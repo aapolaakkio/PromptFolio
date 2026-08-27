@@ -1,0 +1,220 @@
+import { sql } from "drizzle-orm";
+import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+
+// --- Better Auth tables (Task 8 generates the migration; shape fixed by the adapter) ---
+
+export const user = sqliteTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
+  image: text("image"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const session = sqliteTable("session", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const account = sqliteTable("account", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  password: text("password"),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  idToken: text("id_token"),
+  accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp_ms" }),
+  refreshTokenExpiresAt: integer("refresh_token_expires_at", { mode: "timestamp_ms" }),
+  scope: text("scope"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const verification = sqliteTable("verification", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+// --- Application tables ---
+
+export const accounts = sqliteTable(
+  "accounts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    broker: text("broker", { enum: ["nordnet", "op", "spankki", "danske", "other"] }).notNull(),
+    baseCurrency: text("base_currency", { enum: ["EUR", "USD"] })
+      .notNull()
+      .default("EUR"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("accounts_user_idx").on(t.userId)],
+);
+
+export const instruments = sqliteTable("instruments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  isin: text("isin").notNull().unique(),
+  ticker: text("ticker"),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["stock", "etf", "fund", "cash"] }).notNull(),
+  currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+  priceSource: text("price_source", {
+    enum: ["yahoo", "nordnet_fund", "op_fund", "spankki_fund", "danske_fund", "manual"],
+  }).notNull(),
+  sourceKey: text("source_key").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+export const imports = sqliteTable("imports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["csv_nordnet", "csv_op", "pdf", "vision", "manual"] }).notNull(),
+  filename: text("filename").notNull(),
+  sha256: text("sha256").notNull(),
+  status: text("status", { enum: ["draft", "committed", "undone"] })
+    .notNull()
+    .default("draft"),
+  rowCount: integer("row_count").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+export const transactions = sqliteTable(
+  "transactions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    instrumentId: integer("instrument_id").references(() => instruments.id),
+    type: text("type", {
+      enum: [
+        "BUY",
+        "SELL",
+        "DIVIDEND",
+        "FEE",
+        "INTEREST",
+        "DEPOSIT",
+        "WITHDRAWAL",
+        "SPLIT",
+        "TRANSFER_IN",
+        "TRANSFER_OUT",
+      ],
+    }).notNull(),
+    tradeDate: text("trade_date").notNull(),
+    quantity: integer("quantity").notNull().default(0), // scaled 1e6
+    unitPrice: integer("unit_price"), // minor units
+    amount: integer("amount").notNull().default(0), // minor units, signed
+    fee: integer("fee").notNull().default(0),
+    tax: integer("tax").notNull().default(0),
+    currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+    fxRateEur: integer("fx_rate_eur").notNull(), // scaled 1e8
+    externalId: text("external_id"),
+    contentHash: text("content_hash").notNull(),
+    importId: integer("import_id").references(() => imports.id),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    unique("txn_external_uq").on(t.accountId, t.externalId),
+    unique("txn_hash_uq").on(t.accountId, t.contentHash),
+    index("txn_account_date_idx").on(t.accountId, t.tradeDate),
+    index("txn_import_idx").on(t.importId),
+  ],
+);
+
+export const snapshots = sqliteTable("snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  accountId: integer("account_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  asOf: text("as_of").notNull(),
+  source: text("source", { enum: ["pdf", "vision", "manual"] }).notNull(),
+  importId: integer("import_id").references(() => imports.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+export const snapshotRows = sqliteTable("snapshot_rows", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  snapshotId: integer("snapshot_id")
+    .notNull()
+    .references(() => snapshots.id, { onDelete: "cascade" }),
+  instrumentId: integer("instrument_id")
+    .notNull()
+    .references(() => instruments.id),
+  quantity: integer("quantity").notNull(),
+  nav: integer("nav").notNull(),
+  marketValue: integer("market_value").notNull(),
+});
+
+export const prices = sqliteTable(
+  "prices",
+  {
+    instrumentId: integer("instrument_id")
+      .notNull()
+      .references(() => instruments.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    close: integer("close").notNull(),
+    currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+    source: text("source").notNull(),
+    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.instrumentId, t.date] })],
+);
+
+export const fxRates = sqliteTable(
+  "fx_rates",
+  {
+    date: text("date").notNull(),
+    currency: text("currency", { enum: ["USD"] }).notNull(),
+    rateEur: integer("rate_eur").notNull(), // scaled 1e8
+  },
+  (t) => [primaryKey({ columns: [t.date, t.currency] })],
+);
+
+export const priceFetchLog = sqliteTable(
+  "price_fetch_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    source: text("source").notNull(),
+    instrumentId: integer("instrument_id").references(() => instruments.id, {
+      onDelete: "cascade",
+    }),
+    runAt: integer("run_at", { mode: "timestamp_ms" }).notNull(),
+    ok: integer("ok", { mode: "boolean" }).notNull(),
+    message: text("message"),
+  },
+  (t) => [index("price_log_run_idx").on(t.runAt)],
+);
