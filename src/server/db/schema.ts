@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { EUR, type Currency } from "../../core/money";
 
 // --- Better Auth tables (Task 8 generates the migration; shape fixed by the adapter) ---
 
@@ -69,9 +70,11 @@ export const accounts = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     broker: text("broker", { enum: ["nordnet", "op", "spankki", "danske", "other"] }).notNull(),
-    baseCurrency: text("base_currency", { enum: ["EUR", "USD"] })
-      .notNull()
-      .default("EUR"),
+    // Any ISO 4217 code, not a closed enum -- see core/money.ts's `Currency`.
+    // This column has no runtime CHECK constraint; the guarantee comes from
+    // every write going through `parseCurrency` first (import/map.ts,
+    // the api/* zod schemas), not from SQLite.
+    baseCurrency: text("base_currency").$type<Currency>().notNull().default(EUR),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -85,7 +88,8 @@ export const instruments = sqliteTable("instruments", {
   ticker: text("ticker"),
   name: text("name").notNull(),
   kind: text("kind", { enum: ["stock", "etf", "fund", "cash"] }).notNull(),
-  currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+  // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
+  currency: text("currency").$type<Currency>().notNull(),
   priceSource: text("price_source", {
     enum: ["yahoo", "nordnet_fund", "op_fund", "spankki_fund", "danske_fund", "manual"],
   }).notNull(),
@@ -140,7 +144,8 @@ export const transactions = sqliteTable(
     amount: integer("amount").notNull().default(0), // minor units, signed
     fee: integer("fee").notNull().default(0),
     tax: integer("tax").notNull().default(0),
-    currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+    // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
+    currency: text("currency").$type<Currency>().notNull(),
     fxRateEur: integer("fx_rate_eur").notNull(), // scaled 1e8
     externalId: text("external_id"),
     contentHash: text("content_hash").notNull(),
@@ -192,7 +197,8 @@ export const prices = sqliteTable(
       .references(() => instruments.id, { onDelete: "cascade" }),
     date: text("date").notNull(),
     close: integer("close").notNull(),
-    currency: text("currency", { enum: ["EUR", "USD"] }).notNull(),
+    // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
+    currency: text("currency").$type<Currency>().notNull(),
     source: text("source").notNull(),
     fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -203,7 +209,13 @@ export const fxRates = sqliteTable(
   "fx_rates",
   {
     date: text("date").notNull(),
-    currency: text("currency", { enum: ["USD"] }).notNull(),
+    // Any non-EUR ISO 4217 code -- previously hardcoded to `['USD']`, which
+    // is exactly the widening this task exists to remove (§10a A1: the
+    // real portfolio holds SEK, never USD). Nothing at the type level
+    // excludes EUR itself; that a fx_rates row is never written for EUR is
+    // an application-level invariant (EUR converts to itself at rate 1,
+    // never looked up here), not one this column enforces.
+    currency: text("currency").$type<Currency>().notNull(),
     rateEur: integer("rate_eur").notNull(), // scaled 1e8
   },
   (t) => [primaryKey({ columns: [t.date, t.currency] })],

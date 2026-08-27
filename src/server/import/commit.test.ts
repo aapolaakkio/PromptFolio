@@ -1,8 +1,12 @@
 import { test, expect } from "bun:test";
 import { testDb } from "../db";
 import { accounts, fxRates, instruments, transactions, user } from "../db/schema";
+import { EUR, parseCurrency } from "../../core/money";
 import { commitDraft, undoImport } from "./commit";
 import type { Draft, DraftTxn } from "./map";
+
+const USD = parseCurrency("USD");
+const SEK = parseCurrency("SEK");
 
 const seed = () => {
   const { db } = testDb();
@@ -18,7 +22,7 @@ const seed = () => {
     .run();
   const account = db
     .insert(accounts)
-    .values({ userId: "u1", name: "Nordnet", broker: "nordnet", baseCurrency: "EUR" })
+    .values({ userId: "u1", name: "Nordnet", broker: "nordnet", baseCurrency: EUR })
     .returning()
     .get();
   const nokia = db
@@ -28,7 +32,7 @@ const seed = () => {
       ticker: "NOKIA.HE",
       name: "Nokia",
       kind: "stock",
-      currency: "EUR",
+      currency: EUR,
       priceSource: "yahoo",
       sourceKey: "NOKIA.HE",
     })
@@ -48,7 +52,7 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   amount: 500_00,
   fee: 0,
   tax: 0,
-  currency: "EUR",
+  currency: EUR,
   fxRateEur: 100_000_000,
   externalId: null,
   ...over,
@@ -160,7 +164,7 @@ test("refuses a usd row with no fx rate on or before its trade date", () => {
     tradeDate: "2025-05-02",
     quantity: 10_000_000,
     amount: -98570,
-    currency: "USD",
+    currency: USD,
     fxRateEur: 0,
   });
   expect(() => commitDraft(db, args(accountId, draftOf([usd])))).toThrow(/valuuttakurssi/i);
@@ -170,9 +174,9 @@ test("resolves a usd row at the newest rate on or before its trade date", () => 
   const { db, accountId, instrumentId } = seed();
   db.insert(fxRates)
     .values([
-      { date: "2025-04-30", currency: "USD", rateEur: 93_000_000 },
-      { date: "2025-05-02", currency: "USD", rateEur: 92_000_000 },
-      { date: "2025-05-05", currency: "USD", rateEur: 91_000_000 },
+      { date: "2025-04-30", currency: USD, rateEur: 93_000_000 },
+      { date: "2025-05-02", currency: USD, rateEur: 92_000_000 },
+      { date: "2025-05-05", currency: USD, rateEur: 91_000_000 },
     ])
     .run();
   const usd = draftTxn({
@@ -183,17 +187,61 @@ test("resolves a usd row at the newest rate on or before its trade date", () => 
     tradeDate: "2025-05-03",
     quantity: 10_000_000,
     amount: -98570,
-    currency: "USD",
+    currency: USD,
     fxRateEur: 0,
   });
   commitDraft(db, args(accountId, draftOf([usd])));
   expect(db.select().from(transactions).all()[0]!.fxRateEur).toBe(92_000_000);
 });
 
+// The real portfolio holds SEK, never USD (§10a A1) -- these two mirror the
+// USD tests above with SEK to prove the no-fx-rate refusal and the
+// newest-rate-on-or-before resolution generalize to any non-EUR currency,
+// not just the one hardcoded example that used to be the only other option.
+test("refuses a sek row with no fx rate on or before its trade date", () => {
+  const { db, accountId, instrumentId } = seed();
+  const sek = draftTxn({
+    accountId,
+    instrumentId,
+    isin: "FI0009000681",
+    type: "BUY",
+    tradeDate: "2025-05-02",
+    quantity: 10_000_000,
+    amount: -98570,
+    currency: SEK,
+    fxRateEur: 0,
+  });
+  expect(() => commitDraft(db, args(accountId, draftOf([sek])))).toThrow(/valuuttakurssi/i);
+});
+
+test("resolves a sek row at the newest rate on or before its trade date", () => {
+  const { db, accountId, instrumentId } = seed();
+  db.insert(fxRates)
+    .values([
+      { date: "2025-04-30", currency: SEK, rateEur: 9_300_000 },
+      { date: "2025-05-02", currency: SEK, rateEur: 9_200_000 },
+      { date: "2025-05-05", currency: SEK, rateEur: 9_100_000 },
+    ])
+    .run();
+  const sek = draftTxn({
+    accountId,
+    instrumentId,
+    isin: "FI0009000681",
+    type: "BUY",
+    tradeDate: "2025-05-03",
+    quantity: 10_000_000,
+    amount: -98570,
+    currency: SEK,
+    fxRateEur: 0,
+  });
+  commitDraft(db, args(accountId, draftOf([sek])));
+  expect(db.select().from(transactions).all()[0]!.fxRateEur).toBe(9_200_000);
+});
+
 test("a failure part-way through leaves the ledger untouched", () => {
   const { db, accountId } = seed();
   const good = draftTxn({ accountId, externalId: "a" });
-  const bad = draftTxn({ accountId, externalId: "b", currency: "USD", fxRateEur: 0 });
+  const bad = draftTxn({ accountId, externalId: "b", currency: USD, fxRateEur: 0 });
   expect(() => commitDraft(db, args(accountId, draftOf([good, bad])))).toThrow();
   expect(db.select().from(transactions).all()).toHaveLength(0);
 });
@@ -294,7 +342,7 @@ test("undo refuses when a later transaction with no import id at all depends on 
       amount: 18100,
       fee: 0,
       tax: 0,
-      currency: "EUR",
+      currency: EUR,
       fxRateEur: 100_000_000,
       externalId: "manual-sell",
       contentHash: "manual-sell-hash",

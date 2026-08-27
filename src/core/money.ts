@@ -1,4 +1,39 @@
-export type Currency = "EUR" | "USD";
+/**
+ * A validated ISO 4217 currency code (three uppercase A-Z letters, e.g.
+ * "EUR", "SEK", "USD") -- any code, not a closed union. Branded over a bare
+ * `string` so a value can only reach this type through `parseCurrency`
+ * (or the `EUR` constant below, itself built via `parseCurrency`): a plain
+ * string literal does not structurally satisfy the brand, so it cannot be
+ * smuggled into a `Money`/`FxRate` without going through validation first.
+ *
+ * The brand does not encode a currency's minor-unit exponent (EUR/SEK/USD
+ * all have 2, but ISO 4217 also has zero-decimal codes like JPY and
+ * three-decimal codes like KWD). `money.ts`'s `MONEY_SCALE = 2` below is
+ * the one place that assumption is baked in; anything using a non-2-decimal
+ * currency needs that constant to become per-currency first.
+ */
+export type Currency = string & { readonly __brand: "Currency" };
+
+const ISO_4217_PATTERN = /^[A-Z]{3}$/;
+
+/** Validates the ISO 4217 shape (three uppercase A-Z letters). Rejects anything else. */
+export const parseCurrency = (text: string): Currency => {
+  if (!ISO_4217_PATTERN.test(text)) {
+    throw new Error(`Not an ISO 4217 currency code: ${JSON.stringify(text)}`);
+  }
+  // SAFETY: `text` just matched ISO_4217_PATTERN, so it is exactly three
+  // uppercase A-Z letters -- the brand's whole contract.
+  return text as Currency;
+};
+
+/**
+ * The base currency, used throughout core/server code that needs to compare
+ * against or default to EUR. A named constant rather than a bare `"EUR"`
+ * string literal at every call site, so a typo (`"EUR "`, `"EURO"`) is
+ * caught once here instead of silently compiling at each comparison.
+ */
+export const EUR: Currency = parseCurrency("EUR");
+
 export type Rounding = "half-up" | "floor";
 
 export type Money = { readonly minor: bigint; readonly currency: Currency };
@@ -114,7 +149,7 @@ export const cmpQuantity = (a: Quantity, b: Quantity): number =>
   a.scaled === b.scaled ? 0 : a.scaled < b.scaled ? -1 : 1;
 
 export const toEur = (m: Money, rate: FxRate, mode: Rounding = "half-up"): Money => {
-  if (m.currency === "EUR") return m;
+  if (m.currency === EUR) return m;
   if (rate.currency !== m.currency) {
     throw new Error(
       `Fx rate currency ${rate.currency} does not match amount currency ${m.currency}`,
@@ -122,6 +157,6 @@ export const toEur = (m: Money, rate: FxRate, mode: Rounding = "half-up"): Money
   }
   return {
     minor: divideRounded(m.minor * rate.scaled, FX_UNIT, mode),
-    currency: "EUR",
+    currency: EUR,
   };
 };

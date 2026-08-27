@@ -47,10 +47,27 @@ interface InstrumentPayload {
   ticker: string | null;
   name: string;
   kind: "stock" | "etf" | "fund" | "cash";
-  currency: "EUR" | "USD";
+  // Any ISO 4217 code, not a closed EUR|USD union (§10a A1) -- this is the
+  // wire shape sent to the route, before `currencyField`'s zod validation
+  // ever runs, so it stays a plain `string` here deliberately.
+  currency: string;
   priceSource: "yahoo" | "nordnet_fund" | "op_fund" | "spankki_fund" | "danske_fund" | "manual";
   sourceKey: string;
 }
+
+/**
+ * A syntactically valid but never-real ISIN (matches instruments.ts's
+ * `/^[A-Z]{2}[A-Z0-9]{9}\d$/`), derived from a fresh `crypto.randomUUID()`.
+ * Instruments are shared, unscoped reference data across every test in the
+ * process (see instruments.ts's own comment) -- a hardcoded real-looking
+ * ISIN that happens to collide with one a *different* test file's fixture
+ * uses (e.g. the real Nordnet sample CSV's SE0005993102) would silently
+ * make that other file's "this isin is unresolved" assertions flaky
+ * depending on run order, since both share the one process-wide `getDb()`
+ * instruments table.
+ */
+const randomIsin = (country = "SE"): string =>
+  `${country}${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
 const validInstrument = (overrides: Partial<InstrumentPayload> = {}): InstrumentPayload => ({
   isin: "FI0009000681",
@@ -164,5 +181,41 @@ describe("POST /api/instruments", () => {
     // always shapes its body as `{ error, fields: [{ path, message }] }`.
     const body = (await response.json()) as { fields: Array<{ path: string }> };
     expect(body.fields.map((f) => f.path)).toContain("isin");
+  });
+
+  // §10a A1: the real portfolio holds SEK, never USD -- an instrument
+  // whose currency is neither EUR nor USD must still be creatable.
+  test("creates an instrument priced in a real non-EUR/USD ISO currency (SEK)", async () => {
+    const { cookie } = await signUp(`instr-sek-${crypto.randomUUID()}@example.com`);
+    const response = await instrumentRoutes["/api/instruments"].POST(
+      new Request("http://x/api/instruments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(
+          validInstrument({ isin: randomIsin(), sourceKey: "INVE-B.ST", currency: "SEK" }),
+        ),
+      }),
+    );
+    expect(response.status).toBe(201);
+    // SAFETY: a 201 from POST /api/instruments (asserted above) always
+    // returns the inserted row, which carries a currency.
+    const body = (await response.json()) as { currency: string };
+    expect(body.currency).toBe("SEK");
+  });
+
+  test("rejects a currency not shaped like an ISO 4217 code with 400 field detail", async () => {
+    const { cookie } = await signUp(`instr-bad-currency-${crypto.randomUUID()}@example.com`);
+    const response = await instrumentRoutes["/api/instruments"].POST(
+      new Request("http://x/api/instruments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(validInstrument({ isin: "FI0009000681", currency: "eur" })),
+      }),
+    );
+    expect(response.status).toBe(400);
+    // SAFETY: handle()'s ZodError branch (asserted above via status 400)
+    // always shapes its body as `{ error, fields: [{ path, message }] }`.
+    const body = (await response.json()) as { fields: Array<{ path: string }> };
+    expect(body.fields.map((f) => f.path)).toContain("currency");
   });
 });

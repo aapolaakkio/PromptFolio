@@ -3,6 +3,7 @@ import {
   addQuantity,
   cmpQuantity,
   divMoney,
+  EUR,
   formatMoney,
   formatQuantity,
   money,
@@ -171,7 +172,7 @@ export const costBasisAt = (txns: readonly Txn[], on: IsoDate): Map<number, Mone
   for (const lot of open) {
     totals.set(
       lot.instrumentId,
-      addMoney(totals.get(lot.instrumentId) ?? zeroMoney("EUR"), lot.costEur),
+      addMoney(totals.get(lot.instrumentId) ?? zeroMoney(EUR), lot.costEur),
     );
   }
   return totals;

@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { eq } from "drizzle-orm";
 import { getTableConfig, type AnySQLiteTable } from "drizzle-orm/sqlite-core";
+import { EUR } from "../../core/money";
 import { getDb, testDb } from "./index";
 import {
   account,
@@ -61,7 +62,7 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
       userId: "u1",
       name: "Nordnet AOT",
       broker: "nordnet",
-      baseCurrency: "EUR",
+      baseCurrency: EUR,
     })
     .returning()
     .all();
@@ -72,7 +73,7 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
       ticker: "NOKIA.HE",
       name: "Nokia",
       kind: "stock",
-      currency: "EUR",
+      currency: EUR,
       priceSource: "yahoo",
       sourceKey: "NOKIA.HE",
     })
@@ -90,7 +91,7 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
       amount: -100_00,
       fee: 3_00,
       tax: 0,
-      currency: "EUR",
+      currency: EUR,
       fxRateEur: 100_000_000,
       contentHash: "abc",
       externalId: null,
@@ -113,7 +114,7 @@ test("rejects a duplicate content hash within one account", () => {
       userId: "u1",
       name: "OP",
       broker: "op",
-      baseCurrency: "EUR",
+      baseCurrency: EUR,
     })
     .returning()
     .all();
@@ -127,7 +128,7 @@ test("rejects a duplicate content hash within one account", () => {
     amount: 500_00,
     fee: 0,
     tax: 0,
-    currency: "EUR" as const,
+    currency: EUR,
     fxRateEur: 100_000_000,
     contentHash: "dup",
     externalId: null,
@@ -152,7 +153,7 @@ test("enforces foreign keys", () => {
         amount: 1,
         fee: 0,
         tax: 0,
-        currency: "EUR",
+        currency: EUR,
         fxRateEur: 100_000_000,
         contentHash: "x",
         externalId: null,

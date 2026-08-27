@@ -3,6 +3,7 @@ import { mapRows, normaliseDate, contentHash } from "./map";
 import { parseCsv } from "./csv";
 import { parseOpPaste } from "./op-paste";
 import { NORDNET, OP_WEB_PASTE } from "./brokers";
+import { EUR, parseCurrency } from "../../core/money";
 import type { RawRow } from "./types";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
@@ -140,7 +141,7 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
   expect(buy.quantity).toBe(2_000_000); // 2 units, scaled 1e6
   expect(buy.unitPrice).toBe(3400); // 34,00 EUR
   expect(buy.amount).toBe(-6800);
-  expect(buy.currency).toBe("EUR");
+  expect(buy.currency).toBe(EUR);
 });
 
 test("a deposit has no instrument and no quantity", async () => {
@@ -321,7 +322,7 @@ test("content hash is stable for identical rows and differs otherwise", () => {
     amount: -41800,
     fee: 300,
     tax: 0,
-    currency: "EUR" as const,
+    currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
     line: 2,
@@ -346,7 +347,7 @@ test("content hash accepts a row with no line field at all", () => {
     amount: -41800,
     fee: 300,
     tax: 0,
-    currency: "EUR" as const,
+    currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
     line: 2,
@@ -438,7 +439,11 @@ test("csvProblems defaults to none when omitted", () => {
 
 // --- Additional branch coverage not exercised by the fixtures above ------
 
-test("an unsupported currency becomes a problem, not a silent EUR assumption", () => {
+// Any real ISO 4217 code -- including one the real portfolio never held --
+// is accepted, not just EUR/USD (§10a A1: the real portfolio holds SEK,
+// never USD; GBP here stands in for "some third code" to prove the check
+// isn't secretly still a two- or three-member allowlist).
+test("any ISO 4217-shaped currency is accepted, not just EUR or USD", () => {
   const rows = [
     rawRow(2, {
       Id: "1",
@@ -449,13 +454,33 @@ test("an unsupported currency becomes a problem, not a silent EUR assumption", (
       Määrä: "10",
       Kurssi: "1,00",
       Kokonaiskulut: "0",
-      Valuutta: "GBP",
+      Valuutta: "SEK",
+      Summa: "10,00",
+    }),
+  ];
+  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
+  expect(draft.problems).toEqual([]);
+  expect(draft.txns[0]!.currency).toBe(parseCurrency("SEK"));
+});
+
+test("a currency cell not shaped like an ISO 4217 code becomes a problem, not a silent EUR assumption", () => {
+  const rows = [
+    rawRow(2, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "OSTO",
+      Arvopaperi: "X",
+      ISIN: "FI0009000681",
+      Määrä: "10",
+      Kurssi: "1,00",
+      Kokonaiskulut: "0",
+      Valuutta: "12",
       Summa: "10,00",
     }),
   ];
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
   expect(draft.txns).toHaveLength(0);
-  expect(draft.problems[0]!.message).toMatch(/GBP/);
+  expect(draft.problems[0]!.message).toMatch(/12/);
 });
 
 test("an empty unit-price cell yields no unit price, distinct from a literal 0", () => {
@@ -500,7 +525,7 @@ test("cell() prefers columnPositions over columns when both could apply", () => 
     columnPositions: { currency: 4 }, // 1-based: the first "Valuutta"
   };
   const draft = mapRows(rows, config, new Map());
-  expect(draft.txns[0]!.currency).toBe("EUR");
+  expect(draft.txns[0]!.currency).toBe(EUR);
 });
 
 test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {

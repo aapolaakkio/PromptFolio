@@ -1,4 +1,4 @@
-import { parseMoney, parseQuantity } from "../../core/money";
+import { EUR, parseMoney, parseQuantity } from "../../core/money";
 import { normaliseDate } from "./map";
 import type { CsvProblem, RawRow } from "./types";
 
@@ -124,7 +124,7 @@ const isCurrencyAmount = (line: string): boolean => {
   try {
     // The currency argument is irrelevant to whether the numeric part
     // parses; only the numeric shape is being validated here.
-    parseMoney(amount, "EUR");
+    parseMoney(amount, EUR);
     return true;
   } catch {
     return false;

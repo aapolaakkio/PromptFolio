@@ -1,4 +1,4 @@
-import { parseMoney, parseQuantity } from "../../core/money";
+import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money";
 import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types";
 
 export type DraftTxn = {
@@ -13,7 +13,7 @@ export type DraftTxn = {
   readonly amount: number;
   readonly fee: number;
   readonly tax: number;
-  readonly currency: "EUR" | "USD";
+  readonly currency: Currency;
   readonly fxRateEur: number;
   readonly externalId: string | null;
 };
@@ -183,7 +183,7 @@ export const mapRows = (
    * broker that opted into re-signing but left one of its own labels out,
    * a config gap rather than a data problem, so it is not raised here.
    */
-  const resolveAmount = (amountText: string, currency: "EUR" | "USD", label: string): bigint => {
+  const resolveAmount = (amountText: string, currency: Currency, label: string): bigint => {
     const parsed = parseMoney(amountText || "0", currency).minor;
     if (!config.amountSign) return parsed;
     const magnitude = parsed < 0n ? -parsed : parsed;
@@ -197,11 +197,13 @@ export const mapRows = (
       const type = config.typeMap[label];
       if (!type) throw new Error(`Tuntematon tapahtumatyyppi: ${cell(row, "type")}`);
 
+      // Any ISO 4217 code is accepted here (§10a A1) -- `parseCurrency`
+      // throws for anything not shaped like one (e.g. "GB", "EURO"), and
+      // that throw is caught below like every other per-row failure,
+      // turning it into a `DraftProblem` rather than a silent EUR default
+      // or a rejection of a real, valid, non-EUR/USD code such as "SEK".
       const currencyText = cell(row, "currency").trim().toUpperCase() || "EUR";
-      if (currencyText !== "EUR" && currencyText !== "USD") {
-        throw new Error(`Tuettamaton valuutta: ${currencyText}`);
-      }
-      const currency = currencyText;
+      const currency = parseCurrency(currencyText);
 
       const isinText = cell(row, "isin").trim();
       const isin = isinText === "" ? null : isinText;
@@ -246,7 +248,7 @@ export const mapRows = (
         fee: feeText === "" ? 0 : Number(parseMoney(feeText, currency).minor),
         tax: 0,
         currency,
-        fxRateEur: currency === "EUR" ? 100_000_000 : 0, // marker; Task 12 resolves from fx_rates at commit
+        fxRateEur: currency === EUR ? 100_000_000 : 0, // marker; Task 12 resolves from fx_rates at commit
         externalId: cell(row, "externalId").trim() || null,
       });
     } catch (cause) {

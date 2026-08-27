@@ -5,17 +5,22 @@ import {
   parseMoney,
   parseQuantity,
   parseFxRate,
+  parseCurrency,
   formatMoney,
   formatQuantity,
   addMoney,
   zeroMoney,
+  EUR,
+  type Currency,
 } from "./money";
+
+const USD = parseCurrency("USD");
 
 let nextId = 1;
 const txn = (
   type: TransactionType,
   tradeDate: string,
-  o: { qty?: string; amount?: string; fee?: string; currency?: "EUR" | "USD"; rate?: string } = {},
+  o: { qty?: string; amount?: string; fee?: string; currency?: Currency; rate?: string } = {},
 ): Txn => ({
   id: nextId++,
   accountId: 1,
@@ -24,11 +29,11 @@ const txn = (
   tradeDate,
   quantity: parseQuantity(o.qty ?? "0"),
   unitPrice: null,
-  amount: parseMoney(o.amount ?? "0", o.currency ?? "EUR"),
-  fee: parseMoney(o.fee ?? "0", o.currency ?? "EUR"),
-  tax: parseMoney("0", o.currency ?? "EUR"),
-  currency: o.currency ?? "EUR",
-  fxRateEur: parseFxRate(o.rate ?? "1", o.currency ?? "EUR"),
+  amount: parseMoney(o.amount ?? "0", o.currency ?? EUR),
+  fee: parseMoney(o.fee ?? "0", o.currency ?? EUR),
+  tax: parseMoney("0", o.currency ?? EUR),
+  currency: o.currency ?? EUR,
+  fxRateEur: parseFxRate(o.rate ?? "1", o.currency ?? EUR),
 });
 
 test("a single buy becomes one open lot including its fee", () => {
@@ -78,7 +83,7 @@ test("disposal fees reduce proceeds", () => {
 
 test("USD purchases are stored at the frozen EUR rate of their trade date", () => {
   const { open } = buildLots([
-    txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00", currency: "USD", rate: "0,90" }),
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00", currency: USD, rate: "0,90" }),
   ]);
   expect(formatMoney(open[0]!.costEur)).toBe("900.00");
 });
@@ -125,7 +130,7 @@ test("a sale spanning three lots prorates proceeds without rounding drift", () =
     txn("SELL", "2025-02-01", { qty: "3", amount: "1,00" }),
   ]);
   expect(disposals.map((d) => formatMoney(d.proceedsEur))).toEqual(["0.33", "0.33", "0.34"]);
-  const total = disposals.reduce((sum, d) => addMoney(sum, d.proceedsEur), zeroMoney("EUR"));
+  const total = disposals.reduce((sum, d) => addMoney(sum, d.proceedsEur), zeroMoney(EUR));
   expect(formatMoney(total)).toBe("1.00");
 });
 

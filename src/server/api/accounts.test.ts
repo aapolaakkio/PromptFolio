@@ -221,6 +221,40 @@ describe("POST /api/accounts", () => {
     const body = (await response.json()) as { fields: Array<{ path: string }> };
     expect(body.fields.map((f) => f.path).sort()).toEqual(["broker", "name"]);
   });
+
+  // §10a A1: the real portfolio holds SEK, never USD -- an account's base
+  // currency must accept any real ISO 4217 code, not just EUR/USD.
+  test("creates an account with an explicit non-EUR/USD ISO base currency (SEK)", async () => {
+    const { cookie } = await signUp(`sek-account-${crypto.randomUUID()}@example.com`);
+    const response = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name: "Avanza", broker: "other", baseCurrency: "SEK" }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    // SAFETY: a 201 from POST /api/accounts (asserted above) always returns
+    // the inserted row, which carries a baseCurrency.
+    const body = (await response.json()) as { baseCurrency: string };
+    expect(body.baseCurrency).toBe("SEK");
+  });
+
+  test("rejects a base currency not shaped like an ISO 4217 code with 400 field detail", async () => {
+    const { cookie } = await signUp(`bad-currency-account-${crypto.randomUUID()}@example.com`);
+    const response = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name: "x", broker: "other", baseCurrency: "12" }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    // SAFETY: handle()'s ZodError branch (asserted above via status 400)
+    // always shapes its body as `{ error, fields: [{ path, message }] }`.
+    const body = (await response.json()) as { fields: Array<{ path: string }> };
+    expect(body.fields.map((f) => f.path)).toContain("baseCurrency");
+  });
 });
 
 describe("assertAccountOwned", () => {

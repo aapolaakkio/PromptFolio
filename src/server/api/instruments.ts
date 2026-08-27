@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireUser } from "../auth-guard";
+import { currencyField } from "./currency-field";
 import { getDb } from "../db";
 import { instruments } from "../db/schema";
 import { HttpError, handle, json } from "../http";
@@ -12,7 +13,7 @@ const UpsertInstrument = z.object({
   ticker: z.string().min(1).max(20).nullable(),
   name: z.string().min(1).max(200),
   kind: z.enum(["stock", "etf", "fund", "cash"]),
-  currency: z.enum(["EUR", "USD"]),
+  currency: currencyField,
   priceSource: z.enum([
     "yahoo",
     "nordnet_fund",

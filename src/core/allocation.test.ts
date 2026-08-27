@@ -2,7 +2,9 @@ import { test, expect } from "bun:test";
 import { allocateBy } from "./allocation";
 import type { PriceLookup } from "./returns";
 import type { Instrument, Txn } from "./types";
-import { parseMoney, parseQuantity, parseFxRate, formatMoney } from "./money";
+import { parseMoney, parseQuantity, parseFxRate, parseCurrency, formatMoney, EUR } from "./money";
+
+const USD = parseCurrency("USD");
 
 const instruments: Instrument[] = [
   {
@@ -11,7 +13,7 @@ const instruments: Instrument[] = [
     ticker: "NOKIA.HE",
     name: "Nokia",
     kind: "stock",
-    currency: "EUR",
+    currency: EUR,
     priceSource: "yahoo",
     sourceKey: "NOKIA.HE",
   },
@@ -21,7 +23,7 @@ const instruments: Instrument[] = [
     ticker: "IWDA.AS",
     name: "iShares Core MSCI World",
     kind: "etf",
-    currency: "EUR",
+    currency: EUR,
     priceSource: "yahoo",
     sourceKey: "IWDA.AS",
   },
@@ -31,7 +33,7 @@ const instruments: Instrument[] = [
     ticker: null,
     name: "OP-Suomi A",
     kind: "fund",
-    currency: "EUR",
+    currency: EUR,
     priceSource: "op_fund",
     sourceKey: "op-suomi-a",
   },
@@ -43,7 +45,7 @@ const usdInstrument: Instrument = {
   ticker: "USDCO",
   name: "USD Co",
   kind: "stock",
-  currency: "USD",
+  currency: USD,
   priceSource: "yahoo",
   sourceKey: "USDCO",
 };
@@ -56,17 +58,17 @@ const buy = (id: number, accountId: number, qty: string): Txn => ({
   tradeDate: "2025-01-01",
   quantity: parseQuantity(qty),
   unitPrice: null,
-  amount: parseMoney("-1,00", "EUR"),
-  fee: parseMoney("0", "EUR"),
-  tax: parseMoney("0", "EUR"),
-  currency: "EUR",
-  fxRateEur: parseFxRate("1", "EUR"),
+  amount: parseMoney("-1,00", EUR),
+  fee: parseMoney("0", EUR),
+  tax: parseMoney("0", EUR),
+  currency: EUR,
+  fxRateEur: parseFxRate("1", EUR),
 });
 
 const prices: PriceLookup = {
   priceOn: (id) => {
-    if (id === 4) return parseMoney("200,00", "USD");
-    return parseMoney({ 1: "10,00", 2: "100,00", 3: "50,00" }[id]!, "EUR");
+    if (id === 4) return parseMoney("200,00", USD);
+    return parseMoney({ 1: "10,00", 2: "100,00", 3: "50,00" }[id]!, EUR);
   },
   priceDateOn: () => "2025-06-01",
   fxOn: (currency) => parseFxRate("1", currency),
@@ -138,7 +140,7 @@ test("a held instrument with no price on the date is excluded from the totals", 
   const noPriceForNokia: PriceLookup = {
     priceOn: (id) => (id === 1 ? null : prices.priceOn(id, "2025-06-01")),
     priceDateOn: () => "2025-06-01",
-    fxOn: () => parseFxRate("1", "EUR"),
+    fxOn: () => parseFxRate("1", EUR),
   };
   const slices = allocateBy(
     [buy(1, 1, "100"), buy(2, 1, "10")],
@@ -153,7 +155,7 @@ test("a held instrument with no price on the date is excluded from the totals", 
 
 test("a held instrument priced in a currency with no fx rate is excluded from the totals", () => {
   const noUsdRate: PriceLookup = {
-    priceOn: (id) => (id === 4 ? parseMoney("20,00", "USD") : prices.priceOn(id, "2025-06-01")),
+    priceOn: (id) => (id === 4 ? parseMoney("20,00", USD) : prices.priceOn(id, "2025-06-01")),
     priceDateOn: () => "2025-06-01",
     fxOn: () => null,
   };

@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { EUR } from "../../core/money";
 import { requireUser } from "../auth-guard";
+import { currencyField } from "./currency-field";
 import { getDb } from "../db";
 import { accounts } from "../db/schema";
 import { HttpError, handle, json } from "../http";
@@ -10,7 +12,7 @@ const { db } = getDb();
 const CreateAccount = z.object({
   name: z.string().min(1).max(100),
   broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
-  baseCurrency: z.enum(["EUR", "USD"]).default("EUR"),
+  baseCurrency: currencyField.default(EUR),
 });
 
 /**

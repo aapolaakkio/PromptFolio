@@ -1,4 +1,4 @@
-import { addMoney, mulMoney, toEur, zeroMoney, type Money, type Quantity } from "./money";
+import { addMoney, EUR, mulMoney, toEur, zeroMoney, type Money, type Quantity } from "./money";
 import { positionsAt } from "./ledger";
 import type { PriceLookup } from "./returns";
 import type { Instrument, IsoDate, Txn } from "./types";
@@ -65,8 +65,8 @@ export const allocateBy = (
       const price = prices.priceOn(instrumentId, on);
       if (price === null) continue;
       const native = mulMoney(price, qty, "half-up");
-      const rate = instrument.currency === "EUR" ? null : prices.fxOn(instrument.currency, on);
-      if (instrument.currency !== "EUR" && rate === null) continue;
+      const rate = instrument.currency === EUR ? null : prices.fxOn(instrument.currency, on);
+      if (instrument.currency !== EUR && rate === null) continue;
       const valueEur = rate === null ? native : toEur(native, rate, "half-up");
 
       const [key, label] = keyAndLabel(dimension, accountId, instrument);
@@ -79,7 +79,7 @@ export const allocateBy = (
     }
   }
 
-  const total = [...totals.values()].reduce((sum, t) => addMoney(sum, t.value), zeroMoney("EUR"));
+  const total = [...totals.values()].reduce((sum, t) => addMoney(sum, t.value), zeroMoney(EUR));
   if (total.minor === 0n) return [];
 
   return [...totals.entries()]

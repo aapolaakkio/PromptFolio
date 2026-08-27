@@ -1,7 +1,18 @@
 import { test, expect } from "bun:test";
 import { positionsAt, cashAt, externalCashFlows } from "./ledger";
 import type { Txn, TransactionType } from "./types";
-import { parseMoney, parseQuantity, parseFxRate, formatMoney, formatQuantity } from "./money";
+import {
+  parseMoney,
+  parseQuantity,
+  parseFxRate,
+  parseCurrency,
+  formatMoney,
+  formatQuantity,
+  EUR,
+  type Currency,
+} from "./money";
+
+const USD = parseCurrency("USD");
 
 let nextId = 1;
 const txn = (
@@ -11,7 +22,7 @@ const txn = (
     instrumentId?: number;
     qty?: string;
     amount?: string;
-    currency?: "EUR" | "USD";
+    currency?: Currency;
     rate?: string;
   } = {},
 ): Txn => ({
@@ -22,11 +33,11 @@ const txn = (
   tradeDate,
   quantity: parseQuantity(opts.qty ?? "0"),
   unitPrice: null,
-  amount: parseMoney(opts.amount ?? "0", opts.currency ?? "EUR"),
-  fee: parseMoney("0", opts.currency ?? "EUR"),
-  tax: parseMoney("0", opts.currency ?? "EUR"),
-  currency: opts.currency ?? "EUR",
-  fxRateEur: parseFxRate(opts.rate ?? "1", opts.currency ?? "EUR"),
+  amount: parseMoney(opts.amount ?? "0", opts.currency ?? EUR),
+  fee: parseMoney("0", opts.currency ?? EUR),
+  tax: parseMoney("0", opts.currency ?? EUR),
+  currency: opts.currency ?? EUR,
+  fxRateEur: parseFxRate(opts.rate ?? "1", opts.currency ?? EUR),
 });
 
 test("accumulates buys and sells into positions", () => {
@@ -61,7 +72,7 @@ test("transfers in and out move units without cash", () => {
     txn("TRANSFER_OUT", "2021-01-02", { instrumentId: 9, qty: "40" }),
   ];
   expect(formatQuantity(positionsAt(txns, "2025-01-01").get(9)!)).toBe("60.000000");
-  expect(formatMoney(cashAt(txns, "2025-01-01", "EUR"))).toBe("0.00");
+  expect(formatMoney(cashAt(txns, "2025-01-01", EUR))).toBe("0.00");
 });
 
 test("a split multiplies units and leaves cash alone", () => {
@@ -83,12 +94,12 @@ test("sums cash per currency", () => {
       instrumentId: 8,
       qty: "2",
       amount: "-300,00",
-      currency: "USD",
+      currency: USD,
       rate: "0,92",
     }),
   ];
-  expect(formatMoney(cashAt(txns, "2025-12-31", "EUR"))).toBe("4032.60");
-  expect(formatMoney(cashAt(txns, "2025-12-31", "USD"))).toBe("-300.00");
+  expect(formatMoney(cashAt(txns, "2025-12-31", EUR))).toBe("4032.60");
+  expect(formatMoney(cashAt(txns, "2025-12-31", USD))).toBe("-300.00");
 });
 
 test("external cash flows are deposits and withdrawals only, in EUR", () => {
@@ -96,7 +107,7 @@ test("external cash flows are deposits and withdrawals only, in EUR", () => {
     txn("DEPOSIT", "2025-01-01", { amount: "5000,00" }),
     txn("BUY", "2025-01-10", { instrumentId: 7, qty: "10", amount: "-1000,00" }),
     txn("WITHDRAWAL", "2025-09-01", { amount: "-500,00" }),
-    txn("DEPOSIT", "2025-10-01", { amount: "1000,00", currency: "USD", rate: "0,92" }),
+    txn("DEPOSIT", "2025-10-01", { amount: "1000,00", currency: USD, rate: "0,92" }),
   ];
   const flows = externalCashFlows(txns);
   expect(flows.map((f) => f.date)).toEqual(["2025-01-01", "2025-09-01", "2025-10-01"]);

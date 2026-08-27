@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { EUR, type Currency } from "../../core/money";
 import type { getDb } from "../db";
 import { fxRates, imports, transactions } from "../db/schema";
 import { HttpError } from "../errors";
@@ -53,7 +54,7 @@ const isTxnType = (value: string): value is TxnType =>
   transactions.type.enumValues.some((candidate) => candidate === value);
 
 /** Newest fx_rates entry for `currency` on or before `date`, or null if none exists. */
-const fxRateOn = (db: TxDb, currency: "USD", date: string): number | null => {
+const fxRateOn = (db: TxDb, currency: Currency, date: string): number | null => {
   const row = db
     .select()
     .from(fxRates)
@@ -72,7 +73,7 @@ const fxRateOn = (db: TxDb, currency: "USD", date: string): number | null => {
  * looked up on or before the row's trade date, or throws.
  */
 const resolveFxRate = (tx: TxDb, row: DraftTxn): number => {
-  if (row.currency === "EUR" || row.fxRateEur !== 0) return row.fxRateEur;
+  if (row.currency === EUR || row.fxRateEur !== 0) return row.fxRateEur;
   const rate = fxRateOn(tx, row.currency, row.tradeDate);
   if (rate === null) {
     throw new HttpError(

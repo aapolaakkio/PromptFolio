@@ -1,5 +1,6 @@
 import {
   addMoney,
+  EUR,
   mulMoney,
   toEur,
   zeroMoney,
@@ -73,7 +74,7 @@ export const valueSeries = (
 ): ValuePoint[] => {
   const byId = new Map(instruments.map((i) => [i.id, i]));
   return datesBetween(from, to).map((date) => {
-    let value = zeroMoney("EUR");
+    let value = zeroMoney(EUR);
     let stale = false;
     for (const [instrumentId, qty] of positionsAt(txns, date)) {
       const instrument = byId.get(instrumentId);
@@ -85,7 +86,7 @@ export const valueSeries = (
       }
       if (prices.priceDateOn(instrumentId, date) !== date) stale = true;
       const native = mulMoney(price, qty, "half-up");
-      if (instrument.currency === "EUR") {
+      if (instrument.currency === EUR) {
         value = addMoney(value, native);
         continue;
       }
