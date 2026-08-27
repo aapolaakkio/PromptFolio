@@ -63,8 +63,13 @@ export const normaliseDate = (value: string, format: "iso" | "fi"): string => {
   return iso;
 };
 
-/** Stable per material field, independent of source line, so a re-import of the same file dedupes. */
-export const contentHash = (txn: DraftTxn): string => {
+/**
+ * Stable per material field, independent of source line, so a re-import of
+ * the same file dedupes. `line` is optional on the input: a caller building
+ * a synthetic row (e.g. Task 13's opening-balance import, which has no CSV
+ * line to attach) can hash it before a line number exists.
+ */
+export const contentHash = (txn: Omit<DraftTxn, "line"> & { line?: number }): string => {
   const material = [
     txn.accountId,
     txn.type,
@@ -87,6 +92,21 @@ const fromCsvProblem = (problem: CsvProblem): DraftProblem => ({
 });
 
 /**
+ * Optional tail arguments for `mapRows`. A named options type -- not two
+ * trailing positional optionals -- because two same-typed-enough optional
+ * positionals (a number and an array) are easy to mis-order at a call site,
+ * and TypeScript won't always catch it (it does here only because the
+ * types happen to differ; it would not if both were arrays). This is a
+ * declared record type, not the bare `object` keyword, so it isn't flagged
+ * by `anti-slop/no-object-parameters`.
+ */
+export type MapRowsOptions = {
+  /** Task 10's structural failures (bad column count, malformed quoting), merged into `Draft.problems`. */
+  readonly csvProblems?: readonly CsvProblem[];
+  readonly accountId?: number;
+};
+
+/**
  * Maps parsed CSV rows into draft transactions ready for the review screen.
  * A row that cannot be mapped becomes a `DraftProblem`, never an exception
  * and never a silent skip -- the user decides what to do with it. An ISIN
@@ -94,17 +114,17 @@ const fromCsvProblem = (problem: CsvProblem): DraftProblem => ({
  * instrument: it's collected in `unknownIsins` and the transaction gets
  * `instrumentId: null`.
  *
- * `csvProblems` carries Task 10's structural failures (bad column count,
- * malformed quoting) so the review screen gets one merged, line-ordered
- * list of everything wrong with the file instead of two separate ones.
+ * `options.csvProblems` carries Task 10's structural failures so the
+ * review screen gets one merged, line-ordered list of everything wrong
+ * with the file instead of two separate ones.
  */
 export const mapRows = (
   rows: readonly RawRow[],
   config: BrokerCsvConfig,
   knownIsins: ReadonlyMap<string, number>,
-  csvProblems: readonly CsvProblem[] = [],
-  accountId = 0,
+  options: MapRowsOptions = {},
 ): Draft => {
+  const { csvProblems = [], accountId = 0 } = options;
   const txns: DraftTxn[] = [];
   const problems: DraftProblem[] = [];
   const unknown = new Map<string, string>();

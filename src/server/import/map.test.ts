@@ -125,6 +125,52 @@ test("content hash is stable for identical rows and differs otherwise", () => {
   expect(contentHash(base)).not.toBe(contentHash({ ...base, amount: -41801 }));
 });
 
+// --- Fix round 1: mapRows options object, contentHash's wider parameter --
+
+test("content hash accepts a row with no line field at all", () => {
+  // Mirrors Task 13's opening-balance call, which builds a row with no CSV
+  // line to attach and calls contentHash before one exists.
+  const { line: _line, ...withoutLine } = {
+    accountId: 1,
+    instrumentId: 7,
+    isin: "FI0009000681",
+    type: "BUY" as const,
+    tradeDate: "2025-01-10",
+    quantity: 100_000_000,
+    unitPrice: 415,
+    amount: -41800,
+    fee: 300,
+    tax: 0,
+    currency: "EUR" as const,
+    fxRateEur: 100_000_000,
+    externalId: null,
+    line: 2,
+  };
+  expect(contentHash(withoutLine)).toBe(contentHash({ ...withoutLine, line: 2 }));
+});
+
+test("mapRows stamps options.accountId onto every draft transaction", () => {
+  const rows = [
+    {
+      line: 2,
+      values: {
+        Id: "1",
+        Kauppapäivä: "2025-01-10",
+        Tapahtumatyyppi: "OSTO",
+        Arvopaperi: "NOKIA",
+        ISIN: "FI0009000681",
+        Määrä: "10",
+        Kurssi: "1,00",
+        Kokonaiskulut: "0",
+        Valuutta: "EUR",
+        Summa: "-10,00",
+      },
+    },
+  ];
+  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), { accountId: 42 });
+  expect(draft.txns[0]!.accountId).toBe(42);
+});
+
 // --- Additions beyond the brief, for the Task 10 output-shape change -----
 //
 // Task 10's parseCsv now returns { rows, headers, problems }, where
@@ -142,7 +188,7 @@ test("merges CSV structural problems into Draft.problems, carrying the raw line 
     "1;2025-01-10;OSTO;NOKIA;FI0009000681;10;4,15;3,00;EUR;-41,50\n" +
     "2;3\n";
   const { rows, problems: csvProblems } = parseCsv(new TextEncoder().encode(csv).buffer, NORDNET);
-  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), csvProblems);
+  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), { csvProblems });
 
   expect(draft.txns).toHaveLength(1);
   expect(draft.problems).toHaveLength(1);
@@ -170,7 +216,7 @@ test("keeps structural CSV problems and row-mapping problems together, sorted by
     },
   ];
   const csvProblems = [{ line: 3, message: "CSV rivi 3: 2 saraketta, odotettiin 10", raw: "2;3" }];
-  const draft = mapRows(rows, NORDNET, new Map(), csvProblems);
+  const draft = mapRows(rows, NORDNET, new Map(), { csvProblems });
 
   expect(draft.problems.map((p) => p.line)).toEqual([3, 5]);
   expect(draft.problems[0]!.rawLine).toBe("2;3");
