@@ -15,6 +15,17 @@ const instrument: Instrument = {
   sourceKey: "NOKIA.HE",
 };
 
+const usdInstrument: Instrument = {
+  id: 9,
+  isin: "US0000000009",
+  ticker: "USDCO",
+  name: "USD Co",
+  kind: "stock",
+  currency: "USD",
+  priceSource: "yahoo",
+  sourceKey: "USDCO",
+};
+
 let nextId = 1;
 const txn = (
   type: TransactionType,
@@ -101,6 +112,44 @@ test("values are zero before the first purchase", () => {
     "2025-01-03",
   );
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00", "0.00", "1000.00"]);
+});
+
+test("converts a USD position through fxOn with correctly rounded EUR value", () => {
+  const usdTxn: Txn = {
+    id: nextId++,
+    accountId: 1,
+    instrumentId: 9,
+    type: "BUY",
+    tradeDate: "2025-01-01",
+    quantity: parseQuantity("1"),
+    unitPrice: null,
+    amount: parseMoney("-100,00", "USD"),
+    fee: parseMoney("0", "USD"),
+    tax: parseMoney("0", "USD"),
+    currency: "USD",
+    fxRateEur: parseFxRate("0.85005000", "USD"),
+  };
+  // Chosen so the exact quotient lands on a rounding tie: half-up gives 85.01,
+  // any rounding-down mode would silently give 85.00 instead.
+  const usdPrices: PriceLookup = {
+    priceOn: (_id, date) => (date >= "2025-01-01" ? parseMoney("100,00", "USD") : null),
+    priceDateOn: (_id, date) => (date >= "2025-01-01" ? "2025-01-01" : null),
+    fxOn: () => parseFxRate("0.85005000", "USD"),
+  };
+  const series = valueSeries([usdTxn], [usdInstrument], usdPrices, "2025-01-01", "2025-01-01");
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["85.01"]);
+});
+
+test("an instrument with no known price contributes nothing and marks the day stale", () => {
+  const txns = [txn("BUY", "2025-01-01", { qty: "10", amount: "-1000,00" })];
+  const neverPriced: PriceLookup = {
+    priceOn: () => null,
+    priceDateOn: () => null,
+    fxOn: () => parseFxRate("1", "EUR"),
+  };
+  const series = valueSeries(txns, [instrument], neverPriced, "2025-01-01", "2025-01-01");
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
+  expect(series.map((p) => p.stale)).toEqual([true]);
 });
 
 test("xirr recovers a known 10% annual return", () => {
