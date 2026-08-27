@@ -9,3 +9,5 @@ data
 
 # This session's scratch workspace - never commit.
 .superpowers
+
+.DS_Store

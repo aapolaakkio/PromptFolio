@@ -358,6 +358,55 @@ Done means all of the following, with tests:
 
 Explicitly **not** in phase 1: reconciliation UI, PDF import, vision import, chat, tax, rebalancing.
 
+## 10a. Amendment — 2026-08-27, after inspecting real broker exports
+
+The user supplied a real Nordnet transaction export, a real Nordnet holdings export, a real OP
+year-end PDF statement, and a screenshot of OP's web transaction view. Four assumptions in sections
+4-6 were falsified. This amendment supersedes them.
+
+### A1. Currency is any ISO 4217 code, not `EUR | USD`
+
+The real portfolio holds EUR and **SEK**; it holds no USD at all. Two ETFs whose names contain
+"USD" trade in EUR — the name is not the currency.
+
+`Currency` becomes a validated 3-letter ISO code rather than a two-member union. `fx_rates`
+accepts any non-EUR currency. Task 15's ECB ingestion fetches whatever currencies appear in the
+ledger, defaulting to none rather than to USD.
+
+### A2. Nordnet exports are UTF-16LE, tab-delimited
+
+Both Nordnet exports are UTF-16 little-endian with a BOM and tab separators, not UTF-8 with
+semicolons. §5.1's `BrokerCsvConfig` example is wrong on both counts. Column *names* were correct.
+
+The transaction export also has **five columns named `Valuutta`**. A parser that maps header name
+to value silently keeps the last, which is the commission currency, not the transaction currency.
+Column identity must therefore be positional, not by name alone.
+
+Its real transaction types are: OSTO, MYYNTI, TALLETUS, NOSTO, ETF_KK SÄÄSTÖN PALVELUMAKSU,
+PER ETF-KK SÄÄSTÖN PALVEMAKSU (Nordnet's own typo), PÄÄOMIT YLIT.KORKO, LAINAKORKO,
+VAIHTO AP-OTTO, VAIHTO AP-JÄTTÖ, DESIM. ULOSKIRJ. KÄT, DESIM KIRJAUS OTTO, Reaaliaikainen talle.
+No dividend rows appear — the holdings are accumulating funds and ETFs.
+
+### A3. OP has no CSV export
+
+§5.1's OP `BrokerCsvConfig` describes a file that does not exist. OP offers a PDF statement and a
+web transaction view. Replaced by:
+
+- **OP paste import (phase 1).** The user copies the OP web transaction table and pastes it in.
+  Parsed as delimited text through the existing parse → map → review → commit pipeline.
+  Two consequences: the web view carries **no ISIN**, so instruments resolve by name via the
+  unknown-instrument flow; and its total is **unsigned**, so the sign is derived from the
+  OSTO/MYYNTI type column rather than read from the amount.
+- **OP PDF (phase 2, unchanged).** The PDF has a real text layer and is a year-end *holdings*
+  statement listing acquisition lots — it feeds opening positions (§4.3), not the transaction path.
+
+### A4. Broker FX rate is preferred over ECB
+
+Nordnet's transaction export carries a per-row `Vaihtokurssi`. Where present it is the rate actually
+applied to the trade, including spread, so it is preferred. The ECB daily rate remains the fallback
+for rows with no broker rate. §4.2's frozen-rate rule is unchanged; only the source order is
+specified. Each transaction records which source its rate came from.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
