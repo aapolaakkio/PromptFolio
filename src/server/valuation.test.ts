@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test";
 import { EUR, formatMoney, parseCurrency } from "../core/money";
+import { valueSeries } from "../core/returns";
 import { testDb } from "./db";
 import { accounts, instruments, prices, transactions, user } from "./db/schema";
+import { backfillFxRates, ECB_HIST_URL } from "./fx";
 import { holdingsFor, loadPortfolio } from "./valuation";
 
 const seed = () => {
@@ -254,6 +256,111 @@ test("a position priced today in a currency with no fx rate for today reports no
   expect(sek.priceDate).toBe("2025-07-01");
   expect(sek.stale).toBe(true);
   expect(sek.valuationError).toMatch(/SEK.*Nordnet Sverige Indeks|Nordnet Sverige Indeks.*SEK/);
+});
+
+// --- Historical-fx fix: the gap above closes once fx.ts's historical backfill runs ---
+// (a fresh ISIN here, not SE0002756973 -- that one is this file's own fixture above)
+
+test("before/after: a SEK-quoted holding's historical value series is excluded (0,00 EUR) before fx history is backfilled, and a real converted figure after", async () => {
+  const { db } = testDb();
+  const userId = crypto.randomUUID();
+  db.insert(user)
+    .values({
+      id: userId,
+      name: "Omistaja",
+      email: `${userId}@example.com`,
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .run();
+  const account = db
+    .insert(accounts)
+    .values({ userId, name: "Nordnet", broker: "nordnet", baseCurrency: EUR })
+    .returning()
+    .get();
+  const sekFund = db
+    .insert(instruments)
+    .values({
+      isin: "SE0009123456",
+      ticker: null,
+      name: "Testirahasto Ruotsi",
+      kind: "fund",
+      currency: parseCurrency("SEK"),
+      priceSource: "manual",
+      sourceKey: "testirahasto-sverige",
+    })
+    .returning()
+    .get();
+  db.insert(transactions)
+    .values({
+      accountId: account.id,
+      instrumentId: sekFund.id,
+      type: "BUY",
+      tradeDate: "2026-08-24", // matches a real row in the recorded hist fixture
+      quantity: 100_000_000, // 100.000000 units
+      unitPrice: null,
+      amount: -95_000_00, // informational only -- valueSeries never reads unitPrice/amount
+      fee: 0,
+      tax: 0,
+      currency: EUR, // the cash that moved was EUR -- §10a A2/A5
+      fxRateEur: 100_000_000,
+      contentHash: crypto.randomUUID(),
+      externalId: null,
+      importId: null,
+    })
+    .run();
+  db.insert(prices)
+    .values({
+      instrumentId: sekFund.id,
+      date: "2026-08-25",
+      close: 100_000, // 1 000,00 SEK per unit
+      currency: parseCurrency("SEK"),
+      source: "manual",
+      fetchedAt: new Date(),
+    })
+    .run();
+
+  const portfolioNow = () => loadPortfolio(db, userId);
+
+  // BEFORE: exactly §10a's confirmed gap -- a real, dated price exists, but fx_rates has
+  // nothing for SEK at all yet (only the ECB *current* daily rate has ever been ingested).
+  const before = valueSeries(
+    portfolioNow().txns,
+    portfolioNow().instruments,
+    portfolioNow().prices,
+    "2026-08-25",
+    "2026-08-25",
+  )[0]!;
+  expect(before.excludedInstrumentIds).toEqual([sekFund.id]);
+  expect(formatMoney(before.valueEur)).toBe("0.00");
+  expect(before.stale).toBe(true);
+
+  // Backfill fx history -- exactly what the nightly job (`runScheduledRefresh`) and a
+  // fresh import commit (`backfillCommittedInstruments`) now both trigger.
+  const histFixtureText = () =>
+    Bun.file(`${import.meta.dir}/fixtures/ecb-eurofxref-hist.csv`).text();
+  const dispatch = async (input: string | URL | Request): Promise<Response> => {
+    expect(String(input)).toBe(ECB_HIST_URL);
+    return new Response(await histFixtureText());
+  };
+  const backfillResult = await backfillFxRates(db, { fetchImpl: dispatch });
+  expect(backfillResult).toEqual({ inserted: 5, currencies: 1 });
+
+  // AFTER: same date, same price, now a real converted EUR value.
+  const after = valueSeries(
+    portfolioNow().txns,
+    portfolioNow().instruments,
+    portfolioNow().prices,
+    "2026-08-25",
+    "2026-08-25",
+  )[0]!;
+  expect(after.excludedInstrumentIds).toEqual([]);
+  expect(after.stale).toBe(false);
+  // 100.000000 units * 1 000,00 SEK = 100 000,00 SEK, converted at the fixture's real
+  // 2026-08-25 SEK rate (8 950 148 EUR-per-SEK, scaled 1e8) via core/money.ts's own
+  // mulMoney/toEur (exact bigint, half-up) = 8 950,15 EUR exactly.
+  expect(formatMoney(after.valueEur)).toBe("8950.15");
 });
 
 test("holdingsFor marks only the affected position's cost basis unknown when a sale has no matching purchase, leaving other holdings unaffected", () => {

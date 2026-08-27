@@ -3,7 +3,7 @@ import type { CronJob } from "bun";
 
 import type { getDb } from "../db";
 import { instruments, priceFetchLog, prices, transactions } from "../db/schema";
-import { refreshFxRates } from "../fx";
+import { backfillFxRates, refreshFxRates } from "../fx";
 import { sourceFor } from "./registry";
 import { SourceNotImplementedError, type FetchImpl, type FetchedPrice } from "./types";
 import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write";
@@ -384,10 +384,10 @@ const SCHEDULE_TZ = "Europe/Helsinki";
  * can trigger is the next weekday evening). `Bun.cron` mirrors
  * `setTimeout`'s error semantics: a handler that rejects with no
  * `unhandledRejection` listener on `process` takes the whole process
- * down. This function never lets a rejection escape -- `refreshFxRates`
- * and `refreshPrices` are each wrapped in their own try/catch, so one
- * evening's ECB outage or an unexpected database error cannot stop the
- * next evening's run. `src/server/index.ts` additionally registers a
+ * down. This function never lets a rejection escape -- `refreshFxRates`,
+ * `refreshPrices`, `backfillFxRates` and the price backfill sweep below are each wrapped in
+ * their own try/catch, so one evening's ECB outage or an unexpected database error cannot
+ * stop the next evening's run. `src/server/index.ts` additionally registers a
  * process-wide `unhandledRejection` listener as a second, independent
  * layer of defense in case something here still escapes.
  */
@@ -402,6 +402,20 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.log(`Hintapäivitys: ${result.ok} onnistui, ${result.failed} epäonnistui`);
   } catch (cause) {
     console.error("Hintapäivitys epäonnistui", cause);
+  }
+  try {
+    // Catches every held currency's fx_rates history up to the earliest date the ledger
+    // actually needs it (see fx.ts's `backfillFxRates` -- the historical-file counterpart
+    // to the daily fetch above). `needsFxBackfill`'s own check is what keeps this cheap on
+    // every ordinary night once a currency's history has already been caught up once.
+    const fxResult = await backfillFxRates(db);
+    if (fxResult.currencies > 0) {
+      console.log(
+        `FX-historian täydennys: ${fxResult.inserted} kurssia lisätty ${fxResult.currencies} valuutalle`,
+      );
+    }
+  } catch (cause) {
+    console.error("FX-historian täydennys epäonnistui", cause);
   }
   try {
     // Catches up any instrument whose stored history still doesn't reach its earliest

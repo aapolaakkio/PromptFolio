@@ -6,6 +6,7 @@ import { EUR, parseCurrency } from "../../core/money";
 import { commitDraft, undoImport } from "./commit";
 import type { Draft, DraftTxn } from "./map";
 import type { FetchImpl } from "../prices/types";
+import { ECB_HIST_URL, ECB_URL } from "../fx";
 
 const USD = parseCurrency("USD");
 const SEK = parseCurrency("SEK");
@@ -290,6 +291,46 @@ test("a first-ever non-EUR transaction commits by fetching ECB's rate on demand 
   // The fetched rate is also persisted, so a later row (or refreshFxRates) never
   // needs to hit the network again for this date/currency.
   expect(db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all()).toHaveLength(1);
+});
+
+// --- Historical-fx fix: a *back-dated* first-ever transaction is no longer blocked either ---
+// (previously C1b's fetchImpl could only ever supply today's ECB rate -- see fx.ts's
+// `ensureFxRate` and `ECB_HIST_URL` comments for the confirmed real gap this closes)
+
+test("a back-dated transaction in a currency never held before now commits, by falling back to ECB's historical file instead of just today's", async () => {
+  const { db, accountId, instrumentId } = seed();
+  // The daily file only ever carries today's rate (2026-08-27 here), well after this
+  // back-dated trade -- on its own this would still deadlock exactly like the old,
+  // un-fixed C1b case. `fetchImpl` plays both real ECB endpoints: the daily one (dated
+  // "today"), and the historical one (verified real shape -- see fx.ts's `ECB_HIST_URL`
+  // comment), which is what actually covers 2020-01-02.
+  const fetchImpl: FetchImpl = async (input) => {
+    const url = String(input);
+    if (url === ECB_URL) return new Response("Date,SEK\n27 August 2026,11.2340\n");
+    if (url === ECB_HIST_URL) {
+      return new Response("Date,SEK\n2026-08-27,11.2340\n2020-01-03,10.9200\n2020-01-02,10.9160\n");
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  const sek = draftTxn({
+    accountId,
+    instrumentId,
+    isin: "FI0009000681",
+    type: "BUY",
+    tradeDate: "2020-01-02",
+    quantity: 10_000_000,
+    amount: -98570,
+    currency: SEK,
+    fxRateEur: 0,
+  });
+  const result = await commitDraft(db, args(accountId, draftOf([sek]), fetchImpl));
+  expect(result.inserted).toBe(1);
+  const stored = db.select().from(transactions).all()[0]!;
+  expect(stored.currency).toBe(SEK);
+  expect(stored.fxRateEur).toBeGreaterThan(0);
+  // Resolved from the historical row dated exactly the trade date, not carried over
+  // from the daily file's unrelated 2026-08-27 rate.
+  expect(db.select().from(fxRates).where(eq(fxRates.date, "2020-01-02")).all()).toHaveLength(1);
 });
 
 test("a failure part-way through leaves the ledger untouched", async () => {

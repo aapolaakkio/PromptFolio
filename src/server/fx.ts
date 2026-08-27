@@ -1,4 +1,4 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, lte } from "drizzle-orm";
 import { z } from "zod";
 
 import { EUR, parseCurrency, parseFxRate, type Currency } from "../core/money";
@@ -9,6 +9,20 @@ import type { FetchImpl } from "./prices/types";
 type Db = ReturnType<typeof getDb>["db"];
 
 export const ECB_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref.csv";
+
+/**
+ * ECB's full daily-history file -- same currency columns as `eurofxref.csv`, one row per
+ * TARGET business day back to 1999-01-04, newest first. Verified by a real fetch
+ * (2026-08-28): `Content-Type: text/csv`, a `Date,USD,JPY,...` header identical in shape to
+ * the daily file's, and one crucial difference the daily file's own format does not have --
+ * each row's date is already ISO `YYYY-MM-DD` (e.g. `2010-02-14`), not the daily file's
+ * spelled-out `D Month YYYY` (e.g. `27 August 2026`). `parseEcbHistDate` below exists
+ * because of that one verified difference; everything else (comma-separated cells, `N/A`
+ * for a currency ECB did not yet publish or has stopped publishing, values scaled and
+ * inverted exactly like the daily file's) reuses `parseEcbValueRow`, the same per-row logic
+ * `parseEcbCsv` itself calls.
+ */
+export const ECB_HIST_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.csv";
 
 const MONTH_NAMES = [
   "January",
@@ -71,6 +85,59 @@ const invertScaledRate = (scaled: bigint): number => {
   return Number(remainder * 2n >= scaled ? quotient + 1n : quotient);
 };
 
+type EcbRow = { readonly date: string; readonly currency: Currency; readonly rateEur: number };
+
+/**
+ * Extracts every `wanted` currency's rate from one already-date-resolved ECB CSV line,
+ * shared by `parseEcbCsv` (the daily file's single value line) and `parseEcbHistCsv` (each
+ * of the historical file's many value lines) -- the two files' rows have the exact same
+ * shape (a header of currency codes, a value per column), only their date column's text
+ * format and the number of value lines differ.
+ *
+ * Throws if `values` has a different number of cells than `headers`: a genuinely truncated
+ * download (the connection dropped mid-row) silently drops trailing columns rather than
+ * raising an HTTP error, and without this check that would read as "this row just happens
+ * to have no rate for its last few currencies" -- indistinguishable from a legitimate `N/A`
+ * -- producing partial rates that look complete. A short row is exactly the shape a cut-off
+ * response leaves behind, so it fails loudly here instead.
+ *
+ * EUR itself is excluded even if a caller's `wanted` set somehow contains it: the file has
+ * no EUR column (EUR is its implicit base), and an EUR/EUR rate would be meaningless --
+ * `fx_rates` must never carry one (see that table's schema comment).
+ *
+ * A single unparseable currency column (a non-numeric cell, e.g. an ECB "N/A" for a
+ * currency ECB has stopped publishing) is skipped rather than failing the whole row: the
+ * other columns' rates are still good data and one bad cell should not block them,
+ * mirroring this project's "one failing source must not stop the others" rule at column
+ * granularity.
+ */
+const parseEcbValueRow = (
+  headers: readonly string[],
+  values: readonly string[],
+  wanted: ReadonlySet<string>,
+  date: string,
+): EcbRow[] => {
+  if (values.length !== headers.length) {
+    throw new Error(
+      `ECB-tiedoston rivi on rikki (${date}): odotettiin ${headers.length} saraketta, saatiin ${values.length}`,
+    );
+  }
+  const out: EcbRow[] = [];
+  for (let i = 1; i < headers.length; i++) {
+    const rawCurrency = headers[i];
+    if (rawCurrency === undefined || rawCurrency === "EUR" || !wanted.has(rawCurrency)) continue;
+    const rawValue = values[i];
+    if (rawValue === undefined || !ECB_RATE_PATTERN.test(rawValue)) continue;
+
+    const currency = parseCurrency(rawCurrency);
+    const { scaled } = parseFxRate(rawValue, currency);
+    if (scaled <= 0n) continue;
+
+    out.push({ date, currency, rateEur: invertScaledRate(scaled) });
+  }
+  return out;
+};
+
 /**
  * Parses the ECB `eurofxref.csv` daily file (two lines: a header row of
  * currency codes, one value row) into EUR-per-foreign-unit rates, scaled
@@ -83,18 +150,6 @@ const invertScaledRate = (scaled: bigint): number => {
  * foreign currencies matter and never defaults to a guessed set; the
  * caller (`refreshFxRates`) passes exactly the currencies its own ledger
  * holds.
- *
- * EUR itself is excluded even if a caller's `wanted` set somehow contains
- * it: the file has no EUR column (EUR is its implicit base), and an
- * EUR/EUR rate would be meaningless -- `fx_rates` must never carry one
- * (see that table's schema comment).
- *
- * A single unparseable currency column (a non-numeric cell, e.g. an ECB
- * "N/A" for a currency ECB has stopped publishing) is skipped rather than
- * failing the whole file: the other columns' rates are still good data
- * and one bad cell should not block them, mirroring this project's
- * "one failing source must not stop the others" rule at column
- * granularity.
  */
 export const parseEcbCsv = (
   text: string,
@@ -113,23 +168,80 @@ export const parseEcbCsv = (
   }
   const date = parseEcbDate(dateText);
 
-  const out: Array<{ date: string; currency: Currency; rateEur: number }> = [];
-  for (let i = 1; i < headers.length; i++) {
-    const rawCurrency = headers[i];
-    if (rawCurrency === undefined || rawCurrency === "EUR" || !wanted.has(rawCurrency)) continue;
-    const rawValue = values[i];
-    if (rawValue === undefined || !ECB_RATE_PATTERN.test(rawValue)) continue;
+  return parseEcbValueRow(headers, values, wanted, date);
+};
 
-    const currency = parseCurrency(rawCurrency);
-    const { scaled } = parseFxRate(rawValue, currency);
-    if (scaled <= 0n) continue;
+const ECB_HIST_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-    out.push({ date, currency, rateEur: invertScaledRate(scaled) });
+const EcbHistDateParts = z.object({
+  year: z.string().regex(/^\d{4}$/),
+  month: z.string().regex(/^(0[1-9]|1[0-2])$/),
+  day: z.string().regex(/^([0-2]\d|3[01])$/),
+});
+
+/**
+ * The historical file's date column, verified by a real fetch to already be ISO
+ * `YYYY-MM-DD` (unlike the daily file's spelled-out `D Month YYYY`, see `ECB_HIST_URL`'s own
+ * comment) -- so unlike `parseEcbDate`, this never resolves a month name, but it is
+ * zod-validated the same way and just as strictly (a real calendar day-of-month range, a
+ * real month range) rather than trusted as-is, for the same reason `parseEcbDate` does not
+ * lean on JS `Date`'s free-text parser: this is every historical `fx_rates` row's primary
+ * key.
+ */
+const parseEcbHistDate = (text: string): string => {
+  const trimmed = text.trim();
+  const match = ECB_HIST_DATE_PATTERN.exec(trimmed);
+  const parsed = match
+    ? EcbHistDateParts.safeParse({ year: match[1], month: match[2], day: match[3] })
+    : undefined;
+  if (!match || !parsed?.success) {
+    throw new Error(`ECB-historiatiedoston päivämäärä ei kelpaa: ${JSON.stringify(text)}`);
+  }
+  return trimmed;
+};
+
+/**
+ * Parses the ECB `eurofxref-hist.csv` historical file: one header row of currency codes,
+ * then one value row per TARGET business day, newest first (verified by a real fetch --
+ * see `ECB_HIST_URL`'s comment). Reuses `parseEcbValueRow` for each line, exactly like
+ * `parseEcbCsv` does for the daily file's one line.
+ *
+ * `opts.since`, when given, bounds how much of a multi-thousand-row file is actually kept:
+ * since the file is newest-first, this stops as soon as it has pushed one row dated before
+ * `since` -- that one extra row is deliberate, not an off-by-one, so a caller doing a
+ * backfill "from `since` onward" still gets the last known rate for any date between
+ * `since` and that row's own date, exactly matching `fxRateOn`'s own "newest row on or
+ * before" semantics. Without `opts.since`, every row is parsed and returned.
+ */
+export const parseEcbHistCsv = (
+  text: string,
+  wanted: ReadonlySet<string>,
+  opts: { since?: string } = {},
+): EcbRow[] => {
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  const headerLine = lines[0];
+  if (headerLine === undefined || !/^Date\b/i.test(headerLine.trim())) {
+    throw new Error("ECB-historiatiedoston muoto ei kelpaa: otsikkorivi puuttuu");
+  }
+  const headers = headerLine.split(",").map((cell) => cell.trim());
+  const since = opts.since;
+
+  const out: EcbRow[] = [];
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (line === undefined) continue;
+    const values = line.split(",").map((cell) => cell.trim());
+    const dateText = values[0];
+    if (dateText === undefined) {
+      throw new Error(`ECB-historiatiedoston rivi ${lineIndex + 1}: päivämääräsarake puuttuu`);
+    }
+    const date = parseEcbHistDate(dateText);
+
+    out.push(...parseEcbValueRow(headers, values, wanted, date));
+    if (since !== undefined && date < since) break;
   }
   return out;
 };
-
-type EcbRow = { readonly date: string; readonly currency: Currency; readonly rateEur: number };
 
 /** Fetches and parses one ECB daily file for exactly `wanted`'s currencies. No DB access. */
 const fetchEcbRows = async (
@@ -141,6 +253,22 @@ const fetchEcbRows = async (
     throw new Error(`ECB vastasi ${response.status} ${response.statusText}`);
   }
   return parseEcbCsv(await response.text(), wanted);
+};
+
+/**
+ * Fetches and parses the ECB historical file for exactly `wanted`'s currencies, from
+ * `since` onward (see `parseEcbHistCsv`'s own doc for the exact boundary). No DB access.
+ */
+const fetchEcbHistRows = async (
+  fetchImpl: FetchImpl,
+  wanted: ReadonlySet<string>,
+  since: string,
+): Promise<EcbRow[]> => {
+  const response = await fetchImpl(ECB_HIST_URL);
+  if (!response.ok) {
+    throw new Error(`ECB (historia) vastasi ${response.status} ${response.statusText}`);
+  }
+  return parseEcbHistCsv(await response.text(), wanted, { since });
 };
 
 /**
@@ -244,32 +372,144 @@ export const refreshFxRates = async (
   return { inserted };
 };
 
+/** Sets `map[currency]` to `date` if it is earlier than what is already stored (or nothing is). */
+const bumpEarliest = (map: Map<Currency, string>, currency: Currency, date: string): void => {
+  const existing = map.get(currency);
+  if (existing === undefined || date < existing) map.set(currency, date);
+};
+
 /**
- * Resolves an fx rate for `currency` on or before `date`, fetching ECB's current daily
- * rate on demand if `fx_rates` has nothing yet (C1b: breaks the "first non-EUR
- * transaction" deadlock). Returns the resolved rate, or `null` if it is still unresolved
- * after trying.
+ * For every non-EUR currency the ledger needs a rate for -- the same union `refreshFxRates`
+ * above already uses (a transaction's own `currency`, or an instrument's quotation
+ * `currency`) -- the earliest trade date it must be convertible on.
  *
- * The deadlock this exists to break, verified directly: `refreshFxRates` above only ever
- * fetches currencies the ledger *already* holds -- but a currency's very first transaction
- * is exactly the row that would introduce it to the ledger, and `import/commit.ts`
- * rejected committing that row for having no `fx_rates` entry yet. Neither side could move
- * first.
+ * This is `core/returns.ts`'s `valueSeries` requirement made explicit: it looks up
+ * `fxOn(instrument.currency, date)` for every date a position is held, starting at that
+ * position's first transaction, so a currency's "earliest needed" date is the earliest
+ * trade date of any transaction that either was itself booked in that currency, or that put
+ * a non-EUR-quoted instrument into the ledger. A currency that only ever appears on an
+ * instrument with zero transactions (never actually held) needs no backfill at all -- there
+ * is no date range to value it over yet -- so it is correctly absent from the result.
+ */
+const earliestNeededDateByCurrency = (db: Db): Map<Currency, string> => {
+  const byCurrency = new Map<Currency, string>();
+
+  for (const row of db
+    .select({ currency: transactions.currency, tradeDate: transactions.tradeDate })
+    .from(transactions)
+    .all()) {
+    if (row.currency === EUR) continue;
+    bumpEarliest(byCurrency, row.currency, row.tradeDate);
+  }
+
+  for (const row of db
+    .select({ currency: instruments.currency, tradeDate: transactions.tradeDate })
+    .from(transactions)
+    .innerJoin(instruments, eq(transactions.instrumentId, instruments.id))
+    .all()) {
+    if (row.currency === EUR) continue;
+    bumpEarliest(byCurrency, row.currency, row.tradeDate);
+  }
+
+  return byCurrency;
+};
+
+/**
+ * True when `currency`'s stored history does not yet reach `earliestNeeded` -- either no
+ * `fx_rates` row exists for it at all, or its earliest one is dated after that. Mirrors
+ * `prices/refresh.ts`'s own `needsBackfill`: this is what keeps `backfillFxRates` cheap on
+ * every ordinary night after the first real backfill completes, exactly the way that
+ * function's own doc comment describes for prices.
+ */
+const needsFxBackfill = (db: Db, currency: Currency, earliestNeeded: string): boolean => {
+  const earliestRow = db
+    .select({ date: fxRates.date })
+    .from(fxRates)
+    .where(eq(fxRates.currency, currency))
+    .orderBy(asc(fxRates.date))
+    .limit(1)
+    .get();
+  return earliestRow === undefined || earliestRow.date > earliestNeeded;
+};
+
+/** The oldest date in `dates`, or `null` if `dates` is empty. */
+const earliestOf = (dates: readonly string[]): string | null =>
+  dates.reduce<string | null>((min, date) => (min === null || date < min ? date : min), null);
+
+export type BackfillFxResult = { readonly inserted: number; readonly currencies: number };
+
+/**
+ * The historical-file counterpart to `refreshFxRates`'s daily fetch: catches every held
+ * currency's `fx_rates` history up to the earliest date the ledger actually needs it (§4.2 /
+ * §10a A1's "no rate at all before the first refresh" gap, confirmed real for SE0002756973 --
+ * see this file's `ECB_HIST_URL` comment for the source that closes it).
  *
- * `eurofxref.csv` (verified against §10a A5's fetch-things-for-real standard) publishes
- * only the latest TARGET business day's rate, not history -- there is no ECB endpoint
- * wired up here that takes a date. So this can only satisfy `date` when the fetched rate's
- * own date is on or before it: importing today's (or a recent) non-EUR trade works; a
- * genuinely back-dated one still returns `null`, exactly as it did before, and the caller
- * reports the same honest "no rate for this date" refusal either way. ECB does publish
- * `eurofxref-hist.csv` for history, but nothing observed so far needs it -- adding a second
- * ingestion path on spec (rather than against a real, confirmed need) is exactly the kind
- * of guess §10a's amendments exist to correct, so it is deliberately not added here.
+ * One combined fetch, not one per currency: ECB serves every currency's history in a single
+ * response regardless of how many columns a caller actually wants, so every currency still
+ * needing backfill (`needsFxBackfill`) is unioned into one `wanted` set and one `since` --
+ * the oldest of their individual earliest-needed dates -- before the historical file is
+ * fetched even once. A currency whose earliest-needed date is later than that shared `since`
+ * simply receives a few extra, harmless rows it didn't strictly need (deduplicated by
+ * `insertFxRates`' `onConflictDoNothing` like everything else here).
  *
- * A fetch failure (ECB unreachable, non-200, a malformed file) is swallowed to `null`
- * rather than thrown: an external-source outage during an import must degrade to "rate
- * still unresolved" (the caller's existing, informative refusal), never surface a raw
- * network error out of a commit (§9.1's External-error handling).
+ * Idempotent by construction, not just by the insert's own conflict handling: once a
+ * currency's earliest stored row reaches its earliest-needed date, `needsFxBackfill` excludes
+ * it from every later call, so a currency fully backfilled once is never re-fetched -- this
+ * is the mechanism that keeps a nightly call to this function from re-downloading the whole
+ * history every night, mirroring `prices/refresh.ts`'s `backfillMany`/`needsBackfill` pair for
+ * price history.
+ *
+ * Nothing needing backfill (an empty ledger, or one whose every held currency's history
+ * already reaches back far enough) means this returns without calling `fetchImpl` at all.
+ */
+export const backfillFxRates = async (
+  db: Db,
+  opts: { fetchImpl?: FetchImpl } = {},
+): Promise<BackfillFxResult> => {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+
+  const pending = [...earliestNeededDateByCurrency(db)].filter(([currency, earliestNeeded]) =>
+    needsFxBackfill(db, currency, earliestNeeded),
+  );
+  if (pending.length === 0) return { inserted: 0, currencies: 0 };
+
+  const wanted = new Set<string>(pending.map(([currency]) => currency));
+  const since = earliestOf(pending.map(([, earliestNeeded]) => earliestNeeded));
+  // SAFETY: `pending` is non-empty (checked above), so `earliestOf` always has at least one
+  // date to compare and cannot return `null`.
+  if (since === null) return { inserted: 0, currencies: 0 };
+
+  const rows = await fetchEcbHistRows(fetchImpl, wanted, since);
+  const inserted = insertFxRates(db, rows);
+  return { inserted, currencies: pending.length };
+};
+
+/**
+ * Resolves an fx rate for `currency` on or before `date`, fetching ECB's rates on demand if
+ * `fx_rates` has nothing yet that satisfies it (C1b: breaks the "first non-EUR transaction"
+ * deadlock; extended below to also break the "first *back-dated* non-EUR transaction"
+ * deadlock).
+ *
+ * The deadlock this exists to break, verified directly: `refreshFxRates`/`backfillFxRates`
+ * above only ever fetch currencies the ledger *already* holds -- but a currency's very first
+ * transaction is exactly the row that would introduce it to the ledger, and
+ * `import/commit.ts` rejected committing that row for having no `fx_rates` entry yet.
+ * Neither side could move first.
+ *
+ * Tries the daily file first, cheaply satisfying the common case (an import of a recent
+ * trade): `eurofxref.csv` publishes only the latest TARGET business day's rate, so this
+ * alone can only satisfy a `date` on or before that day. When it can't -- a genuinely
+ * back-dated transaction in a currency never held before, confirmed a real, committable-today
+ * case rather than a hypothetical one -- this falls back to `eurofxref-hist.csv`, fetching
+ * and storing that currency's history back through `date` (see `parseEcbHistCsv`'s `since`
+ * semantics for the exact boundary) before trying the lookup again. A date older than the
+ * historical file's own earliest row (1999-01-04) still returns `null`, exactly as before.
+ *
+ * A fetch failure at either step (ECB unreachable, non-200, a malformed file) is swallowed to
+ * `null` rather than thrown: an external-source outage during an import must degrade to "rate
+ * still unresolved" (the caller's existing, informative refusal), never surface a raw network
+ * error out of a commit (§9.1's External-error handling). Whatever either fetch already
+ * managed to store before the failure is kept -- only the return value degrades.
  */
 export const ensureFxRate = async (
   db: Db,
@@ -280,12 +520,16 @@ export const ensureFxRate = async (
   const existing = fxRateOn(db, currency, date);
   if (existing !== null) return existing;
 
-  let rows: EcbRow[];
   try {
-    rows = await fetchEcbRows(fetchImpl, new Set([currency]));
+    const dailyRows = await fetchEcbRows(fetchImpl, new Set([currency]));
+    insertFxRates(db, dailyRows);
+    const afterDaily = fxRateOn(db, currency, date);
+    if (afterDaily !== null) return afterDaily;
+
+    const histRows = await fetchEcbHistRows(fetchImpl, new Set([currency]), date);
+    insertFxRates(db, histRows);
+    return fxRateOn(db, currency, date);
   } catch {
     return null;
   }
-  insertFxRates(db, rows);
-  return fxRateOn(db, currency, date);
 };
