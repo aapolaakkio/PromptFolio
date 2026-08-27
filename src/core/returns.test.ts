@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { valueSeries, xirr, twr, datesBetween } from "./returns";
 import type { PriceLookup } from "./returns";
+import { investedCashFlows } from "./ledger";
 import type { Instrument, Txn, TransactionType, CashFlow } from "./types";
 import { parseMoney, parseQuantity, parseFxRate, parseCurrency, formatMoney, EUR } from "./money";
 
@@ -245,30 +246,68 @@ test("xirr falls back to bisection when Newton-Raphson fails to converge", () =>
   expect(xirr(flows, final)).toBeCloseTo(-0.4292, 3);
 });
 
-test("twr ignores the timing of deposits", () => {
-  // Portfolio doubles, but a deposit lands halfway. TWR must stay ~100%, not be diluted.
-  const values = [
-    {
-      date: "2024-01-01",
-      valueEur: parseMoney("1000,00", EUR),
-      stale: false,
-      excludedInstrumentIds: [],
-    },
-    {
-      date: "2024-07-01",
-      valueEur: parseMoney("1400,00", EUR),
-      stale: false,
-      excludedInstrumentIds: [],
-    },
-    {
-      date: "2024-12-31",
-      valueEur: parseMoney("3360,00", EUR),
-      stale: false,
-      excludedInstrumentIds: [],
-    },
+// This test used to hand-build its `values`/`flows` instead of deriving them from
+// valueSeries()/investedCashFlows() the way every real caller does, and it encoded exactly
+// the mismatch that made TWR wrong for any portfolio that deposits and invests (see
+// `twr`'s doc in returns.ts and `investedCashFlows`'s doc in ledger.ts): a 1000.00 deposit
+// dated 2024-07-01, fed as a flow, against a `values[1]` of 1400.00 for that same date that
+// was hand-picked to NOT yet include it -- i.e. it assumed a deposit-shaped flow arriving
+// strictly after that day's valuation. Real `valueSeries` points already include any trade
+// dated exactly that day, so a real invested flow describes the opposite timing. Rebuilt
+// below from actual txns run through the real valueSeries()/investedCashFlows() pair.
+test("twr ignores the timing of a mid-year deposit that gets invested immediately", () => {
+  // 5 units bought 2024-01-01 at 100.00 (500.00). Price stays flat at 100.00 until it
+  // doubles to 200.00 on 2024-12-01. A second deposit of 500.00 is fully invested on
+  // 2024-07-01 -- still at 100.00, so it changes the portfolio's size, not its price
+  // exposure. The instrument itself doubles over the year; TWR must report that ~100%
+  // regardless of when the second deposit landed.
+  const txns: Txn[] = [
+    txn("BUY", "2024-01-01", { qty: "5", amount: "-500,00" }),
+    txn("BUY", "2024-07-01", { qty: "5", amount: "-500,00" }),
   ];
-  const flows: CashFlow[] = [{ date: "2024-07-01", amountEur: parseMoney("1000,00", EUR) }];
-  expect(twr(values, flows)).toBeCloseTo(0.96, 2);
+  const values = valueSeries(
+    txns,
+    [instrument],
+    lookup({ "2024-01-01": "100,00", "2024-12-01": "200,00" }),
+    "2024-01-01",
+    "2024-12-31",
+  );
+  const flows = investedCashFlows(txns);
+  expect(twr(values, flows)).toBeCloseTo(1.0, 6);
+});
+
+// C4 regressions -- verified against the real valueSeries()/investedCashFlows() pipeline,
+// the exact shape every ledger has (deposit, then invest it), reproducing the two repro
+// scenarios from the C4 report.
+
+test("twr is exactly 0 for three flat-price monthly deposits, each invested the same day", () => {
+  const txns: Txn[] = [
+    txn("BUY", "2024-01-01", { qty: "10", amount: "-1000,00" }),
+    txn("BUY", "2024-02-01", { qty: "10", amount: "-1000,00" }),
+    txn("BUY", "2024-03-01", { qty: "10", amount: "-1000,00" }),
+  ];
+  const values = valueSeries(
+    txns,
+    [instrument],
+    lookup({ "2024-01-01": "100,00" }),
+    "2024-01-01",
+    "2024-04-01",
+  );
+  const flows = investedCashFlows(txns);
+  expect(twr(values, flows)).toBeCloseTo(0, 9);
+});
+
+test("twr is exactly +25% for a single deposit, invested the same day, on a 25% price gain", () => {
+  const txns: Txn[] = [txn("BUY", "2024-01-01", { qty: "1", amount: "-80,00" })];
+  const values = valueSeries(
+    txns,
+    [instrument],
+    lookup({ "2024-01-01": "80,00", "2025-01-01": "100,00" }),
+    "2024-01-01",
+    "2025-01-01",
+  );
+  const flows = investedCashFlows(txns);
+  expect(twr(values, flows)).toBeCloseTo(0.25, 9);
 });
 
 test("twr of a flat portfolio is zero", () => {

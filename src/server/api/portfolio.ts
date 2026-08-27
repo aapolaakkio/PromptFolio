@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { allocateBy } from "../../core/allocation";
-import { externalCashFlows, negativePositionIds } from "../../core/ledger";
+import { externalCashFlows, investedCashFlows, negativePositionIds } from "../../core/ledger";
 import { formatMoney, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
@@ -120,7 +120,18 @@ export const portfolioRoutes = {
       const { from, to } = parseRange(new URL(request.url));
       const { txns, instruments, prices } = loadPortfolio(db, userId);
       const series = valueSeries(txns, instruments, prices, from, to);
-      const flows = externalCashFlows(txns).filter((flow) => flow.date >= from && flow.date <= to);
+      // mwrFlows (deposit/withdrawal-shaped) feeds xirr() below, which measures the
+      // investor's own money-weighted experience -- it legitimately cares about when
+      // *they* moved cash. twrFlows (BUY/SELL-shaped) feeds twr() -- see that
+      // function's doc and `investedCashFlows`'s doc in core/ledger.ts for why the two
+      // must NOT be the same list: `series` prices invested positions only (spec §7),
+      // so the flow describing money entering it is a purchase, not a deposit.
+      const mwrFlows = externalCashFlows(txns).filter(
+        (flow) => flow.date >= from && flow.date <= to,
+      );
+      const twrFlows = investedCashFlows(txns).filter(
+        (flow) => flow.date >= from && flow.date <= to,
+      );
       const final = series.at(-1);
 
       // MWR over an arbitrary [from, to] window must account for whatever
@@ -138,7 +149,7 @@ export const portfolioRoutes = {
       // buy are both dated `from`), the day-before value is exactly zero,
       // so the implicit contribution contributes nothing -- the deposit
       // dated `from` is still counted exactly once, via the ordinary
-      // `flows` list below, not doubled here too. `noUncheckedIndexedAccess`
+      // `mwrFlows` list below, not doubled here too. `noUncheckedIndexedAccess`
       // types `[0]` as possibly undefined even though a same-day range
       // always yields exactly one point; the `opening ? ... : []` below
       // handles that without an assertion.
@@ -157,7 +168,7 @@ export const portfolioRoutes = {
           ? xirr(
               [
                 ...(opening ? [{ date: from, amountEur: negateMoney(opening.valueEur) }] : []),
-                ...flows.map((flow) => ({
+                ...mwrFlows.map((flow) => ({
                   date: flow.date,
                   amountEur: negateMoney(flow.amountEur),
                 })),
@@ -180,7 +191,7 @@ export const portfolioRoutes = {
         to,
         valueEur: final ? formatMoney(final.valueEur) : "0.00",
         stale: final?.stale ?? false,
-        twr: twr(series, flows),
+        twr: twr(series, twrFlows),
         mwr,
       });
     }),

@@ -2,6 +2,7 @@ import {
   addMoney,
   addQuantity,
   isZeroQuantity,
+  negateMoney,
   subQuantity,
   toEur,
   zeroMoney,
@@ -86,3 +87,40 @@ export const externalCashFlows = (txns: readonly Txn[]): CashFlow[] =>
     .slice()
     .sort(byTradeDateThenId)
     .map((t) => ({ date: t.tradeDate, amountEur: toEur(t.amount, t.fxRateEur) }));
+
+/**
+ * Cash flows into and out of the *invested* portfolio -- for `returns.ts`'s `twr`
+ * exclusively, never `xirr` (see that function's own note on why it stays on
+ * `externalCashFlows` above).
+ *
+ * `valueSeries` (spec §7) prices positions only -- quantity x price x FX -- and
+ * deliberately excludes uninvested cash. `twr` must be fed flows describing money
+ * moving into and out of that same, positions-only thing, or its sub-period bases
+ * and its value series are quietly describing two different portfolios (see the
+ * long comment on `twr` in `returns.ts` for the mismatch this replaced and why a
+ * deposit is the wrong flow to use). The flow that actually changes what
+ * `valueSeries` prices is a BUY (units acquired) or a SELL (units disposed of) --
+ * a DEPOSIT that has not yet been invested changes only the cash account, which
+ * `valueSeries` does not look at, so it is not a flow into the measured portfolio
+ * at all.
+ *
+ * Sign mirrors `externalCashFlows`'s "positive = flowed into the measured thing"
+ * convention: a BUY's `amount` is negative (cash left the account to fund it), so
+ * it is negated here into a positive inflow to positions; a SELL's `amount` is
+ * positive (cash credited on disposal), negated into a negative outflow.
+ *
+ * TRANSFER_IN/TRANSFER_OUT also move `positionsAt`'s quantities (see
+ * `unitDirection` above) but are deliberately left out here: a security
+ * transferred in kind carries no `amount` (no cash moved) to size the flow with,
+ * so including it would need a priced valuation of the transferred lot that this
+ * ledger does not have. A transfer during the measured window therefore still
+ * causes the exact same base/value mismatch `twr`'s doc warns about, just for a
+ * rarer transaction type than every ledger's ordinary deposit-then-buy shape --
+ * a known, undocumented-until-now gap, not a silent one repeated here.
+ */
+export const investedCashFlows = (txns: readonly Txn[]): CashFlow[] =>
+  txns
+    .filter((t) => (t.type === "BUY" || t.type === "SELL") && t.instrumentId !== null)
+    .slice()
+    .sort(byTradeDateThenId)
+    .map((t) => ({ date: t.tradeDate, amountEur: negateMoney(toEur(t.amount, t.fxRateEur)) }));

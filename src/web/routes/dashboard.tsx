@@ -164,8 +164,10 @@ export const DashboardPage = () => {
             <AllocationChart slices={allocation.data.slices} />
             {allocation.data.excludedInstruments.length > 0 && (
               <p className="mt-3 max-w-prose text-xs text-muted">
-                Jakaumasta puuttuu sijoituksia, joille on kirjattu myynti ilman vastaavaa ostoa.
-                Katso tarkemmat tiedot Omistukset-sivulta.
+                Jakaumasta puuttuu:{" "}
+                {allocation.data.excludedInstruments.map((i) => i.name).join(", ")}. Syynä on joko
+                myynti ilman vastaavaa ostoa tai puuttuva hinta/valuuttakurssi. Katso tarkemmat
+                tiedot Omistukset-sivulta.
               </p>
             )}
           </section>

@@ -186,37 +186,52 @@ export const xirr = (flows: readonly CashFlow[], finalValue: CashFlow): number =
 /**
  * Time-weighted return: chain sub-period returns, neutralising the timing of external flows.
  *
- * Convention: a flow dated the same day as a valuation is treated as arriving AFTER that
- * valuation was taken, so it becomes part of the *next* sub-period's starting base rather
- * than distorting the sub-period that just ended. This is verified against the brief's
- * worked example — values 1000.00 (2024-01-01) -> 1400.00 (2024-07-01) -> 3360.00
- * (2024-12-31) with a 1000.00 deposit dated 2024-07-01:
- *   sub-period 1: start = 1000 (no flow on 2024-01-01), end = 1400 -> return 0.40
- *   sub-period 2: start = 1400 + 1000 (the 2024-07-01 deposit) = 2400, end = 3360 -> return 0.40
- *   chained = 1.40 * 1.40 - 1 = 0.96
- * The opposite convention (netting the flow out of the 1400 ending value instead) chains to
- * 2.36, which the "twr ignores the timing of deposits" test rejects.
+ * C4 fix (2026-08-28) -- `flows` MUST describe the same portfolio `values` measures, or this
+ * function silently computes the return of two different things. `values` comes from
+ * `valueSeries`, which prices *positions only* -- quantity x price x FX (spec §7) -- and
+ * deliberately excludes uninvested cash. The only flow that changes what `valueSeries` prices
+ * is a trade: a BUY adds units, a SELL removes them. A bank deposit that has not yet been
+ * invested changes the cash account, which `valueSeries` never looks at, so it is NOT a flow
+ * into the thing being measured here. Callers must pass `core/ledger.ts`'s
+ * `investedCashFlows(txns)`, never `externalCashFlows(txns)` (that one is deposit/withdrawal
+ * -shaped and belongs to `xirr`, which legitimately measures the investor's own cash timing).
+ * If you are about to change what `flows` means here, re-read `investedCashFlows`'s doc first
+ * -- this pairing is the whole fix for a defect that shipped as "TWR is systematically wrong
+ * for any portfolio that deposits and invests" and must not be re-introduced by only one side
+ * changing.
  *
- * C3 fix (2026-08-27): `values` comes from `valueSeries`, which deliberately excludes
- * uninvested cash (§7) -- it prices *positions*, not the account. A deposit that has not
- * yet been invested is therefore invisible to `values` on the day it lands: the sub-period
- * it starts still has a real, positive base (the deposit itself, via `flowsByDate`) but a
- * zero *invested* value both before and after, because there is nothing to price yet. The
- * old code multiplied `chained` by `end / start` regardless, and once nothing has been
- * bought yet `end` is also 0, so that factor is exactly 0 -- and because `chained` is a
- * running product, one zero factor from the deposit's own day poisons every subsequent
- * sub-period too, however well the portfolio goes on to perform. This is not a rare edge
- * case: every ledger's very first deposit necessarily predates its very first purchase.
+ * Same-day convention -- the flip side of that pairing: `valueSeries(D)` already includes any
+ * trade dated exactly `D` (`positionsAt` uses `tradeDate <= D`), so a flow dated `D` is NOT
+ * "about to happen" relative to `values`'s point for `D` -- it already happened, and the
+ * measured value already reflects it. So, unlike a deposit that lands in cash and waits, a
+ * trade-flow must be subtracted back OUT of the day's value before comparing it to the
+ * previous sub-period's base, or the capital it added gets counted twice: once as "the base
+ * grew" and again as "the base grew *because the market grew it*". Concretely, for the pair
+ * (values[i-1], values[i]), the sub-period factor is:
  *
- * The fix: a sub-period contributes no factor at all -- rather than a corrupting `0` --
- * when its *pre-flow* starting value (`investedStart`) is zero. That is precisely "no
- * capital was actually invested yet at the start of this sub-period", the condition under
- * which a return is not a meaningful concept, as opposed to "capital was invested and this
- * sub-period happens to be flat" (a real, computable 0% return, still chained normally).
- * Skipping instead of zeroing means the chain simply resumes once real invested capital
- * exists to measure a return against. The existing `start === 0` guard is kept too, as a
- * division-by-zero guard for the (separate, rarer) case of a same-day flow that exactly
- * offsets an already-nonzero invested base.
+ *   (values[i].valueEur - flowsDatedAt(values[i].date)) / values[i-1].valueEur
+ *
+ * Worked example (single deposit, invested same day, position then gains 25%): values
+ * 8000.00 (2024-01-01, the day of the BUY) -> 10000.00 (2025-01-01, no further flows).
+ * flow on 2024-01-01 = +8000.00 (the BUY, via `investedCashFlows`). That flow lands on
+ * `values[0]`'s own date, which -- like every ledger's very first purchase -- is never the
+ * *end* of any sub-period, so it is never subtracted from anything; it is simply the base
+ * the first computable sub-period starts from. The one sub-period here: (10000.00 - 0) /
+ * 8000.00 = 1.25 -> +25%, matching the position's actual 80.00 -> 100.00 move exactly, with
+ * no distortion from the deposit that funded it.
+ *
+ * Second worked example (three flat-price monthly deposits, each fully invested same day):
+ * values 1000/2000/3000/3000 on 2024-01-01/02-01/03-01/04-01, flows +1000 on each of the
+ * first three dates. Sub-periods: (2000-1000)/1000 = 1.0, (3000-1000)/2000 = 1.0,
+ * (3000-0)/3000 = 1.0 -> chained 1.0, TWR = 0, correctly flat despite three deposits.
+ *
+ * C3 (2026-08-27, still in force): a sub-period's *start* can legitimately be zero -- e.g. a
+ * deposit dated today has not yet funded a purchase, so `values` stays 0 until the BUY lands.
+ * There is no base to compute a return against, so that sub-period contributes no factor at
+ * all (skipped), rather than the `0 / something` that used to poison every later sub-period
+ * too via the running product. This is not a rare edge case: every ledger's very first
+ * deposit necessarily predates its very first purchase by at least the time it takes to place
+ * the order.
  */
 export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): number => {
   if (values.length < 2) return 0;
@@ -229,15 +244,16 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
   for (let i = 1; i < values.length; i++) {
     const startPoint = values[i - 1]!;
     const endPoint = values[i]!;
-    const investedStart = toNumber(startPoint.valueEur);
+    const start = toNumber(startPoint.valueEur);
     // No capital was actually invested yet at the start of this sub-period -- e.g. a
     // deposit dated today has not yet funded a purchase. There is no base to compute a
-    // return against, so this sub-period contributes nothing to the chain, rather than
-    // the `0 / positiveFlow` factor that used to zero out every later sub-period too (C3).
-    if (investedStart === 0) continue;
-    const start = investedStart + (flowsByDate.get(startPoint.date) ?? 0);
-    const end = toNumber(endPoint.valueEur);
+    // return against, so this sub-period contributes nothing to the chain (C3), rather
+    // than a corrupting `0` factor that poisons every later sub-period in the product.
     if (start === 0) continue;
+    // The end value already includes any trade dated exactly on `endPoint.date` (see this
+    // function's doc) -- subtract it back out so freshly-invested capital is not counted
+    // as market growth in the very sub-period it arrived.
+    const end = toNumber(endPoint.valueEur) - (flowsByDate.get(endPoint.date) ?? 0);
     chained *= end / start;
   }
   return chained - 1;

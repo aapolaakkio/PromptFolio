@@ -766,21 +766,26 @@ describe("GET /api/returns", () => {
     };
     expect(body.valueEur).toBe("10000.00");
     expect(body.stale).toBe(false);
-    // C3: this used to be `expect(Number.isFinite(body.twr)).toBe(true)`, a placeholder
-    // that would not even have caught the exact -100% bug (this ledger's very first
-    // valuation point, 2024-01-01, already holds the BUY made that same day, so the
-    // sub-period base is never the pre-flow-zero case C3 fixes). The honest, deterministic
-    // value below is a real (if unflattering) consequence of a *different*, documented
-    // modeling limit that stands outside C3's scope: `valueSeries` prices positions only,
-    // so it cannot see how much of a same-day deposit was actually invested. Both distort
-    // this scenario: (1) the 2024-01-01 deposit (10,000.00) is bigger than the same-day
-    // buy (8,000.00) -- the un-invested 2,000.00 remainder is added to the chain's base
-    // anyway, since twr() has no way to know only part of it was spent; (2) the
-    // 2024-06-01 withdrawal (1,000.00) is drawn from that idle cash, not the invested
-    // position, but is likewise subtracted from the base as if it were. Chained by hand:
-    // (8000/18000) * (8000/7000) * (10000/8000) - 1 = -23/63 ≈ -0.36508. Verified against
-    // a direct core/returns.ts twr() call over the same series/flows before pinning here.
-    expect(body.twr).toBeCloseTo(-0.3650793650793651, 9);
+    // C4: this used to assert -0.3650793650793651 -- a "hardening" of the exact bug this
+    // fix removes (see core/returns.ts's `twr` doc and core/ledger.ts's `investedCashFlows`
+    // doc for the full story). That number came from feeding twr() the DEPOSIT (10,000.00)
+    // and WITHDRAWAL (1,000.00) as its flows, against a `series` that prices invested
+    // positions only (spec §7) -- two different portfolios. The DEPOSIT is bigger than the
+    // same-day BUY (8,000.00, the only thing actually invested), so the flow inflated a base
+    // the position never actually had; the WITHDRAWAL was drawn from idle cash, not the
+    // position, but was subtracted from the base as if it had been. Neither is a real
+    // consequence of the instrument's own 80.00 -> 100.00 move.
+    //
+    // The only thing that actually happened to the *invested* portfolio here is: 100 units
+    // bought at 80.00 on 2024-01-01 (matching that day's valueSeries point exactly, so the
+    // BUY contributes no sub-period factor -- see `twr`'s doc, a ledger's first purchase
+    // never is), held unchanged through 2025-01-01 where the price is 100.00. No SELL, no
+    // TRANSFER, nothing else moves the position, so there is exactly one sub-period:
+    // (10000.00 - 0) / 8000.00 - 1 = 0.25. The DEPOSIT and WITHDRAWAL are real ledger events
+    // but never touch a position, so `investedCashFlows` correctly excludes them from twr's
+    // input -- verified by an equivalent direct core/returns.ts twr() call before pinning
+    // this number.
+    expect(body.twr).toBeCloseTo(0.25, 9);
     // Regression: a withdrawal's negative ledger amount, negated into
     // xirr's sign convention via a format-then-reparse of "-<already
     // negative>", used to produce an unparsable "--100.00" and silently
