@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { EUR } from "../../core/money";
+import { EUR, parseMoney } from "../../core/money";
+import { xirr } from "../../core/returns";
 
 // Exercises portfolioRoutes (src/server/api/portfolio.ts) against a real,
 // migrated database and a real Better Auth session, mirroring
@@ -308,6 +309,37 @@ describe("GET /api/value-series", () => {
     );
     expect(response.status).toBe(400);
   });
+
+  // Defence in depth: scoping is already proven at the shared loadPortfolio()
+  // choke point (valuation.test.ts's "loads only the requesting user's
+  // rows"), but this is one of the four routes every screen reads from, so
+  // it is worth one direct route-level check per route too.
+  test("scopes value to the caller and never counts another user's position", async () => {
+    const owner = await signUp(`series-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`series-stranger-${crypto.randomUUID()}@example.com`);
+    await seedHolding(owner.cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const response = await portfolioRoutes["/api/value-series"].GET(
+      new Request("http://x/api/value-series?from=2024-01-01&to=2024-01-01", {
+        headers: { cookie: stranger.cookie },
+      }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/value-series (asserted above) always
+    // returns an array of { date, valueEur, stale } points.
+    const body = (await response.json()) as Array<{
+      date: string;
+      valueEur: string;
+      stale: boolean;
+    }>;
+    expect(body).toEqual([{ date: "2024-01-01", valueEur: "0.00", stale: false }]);
+  });
 });
 
 // --- GET /api/allocation ---
@@ -365,6 +397,27 @@ describe("GET /api/allocation", () => {
       new Request("http://x/api/allocation?by=sector", { headers: { cookie } }),
     );
     expect(response.status).toBe(400);
+  });
+
+  // Defence in depth -- see the matching comment on /api/value-series.
+  test("scopes allocation to the caller and never counts another user's position", async () => {
+    const owner = await signUp(`alloc-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`alloc-stranger-${crypto.randomUUID()}@example.com`);
+    await seedHolding(owner.cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const response = await portfolioRoutes["/api/allocation"].GET(
+      new Request("http://x/api/allocation?on=2024-01-01", {
+        headers: { cookie: stranger.cookie },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 });
 
@@ -515,5 +568,85 @@ describe("GET /api/returns", () => {
       new Request("http://x/api/returns?from=2024-06-01&to=2024-01-01", { headers: { cookie } }),
     );
     expect(response.status).toBe(400);
+  });
+
+  // Defence in depth -- see the matching comment on /api/value-series.
+  test("scopes returns to the caller and never counts another user's position", async () => {
+    const owner = await signUp(`returns-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`returns-stranger-${crypto.randomUUID()}@example.com`);
+    await seedHolding(owner.cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const response = await portfolioRoutes["/api/returns"].GET(
+      new Request("http://x/api/returns?from=2024-01-01&to=2024-01-01", {
+        headers: { cookie: stranger.cookie },
+      }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/returns (asserted above) always returns
+    // this { valueEur, mwr, ... } shape.
+    const body = (await response.json()) as { valueEur: string; mwr: number | null };
+    expect(body.valueEur).toBe("0.00");
+    expect(body.mwr).toBeNull();
+  });
+
+  // Regression for the reviewed Important finding: filtering externalCashFlows
+  // to [from, to] alone silently drops whatever the portfolio was already
+  // worth going into `from` -- xirr() then treats the final value as having
+  // appeared from nothing and returns a finite, plausible, WRONG rate rather
+  // than null or an error. This must be exercised with `from` genuinely
+  // AFTER inception (not the default since-inception range, where the
+  // pre-window value is always zero and the bug is invisible), and the
+  // assertion must pin the actual number -- not merely check it is non-null,
+  // which the pre-fix code could also produce by coincidence.
+  test("MWR over a window starting after inception accounts for the value already there", async () => {
+    const { cookie } = await signUp(`returns-windowed-${crypto.randomUUID()}@example.com`);
+    await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 100_000_000, // 100 units
+      unitPrice: 5000, // 50.00/unit
+      principal: 500_000, // 5,000.00 -- fully funded, no deposit needed for this test
+      prices: [
+        { date: "2024-01-01", close: 5000 }, // 50.00/unit -- still the latest price at 2024-06-30
+        { date: "2025-01-01", close: 6000 }, // 60.00/unit
+      ],
+    });
+
+    const response = await portfolioRoutes["/api/returns"].GET(
+      new Request("http://x/api/returns?from=2024-07-01&to=2025-01-01", { headers: { cookie } }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/returns (asserted above) always returns
+    // this { valueEur, mwr, ... } shape.
+    const body = (await response.json()) as { valueEur: string; mwr: number | null };
+    expect(body.valueEur).toBe("6000.00"); // 100 x 60.00
+
+    // Independently derived expected flows, with no dependency on
+    // portfolio.ts's own implementation: the value already held on
+    // 2024-07-01 (100 units still priced at the 1.1. close of 50.00, since
+    // no later price exists yet) is a -5000.00 implicit contribution; there
+    // are no deposits or withdrawals inside the window; the final value on
+    // 2025-01-01 is +6000.00 (100 x 60.00). Computed via the same, already
+    // separately-tested core.xirr -- this checks that portfolio.ts assembled
+    // the RIGHT flows, not that xirr's own math is right (core/returns.test.ts
+    // already covers that).
+    const expected = xirr([{ date: "2024-07-01", amountEur: parseMoney("-5000.00", EUR) }], {
+      date: "2025-01-01",
+      amountEur: parseMoney("6000.00", EUR),
+    });
+    expect(body.mwr).not.toBeNull();
+    expect(body.mwr).toBeCloseTo(expected, 9);
+    // Sanity bound: a real position that grew 20% over a half-year window
+    // should show as substantial double-digit annualised growth, not a
+    // number near zero (which is what the pre-fix bug would NOT have
+    // produced either, since it never added an opening flow at all -- but
+    // pinning a plausible range guards against a fix that silently changed
+    // the wrong thing).
+    expect(body.mwr ?? Number.NaN).toBeGreaterThan(0.3);
   });
 });

@@ -17,6 +17,12 @@ const IsoDateSchema = z
 
 const today = (): IsoDate => new Date().toISOString().slice(0, 10);
 
+const DAY_MS = 86_400_000;
+
+/** The calendar day immediately before `date`, as an IsoDate. */
+const dayBefore = (date: IsoDate): IsoDate =>
+  new Date(Date.parse(date) - DAY_MS).toISOString().slice(0, 10);
+
 type DateRange = { readonly from: IsoDate; readonly to: IsoDate };
 
 /**
@@ -86,6 +92,27 @@ export const portfolioRoutes = {
       const flows = externalCashFlows(txns).filter((flow) => flow.date >= from && flow.date <= to);
       const final = series.at(-1);
 
+      // MWR over an arbitrary [from, to] window must account for whatever
+      // the portfolio was already worth going into `from` -- otherwise
+      // xirr() sees the final value as having appeared from nothing and
+      // returns a finite, plausible, WRONG rate instead of failing loudly.
+      // Standard treatment: the value at the start of the window becomes
+      // an implicit contribution dated `from`.
+      //
+      // That value is looked up as of the day BEFORE `from`, not `from`
+      // itself (nor reused from `series[0]`, which already reflects any
+      // trade dated exactly `from`). This is what keeps the adjustment a
+      // genuine no-op for the common since-inception default range: when
+      // nothing predates `from` (e.g. the account's very first deposit and
+      // buy are both dated `from`), the day-before value is exactly zero,
+      // so the implicit contribution contributes nothing -- the deposit
+      // dated `from` is still counted exactly once, via the ordinary
+      // `flows` list below, not doubled here too. `noUncheckedIndexedAccess`
+      // types `[0]` as possibly undefined even though a same-day range
+      // always yields exactly one point; the `opening ? ... : []` below
+      // handles that without an assertion.
+      const opening = valueSeries(txns, instruments, prices, dayBefore(from), dayBefore(from))[0];
+
       // core/returns.ts's xirr() takes contributions as NEGATIVE and
       // withdrawals as POSITIVE. externalCashFlows() carries the ledger's
       // own sign instead (a DEPOSIT is a positive amount -- money added to
@@ -97,7 +124,13 @@ export const portfolioRoutes = {
       try {
         mwr = final
           ? xirr(
-              flows.map((flow) => ({ date: flow.date, amountEur: negateMoney(flow.amountEur) })),
+              [
+                ...(opening ? [{ date: from, amountEur: negateMoney(opening.valueEur) }] : []),
+                ...flows.map((flow) => ({
+                  date: flow.date,
+                  amountEur: negateMoney(flow.amountEur),
+                })),
+              ],
               { date: final.date, amountEur: final.valueEur },
             )
           : null;
