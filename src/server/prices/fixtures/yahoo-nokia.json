@@ -1,0 +1,87 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "EUR",
+          "symbol": "NOKIA.HE",
+          "exchangeName": "HEL",
+          "fullExchangeName": "Helsinki",
+          "instrumentType": "EQUITY",
+          "firstTradeDate": 946886400,
+          "regularMarketTime": 1787844596,
+          "hasPrePostMarketData": false,
+          "gmtoffset": 10800,
+          "timezone": "EEST",
+          "exchangeTimezoneName": "Europe/Helsinki",
+          "regularMarketPrice": 9.004,
+          "fiftyTwoWeekHigh": 14.995,
+          "fiftyTwoWeekLow": 3.612,
+          "regularMarketDayHigh": 9.3,
+          "regularMarketDayLow": 8.936,
+          "regularMarketVolume": 10552140,
+          "longName": "Nokia Oyj",
+          "shortName": "Nokia Corporation",
+          "chartPreviousClose": 8.756,
+          "priceHint": 2,
+          "currentTradingPeriod": {
+            "pre": {
+              "timezone": "EEST",
+              "end": 1787814000,
+              "start": 1787814000,
+              "gmtoffset": 10800
+            },
+            "regular": {
+              "timezone": "EEST",
+              "end": 1787844600,
+              "start": 1787814000,
+              "gmtoffset": 10800
+            },
+            "post": {
+              "timezone": "EEST",
+              "end": 1787844600,
+              "start": 1787844600,
+              "gmtoffset": 10800
+            }
+          },
+          "dataGranularity": "1d",
+          "range": "5d",
+          "validRanges": ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+        },
+        "timestamp": [1787295600, 1787554800, 1787641200, 1787727600, 1787814000],
+        "indicators": {
+          "quote": [
+            {
+              "close": [
+                8.755999565124512, 8.579999923706055, 8.90999984741211, 8.821999549865723,
+                9.003999710083008
+              ],
+              "high": [
+                8.97599983215332, 8.73799991607666, 8.97599983215332, 8.911999702453613,
+                9.300000190734863
+              ],
+              "volume": [8890898, 11032583, 10403686, 7708561, 10552140],
+              "open": [
+                8.788000106811523, 8.684000015258789, 8.649999618530273, 8.90999984741211,
+                9.144000053405762
+              ],
+              "low": [
+                8.668000221252441, 8.413999557495117, 8.595999717712402, 8.70199966430664,
+                8.935999870300293
+              ]
+            }
+          ],
+          "adjclose": [
+            {
+              "adjclose": [
+                8.755999565124512, 8.579999923706055, 8.90999984741211, 8.821999549865723,
+                9.003999710083008
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "error": null
+  }
+}

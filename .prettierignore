@@ -1,0 +1,11 @@
+# src/server/prices/fixtures/*.html are byte-exact recordings of real
+# nordnet.fi responses (an escaped-JSON string embedded via a <script>-style
+# payload, stored as an HTML comment purely so no formatter parses it as
+# executable JS -- see the fixture files' own header comments and
+# src/server/prices/funds.ts's NORDNET_FUND comment for why). oxfmt's HTML
+# formatter still wraps long lines inside HTML comments, which does not
+# corrupt the content today but is one unlucky wrap away from splitting a
+# regex-matched field across a newline; excluded entirely rather than left
+# to chance. Picked up automatically by both oxfmt and oxlint (both default
+# to `.gitignore`/`.prettierignore` for ignore patterns).
+src/server/prices/fixtures/*.html

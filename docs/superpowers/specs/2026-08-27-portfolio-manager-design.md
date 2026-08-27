@@ -415,12 +415,47 @@ applied to the trade, including spread, so it is preferred. The ECB daily rate r
 for rows with no broker rate. §4.2's frozen-rate rule is unchanged; only the source order is
 specified. Each transaction records which source its rate came from.
 
+### A5. Price sources, verified — Task 14, 2026-08-27
+
+§6's table guessed a mechanism per source. All four guesses were wrong in some way once checked
+against a real fetch; here is what each source actually does, and why `spankki_fund`/`danske_fund`
+ship unimplemented.
+
+- **`yahoo`** — the guessed public chart endpoint
+  (`query1.finance.yahoo.com/v8/finance/chart/{ticker}`) is real and needs no auth; verified by
+  fetching `NOKIA.HE` directly. `meta.currency` is trusted as observed (any ISO 4217 code via
+  `parseCurrency`), not narrowed to `EUR | USD` — an ETF quoted in a third currency is possible and
+  must not be silently misreported.
+- **`nordnet_fund`** — the guessed `/api/2/instruments/historical/prices/{isin}` JSON endpoint is
+  real but returns `401 NEXT_INVALID_SESSION` without a logged-in session; **this resolves the open
+  question below: yes, it needs an authenticated session.** It does *not* degrade to `manual`,
+  though — each fund's own public detail page
+  (`nordnet.fi/rahastot/lista/{slug}`) is server-rendered and needs no session, and was found (by
+  fetching both the user's EUR fund and their SEK fund) to embed the fund's `latestNav` and
+  `previousNav` directly in the HTML. This is a real but limited source: two NAV points per fetch,
+  not a history: a daily refresh job can still accumulate history over time. See
+  `src/server/prices/funds.ts`'s `NORDNET_FUND` comment for the full finding, including how the SEK
+  fund's currency was confirmed to come through unchanged.
+- **`op_fund`** — the guessed `data-nav="..."` attribute does not exist anywhere on the page. The
+  real fact sheet (`op.fi/.../rahastot/kaikki-rahastot/{slug}`) is plain server-rendered HTML with no
+  client-side rendering involved, and states the NAV as `<dt>Osuuden arvo (26.08.)</dt><dd>283,60
+  EUR</dd>` — verified against the real OP-Maailma Indeksi page.
+- **`spankki_fund` / `danske_fund`** — **not implemented.** No S-Pankki or Danske holding appears in
+  any real export or paste seen so far; both banks were named
+  during planning as *possibly* held, but that was never confirmed. Writing scrapers against guessed
+  selectors for an unconfirmed holding is the same mistake A2/A3 above already document once each
+  (wrong Nordnet encoding/delimiter, an OP CSV format that doesn't exist) — so both stay in the
+  `PriceSourceId` union and the registry, wired to an explicit not-yet-implemented source that
+  behaves exactly like `manual`, rather than to a guessed scraper. Any instrument on either bank
+  should be configured with `price_source: 'manual'` until a real holding and a real page can be
+  checked.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
   Resolved either way by the opening-position flow (§4.3), so it does not block phase 1.
-- Whether `nordnet_fund` NAV access needs an authenticated session. If it does, that source
-  degrades to `manual` for phase 1 and gets its own investigation.
+- ~~Whether `nordnet_fund` NAV access needs an authenticated session.~~ **Resolved by A5:** the
+  historical-prices endpoint does; the fund detail page (what `nordnet_fund` actually uses) does not.
 - Exact Finnish tax rules (FIFO vs. hankintameno-olettama, the 30%/34% bracket boundary,
   85%-taxable listed dividends) are deliberately deferred to the phase 4 spec and must be
   verified against vero.fi at that time rather than assumed.
