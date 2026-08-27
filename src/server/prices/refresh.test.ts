@@ -166,6 +166,43 @@ test("reports a large-jump rejection as a failure with a message distinct from a
   expect(rows[0]!.close).toBe(400);
 });
 
+test("a value confirmed across 3 daily refreshes is re-baselined, logged loudly, and counted ok", async () => {
+  const { db } = testDb();
+  const instrument = seedInstrument(db);
+  db.insert(prices)
+    .values({
+      instrumentId: instrument.id,
+      date: "2026-08-01",
+      close: 400,
+      currency: EUR,
+      source: "yahoo",
+      fetchedAt: new Date(),
+    })
+    .run();
+
+  // Simulates a steep reverse split, one scheduled weekday refresh at a
+  // time: each day is a >10x jump from the original 400 baseline, but
+  // consistent with the day before it.
+  const first = await refreshPrices(db, { fetchImpl: yahooStub(44), today: "2026-08-02" });
+  expect(first).toEqual({ ok: 0, failed: 1 });
+  const second = await refreshPrices(db, { fetchImpl: yahooStub(44.5), today: "2026-08-03" });
+  expect(second).toEqual({ ok: 0, failed: 1 });
+  // Not yet in `prices` -- still pending confirmation.
+  expect(db.select().from(prices).all()).toHaveLength(1);
+
+  const third = await refreshPrices(db, { fetchImpl: yahooStub(45), today: "2026-08-04" });
+  expect(third).toEqual({ ok: 1, failed: 0 });
+
+  const log = db.select().from(priceFetchLog).all();
+  const lastLog = log[log.length - 1]!;
+  expect(lastLog.ok).toBe(true);
+  expect(lastLog.message).toContain("UUDELLEENPERUSTETTU");
+
+  const rows = db.select().from(prices).all();
+  expect(rows).toHaveLength(2); // the original 2026-08-01 row, plus the re-baselined new one.
+  expect(rows.find((r) => r.close === 4_500)).toBeDefined();
+});
+
 // --- backfillInstrument --------------------------------------------------------
 
 test("backfills nothing and touches no network for an instrument with no transactions", async () => {
@@ -284,6 +321,51 @@ test("a backfill batch that fully covers the range but contains one implausible 
   expect(log[0]!.ok).toBe(false);
   expect(log[0]!.message).toContain("hylätty epäuskottavana hintahyppynä");
   expect(log[0]!.message).not.toContain("jäi vajaaksi");
+});
+
+test("a re-baseline confirmed within one backfill batch is logged loudly and counted ok despite the leftover rejections", async () => {
+  const { db } = testDb();
+  const instrument = seedInstrument(db);
+  seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2026-08-01" });
+  const reverseSplitMidHistory = async (): Promise<Response> =>
+    Response.json({
+      chart: {
+        result: [
+          {
+            meta: { currency: "EUR" },
+            // 08-01 (normal), 08-02/03 (implausible vs. 08-01, pending),
+            // 08-04 (3rd consistent reading -> confirmed re-baseline),
+            // 08-05 (an ordinary move vs. the NEW baseline).
+            timestamp: [1785542400, 1785628800, 1785715200, 1785801600, 1785888000],
+            indicators: { quote: [{ close: [4, 44, 44.5, 45, 45.5] }] },
+          },
+        ],
+      },
+    });
+  const result = await backfillInstrument(db, instrument.id, {
+    fetchImpl: reverseSplitMidHistory,
+    today: "2026-08-05",
+  });
+  // 08-01, 08-04 (the confirmed re-baseline) and 08-05 are written; 08-02
+  // and 08-03 are the two consumed-as-confirmation rejections.
+  expect(result).toEqual({ inserted: 3, incomplete: false });
+
+  const log = db.select().from(priceFetchLog).all();
+  expect(log).toHaveLength(1);
+  expect(log[0]!.ok).toBe(true);
+  expect(log[0]!.message).toContain("UUDELLEENPERUSTETTU");
+  expect(log[0]!.message).toContain("hylätty epäuskottavana hintahyppynä");
+  expect(log[0]!.message).not.toContain("jäi vajaaksi");
+
+  const rows = db
+    .select()
+    .from(prices)
+    .all()
+    .map((r) => ({ date: r.date, close: r.close }));
+  expect(rows).toContainEqual({ date: "2026-08-01", close: 400 });
+  expect(rows).toContainEqual({ date: "2026-08-04", close: 4_500 });
+  expect(rows).toContainEqual({ date: "2026-08-05", close: 4_550 });
+  expect(rows).toHaveLength(3);
 });
 
 // --- runScheduledRefresh / startScheduler --------------------------------------

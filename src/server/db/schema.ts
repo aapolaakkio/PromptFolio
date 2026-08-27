@@ -235,3 +235,37 @@ export const priceFetchLog = sqliteTable(
   },
   (t) => [index("price_log_run_idx").on(t.runAt)],
 );
+
+/**
+ * At most one row per instrument, tracking a price the plausibility check
+ * (`src/server/prices/write.ts`) has rejected as an implausible jump but
+ * has not yet confirmed as a real, permanent re-baseline (a stock split,
+ * a reverse split, a fund NAV re-denomination). Reviewer finding on Task
+ * 15: comparing every new point only against the last *stored* price
+ * means a genuine permanent change would be rejected forever -- every
+ * later real price also fails against the same frozen stale baseline,
+ * and there is no price-correction UI anywhere in this app to unstick it
+ * by hand. This table is what lets `writePrices` tell a transient glitch
+ * apart from a real, permanent change: a glitch does not repeat at a
+ * consistent new scale across several separate refreshes; a real split
+ * or re-denomination does. See `write.ts`'s `RE_BASELINE_CONFIRMATIONS`
+ * comment for the exact rule and its justification.
+ */
+export const pendingPriceRejections = sqliteTable("pending_price_rejections", {
+  instrumentId: integer("instrument_id")
+    .notNull()
+    .primaryKey()
+    .references(() => instruments.id, { onDelete: "cascade" }),
+  date: text("date").notNull(),
+  close: integer("close").notNull(),
+  // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
+  currency: text("currency").$type<Currency>().notNull(),
+  // How many consecutive refreshes have now reported a value consistent
+  // with this pending candidate (not necessarily identical -- see
+  // write.ts). Reset to 1 whenever a genuinely new, unrelated anomaly
+  // starts; the row is deleted entirely once either resolved (streak
+  // reaches the confirmation threshold and the candidate is accepted) or
+  // abandoned (a later point turns out plausible against the real stored
+  // baseline again, i.e. the anomaly was transient after all).
+  streak: integer("streak").notNull(),
+});

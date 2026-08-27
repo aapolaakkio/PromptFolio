@@ -80,9 +80,30 @@ export const refreshPrices = async (
         to: asOf,
         fetchImpl: opts.fetchImpl,
       });
-      const { written, rejectedImplausible } = writePrices(db, instrument.id, source.id, points);
+      const { written, rejectedImplausible, reBaselined } = writePrices(
+        db,
+        instrument.id,
+        source.id,
+        points,
+      );
 
-      if (rejectedImplausible > 0) {
+      if (reBaselined > 0) {
+        // Loud on purpose: this means a price that looked implausible was
+        // just confirmed, `RE_BASELINE_CONFIRMATIONS` times in a row, as a
+        // real, permanent change (a split, a re-denomination) -- worth a
+        // human's attention even though the fetch itself succeeded and the
+        // instrument is no longer stuck. See write.ts's
+        // RE_BASELINE_CONFIRMATIONS doc comment.
+        const message =
+          `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
+          `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
+          (rejectedImplausible > 0 ? ` (${rejectedImplausible} yhä hylätty)` : "");
+        console.warn(
+          `Hintasarja uudelleenperustettu: ${source.id} instrumentille ${instrument.id}`,
+        );
+        logAttempt(db, { source: source.id, instrumentId: instrument.id, ok: true, message });
+        ok++;
+      } else if (rejectedImplausible > 0) {
         failed++;
         logAttempt(db, {
           source: source.id,
@@ -187,7 +208,12 @@ export const backfillInstrument = async (
     return { inserted: 0, incomplete: true };
   }
 
-  const { written, rejectedImplausible } = writePrices(db, instrumentId, source.id, points);
+  const { written, rejectedImplausible, reBaselined } = writePrices(
+    db,
+    instrumentId,
+    source.id,
+    points,
+  );
 
   const earliestReturned = points.reduce<string | null>(
     (min, point) => (min === null || point.date < min ? point.date : min),
@@ -198,6 +224,13 @@ export const backfillInstrument = async (
   const incomplete = points.length === 0 || gapDays > BACKFILL_GAP_TOLERANCE_DAYS;
 
   const parts = [`${written} hintapistettä tallennettu`];
+  if (reBaselined > 0) {
+    // Loud on purpose -- see the matching branch in refreshPrices above.
+    console.warn(
+      `Hintasarja uudelleenperustettu taustatäytössä: ${source.id} instrumentille ${instrumentId}`,
+    );
+    parts.push(`näistä ${reBaselined} UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen`);
+  }
   if (rejectedImplausible > 0) {
     parts.push(`${rejectedImplausible} hylätty epäuskottavana hintahyppynä`);
   }
@@ -215,12 +248,13 @@ export const backfillInstrument = async (
     parts.push(`taustatäyttö jäi vajaaksi: pyydetty alkaen ${from}, ${coverage}${knownReason}`);
   }
 
-  logAttempt(db, {
-    source: source.id,
-    instrumentId,
-    ok: !incomplete && rejectedImplausible === 0,
-    message: parts.join("; "),
-  });
+  // A re-baseline (see writePrices) takes priority over stray rejections:
+  // the points that got folded into confirming it are an expected, safe
+  // part of that process, not an unrelated failure -- mirrors the same
+  // precedence refreshPrices gives it above.
+  const ok = reBaselined > 0 ? !incomplete : !incomplete && rejectedImplausible === 0;
+
+  logAttempt(db, { source: source.id, instrumentId, ok, message: parts.join("; ") });
 
   return { inserted: written, incomplete };
 };
