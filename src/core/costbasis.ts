@@ -3,6 +3,7 @@ import {
   addQuantity,
   cmpQuantity,
   divMoney,
+  formatMoney,
   formatQuantity,
   money,
   negateMoney,
@@ -78,8 +79,14 @@ export const buildLots = (txns: readonly Txn[]) => {
     const lots = openByInstrument.get(t.instrumentId) ?? [];
 
     if (t.type === "BUY" || t.type === "TRANSFER_IN") {
-      const grossEur = toEur(negateMoney(t.amount), t.fxRateEur);
-      const feeEur = toEur(t.fee, t.fxRateEur);
+      if (t.amount.minor > 0n) {
+        throw new Error(
+          `Cannot record ${t.type} of instrument ${t.instrumentId} on ${t.tradeDate}: ` +
+            `acquisition amount ${formatMoney(t.amount)} must not be positive (cash in on an acquisition)`,
+        );
+      }
+      const grossEur = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
+      const feeEur = toEur(t.fee, t.fxRateEur, "half-up");
       lots.push({
         instrumentId: t.instrumentId,
         acquiredOn: t.tradeDate,
@@ -97,7 +104,10 @@ export const buildLots = (txns: readonly Txn[]) => {
 
     if (t.type !== "SELL" && t.type !== "TRANSFER_OUT") continue;
 
-    const proceedsEur = subMoney(toEur(t.amount, t.fxRateEur), toEur(t.fee, t.fxRateEur));
+    const proceedsEur = subMoney(
+      toEur(t.amount, t.fxRateEur, "half-up"),
+      toEur(t.fee, t.fxRateEur, "half-up"),
+    );
     const held = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
     if (cmpQuantity(held, t.quantity) < 0) {
       throw new Error(
@@ -106,10 +116,11 @@ export const buildLots = (txns: readonly Txn[]) => {
       );
     }
 
+    let remainingLots = lots;
     let remaining = t.quantity;
     let remainingProceeds = proceedsEur;
     while (remaining.scaled > 0n) {
-      const lot = lots[0]!;
+      const lot = remainingLots[0]!;
       const takenScaled =
         lot.quantity.scaled <= remaining.scaled ? lot.quantity.scaled : remaining.scaled;
       const taken: Quantity = { scaled: takenScaled };
@@ -134,18 +145,20 @@ export const buildLots = (txns: readonly Txn[]) => {
         gainEur: subMoney(shareOfProceeds, costEur),
       });
 
-      if (isFullLot) {
-        lots.shift();
-      } else {
-        lots[0] = {
-          ...lot,
-          quantity: subQuantity(lot.quantity, taken),
-          costEur: subMoney(lot.costEur, costEur),
-        };
-      }
+      const rest = remainingLots.slice(1);
+      remainingLots = isFullLot
+        ? rest
+        : [
+            {
+              ...lot,
+              quantity: subQuantity(lot.quantity, taken),
+              costEur: subMoney(lot.costEur, costEur),
+            },
+            ...rest,
+          ];
       remaining = subQuantity(remaining, taken);
     }
-    openByInstrument.set(t.instrumentId, lots);
+    openByInstrument.set(t.instrumentId, remainingLots);
   }
 
   const open = [...openByInstrument.values()].flat().filter((lot) => lot.quantity.scaled > 0n);

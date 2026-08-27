@@ -129,6 +129,37 @@ test("a sale spanning three lots prorates proceeds without rounding drift", () =
   expect(formatMoney(total)).toBe("1.00");
 });
 
+test("a TRANSFER_IN creates an open lot with the stated cost, including its fee", () => {
+  const { open, disposals } = buildLots([
+    txn("TRANSFER_IN", "2025-01-10", { qty: "10", amount: "-1000,00", fee: "3,00" }),
+  ]);
+  expect(disposals).toHaveLength(0);
+  expect(open).toHaveLength(1);
+  expect(formatQuantity(open[0]!.quantity)).toBe("10.000000");
+  expect(formatMoney(open[0]!.costEur)).toBe("1003.00");
+});
+
+test("a TRANSFER_OUT consumes lots FIFO and produces a disposal, like a sale", () => {
+  const { open, disposals } = buildLots([
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00" }), // 100.00/unit
+    txn("BUY", "2025-02-10", { qty: "10", amount: "-1200,00" }), // 120.00/unit
+    txn("TRANSFER_OUT", "2025-03-10", { qty: "15", amount: "2250,00" }), // 150.00/unit
+  ]);
+  expect(disposals).toHaveLength(2);
+  expect(disposals.map((d) => formatMoney(d.costEur))).toEqual(["1000.00", "600.00"]);
+  expect(disposals.map((d) => formatMoney(d.proceedsEur))).toEqual(["1500.00", "750.00"]);
+  expect(open.map((l) => formatQuantity(l.quantity))).toEqual(["5.000000"]);
+});
+
+test("a BUY (or TRANSFER_IN) with a non-negative amount is a domain error", () => {
+  expect(() => buildLots([txn("BUY", "2025-01-10", { qty: "10", amount: "1000,00" })])).toThrow(
+    /instrument 7.*2025-01-10/i,
+  );
+  expect(() =>
+    buildLots([txn("TRANSFER_IN", "2025-01-10", { qty: "10", amount: "1000,00" })]),
+  ).toThrow(/instrument 7.*2025-01-10/i);
+});
+
 test("a split with an uneven ratio gives the remainder to the last lot", () => {
   // 1:2 rescaled to a total of 10 puts the boundary at 10/3, which has no exact
   // 6-decimal representation (3.333333...): the first lot's floor-rounded share and the
