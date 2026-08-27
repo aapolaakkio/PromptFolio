@@ -51,19 +51,32 @@ export const DashboardPage = () => {
   if (series.isPending || returns.isPending || allocation.isPending) return <p>Ladataan…</p>;
 
   // Portfolio value is positions x price x FX (spec §7) -- a deposit that
-  // hasn't been invested in anything never shows up here, by design. An
-  // empty allocation is the one client-visible signal for "no current
-  // positions": treat it as the empty/cash-only state and explain the
-  // zero, rather than showing a bare "0,00 €" that reads as broken.
-  const hasPositions = allocation.data.length > 0;
+  // hasn't been invested in anything never shows up here, by design. But
+  // "no current holdings" (empty allocation, today) is NOT the same claim
+  // as "never invested a cent" -- a fully divested user who once held
+  // positions still has a real chart and real returns, and telling them
+  // otherwise would be a confidently wrong statement about their own
+  // history. `hasEverInvested` asks the value series itself: has the
+  // portfolio ever actually been worth something? Only when the answer is
+  // no do we show the explanatory empty-state card instead of the normal
+  // dashboard. `allocation.data` (today's holdings) still separately
+  // decides what the allocation section shows -- empty there just means
+  // "nothing held right now", which `AllocationChart` already renders as
+  // "Ei omistuksia", a true statement for a divested portfolio too.
+  const hasEverInvested = series.data.some((point) => Number(point.valueEur) !== 0);
 
   // The last date still marked stale in the series (see valueSeries in
   // core/returns.ts): every earlier day was valued from a carried-forward
   // or missing price. For Nordnet funds specifically, the historical NAV
   // endpoint needs a browser session the scraper doesn't have -- real
   // accumulation only starts the day the price-refresh job first runs, so
-  // a long stale prefix here is expected, not a bug.
-  const staleFrom = series.data.filter((p) => p.stale).at(-1);
+  // a long stale prefix here is expected, not a bug. Gated on
+  // `hasEverInvested` too: a portfolio that never held anything can only
+  // ever be stale in the degenerate case of a position bought but never
+  // once priced, which is an import/instrument problem, not a "some
+  // values are old" one -- showing this badge above the "no investments
+  // yet" card would be a non-sequitur, so it stays with the real dashboard.
+  const staleFrom = hasEverInvested ? series.data.filter((point) => point.stale).at(-1) : undefined;
 
   return (
     <>
@@ -86,8 +99,8 @@ export const DashboardPage = () => {
         <Stat label="Salkun arvo" value={eur(returns.data.valueEur)} />
         <Stat
           label="Tuotto (aikapainotettu)"
-          value={hasPositions ? pct(returns.data.twr) : "—"}
-          tone={hasPositions ? (returns.data.twr >= 0 ? "gain" : "loss") : undefined}
+          value={hasEverInvested ? pct(returns.data.twr) : "—"}
+          tone={hasEverInvested ? (returns.data.twr >= 0 ? "gain" : "loss") : undefined}
         />
         <Stat
           label="Oma tuotto (XIRR)"
@@ -96,7 +109,7 @@ export const DashboardPage = () => {
         />
       </section>
 
-      {hasPositions ? (
+      {hasEverInvested ? (
         <>
           <section className="card mt-6">
             <h2>Arvon kehitys</h2>
