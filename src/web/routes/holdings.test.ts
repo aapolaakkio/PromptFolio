@@ -14,6 +14,7 @@ const row = (name: string, valueEur: string, unrealisedEur: string): Holding => 
   priceDate: "2025-06-02",
   stale: false,
   costBasisError: null,
+  valuationError: null,
 });
 
 test("sorts by value descending by default", () => {

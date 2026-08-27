@@ -20,9 +20,11 @@ const KIND_LABELS = {
  *    true. Normal for Nordnet funds, whose price history only starts
  *    accumulating once the refresh job first runs (spec §10a A5) -- so a
  *    long stale prefix is expected, not an error.
- *  - never priced at all: `priceDate` is `null`. The API values the
- *    position at 0,00 € and marks it stale too, but a user must not read
- *    "0,00 €, old price" here -- there is no price yet, at all.
+ *  - never priced at all, or priced but not convertible to EUR (no fx rate
+ *    for today): `priceDate` may be a real date or `null`, `stale` is
+ *    always true, and the market-value/gain cells render "tuntematon"
+ *    (see below) rather than any number -- the API never fabricates a
+ *    0,00 € for a holding it cannot value.
  * Both states are conveyed through text ("vanha" / "ei hintaa"), not colour
  * alone, so the distinction survives for colour-blind users and in print.
  */
@@ -158,7 +160,13 @@ export const HoldingsPage = () => {
               </td>
               <td className="num">
                 {row.valueEur === null ? (
-                  <UnknownCostCell message={row.costBasisError?.message ?? ""} />
+                  // valueEur/unrealisedEur can be null for either of two independent
+                  // reasons (see Holding's own docs): an unmatched-disposal cost basis
+                  // (costBasisError) or a valuation failure -- no price or no fx rate
+                  // for today (valuationError). Whichever is set explains this cell.
+                  <UnknownCostCell
+                    message={row.costBasisError?.message ?? row.valuationError ?? ""}
+                  />
                 ) : (
                   eur(row.valueEur)
                 )}
@@ -173,7 +181,9 @@ export const HoldingsPage = () => {
                 }`}
               >
                 {row.unrealisedEur === null ? (
-                  <UnknownCostCell message={row.costBasisError?.message ?? ""} />
+                  <UnknownCostCell
+                    message={row.costBasisError?.message ?? row.valuationError ?? ""}
+                  />
                 ) : (
                   eur(row.unrealisedEur)
                 )}

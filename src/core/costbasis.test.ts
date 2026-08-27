@@ -41,9 +41,15 @@ const txn = (
   fxRateEur: parseFxRate(o.rate ?? "1", o.currency ?? EUR),
 });
 
-test("a single buy becomes one open lot including its fee", () => {
+// `amount` is the fee-inclusive total cash that moved (see `Txn.amount`'s doc
+// in core/types.ts) -- it is what both real brokers report (OP's `Yhteensä`,
+// Nordnet's `Summa`), and `core/ledger.ts`'s `cashAt` relies on it being the
+// true cash movement. `fee` is carried alongside purely for reporting and must
+// never be added to (or subtracted from) `amount` again here -- doing so was
+// exactly C2: a real broker fee got double-counted into cost basis/proceeds.
+test("a single buy's cost basis is its fee-inclusive amount, unadjusted by fee", () => {
   const { open, disposals } = buildLots([
-    txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00", fee: "3,00" }),
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-1003,00", fee: "3,00" }),
   ]);
   expect(disposals).toHaveLength(0);
   expect(open).toHaveLength(1);
@@ -77,10 +83,10 @@ test("a sale spanning two lots produces two disposals", () => {
   expect(open.map((l) => formatQuantity(l.quantity))).toEqual(["5.000000"]);
 });
 
-test("disposal fees reduce proceeds", () => {
+test("disposal proceeds are its fee-inclusive amount, unadjusted by fee", () => {
   const { disposals } = buildLots([
     txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00" }),
-    txn("SELL", "2025-03-10", { qty: "10", amount: "1200,00", fee: "5,00" }),
+    txn("SELL", "2025-03-10", { qty: "10", amount: "1195,00", fee: "5,00" }),
   ]);
   expect(formatMoney(disposals[0]!.proceedsEur)).toBe("1195.00");
   expect(formatMoney(disposals[0]!.gainEur)).toBe("195.00");
@@ -161,9 +167,9 @@ test("a sale spanning three lots prorates proceeds without rounding drift", () =
   expect(formatMoney(total)).toBe("1.00");
 });
 
-test("a TRANSFER_IN creates an open lot with the stated cost, including its fee", () => {
+test("a TRANSFER_IN creates an open lot with the stated cost, its fee-inclusive amount unadjusted by fee", () => {
   const { open, disposals } = buildLots([
-    txn("TRANSFER_IN", "2025-01-10", { qty: "10", amount: "-1000,00", fee: "3,00" }),
+    txn("TRANSFER_IN", "2025-01-10", { qty: "10", amount: "-1003,00", fee: "3,00" }),
   ]);
   expect(disposals).toHaveLength(0);
   expect(open).toHaveLength(1);

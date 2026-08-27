@@ -192,7 +192,7 @@ export const importRoutes = {
       assertAccountOwned(userId, accountId);
       const { config, draft, sha256 } = await buildDraft(file, accountId);
       return json(
-        commitDraft(db, {
+        await commitDraft(db, {
           userId,
           accountId,
           filename: file.name,
@@ -220,7 +220,7 @@ export const importRoutes = {
       assertAccountOwned(userId, accountId);
       const { draft, sha256 } = buildPasteDraft(text, accountId);
       return json(
-        commitDraft(db, {
+        await commitDraft(db, {
           userId,
           accountId,
           filename: OP_PASTE_FILENAME,

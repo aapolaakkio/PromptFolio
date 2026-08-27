@@ -120,6 +120,7 @@ const seedHolding = async (
 
   const accountId = await createAccount(cookie);
   const instrumentId = await createInstrument(cookie, randomIsin());
+  const fee = opts.fee ?? 0;
 
   db.insert(transactions)
     .values({
@@ -129,8 +130,12 @@ const seedHolding = async (
       tradeDate: opts.buyDate,
       quantity: opts.quantity,
       unitPrice: opts.unitPrice,
-      amount: -opts.principal,
-      fee: opts.fee ?? 0,
+      // `amount` is the fee-inclusive total cash that moved (see
+      // `Txn.amount`'s doc in core/types.ts) -- `principal` here is the
+      // pre-fee trade value, so the fee is folded in before it is stored,
+      // matching what a real broker export reports.
+      amount: -(opts.principal + fee),
+      fee,
       tax: 0,
       currency: EUR,
       fxRateEur: 100_000_000,
@@ -761,7 +766,21 @@ describe("GET /api/returns", () => {
     };
     expect(body.valueEur).toBe("10000.00");
     expect(body.stale).toBe(false);
-    expect(Number.isFinite(body.twr)).toBe(true);
+    // C3: this used to be `expect(Number.isFinite(body.twr)).toBe(true)`, a placeholder
+    // that would not even have caught the exact -100% bug (this ledger's very first
+    // valuation point, 2024-01-01, already holds the BUY made that same day, so the
+    // sub-period base is never the pre-flow-zero case C3 fixes). The honest, deterministic
+    // value below is a real (if unflattering) consequence of a *different*, documented
+    // modeling limit that stands outside C3's scope: `valueSeries` prices positions only,
+    // so it cannot see how much of a same-day deposit was actually invested. Both distort
+    // this scenario: (1) the 2024-01-01 deposit (10,000.00) is bigger than the same-day
+    // buy (8,000.00) -- the un-invested 2,000.00 remainder is added to the chain's base
+    // anyway, since twr() has no way to know only part of it was spent; (2) the
+    // 2024-06-01 withdrawal (1,000.00) is drawn from that idle cash, not the invested
+    // position, but is likewise subtracted from the base as if it were. Chained by hand:
+    // (8000/18000) * (8000/7000) * (10000/8000) - 1 = -23/63 ≈ -0.36508. Verified against
+    // a direct core/returns.ts twr() call over the same series/flows before pinning here.
+    expect(body.twr).toBeCloseTo(-0.3650793650793651, 9);
     // Regression: a withdrawal's negative ledger amount, negated into
     // xirr's sign convention via a format-then-reparse of "-<already
     // negative>", used to produce an unparsable "--100.00" and silently

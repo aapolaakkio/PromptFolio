@@ -1,10 +1,12 @@
 import { test, expect } from "bun:test";
-import { mapRows, normaliseDate, contentHash } from "./map";
+import { mapRows, normaliseDate, contentHash, type DraftTxn } from "./map";
 import { parseCsv } from "./csv";
 import { parseOpPaste } from "./op-paste";
 import { NORDNET, OP_WEB_PASTE } from "./brokers";
-import { EUR, parseCurrency } from "../../core/money";
+import { buildLots } from "../../core/costbasis";
+import { EUR, parseCurrency, formatMoney, money, parseFxRate } from "../../core/money";
 import type { RawRow } from "./types";
+import type { TransactionType, Txn } from "../../core/types";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
 const opFixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
@@ -259,6 +261,75 @@ test("the OP fixture's OSINKO row maps to DIVIDEND, positive amount, and quantit
   // flow through as though 20 units were bought or sold on this date.
   expect(dividend.quantity).toBe(0);
   expect(dividend.unitPrice).toBe(8); // "0,08   EUR" -- dividend per share, kept as informational
+});
+
+// --- C2 regression: a real, non-zero broker fee must flow end to end from a
+// parsed fixture row through to core/costbasis's reported cost basis and
+// disposal proceeds without ever being combined with the already
+// fee-inclusive `amount` mapRows produced (see `Txn.amount`'s doc in
+// core/types.ts). Every fixture row used elsewhere in this file happened to
+// carry a zero fee, which is exactly why the double-count bug survived --
+// this test is the one that would have caught it.
+test("a real OP fixture row's non-zero fee reaches cost basis and disposal proceeds unadjusted, end to end", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+
+  const toTxn = (
+    row: DraftTxn,
+    id: number,
+    instrumentId: number,
+    overrides: Partial<DraftTxn> = {},
+  ): Txn => {
+    const merged = { ...row, ...overrides };
+    return {
+      id,
+      accountId: merged.accountId,
+      instrumentId,
+      // SAFETY: `merged.type` is either OP_WEB_PASTE.typeMap's own "BUY"/"SELL" output
+      // (real, validated ledger types -- see mapRows) or this test's own `overrides.type`
+      // literal ("BUY"), never arbitrary text, so it is always a real `TransactionType`.
+      type: merged.type as TransactionType,
+      tradeDate: merged.tradeDate,
+      quantity: { scaled: BigInt(merged.quantity) },
+      unitPrice:
+        merged.unitPrice === null ? null : money(BigInt(merged.unitPrice), merged.currency),
+      amount: money(BigInt(merged.amount), merged.currency),
+      fee: money(BigInt(merged.fee), merged.currency),
+      tax: money(BigInt(merged.tax), merged.currency),
+      currency: merged.currency,
+      fxRateEur: parseFxRate("1", merged.currency),
+    };
+  };
+
+  // Row 0: "OP-MAAILMA INDEKSI A" OSTO, 1,2000 kpl x 250,00 EUR, Kulut 0,02
+  // EUR, Yhteensä 300,02 EUR -- real fixture bytes. mapRows already folded
+  // the fee into `amount` (-300.02); costBasisAt must report that figure
+  // as-is, not 300.02 + 0.02 fee again (the C2 bug).
+  const buyRow = draft.txns[0]!;
+  expect(buyRow.fee).toBe(2);
+  expect(buyRow.amount).toBe(-30002);
+  const { open } = buildLots([toTxn(buyRow, 1, 900)]);
+  expect(open).toHaveLength(1);
+  expect(formatMoney(open[0]!.costEur)).toBe("300.02");
+
+  // Row 2: "ESIMERKKI OYJ" MYYNTI, 15,00 kpl @ 3,10 EUR, Kulut 0,45 EUR,
+  // Yhteensä 44,55 EUR -- the real, unmodified parsed fee-inclusive SELL.
+  // Paired with a synthetic prior BUY (this fixture's own ESIMERKKI row is a
+  // bare MYYNTI with no matching purchase on the page -- see op-paste.ts's
+  // doc on out-of-order paging) purely so buildLots has a lot to dispose
+  // of; only the BUY leg is synthetic, the SELL leg is the real fixture row.
+  const sellRow = draft.txns[2]!;
+  expect(sellRow.fee).toBe(45);
+  expect(sellRow.amount).toBe(4455);
+  const priorBuy = toTxn(sellRow, 2, 901, {
+    type: "BUY",
+    tradeDate: "2025-01-01",
+    amount: -100_000,
+    fee: 0,
+  });
+  const { disposals } = buildLots([priorBuy, toTxn(sellRow, 3, 901)]);
+  expect(disposals).toHaveLength(1);
+  expect(formatMoney(disposals[0]!.proceedsEur)).toBe("44.55");
 });
 
 test("every OP fixture row with no ISIN is tracked as unknown by name, never given an invented ISIN", async () => {

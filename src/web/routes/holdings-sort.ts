@@ -19,11 +19,18 @@
  * nothing else. `Number(...)` is used below only for sorting, never to
  * compute an amount.
  *
- * `costEur`/`valueEur`/`unrealisedEur` are `null` together, exactly when
- * `costBasisError` is non-null: a SELL with no matching earlier BUY on the
- * ledger (e.g. one page of a multi-page OP import pasted out of order) makes
- * this position's cost basis, market value and gain all genuinely unknown --
- * not zero, not stale, unknown -- until the missing purchase is imported.
+ * `costEur` is `null` exactly when `costBasisError` is non-null: a SELL with no
+ * matching earlier BUY on the ledger (e.g. one page of a multi-page OP import
+ * pasted out of order) makes this position's cost basis genuinely unknown -- not
+ * zero, not stale, unknown -- until the missing purchase is imported. When that
+ * happens `valueEur`/`unrealisedEur` are null too (an unrealised gain needs both
+ * sides).
+ *
+ * `valueEur`/`unrealisedEur` can independently be `null` for a second, unrelated
+ * reason: `valuationError` non-null, meaning no price is known for today, or (for a
+ * non-EUR instrument) no fx rate is known for today. `costEur` stays populated in
+ * that case -- cost basis does not depend on today's market data. Never a
+ * fabricated `0,00 €` either way (see `server/valuation.ts`'s `HoldingView` doc).
  */
 export type Holding = {
   instrumentId: number;
@@ -38,6 +45,7 @@ export type Holding = {
   priceDate: string | null;
   stale: boolean;
   costBasisError: { tradeDate: string; message: string } | null;
+  valuationError: string | null;
 };
 
 export type SortKey = "name" | "quantity" | "costEur" | "valueEur" | "unrealisedEur";

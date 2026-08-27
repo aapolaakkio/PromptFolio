@@ -152,6 +152,10 @@ test("an instrument with no known price contributes nothing and marks the day st
   const series = valueSeries(txns, [instrument], neverPriced, "2025-01-01", "2025-01-01");
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
   expect(series.map((p) => p.stale)).toEqual([true]);
+  // C1: an unvalued holding is reported, not just implied by a 0,00 € total that
+  // happens to also be stale -- the caller must be able to tell "this holding could
+  // not be valued" apart from "the whole portfolio happens to be worth nothing".
+  expect(series[0]!.excludedInstrumentIds).toEqual([7]);
 });
 
 test("a priced USD instrument with no known fx rate contributes nothing and marks the day stale", () => {
@@ -177,6 +181,9 @@ test("a priced USD instrument with no known fx rate contributes nothing and mark
   const series = valueSeries([usdTxn], [usdInstrument], noFxRate, "2025-01-01", "2025-01-01");
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
   expect(series.map((p) => p.stale)).toEqual([true]);
+  // C1: same as the no-price case above -- a real, dated price exists here, but the
+  // missing fx rate must still exclude (not zero-fabricate) this holding, visibly.
+  expect(series[0]!.excludedInstrumentIds).toEqual([9]);
 });
 
 test("a SELL with no matching prior BUY drives the position negative, and that day's value excludes it rather than going negative", () => {
@@ -280,4 +287,34 @@ test("twr of a flat portfolio is zero", () => {
     },
   ];
   expect(twr(values, [])).toBeCloseTo(0, 6);
+});
+
+// --- C3 regression: a deposit that predates its first investment must not report -100% ---
+
+const point = (date: string, valueEur: string) => ({
+  date,
+  valueEur: parseMoney(valueEur, EUR),
+  stale: false,
+  excludedInstrumentIds: [],
+});
+
+test("twr does not collapse to -100% when a deposit precedes the first purchase (the normal shape of every ledger)", () => {
+  // Reproduces the exact C3 report: a 1000.00 deposit on 2024-01-01, no purchase until
+  // 2024-01-05 (10 units @ 100.00). `valueSeries` excludes uninvested cash (§7), so the
+  // invested value is 0.00 for every day up to and including 2024-01-04 -- the old code
+  // added the deposit to that zero base anyway, producing a `0 / 1000` = 0 factor on the
+  // very first sub-period that then poisoned the whole chained product, however the
+  // position went on to perform (`chained` never recovers from one 0 factor). Here the
+  // position gains 10% (1000.00 -> 1100.00) after being funded; the fixed twr() must
+  // report that 10%, not -100%.
+  const values = [
+    point("2024-01-01", "0,00"),
+    point("2024-01-02", "0,00"),
+    point("2024-01-03", "0,00"),
+    point("2024-01-04", "0,00"),
+    point("2024-01-05", "1000,00"),
+    point("2024-01-06", "1100,00"),
+  ];
+  const flows: CashFlow[] = [{ date: "2024-01-01", amountEur: parseMoney("1000,00", EUR) }];
+  expect(twr(values, flows)).toBeCloseTo(0.1, 6);
 });

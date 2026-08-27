@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 
 import { EUR, parseCurrency, type Currency } from "../core/money";
 import { testDb } from "./db";
-import { accounts, fxRates, transactions, user } from "./db/schema";
-import { ECB_URL, parseEcbCsv, refreshFxRates } from "./fx";
+import { accounts, fxRates, instruments, transactions, user } from "./db/schema";
+import { ECB_URL, ensureFxRate, fxRateOn, parseEcbCsv, refreshFxRates } from "./fx";
 
 const SEK = parseCurrency("SEK");
 
@@ -178,4 +178,112 @@ test("surfaces a non-OK ECB response as a thrown error instead of silently stori
   const failing = async (): Promise<Response> =>
     new Response("down", { status: 503, statusText: "Service Unavailable" });
   await expect(refreshFxRates(db, { fetchImpl: failing })).rejects.toThrow(/503/);
+});
+
+// --- C1: currencies sourced from instruments too, not just transactions.currency ------
+
+test("fetches a currency held only by an instrument's own quotation currency, with no matching transaction currency at all", async () => {
+  // Reproduces C1 exactly: a fund whose transactions are booked in EUR (§10a A2/A5 --
+  // the cash that moved was EUR) but whose price/NAV is quoted in SEK. Before this fix,
+  // SEK never appeared in `transactions.currency`, so its rate was never fetched even
+  // though the instrument plainly needs one to be valued.
+  const { db } = testDb();
+  seedTransaction(db, EUR); // only ever a EUR transaction -- no SEK row anywhere
+  db.insert(instruments)
+    .values({
+      isin: "SE0002756973",
+      ticker: null,
+      name: "Nordnet Sverige Indeks",
+      kind: "fund",
+      currency: SEK,
+      priceSource: "nordnet_fund",
+      sourceKey: "nordnet-sverige",
+    })
+    .run();
+  const stub = async (): Promise<Response> => new Response(await fixtureText());
+  const result = await refreshFxRates(db, { fetchImpl: stub });
+  expect(result).toEqual({ inserted: 1 });
+  const rows = db.select().from(fxRates).all();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ currency: "SEK", rateEur: EXPECTED_RATE_EUR.SEK });
+});
+
+test("unions transaction and instrument currencies without fetching a currency twice", async () => {
+  const { db } = testDb();
+  seedTransaction(db, SEK);
+  db.insert(instruments)
+    .values({
+      isin: "SE0002756973",
+      ticker: null,
+      name: "Nordnet Sverige Indeks",
+      kind: "fund",
+      currency: SEK, // same currency the transaction already carries
+      priceSource: "nordnet_fund",
+      sourceKey: "nordnet-sverige",
+    })
+    .run();
+  let calls = 0;
+  const stub = async (): Promise<Response> => {
+    calls++;
+    return new Response(await fixtureText());
+  };
+  const result = await refreshFxRates(db, { fetchImpl: stub });
+  expect(calls).toBe(1); // one ECB fetch, not one per source of the currency
+  expect(result).toEqual({ inserted: 1 });
+});
+
+// --- C1b: fxRateOn / ensureFxRate -- breaks the "first non-EUR transaction" deadlock ---
+
+test("fxRateOn returns null with no matching row, and the newest row on or before the date otherwise", () => {
+  const { db } = testDb();
+  db.insert(fxRates)
+    .values([
+      { date: "2026-08-20", currency: SEK, rateEur: 9_000_000 },
+      { date: "2026-08-25", currency: SEK, rateEur: 9_100_000 },
+    ])
+    .run();
+  expect(fxRateOn(db, SEK, "2026-08-19")).toBeNull();
+  expect(fxRateOn(db, SEK, "2026-08-22")).toBe(9_000_000);
+  expect(fxRateOn(db, SEK, "2026-08-30")).toBe(9_100_000);
+});
+
+test("ensureFxRate returns the existing rate without ever calling fetchImpl", async () => {
+  const { db } = testDb();
+  db.insert(fxRates).values({ date: "2026-08-20", currency: SEK, rateEur: 9_000_000 }).run();
+  const mustNotBeCalled = (): Promise<Response> => {
+    throw new Error("must not be called");
+  };
+  const rate = await ensureFxRate(db, SEK, "2026-08-22", mustNotBeCalled);
+  expect(rate).toBe(9_000_000);
+});
+
+test("ensureFxRate fetches and stores ECB's rate on demand when nothing exists yet, breaking the deadlock", async () => {
+  const { db } = testDb();
+  // No fx_rates row at all -- exactly the deadlock: refreshFxRates() never fetches a
+  // currency the ledger doesn't hold yet, and this currency's first transaction is
+  // exactly what would introduce it.
+  const stub = async (): Promise<Response> => new Response(await fixtureText());
+  const rate = await ensureFxRate(db, SEK, "2026-08-27", stub);
+  expect(rate).toBe(EXPECTED_RATE_EUR.SEK);
+  expect(db.select().from(fxRates).all()).toHaveLength(1);
+});
+
+test("ensureFxRate returns null (not a thrown error) when ECB has nothing to offer for this date -- the fetched rate is later than the row's own date", async () => {
+  // ECB's daily file has no history -- it can only ever satisfy `date`s on or after
+  // its own published date. A genuinely back-dated row stays unresolved.
+  const { db } = testDb();
+  const stub = async (): Promise<Response> => new Response(await fixtureText()); // dated 2026-08-27
+  const rate = await ensureFxRate(db, SEK, "2020-01-01", stub);
+  expect(rate).toBeNull();
+  // Still stores what it fetched, so a later row on/after that date benefits for free.
+  expect(db.select().from(fxRates).all()).toHaveLength(1);
+});
+
+test("ensureFxRate swallows a fetch failure to null instead of throwing out of a commit", async () => {
+  const { db } = testDb();
+  const failing = async (): Promise<Response> =>
+    new Response("down", { status: 503, statusText: "Service Unavailable" });
+  const rate = await ensureFxRate(db, SEK, "2026-08-27", failing);
+  expect(rate).toBeNull();
+  expect(db.select().from(fxRates).all()).toEqual([]);
 });

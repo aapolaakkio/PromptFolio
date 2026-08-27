@@ -162,26 +162,49 @@ export type HoldingView = {
   readonly currency: Currency;
   readonly quantity: string;
   /**
-   * `costEur`, `valueEur` and `unrealisedEur` are `null` together, exactly when
-   * `costBasisError` is non-null: a SELL/TRANSFER_OUT with no matching earlier BUY
-   * (e.g. one page of a multi-page OP import pasted out of order) makes this
-   * instrument's cost basis genuinely unknown, and an unrealised gain cannot be
-   * computed without it. `valueEur` is nulled too rather than left as a lone
-   * price-times-quantity figure: `quantity` for this instrument is the ledger's raw
-   * signed total (see `positionsAt`), and can itself be negative in exactly this
-   * situation -- reporting a "market value" computed from a nonsensical negative
-   * holding would be the same class of wrong-but-plausible number this whole type
-   * exists to avoid. The row is still returned, with `quantity` shown as-is (that is
-   * the honest ledger fact) and `costBasisError` explaining why the money fields
-   * are missing, instead of one bad position taking down every other holding's
-   * response (see `costBasisPerInstrument` in `core/costbasis.ts`).
+   * `null` exactly when `costBasisError` is non-null: a SELL/TRANSFER_OUT with no
+   * matching earlier BUY (e.g. one page of a multi-page OP import pasted out of order)
+   * makes this instrument's cost basis genuinely unknown. When that happens, `valueEur`
+   * and `unrealisedEur` are nulled too rather than left as a lone price-times-quantity
+   * figure: `quantity` for this instrument is the ledger's raw signed total (see
+   * `positionsAt`), and can itself be negative in exactly this situation -- reporting a
+   * "market value" computed from a nonsensical negative holding would be the same class
+   * of wrong-but-plausible number this whole type exists to avoid. The row is still
+   * returned, with `quantity` shown as-is (that is the honest ledger fact) and
+   * `costBasisError` explaining why the money fields are missing, instead of one bad
+   * position taking down every other holding's response (see `costBasisPerInstrument`
+   * in `core/costbasis.ts`). `costEur` itself does NOT depend on whether this holding
+   * can be *valued* (see `valueEur`'s own doc just below) -- cost basis and market value
+   * are independent failure modes, and only cost basis failing here nulls this field.
    */
   readonly costEur: string | null;
+  /**
+   * `valueEur` and `unrealisedEur` are `null` together, exactly when `valuationError` is
+   * non-null: no price is known for `on`, or (for a non-EUR instrument) no fx rate is
+   * known for `on`. C1: this used to fall back to a fabricated `0,00 €` market value --
+   * with `stale` computed only from `priceDate !== on`, which can itself be `false` when
+   * a real price row exists dated exactly `on` and only the *fx rate* is missing (the
+   * real, reproduced case: a EUR-booked, SEK-quoted fund whose SEK rate was never
+   * fetched -- see `fx.ts`). That combination rendered a clean-looking, confidently
+   * wrong `0,00 €` loss with no badge at all. Follows the same null-plus-explanation
+   * pattern as `costBasisError` below rather than inventing a fourth shape (see
+   * `core/allocation.ts`'s and `core/returns.ts`'s `excludedInstrumentIds`, the other two
+   * places this same "cannot value" condition is now surfaced).
+   */
   readonly valueEur: string | null;
   readonly unrealisedEur: string | null;
   readonly priceDate: IsoDate | null;
+  /**
+   * `true` whenever the number shown must carry a staleness badge rather than read as
+   * current: the price actually used was not dated `on` itself (carried forward from an
+   * earlier date), was missing entirely, or (C1) `valuationError` is set for any other
+   * reason (e.g. price present but fx rate missing) -- `priceDate !== on` alone is not a
+   * sufficient check, since a same-day price row can still leave the holding unvaluable.
+   */
   readonly stale: boolean;
   readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
+  /** See `valueEur`'s doc. Finnish, user-facing, names the instrument and the date. */
+  readonly valuationError: string | null;
 };
 
 /**
@@ -197,11 +220,29 @@ const explainUnmatchedDisposal = (instrument: Instrument, tradeDate: IsoDate): s
   `ostotapahtumat tai poista myyntirivi.`;
 
 /**
+ * Explains why a holding could not be valued -- no price for `on`, or (for a non-EUR
+ * instrument) no fx rate for `on`. Follows `explainUnmatchedDisposal`'s own wording
+ * convention (names the instrument by ISIN/name, names the date, Finnish, user-facing).
+ * C1: this is what used to fall through to a silent, fabricated `0,00 €` instead.
+ */
+const explainValuationFailure = (
+  instrument: Instrument,
+  on: IsoDate,
+  reason: "no-price" | "no-fx-rate",
+): string =>
+  reason === "no-price"
+    ? `Instrumentille ${instrument.name} (${instrument.isin}) ei ole hintaa päivälle ${on}, ` +
+      `joten markkina-arvoa ei voi laskea.`
+    : `Valuuttakurssia ${instrument.currency} ei löydy päivälle ${on}, joten instrumentin ` +
+      `${instrument.name} (${instrument.isin}) markkina-arvoa ei voi laskea.`;
+
+/**
  * Current holdings, valued as of `on`. `stale` is `true` whenever the price
  * actually used was not dated `on` itself (carried forward from an earlier
- * date, per `PriceLookup.priceDateOn`'s contract) or was missing entirely --
- * either way the UI must show the staleness badge rather than a number that
- * looks as current as it is not.
+ * date, per `PriceLookup.priceDateOn`'s contract), was missing entirely, or
+ * (C1) `valuationError` is set for any other reason -- either way the UI must
+ * show the staleness badge rather than a number that looks as current, or as
+ * complete, as it is not.
  *
  * Cost basis is resolved per instrument (`costBasisPerInstrument`), so one
  * instrument's `UnmatchedDisposalError` marks only that row's money fields
@@ -225,12 +266,23 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
       const priceDate = lookup.priceDateOn(instrumentId, on);
       const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
 
-      const nativeValueEur =
-        price === null || (instrument.currency !== EUR && rate === null)
-          ? zeroMoney(EUR)
-          : rate === null
-            ? mulMoney(price, quantity)
-            : toEur(mulMoney(price, quantity), rate);
+      // C1: no fabricated `zeroMoney(EUR)` fallback -- a holding this function cannot
+      // honestly price or convert reports `null`, with `valuationError` saying why,
+      // exactly like `costBasisError` already does for an unmatched disposal.
+      const nativeValueEur: Money | null =
+        price === null
+          ? null
+          : instrument.currency !== EUR && rate === null
+            ? null
+            : rate === null
+              ? mulMoney(price, quantity)
+              : toEur(mulMoney(price, quantity), rate);
+      const valuationError =
+        price === null
+          ? explainValuationFailure(instrument, on, "no-price")
+          : instrument.currency !== EUR && rate === null
+            ? explainValuationFailure(instrument, on, "no-fx-rate")
+            : null;
 
       const outcome: CostBasisOutcome | undefined = costs.get(instrumentId);
       const costBasisError =
@@ -255,11 +307,16 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
         currency: instrument.currency,
         quantity: formatQuantity(quantity),
         costEur: costEur === null ? null : formatMoney(costEur),
-        valueEur: costBasisError === null ? formatMoney(nativeValueEur) : null,
-        unrealisedEur: costEur === null ? null : formatMoney(subMoney(nativeValueEur, costEur)),
+        valueEur:
+          costBasisError === null && nativeValueEur !== null ? formatMoney(nativeValueEur) : null,
+        unrealisedEur:
+          costEur === null || nativeValueEur === null
+            ? null
+            : formatMoney(subMoney(nativeValueEur, costEur)),
         priceDate,
-        stale: priceDate !== on,
+        stale: valuationError !== null || priceDate !== on,
         costBasisError,
+        valuationError,
       };
       return [holding];
     })

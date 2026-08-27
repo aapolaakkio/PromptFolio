@@ -1,8 +1,10 @@
-import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { EUR, type Currency } from "../../core/money";
 import type { getDb } from "../db";
-import { fxRates, imports, transactions } from "../db/schema";
+import { imports, transactions } from "../db/schema";
 import { HttpError } from "../errors";
+import { ensureFxRate, fxRateOn } from "../fx";
+import type { FetchImpl } from "../prices/types";
 import { contentHash, type Draft, type DraftTxn } from "./map";
 
 export type ImportKind = "csv_nordnet" | "csv_op" | "pdf" | "vision" | "manual";
@@ -52,18 +54,6 @@ type TxnType = (typeof transactions.$inferInsert)["type"];
  */
 const isTxnType = (value: string): value is TxnType =>
   transactions.type.enumValues.some((candidate) => candidate === value);
-
-/** Newest fx_rates entry for `currency` on or before `date`, or null if none exists. */
-const fxRateOn = (db: TxDb, currency: Currency, date: string): number | null => {
-  const row = db
-    .select()
-    .from(fxRates)
-    .where(and(eq(fxRates.currency, currency), lte(fxRates.date, date)))
-    .orderBy(desc(fxRates.date))
-    .limit(1)
-    .get();
-  return row?.rateEur ?? null;
-};
 
 /**
  * Resolves the fx rate to store for one draft row. EUR rows already carry
@@ -160,6 +150,31 @@ const insertRow = (
 };
 
 /**
+ * Ensures every unresolved (non-EUR, `fxRateEur: 0`) currency in `draft` has at least a
+ * chance to resolve before the real transaction opens, by attempting one on-demand ECB
+ * fetch per currency still missing a rate (C1b -- see `fx.ts`'s `ensureFxRate`). Runs
+ * *before* `db.transaction()` deliberately: the fetch is a network call, and drizzle's
+ * `bun:sqlite` transaction callback is synchronous, so an `await` cannot live inside it.
+ *
+ * At most one fetch per distinct currency, no matter how many rows need it: `ensureFxRate`
+ * always fetches the same thing (ECB's current daily file has no date parameter), so a
+ * currency already attempted this call either just got a fresh rate (further rows recheck
+ * it for free inside `resolveFxRate`) or genuinely can't be resolved today (retrying it
+ * per-row would just repeat the same failed network call). Rows still unresolved after this
+ * runs get the informative, unchanged `resolveFxRate` refusal message.
+ */
+const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): Promise<void> => {
+  const attempted = new Set<Currency>();
+  for (const row of draft.txns) {
+    if (row.currency === EUR || row.fxRateEur !== 0) continue;
+    if (attempted.has(row.currency)) continue;
+    attempted.add(row.currency);
+    if (fxRateOn(db, row.currency, row.tradeDate) !== null) continue;
+    await ensureFxRate(db, row.currency, row.tradeDate, fetchImpl);
+  }
+};
+
+/**
  * Commits a parsed import into the append-only ledger. Every insert (the
  * `imports` row and every `transactions` row) happens inside one SQLite
  * transaction: if any row fails -- an unresolved fx rate, an unknown
@@ -167,8 +182,11 @@ const insertRow = (
  * `db.transaction()` callback uncaught, which is what makes drizzle roll
  * the whole transaction back. Nothing in this function may catch that
  * error before it leaves the callback.
+ *
+ * Async since C1b: `ensureDraftFxRates` above may need one on-demand network fetch per
+ * unresolved currency before the (still fully synchronous) transaction opens.
  */
-export const commitDraft = (
+export const commitDraft = async (
   db: Db,
   args: {
     userId: string;
@@ -177,8 +195,10 @@ export const commitDraft = (
     filename: string;
     sha256: string;
     draft: Draft;
+    /** Injected in tests; defaults to the real `fetch` in production (C1b's on-demand ECB fetch). */
+    fetchImpl?: FetchImpl;
   },
-): CommitResult => {
+): Promise<CommitResult> => {
   const { draft } = args;
   if (draft.unknownIsins.length > 0) {
     // `isin` is null for a broker whose export carries no ISIN at all
@@ -192,6 +212,8 @@ export const commitDraft = (
       `Tuntemattomat arvopaperit on lisättävä ensin: ${draft.unknownIsins.map(label).join(", ")}`,
     );
   }
+
+  await ensureDraftFxRates(db, draft, args.fetchImpl ?? fetch);
 
   let inserted = 0;
   let skipped = 0;

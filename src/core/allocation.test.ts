@@ -75,7 +75,7 @@ const prices: PriceLookup = {
 };
 
 test("groups by instrument kind, largest first", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(2, 1, "10"), buy(3, 2, "10")],
     instruments,
     prices,
@@ -87,7 +87,7 @@ test("groups by instrument kind, largest first", () => {
 });
 
 test("weights sum to one", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(3, 2, "10")],
     instruments,
     prices,
@@ -98,7 +98,7 @@ test("weights sum to one", () => {
 });
 
 test("groups by account", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(3, 2, "10")],
     instruments,
     prices,
@@ -109,11 +109,14 @@ test("groups by account", () => {
 });
 
 test("an empty portfolio has no slices", () => {
-  expect(allocateBy([], instruments, prices, "2025-06-01", "kind")).toEqual([]);
+  expect(allocateBy([], instruments, prices, "2025-06-01", "kind")).toEqual({
+    slices: [],
+    excludedInstrumentIds: [],
+  });
 });
 
 test("groups by currency", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(4, 1, "10")],
     [...instruments, usdInstrument],
     prices,
@@ -125,7 +128,7 @@ test("groups by currency", () => {
 });
 
 test("groups by instrument, using the instrument's name as the label", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(2, 1, "10")],
     instruments,
     prices,
@@ -136,13 +139,13 @@ test("groups by instrument, using the instrument's name as the label", () => {
   expect(slices.map((s) => s.label)).toEqual(["Nokia", "iShares Core MSCI World"]);
 });
 
-test("a held instrument with no price on the date is excluded from the totals", () => {
+test("a held instrument with no price on the date is excluded from the totals, and reported as excluded", () => {
   const noPriceForNokia: PriceLookup = {
     priceOn: (id) => (id === 1 ? null : prices.priceOn(id, "2025-06-01")),
     priceDateOn: () => "2025-06-01",
     fxOn: () => parseFxRate("1", EUR),
   };
-  const slices = allocateBy(
+  const { slices, excludedInstrumentIds } = allocateBy(
     [buy(1, 1, "100"), buy(2, 1, "10")],
     instruments,
     noPriceForNokia,
@@ -151,15 +154,18 @@ test("a held instrument with no price on the date is excluded from the totals", 
   );
   expect(slices.map((s) => s.key)).toEqual(["etf"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
+  // C1: the excluded holding must not just vanish -- it is named here, not
+  // just silently missing from `slices`.
+  expect(excludedInstrumentIds).toEqual([1]);
 });
 
-test("a held instrument priced in a currency with no fx rate is excluded from the totals", () => {
+test("a held instrument priced in a currency with no fx rate is excluded from the totals, and reported as excluded", () => {
   const noUsdRate: PriceLookup = {
     priceOn: (id) => (id === 4 ? parseMoney("20,00", USD) : prices.priceOn(id, "2025-06-01")),
     priceDateOn: () => "2025-06-01",
     fxOn: () => null,
   };
-  const slices = allocateBy(
+  const { slices, excludedInstrumentIds } = allocateBy(
     [buy(1, 1, "100"), buy(4, 1, "10")],
     [...instruments, usdInstrument],
     noUsdRate,
@@ -168,10 +174,11 @@ test("a held instrument priced in a currency with no fx rate is excluded from th
   );
   expect(slices.map((s) => s.key)).toEqual(["stock"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
+  expect(excludedInstrumentIds).toEqual([4]);
 });
 
 test("a position in an instrument absent from the instruments list is excluded from the totals", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "100"), buy(3, 2, "10")],
     instruments.filter((i) => i.id !== 3),
     prices,
@@ -182,7 +189,7 @@ test("a position in an instrument absent from the instruments list is excluded f
 });
 
 test("the same instrument held across two accounts aggregates into a single slice", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "60"), buy(1, 2, "40")],
     instruments,
     prices,
@@ -213,7 +220,7 @@ test("an instrument with a negative net position (unmatched disposal) is exclude
     fxRateEur: parseFxRate("1", EUR),
   });
 
-  const slices = allocateBy(
+  const { slices, excludedInstrumentIds } = allocateBy(
     [sell(1, 1, "10"), buy(2, 1, "10")],
     instruments,
     prices,
@@ -225,10 +232,14 @@ test("an instrument with a negative net position (unmatched disposal) is exclude
   // silently folded into another bucket as zero either.
   expect(slices.map((s) => s.key)).toEqual(["etf"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
+  // A negative position is reported via `ledger.ts`'s `negativePositionIds` instead
+  // (see `AllocationResult.excludedInstrumentIds`'s doc) -- this function's own list
+  // stays empty for this case.
+  expect(excludedInstrumentIds).toEqual([]);
 });
 
 test("the same instrument held across two accounts still produces two account slices", () => {
-  const slices = allocateBy(
+  const { slices } = allocateBy(
     [buy(1, 1, "60"), buy(1, 2, "40")],
     instruments,
     prices,

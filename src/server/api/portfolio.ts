@@ -79,20 +79,31 @@ export const portfolioRoutes = {
       const { txns, instruments, prices } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
 
-      // allocateBy() already excludes a negative (unmatched-disposal) position
-      // from every slice's total rather than counting it as a negative amount
-      // (see core/allocation.ts) -- but that must not mean the position just
-      // vanishes from the response with no trace. negativePositionIds() names
-      // exactly which instruments were left out, enriched here with the
+      const { slices, excludedInstrumentIds } = allocateBy(
+        txns,
+        instruments,
+        prices,
+        on,
+        dimension,
+      );
+
+      // Two distinct reasons a holding can be left out of every slice, both of which
+      // must be visible rather than a silent gap (C1): allocateBy() itself already
+      // excludes an instrument it could not price/convert (`excludedInstrumentIds`,
+      // computed per-account -- see its own doc for why negative positions are
+      // deliberately not in that list), and a negative (unmatched-disposal) position
+      // is reported by ledger.ts's whole-ledger negativePositionIds() instead. Merged
+      // here (deduped by instrumentId) into one list, each entry enriched with the
       // ISIN/name a caller needs to act on it (the same instrumentId /api/holdings
       // reports the same instrument's costBasisError under).
-      const excludedInstruments = negativePositionIds(txns, on).flatMap((instrumentId) => {
+      const excludedIds = new Set([...negativePositionIds(txns, on), ...excludedInstrumentIds]);
+      const excludedInstruments = [...excludedIds].flatMap((instrumentId) => {
         const instrument = byId.get(instrumentId);
         return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
       });
 
       return json({
-        slices: allocateBy(txns, instruments, prices, on, dimension).map((slice) => ({
+        slices: slices.map((slice) => ({
           key: slice.key,
           label: slice.label,
           valueEur: formatMoney(slice.valueEur),

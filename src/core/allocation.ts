@@ -12,6 +12,25 @@ export type Slice = {
   readonly weight: number;
 };
 
+export type AllocationResult = {
+  readonly slices: Slice[];
+  /**
+   * Instrument ids held with a positive quantity at `on` but left out of every slice
+   * because no price was known for `on`, or (for a non-EUR instrument) no fx rate was
+   * known for `on` -- C1: these used to just vanish from the response with no trace,
+   * indistinguishable from "not held" or "genuinely worth nothing". Mirrors
+   * `returns.ts`'s `ValuePoint.excludedInstrumentIds` in shape and purpose.
+   *
+   * Deliberately does NOT include a negative-position (unmatched-disposal) exclusion --
+   * `ledger.ts`'s `negativePositionIds`, computed over the *whole* ledger, already
+   * covers that case; this function only ever sees one account's transactions at a
+   * time (see `buckets` below), so an instrument negative in one account but positive
+   * overall would be misreported here. Callers combine both lists (see
+   * `server/api/portfolio.ts`'s `/api/allocation`).
+   */
+  readonly excludedInstrumentIds: readonly number[];
+};
+
 const KIND_LABELS = {
   stock: "Osakkeet",
   etf: "ETF:t",
@@ -42,9 +61,10 @@ export const allocateBy = (
   prices: PriceLookup,
   on: IsoDate,
   dimension: Dimension,
-): Slice[] => {
+): AllocationResult => {
   const byId = new Map(instruments.map((i) => [i.id, i]));
   const totals = new Map<string, { label: string; value: Money }>();
+  const excludedInstrumentIds = new Set<number>();
 
   // Account grouping needs per-account positions, so walk transactions per account.
   const accountIds = [...new Set(txns.map((t) => t.accountId))];
@@ -66,15 +86,27 @@ export const allocateBy = (
       // silently subtracting that from a bucket's total is exactly the
       // "plausible but wrong number" this must not produce. Skip its
       // contribution entirely rather than count it as either a negative or a
-      // zero amount.
+      // zero amount. Reported via `negativePositionIds` instead of this
+      // function's own `excludedInstrumentIds` -- see that field's doc.
       if (qty.scaled < 0n) continue;
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
       const price = prices.priceOn(instrumentId, on);
-      if (price === null) continue;
+      if (price === null) {
+        // C1: no price at all for `on` -- this holding cannot be valued, so it must
+        // not just disappear from the response with no trace.
+        excludedInstrumentIds.add(instrumentId);
+        continue;
+      }
       const native = mulMoney(price, qty, "half-up");
       const rate = instrument.currency === EUR ? null : prices.fxOn(instrument.currency, on);
-      if (instrument.currency !== EUR && rate === null) continue;
+      if (instrument.currency !== EUR && rate === null) {
+        // C1: a real price exists, but this non-EUR instrument has no fx rate for
+        // `on` -- excluded for the same reason as a missing price, not folded in as
+        // an implied 0,00 €.
+        excludedInstrumentIds.add(instrumentId);
+        continue;
+      }
       const valueEur = rate === null ? native : toEur(native, rate, "half-up");
 
       const [key, label] = keyAndLabel(dimension, accountId, instrument);
@@ -88,9 +120,9 @@ export const allocateBy = (
   }
 
   const total = [...totals.values()].reduce((sum, t) => addMoney(sum, t.value), zeroMoney(EUR));
-  if (total.minor === 0n) return [];
+  if (total.minor === 0n) return { slices: [], excludedInstrumentIds: [...excludedInstrumentIds] };
 
-  return [...totals.entries()]
+  const slices = [...totals.entries()]
     .map(([key, { label, value }]) => ({
       key,
       label,
@@ -104,4 +136,5 @@ export const allocateBy = (
           ? 1
           : -1,
     );
+  return { slices, excludedInstrumentIds: [...excludedInstrumentIds] };
 };

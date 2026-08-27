@@ -119,13 +119,16 @@ export const buildLots = (txns: readonly Txn[]) => {
             `acquisition amount ${formatMoney(t.amount)} must not be positive (cash in on an acquisition)`,
         );
       }
-      const grossEur = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
-      const feeEur = toEur(t.fee, t.fxRateEur, "half-up");
+      // `t.amount` is already fee-inclusive (see `Txn.amount`'s doc): the fee was
+      // already debited as part of the cash that left the account, so the full
+      // cost basis is `-amount` alone -- adding `t.fee` again would double-count
+      // it (C2).
+      const costEur = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
       lots.push({
         instrumentId: t.instrumentId,
         acquiredOn: t.tradeDate,
         quantity: t.quantity,
-        costEur: addMoney(grossEur, feeEur),
+        costEur,
       });
       openByInstrument.set(t.instrumentId, lots);
       continue;
@@ -138,10 +141,11 @@ export const buildLots = (txns: readonly Txn[]) => {
 
     if (t.type !== "SELL" && t.type !== "TRANSFER_OUT") continue;
 
-    const proceedsEur = subMoney(
-      toEur(t.amount, t.fxRateEur, "half-up"),
-      toEur(t.fee, t.fxRateEur, "half-up"),
-    );
+    // `t.amount` is already fee-inclusive (see `Txn.amount`'s doc): the fee was
+    // already deducted from the cash credited to the account, so `amount` alone
+    // is the real net proceeds -- subtracting `t.fee` again would double-count
+    // it (C2).
+    const proceedsEur = toEur(t.amount, t.fxRateEur, "half-up");
     const held = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
     if (cmpQuantity(held, t.quantity) < 0) {
       throw new UnmatchedDisposalError(t.instrumentId, t.tradeDate, held, t.quantity);

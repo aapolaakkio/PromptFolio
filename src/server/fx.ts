@@ -1,8 +1,9 @@
+import { and, desc, eq, lte } from "drizzle-orm";
 import { z } from "zod";
 
 import { EUR, parseCurrency, parseFxRate, type Currency } from "../core/money";
 import type { getDb } from "./db";
-import { fxRates, transactions } from "./db/schema";
+import { fxRates, instruments, transactions } from "./db/schema";
 import type { FetchImpl } from "./prices/types";
 
 type Db = ReturnType<typeof getDb>["db"];
@@ -128,41 +129,28 @@ export const parseEcbCsv = (
   return out;
 };
 
-/**
- * Fetches the ECB daily reference rates and stores every non-EUR currency
- * the ledger actually holds, idempotently (a re-run for the same date
- * inserts nothing new -- `fx_rates`' primary key is `(date, currency)`).
- *
- * §10a A1 supersedes the original brief here: the real portfolio holds
- * EUR and SEK, never USD, so this fetches *exactly* the ledger's own
- * non-EUR currencies via `transactions.currency` and never falls back to
- * a guessed default. An empty ledger -- nothing imported yet, or a ledger
- * that only ever traded in EUR -- means there is nothing to convert, so
- * this returns without calling `fetchImpl` at all: no network call, no
- * USD placeholder row.
- */
-export const refreshFxRates = async (
-  db: Db,
-  opts: { fetchImpl?: FetchImpl } = {},
-): Promise<{ inserted: number }> => {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+type EcbRow = { readonly date: string; readonly currency: Currency; readonly rateEur: number };
 
-  const held = db
-    .selectDistinct({ currency: transactions.currency })
-    .from(transactions)
-    .all()
-    .map((row) => row.currency)
-    .filter((currency) => currency !== EUR);
-
-  if (held.length === 0) return { inserted: 0 };
-  const wanted = new Set<string>(held);
-
+/** Fetches and parses one ECB daily file for exactly `wanted`'s currencies. No DB access. */
+const fetchEcbRows = async (
+  fetchImpl: FetchImpl,
+  wanted: ReadonlySet<string>,
+): Promise<EcbRow[]> => {
   const response = await fetchImpl(ECB_URL);
   if (!response.ok) {
     throw new Error(`ECB vastasi ${response.status} ${response.statusText}`);
   }
-  const rows = parseEcbCsv(await response.text(), wanted);
+  return parseEcbCsv(await response.text(), wanted);
+};
 
+/**
+ * Inserts every row, idempotently (`fx_rates`' primary key is `(date, currency)`, so a
+ * re-run for the same date/currency inserts nothing new). Returns the count actually
+ * inserted. Shared by `refreshFxRates` (the scheduled job) and `ensureFxRate` (the
+ * on-demand path C1b needs) so both write through the exact same defense-in-depth EUR
+ * guard and conflict handling.
+ */
+const insertFxRates = (db: Db, rows: readonly EcbRow[]): number => {
   let inserted = 0;
   db.transaction((tx) => {
     for (const row of rows) {
@@ -179,5 +167,125 @@ export const refreshFxRates = async (
       if (result.changes > 0) inserted++;
     }
   });
+  return inserted;
+};
+
+/**
+ * The newest `fx_rates` row for `currency` dated on or before `date`, or `null` if none
+ * exists yet. Exported so `import/commit.ts` shares this exact lookup (previously its own
+ * private copy) rather than a second implementation that could drift. Takes only the
+ * `select` method it needs -- both the shared `Db` handle and a transaction's `tx` handle
+ * satisfy this structurally, so a caller inside `db.transaction()` can pass `tx` straight
+ * through.
+ */
+export const fxRateOn = (
+  db: Pick<Db, "select">,
+  currency: Currency,
+  date: string,
+): number | null => {
+  const row = db
+    .select()
+    .from(fxRates)
+    .where(and(eq(fxRates.currency, currency), lte(fxRates.date, date)))
+    .orderBy(desc(fxRates.date))
+    .limit(1)
+    .get();
+  return row?.rateEur ?? null;
+};
+
+/**
+ * Fetches the ECB daily reference rates and stores every non-EUR currency the ledger
+ * actually holds, idempotently.
+ *
+ * §10a A1 supersedes the original brief here: the real portfolio holds EUR and SEK, never
+ * USD, so this fetches *exactly* the currencies the ledger holds and never falls back to a
+ * guessed default.
+ *
+ * C1 fix (2026-08-27): the "currencies the ledger holds" set used to come from
+ * `transactions.currency` alone. Verified against a real migrated database: per §10a A2/A5
+ * a fund like the user's SEK holding is booked in EUR (the transaction's own `currency` is
+ * EUR -- that is what actually changed hands) while its price/NAV is quoted in SEK. SEK
+ * therefore never appeared in `transactions.currency`, so its rate was never fetched, and
+ * `valuation.ts`'s `holdingsFor` silently fell back to a fabricated `0,00 €` market value
+ * with no stale badge (the price row itself was dated today -- only the FX rate was
+ * missing). Now sourced from `instruments.currency` too (the instrument's own quotation
+ * currency), unioned with `transactions.currency`, so a EUR-booked, SEK-quoted holding's
+ * rate is fetched regardless of which side ever recorded "SEK".
+ *
+ * An empty ledger -- nothing imported yet, or a ledger that only ever traded EUR
+ * instruments -- means there is nothing to convert, so this returns without calling
+ * `fetchImpl` at all: no network call, no placeholder row.
+ */
+export const refreshFxRates = async (
+  db: Db,
+  opts: { fetchImpl?: FetchImpl } = {},
+): Promise<{ inserted: number }> => {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+
+  const txnCurrencies = db
+    .selectDistinct({ currency: transactions.currency })
+    .from(transactions)
+    .all()
+    .map((row) => row.currency);
+  const instrumentCurrencies = db
+    .selectDistinct({ currency: instruments.currency })
+    .from(instruments)
+    .all()
+    .map((row) => row.currency);
+  const held = [...new Set([...txnCurrencies, ...instrumentCurrencies])].filter(
+    (currency) => currency !== EUR,
+  );
+
+  if (held.length === 0) return { inserted: 0 };
+  const wanted = new Set<string>(held);
+
+  const rows = await fetchEcbRows(fetchImpl, wanted);
+  const inserted = insertFxRates(db, rows);
   return { inserted };
+};
+
+/**
+ * Resolves an fx rate for `currency` on or before `date`, fetching ECB's current daily
+ * rate on demand if `fx_rates` has nothing yet (C1b: breaks the "first non-EUR
+ * transaction" deadlock). Returns the resolved rate, or `null` if it is still unresolved
+ * after trying.
+ *
+ * The deadlock this exists to break, verified directly: `refreshFxRates` above only ever
+ * fetches currencies the ledger *already* holds -- but a currency's very first transaction
+ * is exactly the row that would introduce it to the ledger, and `import/commit.ts`
+ * rejected committing that row for having no `fx_rates` entry yet. Neither side could move
+ * first.
+ *
+ * `eurofxref.csv` (verified against §10a A5's fetch-things-for-real standard) publishes
+ * only the latest TARGET business day's rate, not history -- there is no ECB endpoint
+ * wired up here that takes a date. So this can only satisfy `date` when the fetched rate's
+ * own date is on or before it: importing today's (or a recent) non-EUR trade works; a
+ * genuinely back-dated one still returns `null`, exactly as it did before, and the caller
+ * reports the same honest "no rate for this date" refusal either way. ECB does publish
+ * `eurofxref-hist.csv` for history, but nothing observed so far needs it -- adding a second
+ * ingestion path on spec (rather than against a real, confirmed need) is exactly the kind
+ * of guess §10a's amendments exist to correct, so it is deliberately not added here.
+ *
+ * A fetch failure (ECB unreachable, non-200, a malformed file) is swallowed to `null`
+ * rather than thrown: an external-source outage during an import must degrade to "rate
+ * still unresolved" (the caller's existing, informative refusal), never surface a raw
+ * network error out of a commit (§9.1's External-error handling).
+ */
+export const ensureFxRate = async (
+  db: Db,
+  currency: Currency,
+  date: string,
+  fetchImpl: FetchImpl,
+): Promise<number | null> => {
+  const existing = fxRateOn(db, currency, date);
+  if (existing !== null) return existing;
+
+  let rows: EcbRow[];
+  try {
+    rows = await fetchEcbRows(fetchImpl, new Set([currency]));
+  } catch {
+    return null;
+  }
+  insertFxRates(db, rows);
+  return fxRateOn(db, currency, date);
 };

@@ -39,12 +39,13 @@ const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
 /**
  * `/api/allocation` returns an envelope, not a bare array: `slices` is what
  * `AllocationChart` renders, and `excludedInstruments` names every instrument
- * `allocateBy()` (core/allocation.ts) had to leave out of every slice's total --
- * a SELL with no matching earlier BUY drives a position negative, and a negative
- * position must never be counted into an allocation total (nor silently dropped
- * with no trace -- see the design-defect fix report for the reasoning). Each
- * entry's `instrumentId` is the same id `/api/holdings` reports that same
- * instrument's `costBasisError` under.
+ * left out of every slice's total, for either of two reasons: a SELL with no
+ * matching earlier BUY drives a position negative (a negative position must
+ * never be counted into an allocation total), or the holding could not be
+ * priced/converted to EUR for the requested date (no price, or no fx rate --
+ * see `core/allocation.ts`'s `allocateBy`). Neither is silently dropped with
+ * no trace. Each entry's `instrumentId` is the same id `/api/holdings` reports
+ * that same instrument's `costBasisError`/`valuationError` under.
  */
 const AllocationResponseSchema = z.object({
   slices: z.array(AllocationSliceSchema),

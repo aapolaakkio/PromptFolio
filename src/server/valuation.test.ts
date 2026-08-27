@@ -60,14 +60,15 @@ const seed = () => {
         tradeDate: "2025-01-10",
         quantity: 100_000_000,
         unitPrice: 415,
-        // `amount` is the PRINCIPAL only (quantity x unit price = -415.00) --
-        // `fee` (3.00) is a separate column costBasisAt adds on top (see
-        // core/costbasis.test.ts's "including its fee" fixtures). The task
-        // brief's original seed set this to -418.00 (principal + fee already
-        // combined), which silently double-counted the fee and made the
-        // brief's own expected costEur ("418.00 = 415.00 + 3.00 fee")
-        // unreachable -- caught by running this test and watching it fail.
-        amount: -41500,
+        // `amount` is the fee-inclusive total cash that moved (principal
+        // 415.00 + fee 3.00 = -418.00) -- see `Txn.amount`'s doc in
+        // core/types.ts, and C2 in the phase-1 review: an earlier version of
+        // this seed set `amount` to the principal alone and let
+        // `costBasisAt` add `fee` on top, which is exactly the double-count
+        // bug real OP/Nordnet fixtures exposed (both brokers report a
+        // fee-inclusive total, never principal-only). `fee` is carried here
+        // purely for reporting; it must not be added to `amount` again.
+        amount: -41800,
         fee: 300,
         tax: 0,
         currency: EUR,
@@ -160,7 +161,7 @@ test("holdings carry quantity, cost, value, gain and staleness as strings", () =
   const nokia = holdings[0]!;
   expect(nokia.name).toBe("Nokia");
   expect(nokia.quantity).toBe("100.000000");
-  expect(nokia.costEur).toBe("418.00"); // 415.00 + 3.00 fee
+  expect(nokia.costEur).toBe("418.00"); // amount is already fee-inclusive: 415.00 principal + 3.00 fee
   expect(nokia.valueEur).toBe("460.00");
   expect(nokia.unrealisedEur).toBe("42.00");
   expect(nokia.priceDate).toBe("2025-06-02");
@@ -174,7 +175,12 @@ test("holdings are exactly current, not stale, when priced on the price's own da
   expect(holdings[0]!.priceDate).toBe("2025-06-02");
 });
 
-test("a position with no price at all values at zero EUR and is reported stale", () => {
+// C1: a position with no price at all used to report a fabricated "0.00" market value
+// (and a matching, equally fabricated "-50.00" loss) -- a plausible-looking but entirely
+// invented number, since there is nothing to value this holding at. It must instead
+// report `valueEur`/`unrealisedEur` as null, with `valuationError` saying why, exactly
+// like `costBasisError` already does for an unmatched disposal (see HoldingView's doc).
+test("a position with no price at all reports no value, not a fabricated zero, and is stale", () => {
   const { db, sqlite, accountId } = seed();
   // A second instrument with no rows in `prices` at all -- distinct from
   // the "carried forward from an earlier date" staleness case above.
@@ -195,9 +201,59 @@ test("a position with no price at all values at zero EUR and is reported stale",
 
   const holdings = holdingsFor(db, "u1", "2025-07-01");
   const neste = holdings.find((h) => h.isin === "FI0009002377")!;
-  expect(neste.valueEur).toBe("0.00");
+  // Cost basis is still known -- it doesn't depend on today's price -- so it stays.
+  expect(neste.costEur).toBe("50.00");
+  expect(neste.valueEur).toBeNull();
+  expect(neste.unrealisedEur).toBeNull();
   expect(neste.priceDate).toBeNull();
   expect(neste.stale).toBe(true);
+  expect(neste.valuationError).toMatch(/Neste.*FI0009002377/);
+});
+
+// C1's exact reproduction: a real price row dated `on` itself (so the OLD staleness
+// check, `priceDate !== on` alone, reports `false`), but the instrument prices in a
+// non-EUR currency with no fx rate known for `on` -- a EUR-booked, SEK-quoted fund is
+// the real case this came from (see fx.ts). Must still report no value and be stale.
+test("a position priced today in a currency with no fx rate for today reports no value, not a fabricated zero", () => {
+  const { db, sqlite, accountId } = seed();
+  // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
+  // single row with an `id` column on success.
+  const sekFund = sqlite
+    .query(
+      "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .get(
+      "SE0002756973",
+      null,
+      "Nordnet Sverige Indeks",
+      "fund",
+      "SEK",
+      "nordnet_fund",
+      "nordnet-sverige",
+    ) as {
+    id: number;
+  };
+  sqlite
+    .query(
+      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 100000000, 1000, -100000, 0, 0, 'EUR', 100000000, 'sek-buy')",
+    )
+    .run(accountId, sekFund.id);
+  sqlite
+    .query(
+      "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-07-01', 1000, 'SEK', 'nordnet_fund', 0)",
+    )
+    .run(sekFund.id);
+  // Deliberately no fx_rates row for SEK at all -- the exact C1 deadlock/gap.
+
+  const holdings = holdingsFor(db, "u1", "2025-07-01");
+  const sek = holdings.find((h) => h.isin === "SE0002756973")!;
+  expect(sek.costEur).toBe("1000.00");
+  expect(sek.valueEur).toBeNull();
+  expect(sek.unrealisedEur).toBeNull();
+  // The price IS dated exactly `on` -- proves staleness isn't just `priceDate !== on`.
+  expect(sek.priceDate).toBe("2025-07-01");
+  expect(sek.stale).toBe(true);
+  expect(sek.valuationError).toMatch(/SEK.*Nordnet Sverige Indeks|Nordnet Sverige Indeks.*SEK/);
 });
 
 test("holdingsFor marks only the affected position's cost basis unknown when a sale has no matching purchase, leaving other holdings unaffected", () => {

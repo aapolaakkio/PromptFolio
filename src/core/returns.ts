@@ -16,12 +16,16 @@ export type ValuePoint = {
   readonly valueEur: Money;
   readonly stale: boolean;
   /**
-   * Instrument ids excluded from `valueEur` on this date because their net position
-   * was negative (an unmatched disposal -- see `ledger.ts`'s `negativePositionIds`).
-   * Deliberately a distinct field from `stale`: `stale` means "this price is old, not
-   * wrong"; an excluded instrument's value is not merely old, it is not included at
-   * all, which is a different fact the caller needs to be able to act on separately.
-   * Normally empty.
+   * Instrument ids excluded from `valueEur` on this date because it could not honestly
+   * be valued, for any of three reasons: (1) their net position was negative (an
+   * unmatched disposal -- see `ledger.ts`'s `negativePositionIds`), (2) no price is
+   * known for this date, or (3) the instrument prices in a non-EUR currency with no fx
+   * rate known for this date. Deliberately a distinct field from `stale`: `stale` means
+   * "a price used here is old, not wrong" (a value was still computed); an excluded
+   * instrument's value is not merely old, it is not included in `valueEur` at all --
+   * a different fact the caller needs to act on separately (C1: the caller must show
+   * this holding as unvalued, never silently fold it into the total as an implied
+   * 0,00 €). Normally empty.
    */
   readonly excludedInstrumentIds: readonly number[];
 };
@@ -72,7 +76,9 @@ const yearsBetween = (a: IsoDate, b: IsoDate): number => {
 
 /**
  * Daily EUR value of all positions. A day is `stale` when any held instrument's
- * price was not dated that exact day (i.e. it was carried forward from an earlier date).
+ * price was not dated that exact day (i.e. it was carried forward from an earlier date),
+ * or when a held instrument could not be valued at all (see `ValuePoint.excludedInstrumentIds`'s
+ * doc) -- either way the number shown must carry a badge, not read as clean.
  */
 export const valueSeries = (
   txns: readonly Txn[],
@@ -99,7 +105,11 @@ export const valueSeries = (
       }
       const price = prices.priceOn(instrumentId, date);
       if (price === null) {
+        // No price at all for this date (not even an older, carried-forward one) --
+        // there is nothing to value this holding at, so it is excluded from `value`
+        // exactly like a negative position, not silently treated as worth 0,00 €.
         stale = true;
+        excludedInstrumentIds.push(instrumentId);
         continue;
       }
       if (prices.priceDateOn(instrumentId, date) !== date) stale = true;
@@ -110,7 +120,12 @@ export const valueSeries = (
       }
       const rate = prices.fxOn(instrument.currency, date);
       if (rate === null) {
+        // C1: a real, dated price exists, but no fx rate does -- e.g. a EUR-booked,
+        // SEK-quoted holding before `fx.ts`'s currency sourcing fix (§10a A2/A5). This
+        // must never fall through to `value` unconverted or as an implied 0,00 €;
+        // excluded exactly like a missing price, for the same reason.
         stale = true;
+        excludedInstrumentIds.push(instrumentId);
         continue;
       }
       value = addMoney(value, toEur(native, rate, "half-up"));
@@ -181,6 +196,27 @@ export const xirr = (flows: readonly CashFlow[], finalValue: CashFlow): number =
  *   chained = 1.40 * 1.40 - 1 = 0.96
  * The opposite convention (netting the flow out of the 1400 ending value instead) chains to
  * 2.36, which the "twr ignores the timing of deposits" test rejects.
+ *
+ * C3 fix (2026-08-27): `values` comes from `valueSeries`, which deliberately excludes
+ * uninvested cash (§7) -- it prices *positions*, not the account. A deposit that has not
+ * yet been invested is therefore invisible to `values` on the day it lands: the sub-period
+ * it starts still has a real, positive base (the deposit itself, via `flowsByDate`) but a
+ * zero *invested* value both before and after, because there is nothing to price yet. The
+ * old code multiplied `chained` by `end / start` regardless, and once nothing has been
+ * bought yet `end` is also 0, so that factor is exactly 0 -- and because `chained` is a
+ * running product, one zero factor from the deposit's own day poisons every subsequent
+ * sub-period too, however well the portfolio goes on to perform. This is not a rare edge
+ * case: every ledger's very first deposit necessarily predates its very first purchase.
+ *
+ * The fix: a sub-period contributes no factor at all -- rather than a corrupting `0` --
+ * when its *pre-flow* starting value (`investedStart`) is zero. That is precisely "no
+ * capital was actually invested yet at the start of this sub-period", the condition under
+ * which a return is not a meaningful concept, as opposed to "capital was invested and this
+ * sub-period happens to be flat" (a real, computable 0% return, still chained normally).
+ * Skipping instead of zeroing means the chain simply resumes once real invested capital
+ * exists to measure a return against. The existing `start === 0` guard is kept too, as a
+ * division-by-zero guard for the (separate, rarer) case of a same-day flow that exactly
+ * offsets an already-nonzero invested base.
  */
 export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): number => {
   if (values.length < 2) return 0;
@@ -193,7 +229,13 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
   for (let i = 1; i < values.length; i++) {
     const startPoint = values[i - 1]!;
     const endPoint = values[i]!;
-    const start = toNumber(startPoint.valueEur) + (flowsByDate.get(startPoint.date) ?? 0);
+    const investedStart = toNumber(startPoint.valueEur);
+    // No capital was actually invested yet at the start of this sub-period -- e.g. a
+    // deposit dated today has not yet funded a purchase. There is no base to compute a
+    // return against, so this sub-period contributes nothing to the chain, rather than
+    // the `0 / positiveFlow` factor that used to zero out every later sub-period too (C3).
+    if (investedStart === 0) continue;
+    const start = investedStart + (flowsByDate.get(startPoint.date) ?? 0);
     const end = toNumber(endPoint.valueEur);
     if (start === 0) continue;
     chained *= end / start;
