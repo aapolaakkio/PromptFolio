@@ -1,0 +1,24 @@
+[install]
+# Supply-chain security: refuse to install a package version published less
+# than a day ago, so a freshly-compromised release has time to be caught
+# and pulled before this project can pull it in.
+minimumReleaseAge = 86400
+# @tanstack/react-table@9.2.3 and @tanstack/react-charts@0.16.0 - the exact
+# releases the brief's ^9.2 / ^0.16 ranges resolve to - were both published
+# within the last 24h (see task-1-report.md). Excluded so `bun install` can
+# complete; revisit and drop this exclusion once an older matching release
+# exists.
+minimumReleaseAgeExcludes = ["@tanstack/react-table", "@tanstack/react-charts"]
+
+[test]
+coverage = true
+coverageThreshold = 0.8
+# tools/oxlint/anti-slop is vendored plugin source, not this project's code:
+# its own *.test.ts files use the plugin's RuleTester, which needs a raw
+# AST transfer Bun's test runner doesn't implement. Keep them out of `bun
+# test` entirely; oxlint.config.ts already excludes the same tree from lint.
+pathIgnorePatterns = ["tools/oxlint/anti-slop/**"]
+
+# Bun's HTML bundler runs Tailwind directly - no vite, no postcss config.
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
