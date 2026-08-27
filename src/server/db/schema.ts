@@ -33,6 +33,11 @@ export const account = sqliteTable("account", {
     .references(() => user.id, { onDelete: "cascade" }),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
+  // Better Auth 1.7.2's account model requires `issuer` (the stable
+  // provider-side key, e.g. "local:credential" for email/password) - the
+  // installed @better-auth/drizzle-adapter throws at query time without it.
+  // Not present in an older Better Auth generation; see task-8-report.md.
+  issuer: text("issuer").notNull(),
   password: text("password"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),

@@ -4,6 +4,8 @@ data
 *.db
 *.db-wal
 *.db-shm
+.env
+.env.local
 
 # This session's scratch workspace - never commit.
 .superpowers

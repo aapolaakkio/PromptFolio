@@ -37,3 +37,15 @@ export const getDb = (): ReturnType<typeof openDb> => {
   sharedHandle ??= openDb();
   return sharedHandle;
 };
+
+/**
+ * Test-only: clears the memoised shared handle so the next getDb() call
+ * opens a fresh connection. `getDb()` memoises into a process-lifetime
+ * module global, so once one test file seeds it (e.g. with an in-memory
+ * database via DATABASE_PATH), that handle otherwise leaks into every
+ * other test file for the rest of the `bun test` process. Call this before
+ * a test needs its own isolated getDb() handle.
+ */
+export const resetDbHandleForTests = (): void => {
+  sharedHandle = undefined;
+};
