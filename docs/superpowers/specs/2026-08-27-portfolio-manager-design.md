@@ -393,7 +393,15 @@ No dividend rows appear — the holdings are accumulating funds and ETFs.
 web transaction view. Replaced by:
 
 - **OP paste import (phase 1).** The user copies the OP web transaction table and pastes it in.
-  Parsed as delimited text through the existing parse → map → review → commit pipeline.
+  The real paste is **newline-separated — one value per line, with no delimiter at all** — so it does
+  not fit the delimiter-based `BrokerCsvConfig` path and needs its own parser.
+  Its eight columns are `Laji`, `Tapahtuma`, `Tapahtuma-päivämäärä`, `Määrä`, `Kurssi`,
+  `Kulut / Korot / Verot`, `Yhteensä`, `Toiminnot` (always empty). Two header labels wrap onto two
+  lines each, so the header block is ten lines for eight columns, and rows are separated by a line
+  containing a single space.
+  **A missing fee omits its line entirely rather than emitting an empty cell**, so a row is six or
+  seven values and the column each value belongs to must be derived from that count — the last value
+  is always `Yhteensä`. Parsing positionally would book a purchase total as a fee.
   Two consequences: the web view carries **no ISIN**, so instruments resolve by name via the
   unknown-instrument flow; and its total is **unsigned**, so the sign is derived from the
   OSTO/MYYNTI type column rather than read from the amount.
