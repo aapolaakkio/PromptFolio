@@ -26,11 +26,23 @@
  * `typeof fetch`, which requires a static `preconnect` method that a bare
  * function value does not have -- see `src/server/prices/types.ts`'s
  * `FetchImpl` comment for the same issue on the production side.
+ *
+ * `realFetch` (below) is the one deliberate, explicit exception to "no
+ * test may touch the real network": `globalThis.fetch` at the top of this
+ * module -- captured before the `blockedFetch` reassignment two lines
+ * down -- is still Bun's genuine implementation. Task 21's end-to-end test
+ * (e2e/import-to-holdings.test.ts) is the one legitimate caller: it drives
+ * a real HTTP server it started itself, on localhost, and needs a working
+ * `fetch` to reach it. Exporting the captured reference (rather than, say,
+ * checking an env var inside `blockedFetch` and falling through) keeps the
+ * exception visible at every call site -- `import { realFetch }` -- instead
+ * of ambient and easy to miss, and every other test file's un-imported
+ * `fetch(...)` still throws exactly as before.
  */
 // Marks this file as a module (it otherwise has no top-level import/export)
 // so the `function`+`namespace` merge below is allowed at all --
 // `verbatimModuleSyntax` disallows namespaces in a global script file.
-export {};
+export const realFetch: typeof fetch = fetch;
 
 function blockedFetch(): Promise<Response> {
   throw new Error(

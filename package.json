@@ -11,8 +11,8 @@
     "test:cov": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
-    "fmt": "oxfmt src",
-    "fmt:check": "oxfmt --check src",
+    "fmt": "oxfmt src e2e",
+    "fmt:check": "oxfmt --check src e2e",
     "check": "bun run lint && bun run fmt:check && bun run typecheck && bun test"
   },
   "devDependencies": {
