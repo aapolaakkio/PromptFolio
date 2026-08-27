@@ -3,10 +3,11 @@ import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
 import { instruments } from "../db/schema";
 import { HttpError, handle, json } from "../http";
+import { backfillCommittedInstruments } from "../import/backfill-on-commit";
 import { BROKER_CONFIGS, OP_WEB_PASTE } from "../import/brokers";
 import { commitDraft, undoImport } from "../import/commit";
 import { detectBroker, parseCsv } from "../import/csv";
-import { mapRows } from "../import/map";
+import { mapRows, type Draft } from "../import/map";
 import { parseOpPaste } from "../import/op-paste";
 import type { BrokerCsvConfig } from "../import/types";
 import { assertAccountOwned } from "./accounts";
@@ -165,6 +166,20 @@ const buildPasteDraft = (text: string, accountId: number) => {
   };
 };
 
+/**
+ * Fires backfill for a just-committed draft's instruments without ever letting it delay or fail
+ * the response a caller is waiting on -- see backfill-on-commit.ts's own doc comment for why
+ * this is fire-and-forget rather than awaited. `backfillCommittedInstruments` already never
+ * throws (it isolates every instrument's own failure internally), but the `.catch` here is a
+ * second, independent layer for the same reason `runScheduledRefresh` (prices/refresh.ts) keeps
+ * its own try/catch around each phase even though the function it calls is meant not to reject.
+ */
+const fireBackfill = (draft: Draft): void => {
+  void backfillCommittedInstruments(db, draft).catch((cause) => {
+    console.error("Taustatäyttö tuonnin jälkeen epäonnistui odottamattomasti", cause);
+  });
+};
+
 // A pasted-text import has no real filename; this constant labels the
 // resulting `imports` row the same way every OP paste produces, so the
 // import history reads as "an OP paste", not a made-up per-request name.
@@ -191,17 +206,16 @@ export const importRoutes = {
       const { file, accountId } = await readUpload(request);
       assertAccountOwned(userId, accountId);
       const { config, draft, sha256 } = await buildDraft(file, accountId);
-      return json(
-        await commitDraft(db, {
-          userId,
-          accountId,
-          filename: file.name,
-          sha256,
-          draft,
-          kind: config.broker === "nordnet" ? "csv_nordnet" : "csv_op",
-        }),
-        201,
-      );
+      const result = await commitDraft(db, {
+        userId,
+        accountId,
+        filename: file.name,
+        sha256,
+        draft,
+        kind: config.broker === "nordnet" ? "csv_nordnet" : "csv_op",
+      });
+      fireBackfill(draft);
+      return json(result, 201);
     }),
   },
   "/api/imports/op-paste/preview": {
@@ -219,17 +233,16 @@ export const importRoutes = {
       const { text, accountId } = PasteBody.parse(await request.json());
       assertAccountOwned(userId, accountId);
       const { draft, sha256 } = buildPasteDraft(text, accountId);
-      return json(
-        await commitDraft(db, {
-          userId,
-          accountId,
-          filename: OP_PASTE_FILENAME,
-          sha256,
-          draft,
-          kind: "csv_op",
-        }),
-        201,
-      );
+      const result = await commitDraft(db, {
+        userId,
+        accountId,
+        filename: OP_PASTE_FILENAME,
+        sha256,
+        draft,
+        kind: "csv_op",
+      });
+      fireBackfill(draft);
+      return json(result, 201);
     }),
   },
   "/api/imports/:id/undo": {

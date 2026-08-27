@@ -433,6 +433,72 @@ describe("POST /api/imports/commit", () => {
     expect(undoResponse.status).toBe(200);
     expect(await undoResponse.json()).toEqual({ deleted: 1 });
   });
+
+  test("a commit still returns 201 even when the backfill it fires afterwards can't reach any price source", async () => {
+    // No fetchImpl is injected anywhere in this test -- the route has no way to accept one
+    // (matching how ensureDraftFxRates's ECB fetch is never stubbed through the route either;
+    // see this describe block's other EUR-only tests), so the fire-and-forget backfill this
+    // commit triggers (src/server/api/imports.ts's `fireBackfill`) hits the real global fetch,
+    // which src/server/test-network-guard.ts replaces with one that always throws. This proves
+    // the constraint end to end: a commit whose own rows are all perfectly valid must not be
+    // reported as failed just because the price source its backfill needs is unreachable.
+    const { cookie } = await signUp(
+      `imp-commit-backfill-isolated-${crypto.randomUUID()}@example.com`,
+    );
+    const accountId = await openAccount(cookie);
+    await registerNokia(cookie);
+
+    const { getDb } = await import("../db");
+    const { instruments, priceFetchLog } = await import("../db/schema");
+    const { asc, eq } = await import("drizzle-orm");
+    const { db } = getDb();
+    // SAFETY: registerNokia() above always creates (or has already created, in an earlier
+    // test sharing this process-wide database) exactly this instrument.
+    const nokia = db.select().from(instruments).where(eq(instruments.isin, "FI0009000681")).get()!;
+    const logCountBefore = db
+      .select()
+      .from(priceFetchLog)
+      .where(eq(priceFetchLog.instrumentId, nokia.id))
+      .all().length;
+
+    const row = nordnetRow({
+      id: "2002",
+      date: "2020-06-15",
+      type: "OSTO",
+      name: "NOKIA",
+      isin: "FI0009000681",
+      qty: "100",
+      price: "4,15",
+      fee: "3,00",
+      currency: "EUR",
+      amount: "-418,00",
+    });
+
+    const commitResponse = await importRoutes["/api/imports/commit"].POST(
+      uploadRequest("http://x/api/imports/commit", cookie, nordnetFile(row), accountId),
+    );
+    expect(commitResponse.status).toBe(201);
+    // SAFETY: a 201 from POST /api/imports/commit (asserted above) always returns
+    // { importId, inserted, skipped }.
+    const commitBody = (await commitResponse.json()) as { inserted: number };
+    expect(commitBody.inserted).toBe(1);
+
+    // The fire-and-forget backfill is not awaited by the route (that's the whole point --
+    // see fireBackfill's own comment), so give its one synchronous-throw-turned-rejection a
+    // moment to settle before asserting on its effect.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const logAfter = db
+      .select()
+      .from(priceFetchLog)
+      .where(eq(priceFetchLog.instrumentId, nokia.id))
+      .orderBy(asc(priceFetchLog.id))
+      .all();
+    expect(logAfter.length).toBeGreaterThan(logCountBefore);
+    const newest = logAfter[logAfter.length - 1]!;
+    expect(newest.ok).toBe(false);
+    expect(newest.message).toContain("Taustatäyttö");
+  });
 });
 
 // --- POST /api/imports/:id/undo ---

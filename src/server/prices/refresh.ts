@@ -2,7 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import type { CronJob } from "bun";
 
 import type { getDb } from "../db";
-import { instruments, priceFetchLog, transactions } from "../db/schema";
+import { instruments, priceFetchLog, prices, transactions } from "../db/schema";
 import { refreshFxRates } from "../fx";
 import { sourceFor } from "./registry";
 import { SourceNotImplementedError, type FetchImpl, type FetchedPrice } from "./types";
@@ -259,6 +259,120 @@ export const backfillInstrument = async (
   return { inserted: written, incomplete };
 };
 
+/**
+ * `priceSource`s excluded from `needsBackfill`/`backfillMany` even though `backfillInstrument`
+ * itself would happily attempt them: both genuinely cannot return history through their public,
+ * unauthenticated page, no matter how many times they're asked. `nordnet_fund`'s page carries
+ * only `latestNav`/`previousNav` -- two points (see funds.ts's `NORDNET_FUND` comment, and
+ * `BackfillResult.incomplete`'s doc above). `op_fund`'s page carries exactly one NAV, the
+ * current one (`OP_FUND`'s fetch returns at most a single `FetchedPrice`) -- the identical
+ * shape of limitation, discovered while wiring this sweep up, not something `op_fund`'s own
+ * source code claims anywhere in a comment. Neither will ever stop looking "incomplete" no
+ * matter how many times a nightly catch-up sweep re-fetches it, so excluding them here is what
+ * keeps that sweep from burning a request against each one, forever, for zero gain -- exactly
+ * the "do not retry it pointlessly on every trigger" a real fix for this gap has to avoid.
+ * `backfillInstrument` called directly (the import-commit trigger's one-off attempt, or a
+ * manual `bun -e` call) is unaffected -- this exclusion only governs the sweep's own selection.
+ */
+const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund"]);
+
+/**
+ * True when `instrumentId` has a real earliest transaction but its stored price history does
+ * not yet reach it -- either no price row exists for it at all, or the earliest one is dated
+ * more than `BACKFILL_GAP_TOLERANCE_DAYS` after that transaction. This is the selection this
+ * task's nightly catch-up sweep (`backfillMany`, called from `runScheduledRefresh`) needs and
+ * the existing daily `refreshPrices` sweep does not: `refreshPrices` always re-fetches
+ * "today" for every instrument regardless of history, but re-running a full-range backfill
+ * for an instrument that already has one would be a wasted request against Yahoo (or whichever
+ * source) every single night, for an instrument that needs nothing further.
+ */
+const needsBackfill = (db: Db, instrumentId: number): boolean => {
+  const instrument = db.select().from(instruments).where(eq(instruments.id, instrumentId)).get();
+  if (!instrument) return false;
+  if (instrument.priceSource === "manual" || NEVER_BACKFILLABLE.has(instrument.priceSource)) {
+    return false;
+  }
+
+  const earliestTxn = db
+    .select({ tradeDate: transactions.tradeDate })
+    .from(transactions)
+    .where(eq(transactions.instrumentId, instrumentId))
+    .orderBy(asc(transactions.tradeDate))
+    .limit(1)
+    .get();
+  if (!earliestTxn) return false;
+
+  const earliestPrice = db
+    .select({ date: prices.date })
+    .from(prices)
+    .where(eq(prices.instrumentId, instrumentId))
+    .orderBy(asc(prices.date))
+    .limit(1)
+    .get();
+  if (!earliestPrice) return true;
+
+  return (
+    earliestPrice.date > earliestTxn.tradeDate &&
+    daysBetween(earliestPrice.date, earliestTxn.tradeDate) > BACKFILL_GAP_TOLERANCE_DAYS
+  );
+};
+
+export type BackfillManyResult = {
+  readonly attempted: number;
+  readonly backfilled: number;
+  readonly incomplete: number;
+  readonly errored: number;
+};
+
+/**
+ * Runs `backfillInstrument` for every id in `instrumentIds` that `needsBackfill` says actually
+ * needs it, isolating each attempt from every other's exactly like `refreshPrices` does for the
+ * daily fetch: `backfillInstrument` itself already catches and logs a source's own fetch
+ * failure, but the surrounding `try/catch` here is a second, independent layer in case
+ * something it did not anticipate (an unexpected database error, say) still throws -- this
+ * function must never propagate a rejection, since both of its callers (the import-commit
+ * route, and `runScheduledRefresh`'s nightly catch-up sweep below) rely on that to keep
+ * backfill fully isolated from the operation that triggered it.
+ *
+ * Sequential, deliberately not concurrent: a handful of years-long histories fetched one at a
+ * time is already gentle on a public endpoint like Yahoo's, and firing them all at once would
+ * be exactly the unnecessary burst this task's own review called out as worth thinking about.
+ * No further throttling (delays between requests, a request budget) is added on top of that --
+ * this is a single-user instance backfilling at most a handful of instruments, not a fleet, and
+ * inventing a rate limit with no evidence Yahoo's public endpoint actually needs one would be
+ * exactly the kind of unverified guess this project's other `prices/` code already declines to
+ * make (see `types.ts`'s `requirePositiveMinor` comment for the same principle applied to a
+ * different check).
+ */
+export const backfillMany = async (
+  db: Db,
+  instrumentIds: readonly number[],
+  opts: { fetchImpl?: FetchImpl; today?: string } = {},
+): Promise<BackfillManyResult> => {
+  let attempted = 0;
+  let backfilled = 0;
+  let incomplete = 0;
+  let errored = 0;
+
+  for (const instrumentId of new Set(instrumentIds)) {
+    if (!needsBackfill(db, instrumentId)) continue;
+    attempted++;
+    try {
+      const result = await backfillInstrument(db, instrumentId, opts);
+      if (result.inserted > 0) backfilled++;
+      if (result.incomplete) incomplete++;
+    } catch (cause) {
+      errored++;
+      console.error(
+        `Taustatäyttö epäonnistui odottamattomasti instrumentille ${instrumentId}`,
+        cause,
+      );
+    }
+  }
+
+  return { attempted, backfilled, incomplete, errored };
+};
+
 /** Weekday evenings, after Finnish fund NAVs publish. */
 const SCHEDULE = "30 19 * * 1-5";
 const SCHEDULE_TZ = "Europe/Helsinki";
@@ -288,6 +402,29 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.log(`Hintapäivitys: ${result.ok} onnistui, ${result.failed} epäonnistui`);
   } catch (cause) {
     console.error("Hintapäivitys epäonnistui", cause);
+  }
+  try {
+    // Catches up any instrument whose stored history still doesn't reach its earliest
+    // transaction -- an instrument imported before this catch-up sweep existed, or one whose
+    // one-off backfill on import (see src/server/import/backfill-on-commit.ts) failed or was
+    // never triggered at all. `backfillMany`'s own `needsBackfill` filter is what keeps this
+    // cheap on every ordinary night: an instrument already fully backfilled, `manual`, or a
+    // source that can never complete one (`nordnet_fund`/`op_fund`) is skipped without a
+    // network call.
+    const allInstrumentIds = db
+      .select({ id: instruments.id })
+      .from(instruments)
+      .all()
+      .map((row) => row.id);
+    const result = await backfillMany(db, allInstrumentIds);
+    if (result.attempted > 0) {
+      console.log(
+        `Taustatäyttö: ${result.backfilled} täydentyi, ${result.incomplete} jäi vajaaksi, ` +
+          `${result.errored} virheellistä (${result.attempted} instrumenttia yritetty)`,
+      );
+    }
+  } catch (cause) {
+    console.error("Taustatäyttö epäonnistui", cause);
   }
 };
 

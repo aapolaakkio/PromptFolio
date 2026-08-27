@@ -143,8 +143,8 @@ row carries a small **"vanha"** ("old") badge next to it — the number shown is
 current. A holding with no price at all yet shows **"ei hintaa"** ("no price") instead, so it can
 never be mistaken for "priced at zero".
 
-A long-running "old" badge on a specific instrument, especially a Nordnet fund right after you
-first deploy, is expected — see "Nordnet fund price history" below, not a bug.
+A long-running "old" badge on a Nordnet-fund or OP-fund holding is expected, not a bug — see
+"Which holdings get real history" below for why those two specifically never clear it.
 
 ## Backup and restore
 
@@ -177,11 +177,13 @@ docker compose start promptfolio
 ## The scheduled refresh
 
 A background job runs **weekday evenings at 19:30 Europe/Helsinki** (after Finnish fund NAVs
-publish for the day), refreshing FX rates and every non-`manual` instrument's price. It only runs
-in the Docker/production build (`NODE_ENV=production`) — it is not registered at all under
-`bun run dev`, so editing code locally never fires a real fetch against ECB or a broker's price
-page. Every attempt, success or failure, is logged to the `price_fetch_log` table; a source that
-fails degrades that instrument's badge to stale rather than breaking the dashboard.
+publish for the day), refreshing FX rates and every non-`manual` instrument's price, then catching
+up backfill (see "Which holdings get real history" below) for any instrument whose stored price
+history still doesn't reach its earliest transaction. It only runs in the Docker/production build
+(`NODE_ENV=production`) — it is not registered at all under `bun run dev`, so editing code locally
+never fires a real fetch against ECB, Yahoo, or a broker's price page. Every attempt, success or
+failure, is logged to the `price_fetch_log` table; a source that fails degrades that instrument's
+badge to stale rather than breaking the dashboard.
 
 To trigger a refresh by hand instead of waiting for the schedule — after importing a fresh price
 source, or to check a fix — run this inside the running container:
@@ -195,20 +197,40 @@ await runScheduledRefresh(getDb().db);
 ```
 
 (Without Docker, run the same snippet from the project root with `bun -e "..."` directly.) There
-is no button for this in the UI in Phase 1.
+is no button for this in the UI in Phase 1. This same command also runs the backfill catch-up
+described below, so it doubles as the manual way to backfill an existing holding without
+re-importing anything.
 
 ## Phase 1 scope and known limitations
 
 This section is deliberately unflattering. Read it before trusting a number on the dashboard.
 
-- **Nordnet fund price history cannot be backfilled.** Nordnet's historical NAV endpoint requires
-  a logged-in browser session; nothing this app can call anonymously. The public fund page only
-  gives the latest and previous NAV — two points. History accumulates one point per weekday
-  evening from whenever you first deploy this and start the scheduled refresh. Since the largest
-  holdings in the exports this was built against are Nordnet funds, **the growth chart for those
-  holdings starts from your deploy date, not from when you actually bought them** — the rest of
-  the portfolio (transaction-level cost basis, current value) is correct from day one; only the
-  *historical NAV curve* for Nordnet funds is short until it accumulates.
+- **Which holdings get real history, and which accumulate from first run.** Every `yahoo`-priced
+  instrument (listed stocks and ETFs, and any UCITS ETF) backfills its real
+  price history automatically: Yahoo's public chart endpoint answers a `from`/`to` range directly,
+  so the growth chart, TWR and XIRR see genuine multi-year data going back to the instrument's
+  earliest transaction, not a curve that starts on whatever day you happened to deploy this.
+  **Nordnet-fund and OP-fund holdings cannot get this.** Neither broker exposes fund history to an
+  unauthenticated caller — Nordnet's public fund page carries only the latest and previous NAV
+  (two points), OP's carries only the current one (one point) — so both sources can only ever
+  report what today's page shows, never a range. For those two, history accumulates one point per
+  weekday evening from whenever you first deploy this and start the scheduled refresh; **the
+  growth chart for a Nordnet-fund or OP-fund holding starts from your deploy date, not from when
+  you actually bought it.** The rest of the portfolio (transaction-level cost basis, current
+  value) is correct from day one either way; only the *historical NAV curve* for these two sources
+  is short until it accumulates, and nothing about that will ever change — see
+  `backfillMany`'s `NEVER_BACKFILLABLE` comment in `src/server/prices/refresh.ts` for why the
+  nightly catch-up sweep deliberately stops asking.
+
+  **When backfill runs.** Automatically, twice: right after an import commits (for every
+  instrument that import's rows reference — including a *re*-import of an old export, which is
+  how a holding that predates this feature, or whose backfill failed the first time, catches up
+  without waiting for anything), and every weekday evening as part of the scheduled refresh, which
+  catches up any instrument still missing history for any reason. Both run in the background and
+  can never fail or delay the import/refresh that triggered them — a Yahoo outage shows up as a
+  failed row in `price_fetch_log`, never as a failed import. To trigger it by hand instead of
+  waiting — right after registering a new instrument, say — see "The scheduled refresh" above; the
+  same `runScheduledRefresh` snippet runs this catch-up too.
 
 - **OP has no export.** Transactions are pasted from OP's web transaction table, one page at a
   time, and pages may land in any order. If a sale's matching purchase is on a page imported
