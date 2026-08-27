@@ -269,6 +269,55 @@ test("every OP fixture row with no ISIN is tracked as unknown by name, never giv
   expect(draft.unknownIsins.every((u) => u.isin === null)).toBe(true);
 });
 
+// --- options.knownNames (Task 20: makes a name-only row resolvable across re-imports) ---
+
+test("resolves a name-only row against options.knownNames, case-insensitively", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map(), {
+    // Deliberately mixed-case, unlike the fixture's all-caps "OP-MAAILMA
+    // INDEKSI A" -- proves the match is case-insensitive, not merely an
+    // exact-string match that happens to line up.
+    knownNames: new Map([["Op-Maailma Indeksi A", 42]]),
+  });
+  // The fixture's first two rows are both "OP-MAAILMA INDEKSI A" (see
+  // op-paste.test.ts's own row ordering) -- both resolve, so only ESIMERKKI
+  // OYJ (not in knownNames) is left unknown.
+  expect(draft.txns[0]!.instrumentId).toBe(42);
+  expect(draft.txns[1]!.instrumentId).toBe(42);
+  expect(draft.unknownIsins.map((u) => u.name)).toEqual(["ESIMERKKI OYJ"]);
+});
+
+const OP_HEADER = [
+  "Laji",
+  "Tapahtuma",
+  "Tapahtuma-",
+  "päivämäärä",
+  "Määrä",
+  "Kurssi",
+  "Kulut / Korot /",
+  "Verot",
+  "Yhteensä",
+  "Toiminnot",
+].join("\n");
+
+test("still tracks a name-only row as unknown when knownNames has no match", () => {
+  const paste = [
+    OP_HEADER,
+    "JOKU RAHASTO",
+    "OSTO",
+    "10.08.2025",
+    "1,0000   kpl",
+    "10,00   EUR",
+    "10,00   EUR",
+  ].join("\n");
+  const { rows } = parseOpPaste(paste);
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map(), {
+    knownNames: new Map([["eri rahasto", 1]]),
+  });
+  expect(draft.txns[0]!.instrumentId).toBeNull();
+  expect(draft.unknownIsins).toEqual([{ isin: null, name: "JOKU RAHASTO" }]);
+});
+
 test("an unrecognised transaction type becomes a problem, not a guess", () => {
   const rows = [
     rawRow(2, {

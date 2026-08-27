@@ -111,6 +111,25 @@ export type MapRowsOptions = {
   /** Task 10's structural failures (bad column count, malformed quoting), merged into `Draft.problems`. */
   readonly csvProblems?: readonly CsvProblem[];
   readonly accountId?: number;
+  /**
+   * Instrument name -> known instrument id (any casing; matched
+   * case-insensitively inside mapRows, so the caller need not normalise its
+   * own keys), for a broker whose export carries no ISIN at all -- OP's
+   * web-paste view (§10a A3). Nordnet rows always carry a real ISIN, so
+   * `knownIsins` alone is enough for them to resolve to the same instrument
+   * on every re-import once it's created once. An OP row has nothing to key
+   * on but its name, and mapRows never retains a per-row name once
+   * `unknownIsins` is built (`DraftTxn` has no `name` field), so without
+   * this a name-only row would show up as "unknown" forever -- even
+   * immediately after the user resolves it on the review screen and
+   * previews again -- since the freshly rebuilt draft has no way to know
+   * the instrument it just created is the same one. Task 20 (wiring the OP
+   * paste route) is what populates this from the real `instruments` table;
+   * it defaults to empty here so every existing caller that doesn't pass it
+   * (map.test.ts's direct calls) keeps its prior name-always-unknown
+   * behaviour exactly.
+   */
+  readonly knownNames?: ReadonlyMap<string, number>;
 };
 
 /**
@@ -148,10 +167,16 @@ export const mapRows = (
   knownIsins: ReadonlyMap<string, number>,
   options: MapRowsOptions = {},
 ): Draft => {
-  const { csvProblems = [], accountId = 0 } = options;
+  const { csvProblems = [], accountId = 0, knownNames = new Map<string, number>() } = options;
   const txns: DraftTxn[] = [];
   const problems: DraftProblem[] = [];
   const unknown = new Map<string, { isin: string | null; name: string }>();
+  // Normalised once per call, not per row: `knownNames`' own keys are
+  // uppercased here so the lookup below is case-insensitive regardless of
+  // how the caller cased them, without re-scanning the map on every row.
+  const knownNamesUpper = new Map(
+    [...knownNames].map(([name, id]) => [name.toUpperCase(), id] as const),
+  );
 
   /**
    * A field's cell text. `columnPositions` (set for a header that repeats,
@@ -208,10 +233,20 @@ export const mapRows = (
       const isinText = cell(row, "isin").trim();
       const isin = isinText === "" ? null : isinText;
       const nameText = cell(row, "instrumentName").trim();
-      const instrumentId = isin ? (knownIsins.get(isin) ?? null) : null;
+      // A row with a real ISIN resolves through `knownIsins` as before. A
+      // row with none (OP) falls back to `knownNames`, matched
+      // case-insensitively since the name the review screen sends back to
+      // POST /api/instruments is the exact text this parser extracted, but
+      // a *different* paste of the same holding is not guaranteed to carry
+      // identical casing.
+      const instrumentId = isin
+        ? (knownIsins.get(isin) ?? null)
+        : nameText !== ""
+          ? (knownNamesUpper.get(nameText.toUpperCase()) ?? null)
+          : null;
       if (isin && instrumentId === null) {
         unknown.set(isin, { isin, name: nameText });
-      } else if (!isin && nameText !== "") {
+      } else if (!isin && nameText !== "" && instrumentId === null) {
         // No ISIN to key on at all (OP's web-paste view). Resolution is
         // deferred to the review flow, by name, exactly like an unresolved
         // ISIN -- never silently attached to a guessed instrument, and

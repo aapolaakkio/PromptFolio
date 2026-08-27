@@ -210,9 +210,11 @@ describe("detectBrokerConfig", () => {
   // src/server/import/op-paste.ts) -- it is not a `BrokerCsvConfig` and is
   // deliberately absent from `BROKER_CONFIGS`, so `detectBrokerConfig`
   // (which only ever tries `parseCsv`-shaped candidates) correctly does
-  // not, and cannot, detect it. Wiring OP paste into an HTTP route needs
-  // its own endpoint (it arrives as pasted text, not a file upload) --
-  // out of this task's scope; see brokers.ts's `BROKER_CONFIGS` comment.
+  // not, and cannot, detect it. This stays true even after Task 20 wired
+  // OP paste into its own routes (see the "op-paste" describe blocks
+  // below): those routes call `buildPasteDraft`/`parseOpPaste` directly and
+  // never go through `detectBrokerConfig`/`buildDraft`'s file-upload path
+  // at all -- see brokers.ts's `BROKER_CONFIGS` comment.
   test("does not detect an OP paste -- it is not wired into the CSV-upload broker list", async () => {
     const text = await Bun.file(
       `${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`,
@@ -474,5 +476,220 @@ describe("POST /api/imports/:id/undo", () => {
       }),
     );
     expect(response.status).toBe(400);
+  });
+});
+
+// --- POST /api/imports/op-paste/preview and /api/imports/op-paste/commit ---
+//
+// Task 20 closes the gap Task 11's report flagged: OP's paste has no HTTP
+// route at all. Both routes reuse buildPasteDraft -> the same mapRows /
+// commitDraft pipeline the file-upload routes use -- the only difference is
+// how the raw text is obtained (parseOpPaste, not parseCsv). knownIsins
+// alone can never resolve an OP row: it carries no ISIN at all, ever (see
+// op-paste.ts), so `knownInstrumentMaps`'s companion `knownNames` map
+// (Task 20's change to map.ts) is what lets a *previously registered*
+// instrument stop showing up as unknown -- proven directly below, not just
+// asserted.
+
+const opPasteText = (): Promise<string> =>
+  Bun.file(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`).text();
+
+/**
+ * A fresh, schema-valid ISIN per call -- see instruments.test.ts's own
+ * `randomIsin` comment for why a hardcoded ISIN would be flaky across this
+ * shared, process-wide `instruments` table.
+ */
+const randomIsin = (country = "FI"): string =>
+  `${country}${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
+
+/** Registers an instrument by name with a fresh random ISIN -- how the review screen resolves an OP row. */
+const registerByName = async (cookie: string, name: string): Promise<void> => {
+  const response = await instrumentRoutes["/api/instruments"].POST(
+    new Request("http://x/api/instruments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        isin: randomIsin(),
+        ticker: null,
+        name,
+        kind: "fund",
+        currency: "EUR",
+        priceSource: "manual",
+        sourceKey: name,
+      }),
+    }),
+  );
+  if (response.status !== 201) {
+    throw new Error(`registerByName(${name}) failed with status ${response.status}`);
+  }
+};
+
+/** A named contract (not an open `Record<string, string>` dictionary) so `HeadersInit` accepts it either way `cookie` comes out. */
+type PasteRequestHeaders = { "content-type": "application/json"; cookie?: string };
+
+const pasteRequestHeaders = (cookie: string | undefined): PasteRequestHeaders =>
+  cookie === undefined
+    ? { "content-type": "application/json" }
+    : { "content-type": "application/json", cookie };
+
+const pasteRequest = (
+  url: string,
+  cookie: string | undefined,
+  text: string | undefined,
+  accountId: number | string | undefined,
+): Request =>
+  new Request(url, {
+    method: "POST",
+    headers: pasteRequestHeaders(cookie),
+    body: JSON.stringify({ text, accountId }),
+  });
+
+describe("POST /api/imports/op-paste/preview", () => {
+  test("rejects a request with no session", async () => {
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", undefined, "x", 1),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  test("rejects an account the caller does not own", async () => {
+    const owner = await signUp(`imp-paste-preview-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`imp-paste-preview-stranger-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(owner.cookie, "op");
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest(
+        "http://x/api/imports/op-paste/preview",
+        stranger.cookie,
+        await opPasteText(),
+        accountId,
+      ),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  test("rejects a request with no text", async () => {
+    const { cookie } = await signUp(`imp-paste-preview-notext-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie, "op");
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", cookie, undefined, accountId),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  test("rejects a request with a missing account id", async () => {
+    const { cookie } = await signUp(
+      `imp-paste-preview-noaccount-${crypto.randomUUID()}@example.com`,
+    );
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", cookie, await opPasteText(), undefined),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  test("rejects text whose header block isn't a real OP paste", async () => {
+    const { cookie } = await signUp(
+      `imp-paste-preview-badheader-${crypto.randomUUID()}@example.com`,
+    );
+    const accountId = await openAccount(cookie, "op");
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", cookie, "not an OP paste\n", accountId),
+    );
+    expect(response.status).toBe(400);
+    // SAFETY: handle()'s HttpError branch (asserted above via status 400)
+    // always shapes its body as `{ error }`.
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("otsikkoa");
+  });
+
+  test("previews the real OP paste fixture and reports both name-only unresolved instruments", async () => {
+    const { cookie } = await signUp(`imp-paste-preview-ok-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie, "op");
+    const response = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", cookie, await opPasteText(), accountId),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from POST /api/imports/op-paste/preview (asserted
+    // above) always returns { broker, filename, sha256, txns, problems,
+    // unknownIsins }.
+    const body = (await response.json()) as {
+      broker: string;
+      txns: unknown[];
+      problems: unknown[];
+      unknownIsins: Array<{ isin: string | null; name: string }>;
+    };
+    expect(body.broker).toBe("op");
+    expect(body.txns).toHaveLength(4);
+    expect(body.problems).toEqual([]);
+    expect(body.unknownIsins.map((u) => u.name).sort()).toEqual([
+      "ESIMERKKI OYJ",
+      "OP-MAAILMA INDEKSI A",
+    ]);
+    expect(body.unknownIsins.every((u) => u.isin === null)).toBe(true);
+  });
+});
+
+describe("POST /api/imports/op-paste/commit", () => {
+  test("rejects a request with no session", async () => {
+    const response = await importRoutes["/api/imports/op-paste/commit"].POST(
+      pasteRequest("http://x/api/imports/op-paste/commit", undefined, "x", 1),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  test("refuses to commit while an OP instrument is still unresolved", async () => {
+    const { cookie } = await signUp(`imp-paste-commit-unknown-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie, "op");
+    const response = await importRoutes["/api/imports/op-paste/commit"].POST(
+      pasteRequest("http://x/api/imports/op-paste/commit", cookie, await opPasteText(), accountId),
+    );
+    expect(response.status).toBe(400);
+    // SAFETY: handle()'s HttpError branch (asserted above via status 400)
+    // always shapes its body as `{ error }`.
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("OP-MAAILMA INDEKSI A");
+    expect(body.error).toContain("ESIMERKKI OYJ");
+  });
+
+  test("resolving both instruments by name clears them from a fresh preview, then commit and undo both work", async () => {
+    const { cookie } = await signUp(`imp-paste-commit-ok-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie, "op");
+    const text = await opPasteText();
+
+    await registerByName(cookie, "OP-MAAILMA INDEKSI A");
+    await registerByName(cookie, "ESIMERKKI OYJ");
+
+    // Proves the knownNames resolution, not just that commit happens to
+    // succeed: a second preview of the exact same paste text must now
+    // report zero unresolved instruments, purely from the two instruments
+    // just registered by name (OP rows never carry an ISIN to match on).
+    const previewResponse = await importRoutes["/api/imports/op-paste/preview"].POST(
+      pasteRequest("http://x/api/imports/op-paste/preview", cookie, text, accountId),
+    );
+    // SAFETY: a 200 from this route always returns { unknownIsins, ... }.
+    const previewBody = (await previewResponse.json()) as { unknownIsins: unknown[] };
+    expect(previewBody.unknownIsins).toEqual([]);
+
+    const commitResponse = await importRoutes["/api/imports/op-paste/commit"].POST(
+      pasteRequest("http://x/api/imports/op-paste/commit", cookie, text, accountId),
+    );
+    expect(commitResponse.status).toBe(201);
+    // SAFETY: a 201 from POST /api/imports/op-paste/commit (asserted
+    // above) always returns { importId, inserted, skipped }.
+    const commitBody = (await commitResponse.json()) as {
+      importId: number;
+      inserted: number;
+      skipped: number;
+    };
+    expect(commitBody.inserted).toBe(4);
+    expect(commitBody.skipped).toBe(0);
+
+    const undoResponse = await importRoutes["/api/imports/:id/undo"].POST(
+      new Request(`http://x/api/imports/${commitBody.importId}/undo`, {
+        method: "POST",
+        headers: { cookie },
+      }),
+    );
+    expect(undoResponse.status).toBe(200);
+    expect(await undoResponse.json()).toEqual({ deleted: 4 });
   });
 });

@@ -166,13 +166,11 @@ export const OP_WEB_PASTE: OpPasteConfig = {
 /**
  * Every genuinely delimited (CSV-shaped) broker config, for `parseCsv` and
  * `detectBroker`. `OP_WEB_PASTE` is deliberately not here: it is not a
- * `BrokerCsvConfig` and does not go through `parseCsv` at all (see
- * `op-paste.ts`). Wiring an OP-paste upload into an HTTP route is left for
- * a follow-up task -- `src/server/api/imports.ts` currently only accepts a
- * `multipart/form-data` file upload and calls `parseCsv`/`detectBrokerConfig`
- * unconditionally, and reworking that route is out of this task's scope.
- * A real OP paste would arrive as pasted text (e.g. a JSON request body),
- * not a file, which is a genuinely different upload shape, not just a new
- * entry in this array.
+ * `BrokerCsvConfig` and does not go through `parseCsv`/`detectBrokerConfig`
+ * at all (see `op-paste.ts`). It has its own routes instead --
+ * `POST /api/imports/op-paste/preview` and `POST /api/imports/op-paste/commit`
+ * (Task 20) -- which take a JSON `{ text, accountId }` body (pasted text,
+ * not a file) and feed `OP_WEB_PASTE` + `parseOpPaste`'s output into the
+ * same `mapRows`/`commitDraft` pipeline the file-upload routes use.
  */
 export const BROKER_CONFIGS: readonly BrokerCsvConfig[] = [NORDNET];
