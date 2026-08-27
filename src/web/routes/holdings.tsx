@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
-import { eur, qty, fiDate } from "../lib/format";
+import { eur, qty, share, fiDate } from "../lib/format";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort";
 import { RecordPriceForm } from "./RecordPriceForm";
 
@@ -143,6 +143,7 @@ export const HoldingsPage = () => {
             {header("costEur", "Hankintameno")}
             {header("valueEur", "Markkina-arvo")}
             {header("unrealisedEur", "Tuotto")}
+            {header("weight", "Paino")}
             <th>Hinta</th>
           </tr>
         </thead>
@@ -194,6 +195,17 @@ export const HoldingsPage = () => {
                   />
                 ) : (
                   eur(row.unrealisedEur)
+                )}
+              </td>
+              <td className="num">
+                {row.weight === null ? (
+                  // weight is null in exactly the same cases valueEur is (see
+                  // Holding's own doc) -- the same explanation applies here.
+                  <UnknownCostCell
+                    message={row.costBasisError?.message ?? row.valuationError ?? ""}
+                  />
+                ) : (
+                  share(row.weight)
                 )}
               </td>
               <td className="num">

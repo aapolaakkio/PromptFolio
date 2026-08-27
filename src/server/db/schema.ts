@@ -111,6 +111,15 @@ export const imports = sqliteTable("imports", {
     .notNull()
     .default("draft"),
   rowCount: integer("row_count").notNull().default(0),
+  // Set once, at commit time (commit.ts's commitDraft), from the exact counts its own
+  // insert loop produced. Not derivable later from `transactions` alone: after an
+  // undo, every row this import inserted is gone (see commit.ts's undoImport), and a
+  // skipped/duplicate row was never inserted at all, so there is never a `transactions`
+  // row to count it from in the first place. `/api/imports`'s history listing (the
+  // gap this closes -- an import id used to appear once in a success toast and then be
+  // lost) is what actually reads these back.
+  insertedCount: integer("inserted_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),

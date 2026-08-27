@@ -11,6 +11,7 @@ const row = (name: string, valueEur: string, unrealisedEur: string): Holding => 
   costEur: "100.00",
   valueEur,
   unrealisedEur,
+  weight: Number(valueEur) / 1000,
   priceDate: "2025-06-02",
   stale: false,
   costBasisError: null,
@@ -64,4 +65,23 @@ test("a never-priced holding (priceDate null) sorts as zero value, not NaN", () 
     row("B", "50.00", "0.00"),
   ];
   expect(sortHoldings(rows, "valueEur", "desc").map((r) => r.name)).toEqual(["B", "A"]);
+});
+
+test("sorts by weight, a number rather than a decimal string, like the money columns", () => {
+  const rows = [
+    { ...row("A", "100.00", "0.00"), weight: 0.1 },
+    { ...row("B", "100.00", "0.00"), weight: 0.6 },
+    { ...row("C", "100.00", "0.00"), weight: 0.3 },
+  ];
+  expect(sortHoldings(rows, "weight", "desc").map((r) => r.name)).toEqual(["B", "C", "A"]);
+  expect(sortHoldings(rows, "weight", "asc").map((r) => r.name)).toEqual(["A", "C", "B"]);
+});
+
+test("a holding that cannot be valued (weight null) sorts as zero, not NaN, and does not mutate the input", () => {
+  const rows: Holding[] = [
+    { ...row("A", "0.00", "0.00"), weight: null, valueEur: null, valuationError: "ei hintaa" },
+    { ...row("B", "50.00", "0.00"), weight: 0.5 },
+  ];
+  expect(sortHoldings(rows, "weight", "desc").map((r) => r.name)).toEqual(["B", "A"]);
+  expect(rows[0]!.weight).toBeNull();
 });

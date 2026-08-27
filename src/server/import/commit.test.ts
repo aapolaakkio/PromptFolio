@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { eq } from "drizzle-orm";
 import { testDb } from "../db";
-import { accounts, fxRates, instruments, transactions, user } from "../db/schema";
+import { accounts, fxRates, imports, instruments, transactions, user } from "../db/schema";
 import { EUR, parseCurrency } from "../../core/money";
 import { commitDraft, undoImport } from "./commit";
 import type { Draft, DraftTxn } from "./map";
@@ -89,6 +89,14 @@ test("inserts draft rows and records the import", async () => {
   expect(result.skipped).toBe(0);
   const rows = db.select().from(transactions).all();
   expect(rows[0]!.importId).toBe(result.importId);
+  // The counts commitDraft() returns must also be the ones written onto the
+  // `imports` row itself -- /api/imports (the history listing) reads these
+  // back later, potentially long after the in-memory CommitResult above is
+  // gone, and (once undone) after `transactions` no longer has any row to
+  // recount them from at all -- see schema.ts's own comment on these columns.
+  const importRow = db.select().from(imports).where(eq(imports.id, result.importId)).get()!;
+  expect(importRow.insertedCount).toBe(1);
+  expect(importRow.skippedCount).toBe(0);
 });
 
 test("skips a row already present by external id", async () => {
@@ -99,6 +107,12 @@ test("skips a row already present by external id", async () => {
   expect(second.inserted).toBe(0);
   expect(second.skipped).toBe(1);
   expect(db.select().from(transactions).all()).toHaveLength(1);
+  // The second import's own row records that it skipped everything -- a
+  // skipped row was never inserted, so there is no `transactions` row to
+  // ever recount this from later; it must be captured at commit time.
+  const secondImportRow = db.select().from(imports).where(eq(imports.id, second.importId)).get()!;
+  expect(secondImportRow.insertedCount).toBe(0);
+  expect(secondImportRow.skippedCount).toBe(1);
 });
 
 test("skips a row already present by content hash when there is no external id", async () => {

@@ -40,8 +40,25 @@ export const qty = (value: string): string => toAsciiMinus(QTY.format(Number(val
 export const pct = (ratio: number): string =>
   toAsciiMinus(`${ratio > 0 ? "+" : ""}${PCT.format(ratio)}`);
 
+/**
+ * Formats a share ratio (e.g. a holding's or an allocation slice's `weight`, 0..1) as
+ * an unsigned Finnish percentage -- unlike `pct` above, no leading "+": a portfolio
+ * weight is a proportion, not a gain/loss, so a sign would be meaningless noise.
+ */
+export const share = (ratio: number): string => toAsciiMinus(PCT.format(ratio));
+
 /** Formats an ISO date (YYYY-MM-DD) as the Finnish d.m.yyyy form. */
 export const fiDate = (iso: string): string => {
   const [year, month, day] = iso.split("-");
   return `${Number(day)}.${Number(month)}.${year}`;
 };
+
+const DATETIME = new Intl.DateTimeFormat("fi-FI", { dateStyle: "short", timeStyle: "short" });
+
+/**
+ * Formats a full ISO 8601 instant (e.g. an import's `createdAt`, unlike `fiDate`
+ * above which only ever sees a bare `YYYY-MM-DD` trade/valuation date) as
+ * `pv.kk.vvvv klo hh.mm` in the viewer's own local time zone -- `Intl` resolves the
+ * zone itself; this project never stores or assumes one.
+ */
+export const fiDateTime = (iso: string): string => DATETIME.format(new Date(iso));

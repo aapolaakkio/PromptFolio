@@ -205,6 +205,7 @@ describe("GET /api/holdings", () => {
       costEur: string;
       valueEur: string;
       unrealisedEur: string;
+      weight: number;
       stale: boolean;
       priceDate: string | null;
     }>;
@@ -217,6 +218,10 @@ describe("GET /api/holdings", () => {
     expect(holding.priceDate).toBe("2024-01-10");
     // Priced on 10.1. but requested as of 1.6. -- carried forward, so stale.
     expect(holding.stale).toBe(true);
+    // The only holding -> the entire weight denominator -> 100% of it.
+    // weight is a `number` on the wire, like allocation's own `weight`, never
+    // a decimal string.
+    expect(holding.weight).toBe(1);
   });
 
   test("scopes holdings to the caller and never returns another user's position", async () => {

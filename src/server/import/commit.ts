@@ -238,6 +238,18 @@ export const commitDraft = async (
       if (insertRow(tx, args.accountId, importId, row) === "inserted") inserted++;
       else skipped++;
     }
+
+    // Written back onto the just-created row rather than known up front: `inserted`/
+    // `skipped` are the *outcome* of the insert loop above (a duplicate content hash
+    // or external id can only be detected by actually attempting each row), not
+    // something derivable from `draft` alone before it runs. `/api/imports` (the
+    // history listing) reads these back -- they cannot be recovered later from
+    // `transactions` alone once an import is undone (its rows are deleted) or for a
+    // skipped row (which was never inserted at all) -- see schema.ts's own comment.
+    tx.update(imports)
+      .set({ insertedCount: inserted, skippedCount: skipped })
+      .where(eq(imports.id, importId))
+      .run();
   });
 
   return { importId, inserted, skipped };

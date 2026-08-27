@@ -31,6 +31,13 @@
  * non-EUR instrument) no fx rate is known for today. `costEur` stays populated in
  * that case -- cost basis does not depend on today's market data. Never a
  * fabricated `0,00 €` either way (see `server/valuation.ts`'s `HoldingView` doc).
+ *
+ * `weight` is this holding's share of the portfolio (e.g. `0.1523` for 15.23%) -- a
+ * ratio, so a plain `number` on the wire, never a decimal string like the money
+ * fields above; the page never computes it itself (spec §9.2: no money arithmetic in
+ * the frontend). `null` exactly when `valueEur` is `null` -- a holding that cannot be
+ * valued has no meaningful weight either (see `server/valuation.ts`'s `HoldingView.weight`
+ * doc for the denominator this is computed against).
  */
 export type Holding = {
   instrumentId: number;
@@ -42,13 +49,14 @@ export type Holding = {
   costEur: string | null;
   valueEur: string | null;
   unrealisedEur: string | null;
+  weight: number | null;
   priceDate: string | null;
   stale: boolean;
   costBasisError: { tradeDate: string; message: string } | null;
   valuationError: string | null;
 };
 
-export type SortKey = "name" | "quantity" | "costEur" | "valueEur" | "unrealisedEur";
+export type SortKey = "name" | "quantity" | "costEur" | "valueEur" | "unrealisedEur" | "weight";
 export type SortDirection = "asc" | "desc";
 
 // Finnish alphabetical order places Ä/Ö after Z, not next to A/O -- a plain
@@ -71,6 +79,9 @@ export const sortHoldings = (
     if (key === "name") return sign * collator.compare(a.name, b.name);
     // A `null` money field (unknown cost basis) sorts as zero, same treatment
     // as the pre-existing "never priced" case below -- `Number(null)` is `0`.
+    // `weight` is already a `number | null`, not a decimal string like the money
+    // fields, but `Number()` is the identity function on a real `number` and still
+    // `0` on `null`, so this same line handles it with no separate branch.
     return sign * (Number(a[key]) - Number(b[key]));
   });
 };

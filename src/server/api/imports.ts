@@ -1,7 +1,8 @@
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
-import { instruments } from "../db/schema";
+import { imports, instruments } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { backfillCommittedInstruments } from "../import/backfill-on-commit";
 import { BROKER_CONFIGS, OP_WEB_PASTE } from "../import/brokers";
@@ -191,6 +192,45 @@ const OP_PASTE_FILENAME = "op-liite.txt";
 // (readUpload caps it at 5 MB, PasteBody caps text at 2 M characters) and
 // the parse is cheap.
 export const importRoutes = {
+  /**
+   * Lists this user's own import history -- when, which broker, the filename, how
+   * many rows landed vs. were skipped as duplicates, and whether it has since been
+   * undone. Closes the gap `POST /api/imports/:id/undo` left: that route has worked
+   * since Task 12, but an import's id used to appear exactly once, in a success
+   * toast, and was then gone -- no way to reach undo again without reading the
+   * database directly. Scoped to `userId` via a `where`, never filtered client-side,
+   * so one user's imports can never be listed for another (see imports.test.ts's
+   * cross-user test for this route).
+   *
+   * Newest first (`desc(imports.createdAt)`, ties broken by `id` since two commits
+   * inside the same millisecond would otherwise sort arbitrarily) -- the import a
+   * user most likely wants to undo (the one they just made) is always at the top.
+   */
+  "/api/imports": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const rows = db
+        .select()
+        .from(imports)
+        .where(eq(imports.userId, userId))
+        .orderBy(desc(imports.createdAt), desc(imports.id))
+        .all();
+      return json(
+        rows.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          filename: row.filename,
+          // ISO 8601, like every other cross-boundary instant this project hands the
+          // client (see IsoDate elsewhere) -- the frontend formats it, this layer
+          // never pre-formats a date for a locale.
+          createdAt: row.createdAt.toISOString(),
+          inserted: row.insertedCount,
+          skipped: row.skippedCount,
+          undone: row.status === "undone",
+        })),
+      );
+    }),
+  },
   "/api/imports/preview": {
     POST: handle(async (request) => {
       const { userId } = await requireUser(request);

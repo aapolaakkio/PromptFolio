@@ -2,6 +2,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis";
 import { positionsAt } from "../core/ledger";
 import {
+  addMoney,
   EUR,
   formatMoney,
   formatQuantity,
@@ -193,6 +194,37 @@ export type HoldingView = {
    */
   readonly valueEur: string | null;
   readonly unrealisedEur: string | null;
+  /**
+   * This holding's market value as a fraction of the portfolio, e.g. `0.1523` for
+   * 15.23%. A ratio, not an amount -- like `core/allocation.ts`'s `Slice.weight` and
+   * `/api/returns`'s `twr`/`mwr`, this is legitimately a `number` on the wire, never a
+   * decimal string, and it is computed here, server-side, exactly once -- never
+   * re-derived in the frontend from `valueEur` strings (spec §9.2: no money arithmetic
+   * in the UI).
+   *
+   * `null` exactly when `valueEur` is `null`: a holding that cannot be valued (no
+   * price, no fx rate, or an unmatched-disposal cost basis -- see `valueEur`'s own doc)
+   * has no meaningful share of the portfolio either. `null`, not `0` -- `0` would read
+   * as "this position is worth nothing", which is a different, false claim from "this
+   * position's worth is unknown" (the same reasoning `valueEur`/`unrealisedEur`
+   * themselves already follow).
+   *
+   * The denominator is the sum of every OTHER holding's `valueEur` in this same
+   * response -- i.e. only holdings that could themselves be valued. This is a
+   * deliberate choice, not the only defensible one: summing against the full ledger
+   * (treating an unvaluable holding as contributing 0 to the total) would silently
+   * shrink every other holding's weight whenever one holding's price feed breaks, with
+   * no visible signal that the total is incomplete. Excluding it from the denominator
+   * instead keeps "weights sum to 1 across valued holdings" true and legible, and the
+   * omission is NOT silent: the excluded holding still appears in this same response
+   * with `valuationError`/`costBasisError` explaining why, exactly the precedent
+   * `core/allocation.ts`'s `allocateBy` already set for slice totals (its own
+   * `excludedInstrumentIds`, merged into `/api/allocation`'s response). A caller wanting
+   * "share of everything, valued or not" can always recompute it from `excludedInstrumentIds`
+   * (returned by `/api/allocation`) plus this array -- but that is not the default a
+   * plain holdings table should silently assume.
+   */
+  readonly weight: number | null;
   readonly priceDate: IsoDate | null;
   /**
    * `true` whenever the number shown must carry a staleness badge rather than read as
@@ -257,68 +289,108 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
   const costs = costBasisPerInstrument(txns, on);
 
-  return [...positionsAt(txns, on)]
-    .flatMap(([instrumentId, quantity]) => {
-      const instrument = byId.get(instrumentId);
-      if (!instrument) return [];
+  // First pass: everything EXCEPT `weight`, which needs the total across every other
+  // row in this same result and so cannot be computed per-row in a single flatMap the
+  // way the rest of this function's fields can.
+  const rows = [...positionsAt(txns, on)].flatMap((entry) => {
+    const [instrumentId, quantity] = entry;
+    const instrument = byId.get(instrumentId);
+    if (!instrument) return [];
 
-      const price = lookup.priceOn(instrumentId, on);
-      const priceDate = lookup.priceDateOn(instrumentId, on);
-      const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
+    const price = lookup.priceOn(instrumentId, on);
+    const priceDate = lookup.priceDateOn(instrumentId, on);
+    const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
 
-      // C1: no fabricated `zeroMoney(EUR)` fallback -- a holding this function cannot
-      // honestly price or convert reports `null`, with `valuationError` saying why,
-      // exactly like `costBasisError` already does for an unmatched disposal.
-      const nativeValueEur: Money | null =
-        price === null
+    // C1: no fabricated `zeroMoney(EUR)` fallback -- a holding this function cannot
+    // honestly price or convert reports `null`, with `valuationError` saying why,
+    // exactly like `costBasisError` already does for an unmatched disposal.
+    const nativeValueEur: Money | null =
+      price === null
+        ? null
+        : instrument.currency !== EUR && rate === null
           ? null
-          : instrument.currency !== EUR && rate === null
-            ? null
-            : rate === null
-              ? mulMoney(price, quantity)
-              : toEur(mulMoney(price, quantity), rate);
-      const valuationError =
-        price === null
-          ? explainValuationFailure(instrument, on, "no-price")
-          : instrument.currency !== EUR && rate === null
-            ? explainValuationFailure(instrument, on, "no-fx-rate")
-            : null;
-
-      const outcome: CostBasisOutcome | undefined = costs.get(instrumentId);
-      const costBasisError =
-        outcome && !outcome.ok
-          ? {
-              tradeDate: outcome.error.tradeDate,
-              message: explainUnmatchedDisposal(instrument, outcome.error.tradeDate),
-            }
+          : rate === null
+            ? mulMoney(price, quantity)
+            : toEur(mulMoney(price, quantity), rate);
+    const valuationError =
+      price === null
+        ? explainValuationFailure(instrument, on, "no-price")
+        : instrument.currency !== EUR && rate === null
+          ? explainValuationFailure(instrument, on, "no-fx-rate")
           : null;
-      // `outcome` is only ever absent for an instrument `positionsAt` did not
-      // itself derive from `costBasisPerInstrument`'s own txn scan -- both walk
-      // the same set of instrumentId-bearing transactions, so this defaults to
-      // zero purely as a defensive fallback, matching this function's prior
-      // behaviour for that case.
-      const costEur = costBasisError ? null : outcome?.ok ? outcome.costEur : zeroMoney(EUR);
 
-      const holding: HoldingView = {
+    const outcome: CostBasisOutcome | undefined = costs.get(instrumentId);
+    const costBasisError =
+      outcome && !outcome.ok
+        ? {
+            tradeDate: outcome.error.tradeDate,
+            message: explainUnmatchedDisposal(instrument, outcome.error.tradeDate),
+          }
+        : null;
+    // `outcome` is only ever absent for an instrument `positionsAt` did not
+    // itself derive from `costBasisPerInstrument`'s own txn scan -- both walk
+    // the same set of instrumentId-bearing transactions, so this defaults to
+    // zero purely as a defensive fallback, matching this function's prior
+    // behaviour for that case.
+    const costEur = costBasisError ? null : outcome?.ok ? outcome.costEur : zeroMoney(EUR);
+
+    // The single source of truth for "can this holding's market value be trusted at
+    // all": null whenever `costBasisError` is set (see `HoldingView.costEur`'s doc --
+    // an unmatched disposal can leave `quantity` negative, so a "market value" derived
+    // from it would be nonsense) OR the price/fx lookup itself failed
+    // (`nativeValueEur === null`). `valueEur`, `unrealisedEur` and `weight` all key off
+    // this exact same value, so the three fields stay null/non-null in lockstep by
+    // construction rather than three independently-written conditions drifting apart.
+    const valuedEur: Money | null = costBasisError === null ? nativeValueEur : null;
+
+    return [
+      {
         instrumentId,
-        isin: instrument.isin,
-        name: instrument.name,
-        kind: instrument.kind,
-        currency: instrument.currency,
-        quantity: formatQuantity(quantity),
-        costEur: costEur === null ? null : formatMoney(costEur),
-        valueEur:
-          costBasisError === null && nativeValueEur !== null ? formatMoney(nativeValueEur) : null,
-        unrealisedEur:
-          costEur === null || nativeValueEur === null
-            ? null
-            : formatMoney(subMoney(nativeValueEur, costEur)),
+        instrument,
+        quantity,
+        valuedEur,
         priceDate,
-        stale: valuationError !== null || priceDate !== on,
-        costBasisError,
         valuationError,
-      };
-      return [holding];
-    })
+        costBasisError,
+        costEur,
+      },
+    ];
+  });
+
+  // The weight denominator: the sum of every holding that COULD be valued (see
+  // `HoldingView.weight`'s own doc for why an unvaluable holding is excluded from the
+  // total rather than counted as a 0 contribution -- the same choice
+  // `core/allocation.ts`'s `allocateBy` already made for slice totals).
+  const totalValuedEur = rows.reduce(
+    (sum, row) => (row.valuedEur === null ? sum : addMoney(sum, row.valuedEur)),
+    zeroMoney(EUR),
+  );
+
+  return rows
+    .map((row): HoldingView => ({
+      instrumentId: row.instrumentId,
+      isin: row.instrument.isin,
+      name: row.instrument.name,
+      kind: row.instrument.kind,
+      currency: row.instrument.currency,
+      quantity: formatQuantity(row.quantity),
+      costEur: row.costEur === null ? null : formatMoney(row.costEur),
+      valueEur: row.valuedEur === null ? null : formatMoney(row.valuedEur),
+      unrealisedEur:
+        row.costEur === null || row.valuedEur === null
+          ? null
+          : formatMoney(subMoney(row.valuedEur, row.costEur)),
+      // `totalValuedEur.minor === 0n` guards a division that would otherwise be 0/0
+      // (every valuable holding happens to be worth exactly zero, or there are none) --
+      // an undefined ratio must not surface as a fabricated `NaN` or `0`.
+      weight:
+        row.valuedEur === null || totalValuedEur.minor === 0n
+          ? null
+          : Number(row.valuedEur.minor) / Number(totalValuedEur.minor),
+      priceDate: row.priceDate,
+      stale: row.valuationError !== null || row.priceDate !== on,
+      costBasisError: row.costBasisError,
+      valuationError: row.valuationError,
+    }))
     .sort((a, b) => Number(b.valueEur ?? "0") - Number(a.valueEur ?? "0"));
 };

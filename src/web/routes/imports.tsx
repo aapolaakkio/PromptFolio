@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
 import { eur, fiDate } from "../lib/format";
 import { CreateAccountForm } from "./CreateAccountForm";
+import { ImportHistory } from "./ImportHistory";
 import {
   AccountsSchema,
   CommitResultSchema,
@@ -11,6 +12,12 @@ import {
   summarise,
   type DraftResponse,
 } from "./imports-draft";
+import {
+  ImportHistorySchema,
+  undoConfirmMessage,
+  UndoResultSchema,
+  type ImportRecord,
+} from "./imports-history";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm";
 
 /** Which upload path produced the current `draft`, so resolving an unknown instrument re-previews the right one. */
@@ -26,11 +33,54 @@ export const ImportsPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [showCreateAccount, setShowCreateAccount] = useState(false);
+  // Which import an undo request is currently in flight for -- disables that one
+  // entry's button (see ImportHistory's own `undoingId` prop) without disabling the
+  // rest of the table.
+  const [undoingId, setUndoingId] = useState<number | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => apiGet("/api/accounts", AccountsSchema),
   });
+
+  const history = useQuery({
+    queryKey: ["imports"],
+    queryFn: () => apiGet("/api/imports", ImportHistorySchema),
+  });
+
+  // Undo is destructive and irreversible from the user's own point of view (the
+  // ledger itself stays append-only server-side, but there is no UI path back to
+  // these exact rows once removed) -- `handleUndo` below always confirms with the
+  // user, stating plainly how many transactions will be removed
+  // (`undoConfirmMessage`), before this mutation ever runs.
+  const undo = useMutation({
+    mutationFn: (importId: number) =>
+      apiPost(`/api/imports/${importId}/undo`, {}, UndoResultSchema),
+    onMutate: (importId) => {
+      setUndoingId(importId);
+      setUndoError(null);
+    },
+    onSuccess: () => {
+      setUndoingId(null);
+      // Refetches both the history (so the entry now shows "peruttu") and every
+      // holdings/allocation/returns query the removed transactions could have
+      // affected -- the same broad invalidation commit already does below.
+      void queryClient.invalidateQueries();
+    },
+    onError: (cause) => {
+      setUndoingId(null);
+      // The server's own 409 message already names exactly why (a later sale
+      // depends on the units this import introduced, per commit.ts's undoImport) --
+      // shown verbatim rather than folded into a generic failure message.
+      setUndoError(cause instanceof ApiError ? cause.message : "Perumine epäonnistui");
+    },
+  });
+
+  const handleUndo = (record: ImportRecord) => {
+    if (!window.confirm(undoConfirmMessage(record))) return;
+    undo.mutate(record.id);
+  };
   const hasAccounts = (accounts.data?.length ?? 0) > 0;
   // A brand-new install has zero accounts and, per spec §10 item 3, no way
   // to reach account creation except `curl` -- the gap this form closes.
@@ -325,6 +375,24 @@ export const ImportsPage = () => {
           </button>
         </>
       )}
+
+      <section className="card mt-6">
+        <h2>Tuontihistoria</h2>
+        {undoError && (
+          <p role="alert" className="mt-2 text-loss">
+            {undoError}
+          </p>
+        )}
+        {history.isError ? (
+          <p role="alert" className="text-loss">
+            Tuontihistorian haku epäonnistui. Yritä päivittää sivu.
+          </p>
+        ) : history.isPending ? (
+          <p>Ladataan…</p>
+        ) : (
+          <ImportHistory records={history.data} undoingId={undoingId} onUndo={handleUndo} />
+        )}
+      </section>
     </>
   );
 };

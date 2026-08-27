@@ -759,3 +759,123 @@ describe("POST /api/imports/op-paste/commit", () => {
     expect(await undoResponse.json()).toEqual({ deleted: 4 });
   });
 });
+
+// --- GET /api/imports ---
+//
+// Closes the other half of the gap: undoImport() has worked since Task 12, but there
+// was never a way to reach an import's id again after its one-time success toast.
+// This route is that missing history listing.
+
+describe("GET /api/imports", () => {
+  test("rejects a request with no session", async () => {
+    const response = await importRoutes["/api/imports"].GET(new Request("http://x/api/imports"));
+    expect(response.status).toBe(401);
+  });
+
+  test("never lists another user's imports", async () => {
+    const owner = await signUp(`imp-list-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`imp-list-stranger-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(owner.cookie);
+    const row = nordnetRow({ id: "4001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
+    const commitResponse = await importRoutes["/api/imports/commit"].POST(
+      uploadRequest("http://x/api/imports/commit", owner.cookie, nordnetFile(row), accountId),
+    );
+    expect(commitResponse.status).toBe(201);
+
+    const ownerList = await importRoutes["/api/imports"].GET(
+      new Request("http://x/api/imports", { headers: { cookie: owner.cookie } }),
+    );
+    const strangerList = await importRoutes["/api/imports"].GET(
+      new Request("http://x/api/imports", { headers: { cookie: stranger.cookie } }),
+    );
+    expect(ownerList.status).toBe(200);
+    expect(strangerList.status).toBe(200);
+    // SAFETY: a 200 from GET /api/imports (asserted above) always returns
+    // an array (see the route's own json(rows.map(...)) response).
+    const ownerBody = (await ownerList.json()) as unknown[];
+    // SAFETY: same as ownerBody above.
+    const strangerBody = (await strangerList.json()) as unknown[];
+    expect(ownerBody.length).toBeGreaterThan(0);
+    expect(strangerBody).toEqual([]);
+  });
+
+  test("reports broker kind, filename, insert/skip counts, undone status and newest-first order", async () => {
+    const { cookie } = await signUp(`imp-list-ok-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie);
+
+    const first = nordnetRow({
+      id: "5001",
+      date: "2025-01-10",
+      type: "TALLETUS",
+      amount: "500,00",
+    });
+    const firstCommit = await importRoutes["/api/imports/commit"].POST(
+      uploadRequest(
+        "http://x/api/imports/commit",
+        cookie,
+        nordnetFile(first, "first.csv"),
+        accountId,
+      ),
+    );
+    expect(firstCommit.status).toBe(201);
+    // SAFETY: a 201 from POST /api/imports/commit always returns { importId, ... }.
+    const { importId: firstId } = (await firstCommit.json()) as { importId: number };
+
+    const second = nordnetRow({
+      id: "5002",
+      date: "2025-01-11",
+      type: "TALLETUS",
+      amount: "250,00",
+    });
+    const secondCommit = await importRoutes["/api/imports/commit"].POST(
+      uploadRequest(
+        "http://x/api/imports/commit",
+        cookie,
+        nordnetFile(second, "second.csv"),
+        accountId,
+      ),
+    );
+    expect(secondCommit.status).toBe(201);
+    // SAFETY: same as above.
+    const { importId: secondId } = (await secondCommit.json()) as { importId: number };
+
+    // Undo the first one -- the listing must reflect that afterwards.
+    const undoResponse = await importRoutes["/api/imports/:id/undo"].POST(
+      new Request(`http://x/api/imports/${firstId}/undo`, { method: "POST", headers: { cookie } }),
+    );
+    expect(undoResponse.status).toBe(200);
+
+    const listResponse = await importRoutes["/api/imports"].GET(
+      new Request("http://x/api/imports", { headers: { cookie } }),
+    );
+    expect(listResponse.status).toBe(200);
+    // SAFETY: a 200 from GET /api/imports (asserted above) always returns
+    // an array of { id, kind, filename, createdAt, inserted, skipped, undone }.
+    const list = (await listResponse.json()) as Array<{
+      id: number;
+      kind: string;
+      filename: string;
+      createdAt: string;
+      inserted: number;
+      skipped: number;
+      undone: boolean;
+    }>;
+    // Newest first: the second commit's row precedes the first's.
+    expect(list[0]!.id).toBe(secondId);
+    expect(list[1]!.id).toBe(firstId);
+
+    const secondEntry = list.find((r) => r.id === secondId)!;
+    expect(secondEntry.kind).toBe("csv_nordnet");
+    expect(secondEntry.filename).toBe("second.csv");
+    expect(secondEntry.inserted).toBe(1);
+    expect(secondEntry.skipped).toBe(0);
+    expect(secondEntry.undone).toBe(false);
+    // A real ISO 8601 instant, not a pre-formatted date -- the frontend formats it.
+    expect(() => new Date(secondEntry.createdAt).toISOString()).not.toThrow();
+
+    const firstEntry = list.find((r) => r.id === firstId)!;
+    expect(firstEntry.filename).toBe("first.csv");
+    expect(firstEntry.inserted).toBe(1);
+    expect(firstEntry.undone).toBe(true);
+  });
+});

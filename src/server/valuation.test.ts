@@ -168,6 +168,45 @@ test("holdings carry quantity, cost, value, gain and staleness as strings", () =
   expect(nokia.unrealisedEur).toBe("42.00");
   expect(nokia.priceDate).toBe("2025-06-02");
   expect(nokia.stale).toBe(true);
+  // The only valued holding in the portfolio -- it is the entire denominator,
+  // so its own share of it is exactly 1 (100%).
+  expect(nokia.weight).toBe(1);
+});
+
+// Weight is a ratio (a number on the wire, like allocation.ts's own `weight`), never a
+// decimal string, and is computed against the sum of holdings that COULD be valued --
+// not every holding the ledger knows about. A second, independently priced instrument
+// alongside Nokia proves the split is proportional, not just "1 when alone".
+test("weight is proportional to market value across multiple valued holdings, and sums to 1", () => {
+  const { db, sqlite, accountId } = seed();
+  // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
+  // single row with an `id` column on success.
+  const neste = sqlite
+    .query(
+      "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .get("FI0009002377", "NESTE.HE", "Neste", "stock", "EUR", "yahoo", "NESTE.HE") as {
+    id: number;
+  };
+  sqlite
+    .query(
+      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 50000000, 1000, -50000, 0, 0, 'EUR', 100000000, 'neste-buy')",
+    )
+    .run(accountId, neste.id);
+  sqlite
+    .query(
+      "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-06-02', 1000, 'EUR', 'yahoo', 0)",
+    )
+    .run(neste.id);
+
+  const holdings = holdingsFor(db, "u1", "2025-07-01");
+  const nokia = holdings.find((h) => h.isin === "FI0009000681")!;
+  const nesteHolding = holdings.find((h) => h.isin === "FI0009002377")!;
+  // Nokia: 100.000000 units at 4.60 EUR/unit = 460.00. Neste: 50.000000 units at
+  // 10.00 EUR/unit = 500.00. Total = 960.00 -> Nokia 460/960, Neste 500/960.
+  expect(nokia.weight).toBeCloseTo(460 / 960, 10);
+  expect(nesteHolding.weight).toBeCloseTo(500 / 960, 10);
+  expect(nokia.weight! + nesteHolding.weight!).toBeCloseTo(1, 10);
 });
 
 test("holdings are exactly current, not stale, when priced on the price's own date", () => {
@@ -210,6 +249,13 @@ test("a position with no price at all reports no value, not a fabricated zero, a
   expect(neste.priceDate).toBeNull();
   expect(neste.stale).toBe(true);
   expect(neste.valuationError).toMatch(/Neste.*FI0009002377/);
+  // Cannot be valued -> no meaningful weight either (null, not 0 -- 0 would
+  // read as "this is worthless", not "this is unknown").
+  expect(neste.weight).toBeNull();
+  // Nokia is the only holding that COULD be valued, so it is the entire
+  // denominator: the un-priced Neste position must not silently dilute it.
+  const nokia = holdings.find((h) => h.isin === "FI0009000681")!;
+  expect(nokia.weight).toBe(1);
 });
 
 // C1's exact reproduction: a real price row dated `on` itself (so the OLD staleness
@@ -256,6 +302,8 @@ test("a position priced today in a currency with no fx rate for today reports no
   expect(sek.priceDate).toBe("2025-07-01");
   expect(sek.stale).toBe(true);
   expect(sek.valuationError).toMatch(/SEK.*Nordnet Sverige Indeks|Nordnet Sverige Indeks.*SEK/);
+  // A known price but no fx rate is still "cannot be valued" -- no weight either.
+  expect(sek.weight).toBeNull();
 });
 
 // --- Historical-fx fix: the gap above closes once fx.ts's historical backfill runs ---
@@ -398,6 +446,10 @@ test("holdingsFor marks only the affected position's cost basis unknown when a s
   expect(brokenHolding.costBasisError).not.toBeNull();
   expect(brokenHolding.costBasisError!.tradeDate).toBe("2025-01-01");
   expect(brokenHolding.costBasisError!.message).toContain("FI0009009999");
+  // An unmatched disposal has no meaningful weight either -- and does not
+  // dilute the one holding that COULD be valued.
+  expect(brokenHolding.weight).toBeNull();
+  expect(nokia.weight).toBe(1);
   expect(brokenHolding.costBasisError!.message).toContain("Broken Co");
 });
 
