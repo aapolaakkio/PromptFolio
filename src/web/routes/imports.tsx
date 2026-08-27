@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
 import { eur, fiDate } from "../lib/format";
+import { CreateAccountForm } from "./CreateAccountForm";
 import {
   AccountsSchema,
   CommitResultSchema,
@@ -24,11 +25,20 @@ export const ImportsPage = () => {
   const [draft, setDraft] = useState<DraftResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [showCreateAccount, setShowCreateAccount] = useState(false);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => apiGet("/api/accounts", AccountsSchema),
   });
+  const hasAccounts = (accounts.data?.length ?? 0) > 0;
+  // A brand-new install has zero accounts and, per spec §10 item 3, no way
+  // to reach account creation except `curl` -- the gap this form closes.
+  // The create form shows automatically once accounts have loaded and there
+  // are none, so a first-time user finds it without documentation; once at
+  // least one account exists, it stays tucked behind a toggle instead of
+  // permanently occupying screen space on every later visit.
+  const showCreateAccountForm = showCreateAccount || (!accounts.isPending && !hasAccounts);
 
   const resetOutcome = () => {
     setDraft(null);
@@ -134,6 +144,31 @@ export const ImportsPage = () => {
             ))}
           </select>
         </label>
+
+        {hasAccounts && (
+          <button
+            type="button"
+            className="mt-3 text-sm"
+            onClick={() => setShowCreateAccount((v) => !v)}
+          >
+            {showCreateAccount ? "Peruuta" : "+ Uusi tili"}
+          </button>
+        )}
+        {!accounts.isPending && !hasAccounts && (
+          <p className="mt-3 text-sm text-muted">
+            Ei vielä tilejä. Luo ensimmäinen tili alle aloittaaksesi tuonnin.
+          </p>
+        )}
+        {showCreateAccountForm && (
+          <CreateAccountForm
+            onCreated={(created) => {
+              setAccountId(created.id);
+              setShowCreateAccount(false);
+              resetOutcome();
+              void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+            }}
+          />
+        )}
       </section>
 
       <div className="mt-4 flex gap-2">

@@ -4,6 +4,7 @@ import { accountRoutes } from "./api/accounts";
 import { importRoutes } from "./api/imports";
 import { instrumentRoutes } from "./api/instruments";
 import { portfolioRoutes } from "./api/portfolio";
+import { priceRoutes } from "./api/prices";
 import { getDb, migrate } from "./db";
 import { startScheduler } from "./prices/refresh";
 
@@ -41,6 +42,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
       ...instrumentRoutes,
       ...importRoutes,
       ...portfolioRoutes,
+      ...priceRoutes,
       "/*": index,
     },
   });

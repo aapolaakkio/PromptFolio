@@ -223,6 +223,76 @@ const upsertPrice = (tx: TxDb, instrumentId: number, source: string, point: Fetc
 };
 
 /**
+ * ## Skipping the guard for a human-entered price (manual price entry)
+ *
+ * `resolvePoint`'s plausibility check and its `RE_BASELINE_CONFIRMATIONS`
+ * self-healing streak (both documented just above) exist for one specific
+ * threat: a *scraper* silently returning a structurally wrong number --
+ * misread decimal point, wrong minor-unit scale, wrong column -- with
+ * nothing in the loop that could tell that apart from a real, large price
+ * move. Their whole design leans on that: a transient scraper glitch does
+ * not repeat at a consistent new scale across several independent
+ * scheduled fetches, but a permanent change (a real split) does, so
+ * "seen 3 times in a row" is a meaningful signal to wait for.
+ *
+ * A human typing a price into the manual-entry route (`src/server/api/prices.ts`)
+ * is not that threat model at all. Two things are different, not one:
+ *
+ * 1. **The failure mode this check exists to catch cannot occur here.**
+ *    There is no column-misread, no wrong-scale-JSON-field risk -- the
+ *    value came from `core/money`'s own decimal-string parser
+ *    (`parseMoney`), typed in by a person looking at a real statement or
+ *    fund page. The plausibility guard would be checking a human's
+ *    *judgement*, not a scraper's *plumbing*, which is not what it was
+ *    built to check.
+ * 2. **The self-healing mechanism does not fit a one-off human action.**
+ *    `RE_BASELINE_CONFIRMATIONS` assumes the same *source* calls back on
+ *    its own schedule (a nightly job) and will naturally repeat a real
+ *    change several times running. A human filling in a form once has no
+ *    such schedule -- "come back and enter the same number two more
+ *    times, on two more separate days, before it's trusted" is not a
+ *    reasonable thing to ask of someone who is, right now, correcting a
+ *    number they can already see is wrong. The very scenario this task
+ *    exists to fix -- `spankki_fund`/`danske_fund` instruments set to
+ *    `manual` per the README, whose very first real price has no prior
+ *    stored baseline to compare against anyway (see the "first-ever
+ *    price" branch above) -- would only ever HIT this guard on a
+ *    *correction*, i.e. exactly the case where blocking it is worst.
+ *
+ * The alternative -- leaving the guard on and telling the user to submit
+ * the same correction three separate times -- was rejected because a
+ * feature whose entire job is "let a human fix a wrong price" that
+ * silently (or even loudly, but repeatedly) refuses the fix is worse than
+ * not having the feature at all (this task's own brief calls that out
+ * explicitly). So `writePrices`' caller may pass
+ * `skipPlausibilityCheck: true` to bypass `isPlausibleMove` entirely for
+ * that call's points, writing them unconditionally and clearing any
+ * in-flight pending-rejection streak for the instrument (a human's
+ * explicit correction supersedes whatever a scraper was in the middle of
+ * disputing). This does NOT weaken the guard for anything else: every
+ * automated caller (`refreshPrices`, `backfillInstrument`) never passes
+ * this option, so a scraper's own output is still fully checked, exactly
+ * as before. What is intentionally NOT added: no separate, looser
+ * threshold for manual entries (e.g. "reject only >1000x") -- any such
+ * number would be exactly the kind of unverified guess `MAX_PLAUSIBLE_RATIO`'s
+ * own doc comment already declines to invent, and a human is a strictly
+ * better judge of "is this price right" than any threshold could be.
+ * `requirePositiveMinor` (types.ts) still runs before a manual point ever
+ * reaches this function -- a zero or negative price is never a real price,
+ * human-entered or not, and that check is a fact, not a guess, so it stays.
+ */
+const acceptUnconditionally = (
+  tx: TxDb,
+  instrumentId: number,
+  source: string,
+  point: FetchedPrice,
+): "written" => {
+  upsertPrice(tx, instrumentId, source, point);
+  clearPendingRejection(tx, instrumentId);
+  return "written";
+};
+
+/**
  * Decides one point's fate against the stored baseline and any pending
  * rejection streak, mutating `pending_price_rejections` as needed.
  * Returns which outcome happened so the caller can total it up.
@@ -306,12 +376,22 @@ const resolvePoint = (
  * historical context, no check possible. A baseline in a different
  * currency than the new point is also never compared -- a currency
  * change is not what this check exists to catch.
+ *
+ * `opts.skipPlausibilityCheck` bypasses `resolvePoint`'s guard entirely
+ * for every point in `points`, writing each unconditionally and clearing
+ * any pending rejection streak -- see `acceptUnconditionally`'s doc
+ * comment just above for the full reasoning (manual price entry,
+ * `src/server/api/prices.ts`, is the one caller that passes it). Every
+ * other caller (`refreshPrices`, `backfillInstrument`) omits it, so a
+ * scraped source's output is still fully checked, exactly as before this
+ * option existed.
  */
 export const writePrices = (
   db: Db,
   instrumentId: number,
   source: string,
   points: readonly FetchedPrice[],
+  opts: { readonly skipPlausibilityCheck?: boolean } = {},
 ): WriteOutcome => {
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -320,7 +400,9 @@ export const writePrices = (
   let reBaselined = 0;
   db.transaction((tx) => {
     for (const point of sorted) {
-      const outcome = resolvePoint(tx, instrumentId, source, point);
+      const outcome = opts.skipPlausibilityCheck
+        ? acceptUnconditionally(tx, instrumentId, source, point)
+        : resolvePoint(tx, instrumentId, source, point);
       if (outcome === "written") written++;
       else if (outcome === "reBaselined") {
         written++;

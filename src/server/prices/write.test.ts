@@ -298,3 +298,79 @@ test("a value that reverts to the original baseline's scale is accepted normally
     streak: 1,
   });
 });
+
+// --- skipPlausibilityCheck (manual price entry) -----------------------------
+//
+// A human correcting a price by hand (src/server/api/prices.ts) is not the
+// scraper-plumbing failure mode this guard exists to catch, and the
+// re-baseline streak's "come back and confirm this a few more times" does
+// not fit a one-off form submission -- see write.ts's own doc comment on
+// `acceptUnconditionally` for the full reasoning.
+
+test("skipPlausibilityCheck writes an implausible jump unconditionally instead of rejecting it", () => {
+  const { db } = testDb();
+  const instrument = seedInstrument(db);
+  writePrices(db, instrument.id, "yahoo", [{ date: "2026-08-26", closeMinor: 400, currency: EUR }]);
+  const result = writePrices(
+    db,
+    instrument.id,
+    "manual",
+    [{ date: "2026-08-27", closeMinor: 400 * MAX_PLAUSIBLE_RATIO + 1, currency: EUR }],
+    { skipPlausibilityCheck: true },
+  );
+  expect(result).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 0 });
+  const rows = db.select().from(prices).all();
+  expect(rows).toHaveLength(2);
+  expect(rows.find((r) => r.date === "2026-08-27")).toMatchObject({
+    close: 400 * MAX_PLAUSIBLE_RATIO + 1,
+    source: "manual",
+  });
+});
+
+test("skipPlausibilityCheck clears an in-flight pending-rejection streak for that instrument", () => {
+  const { db } = testDb();
+  const instrument = seedInstrument(db);
+  writePrices(db, instrument.id, "yahoo", [{ date: "2026-08-01", closeMinor: 400, currency: EUR }]);
+  // Starts a pending streak via the normal (non-skipping) path.
+  writePrices(db, instrument.id, "yahoo", [
+    { date: "2026-08-02", closeMinor: 4_400, currency: EUR },
+  ]);
+  expect(db.select().from(pendingPriceRejections).all()).toHaveLength(1);
+
+  // A human's explicit manual correction supersedes whatever the automated
+  // source was in the middle of disputing.
+  const manual = writePrices(
+    db,
+    instrument.id,
+    "manual",
+    [{ date: "2026-08-03", closeMinor: 410, currency: EUR }],
+    { skipPlausibilityCheck: true },
+  );
+  expect(manual).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 0 });
+  expect(db.select().from(pendingPriceRejections).all()).toEqual([]);
+});
+
+test("skipPlausibilityCheck still upserts by (instrumentId, date), same as the checked path", () => {
+  const { db } = testDb();
+  const instrument = seedInstrument(db);
+  writePrices(
+    db,
+    instrument.id,
+    "manual",
+    [{ date: "2026-08-27", closeMinor: 100, currency: EUR }],
+    {
+      skipPlausibilityCheck: true,
+    },
+  );
+  const result = writePrices(
+    db,
+    instrument.id,
+    "manual",
+    [{ date: "2026-08-27", closeMinor: 200, currency: EUR }],
+    { skipPlausibilityCheck: true },
+  );
+  expect(result).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 0 });
+  const rows = db.select().from(prices).all();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ close: 200 });
+});

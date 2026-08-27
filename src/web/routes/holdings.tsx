@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { eur, qty, fiDate } from "../lib/format";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort";
+import { RecordPriceForm } from "./RecordPriceForm";
 
 export type { Holding };
 
@@ -65,8 +66,15 @@ const UnknownCostCell = ({ message }: { message: string }) => (
 );
 
 export const HoldingsPage = () => {
+  const queryClient = useQueryClient();
   const [sortKey, setSortKey] = useState<SortKey>("valueEur");
   const [direction, setDirection] = useState<SortDirection>("desc");
+  // Which row (by instrumentId) currently shows its inline "enter a price"
+  // form -- closing the "manual price source has no way to enter a price"
+  // gap. Not restricted to instruments whose priceSource is "manual": a
+  // human correcting any instrument's stale/wrong stored price needs the
+  // exact same entry path, see RecordPriceForm.tsx's own doc comment.
+  const [priceFormFor, setPriceFormFor] = useState<number | null>(null);
 
   const holdings = useQuery({
     queryKey: ["holdings"],
@@ -190,6 +198,27 @@ export const HoldingsPage = () => {
               </td>
               <td className="num">
                 <PriceCell priceDate={row.priceDate} stale={row.stale} />
+                <div>
+                  <button
+                    type="button"
+                    className="mt-1 text-xs"
+                    onClick={() =>
+                      setPriceFormFor(priceFormFor === row.instrumentId ? null : row.instrumentId)
+                    }
+                  >
+                    {priceFormFor === row.instrumentId ? "Peruuta" : "Syötä hinta"}
+                  </button>
+                  {priceFormFor === row.instrumentId && (
+                    <RecordPriceForm
+                      instrumentId={row.instrumentId}
+                      currency={row.currency}
+                      onRecorded={() => {
+                        setPriceFormFor(null);
+                        void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+                      }}
+                    />
+                  )}
+                </div>
               </td>
             </tr>
           ))}
