@@ -10,6 +10,13 @@ minimumReleaseAge = 86400
 # exists.
 minimumReleaseAgeExcludes = ["@tanstack/react-table", "@tanstack/react-charts"]
 
+[run]
+# oxlint and oxfmt ship `#!/usr/bin/env node` wrapper bins. Forcing every
+# `bun run <script>` to execute under Bun (instead of letting the shebang
+# hand off to the machine's Node) is what lets oxlint's TypeScript
+# `oxlint.config.ts` load without any Node toolchain installed at all.
+bun = true
+
 [test]
 coverage = true
 coverageThreshold = 0.8
