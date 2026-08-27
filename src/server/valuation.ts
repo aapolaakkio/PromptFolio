@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from "drizzle-orm";
-import { costBasisAt } from "../core/costbasis";
+import { costBasisAt, UnmatchedDisposalError } from "../core/costbasis";
 import { positionsAt } from "../core/ledger";
 import {
   EUR,
@@ -18,6 +18,7 @@ import type { PriceLookup } from "../core/returns";
 import type { Instrument, IsoDate, Txn } from "../core/types";
 import type { getDb } from "./db";
 import { accounts, fxRates, instruments, prices, transactions } from "./db/schema";
+import { HttpError } from "./errors";
 
 type Db = ReturnType<typeof getDb>["db"];
 
@@ -169,6 +170,46 @@ export type HoldingView = {
 };
 
 /**
+ * Wraps `costBasisAt` so an `UnmatchedDisposalError` -- a SELL/TRANSFER_OUT
+ * with no matching earlier BUY, e.g. one page of a multi-page OP import
+ * pasted out of order -- becomes a client-facing `HttpError` that names the
+ * actual instrument (its ISIN and name, not the internal `instrumentId`,
+ * which is not client-facing) and trade date, with a one-sentence
+ * instruction, instead of an unhandled throw that `handle()` would
+ * otherwise flatten into a detail-free 500 (see `server/http.ts`).
+ *
+ * 400 (not 422, which this codebase never uses) to match the existing
+ * precedent for "an earlier step must happen first" failures --
+ * `import/commit.ts`'s "Tuntemattomat arvopaperit on lisättävä ensin" for
+ * unknown ISINs is the same shape of problem: data the ledger needs is
+ * missing, and the fix is to import it, not to retry this request as-is.
+ *
+ * Any other error out of `costBasisAt` (e.g. a BUY with a non-negative
+ * amount) is left to propagate untouched -- that is a different defect,
+ * and `handle()`'s generic, detail-free 500 is the correct, safe fallback
+ * for an error nobody has classified yet.
+ */
+const costBasisOrExplain = (
+  txns: readonly Txn[],
+  on: IsoDate,
+  byId: ReadonlyMap<number, Instrument>,
+): Map<number, Money> => {
+  try {
+    return costBasisAt(txns, on);
+  } catch (cause) {
+    if (!(cause instanceof UnmatchedDisposalError)) throw cause;
+    const instrument = byId.get(cause.instrumentId);
+    if (!instrument) throw cause;
+    throw new HttpError(
+      400,
+      `Myyntiä ${instrument.name} (${instrument.isin}) päivältä ${cause.tradeDate} ei voi käsitellä, ` +
+        `koska instrumentille ei ole kirjattu ostotapahtumaa ennen tätä myyntiä: tuo puuttuvat ` +
+        `ostotapahtumat tai poista myyntirivi.`,
+    );
+  }
+};
+
+/**
  * Current holdings, valued as of `on`. `stale` is `true` whenever the price
  * actually used was not dated `on` itself (carried forward from an earlier
  * date, per `PriceLookup.priceDateOn`'s contract) or was missing entirely --
@@ -178,7 +219,7 @@ export type HoldingView = {
 export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] => {
   const { txns, instruments: all, prices: lookup } = loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
-  const costs = costBasisAt(txns, on);
+  const costs = costBasisOrExplain(txns, on, byId);
 
   return [...positionsAt(txns, on)]
     .flatMap(([instrumentId, quantity]) => {

@@ -239,6 +239,64 @@ describe("GET /api/holdings", () => {
     );
     expect(response.status).toBe(400);
   });
+
+  // Regression: an OP import pasted one page at a time can easily land a
+  // SELL on the ledger before the BUY it disposes of, which is on an
+  // earlier page not yet imported. core/costbasis.ts's buildLots() throws
+  // a correct, well-worded domain error for this (UnmatchedDisposalError),
+  // but nothing used to catch it -- handle()'s generic-500 fallback turned
+  // it into a bare, unexplained `{"error":"Palvelinvirhe"}` and took down
+  // the whole holdings screen. This must come back as a 400 (bad ledger
+  // state, not a server fault) whose message names the actual instrument
+  // (ISIN and name -- user-facing facts) and trade date so the user can
+  // find the offending row, tells them what to do about it, and leaks
+  // neither the internal numeric instrumentId nor a raw exception string.
+  test("responds with 400 naming the instrument and date, not a 500, when a sale has no matching purchase", async () => {
+    const { cookie } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    const accountId = await createAccount(cookie);
+    const isin = randomIsin();
+    const instrumentId = await createInstrument(cookie, isin);
+
+    db.insert(transactions)
+      .values({
+        accountId,
+        instrumentId,
+        type: "SELL",
+        tradeDate: "2025-01-01",
+        quantity: 10_000_000, // 10 units
+        unitPrice: 100,
+        amount: 1_000_00, // 1000.00 proceeds
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: crypto.randomUUID(),
+        externalId: null,
+        importId: null,
+      })
+      .run();
+
+    const response = await portfolioRoutes["/api/holdings"].GET(
+      new Request("http://x/api/holdings?on=2025-01-01", { headers: { cookie } }),
+    );
+    expect(response.status).toBe(400);
+    // SAFETY: a 400 from handle() (asserted above) always returns
+    // { error: string } (see http.ts's HttpError branch).
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain(isin);
+    expect(body.error).toContain("Test Co"); // createInstrument()'s fixed instrument name
+    expect(body.error).toContain("2025-01-01");
+    // Tells the user what to do: import the missing purchase or remove the row.
+    expect(body.error).toMatch(/tuo|poista/i);
+    // No internal detail leaked: not core's own raw exception wording,
+    // which names the instrument by its internal numeric id ("instrument N")
+    // rather than the user-facing ISIN/name used above.
+    expect(body.error).not.toMatch(/cannot dispose/i);
+    expect(body.error).not.toMatch(/instrument \d/i);
+  });
 });
 
 // --- GET /api/value-series ---

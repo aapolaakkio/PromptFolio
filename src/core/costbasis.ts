@@ -34,6 +34,39 @@ export type Disposal = {
   readonly gainEur: Money;
 };
 
+/**
+ * Thrown by `buildLots` when a SELL or TRANSFER_OUT disposes of more units
+ * than the ledger has recorded as acquired for that instrument -- i.e. the
+ * ledger given to it is missing an earlier BUY/TRANSFER_IN. This is a
+ * *domain* condition (incomplete or out-of-order import data), not a bug in
+ * this module, so it gets its own identifiable subclass rather than a bare
+ * `Error`: callers can `instanceof`-check it instead of string-matching
+ * `.message`, which would silently break the moment this message's wording
+ * changes.
+ *
+ * `core` stays HTTP-ignorant on purpose (it has no concept of a status code
+ * or a client-facing message), so this only carries `instrumentId` and
+ * `tradeDate` as structured, non-sensitive fields -- exactly what the
+ * server layer needs to look up the instrument's ISIN/name and point the
+ * user at the offending row. `.message` itself still carries the full
+ * quantity detail for server-side logs; it is never sent to a client
+ * as-is (see `server/http.ts`'s `handle`).
+ */
+export class UnmatchedDisposalError extends Error {
+  constructor(
+    readonly instrumentId: number,
+    readonly tradeDate: IsoDate,
+    heldQuantity: Quantity,
+    requestedQuantity: Quantity,
+  ) {
+    super(
+      `Cannot dispose ${formatQuantity(requestedQuantity)} units of instrument ${instrumentId} ` +
+        `on ${tradeDate}: only ${formatQuantity(heldQuantity)} held`,
+    );
+    this.name = "UnmatchedDisposalError";
+  }
+}
+
 const chronological = (txns: readonly Txn[]): Txn[] =>
   txns
     .slice()
@@ -111,10 +144,7 @@ export const buildLots = (txns: readonly Txn[]) => {
     );
     const held = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
     if (cmpQuantity(held, t.quantity) < 0) {
-      throw new Error(
-        `Cannot dispose ${formatQuantity(t.quantity)} units of instrument ${t.instrumentId} ` +
-          `on ${t.tradeDate}: only ${formatQuantity(held)} held`,
-      );
+      throw new UnmatchedDisposalError(t.instrumentId, t.tradeDate, held, t.quantity);
     }
 
     let remainingLots = lots;
