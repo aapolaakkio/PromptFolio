@@ -1,15 +1,35 @@
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { signOut, useSession } from "../lib/auth-client";
+import { SessionGate } from "./session-gate";
 
 /**
- * Session gate for the whole app: every route under this layout requires a
- * signed-in session. `useSession` starts `isPending`, so the redirect only
- * fires once Better Auth has actually resolved the cookie -- an
- * unauthenticated visitor never sees a flash of the dashboard before being
- * sent to /login.
+ * Session gate for the authenticated part of the app (dashboard, holdings,
+ * imports) -- NOT the whole route tree. `router.ts` mounts this as a
+ * pathless layout route ("authenticated") whose children are exactly the
+ * protected pages; `/login` is a SIBLING of that layout, not a descendant
+ * of it.
+ *
+ * That split matters: `SessionGate`'s early `return null` when there is
+ * no session is intentional (see its own comment in session-gate.tsx),
+ * but earlier drafts of this route tree had `/login` nested UNDER this
+ * same gate, so a logged-out visit to `/login` itself also hit that
+ * `return null` before `<Outlet/>` (which is what renders LoginPage) ever
+ * mounted. The URL changed to `/login` via the redirect below, but
+ * nothing ever rendered there -- a permanent blank page with no way to
+ * sign in. Keeping `/login` outside this layout's subtree in the route
+ * tree (see `route-tree.ts`) is what fixes that; this component does not
+ * need to know its own route is gated.
+ *
+ * This file itself stays thin and untested on purpose: `useSession()` is
+ * a real network-backed hook (better-auth's react client), and this
+ * project has no way to stub the browser `fetch` it eventually calls
+ * without touching `bunfig.toml`'s test network guard. All of the
+ * actually-testable logic -- what to render for each of the three session
+ * states -- lives in `./session-gate.tsx`'s `SessionGate`, exercised by
+ * `session-gate.test.ts` with `react-dom/server`'s `renderToStaticMarkup`.
  */
-export const RootLayout = () => {
+export const AuthenticatedLayout = () => {
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
 
@@ -17,31 +37,11 @@ export const RootLayout = () => {
     if (!isPending && !session) void navigate({ to: "/login" });
   }, [isPending, session, navigate]);
 
-  if (isPending) return <main className="grid min-h-dvh place-items-center">Ladataan…</main>;
-  if (!session) return null;
-
   return (
-    <>
-      <header className="flex items-center gap-6 border-b border-line bg-surface px-5 py-3">
-        <span className="font-semibold tracking-tight">PromptFolio</span>
-        <nav className="mr-auto flex gap-4">
-          <Link to="/" className="text-muted no-underline hover:text-ink">
-            Yleiskuva
-          </Link>
-          <Link to="/holdings" className="text-muted no-underline hover:text-ink">
-            Omistukset
-          </Link>
-          <Link to="/imports" className="text-muted no-underline hover:text-ink">
-            Tuonnit
-          </Link>
-        </nav>
-        <button type="button" onClick={() => void signOut()}>
-          Kirjaudu ulos
-        </button>
-      </header>
-      <main className="mx-auto max-w-5xl px-5 pb-16 pt-8">
-        <Outlet />
-      </main>
-    </>
+    <SessionGate
+      isPending={isPending}
+      hasSession={session != null}
+      onSignOut={() => void signOut()}
+    />
   );
 };

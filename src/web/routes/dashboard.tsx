@@ -1,18 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
 import { apiGet } from "../lib/api";
 import { eur, pct, fiDate } from "../lib/format";
 import { TimeSeriesChart } from "../charts/TimeSeriesChart";
 import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart";
 
-type ValuePoint = { date: string; valueEur: string; stale: boolean };
-type Returns = {
-  valueEur: string;
-  stale: boolean;
-  twr: number;
-  mwr: number | null;
-  from: string;
-  to: string;
-};
+/**
+ * Response schemas for the three endpoints this page calls, parsed
+ * instead of the `as T` cast `apiGet` otherwise falls back to (spec
+ * §9.2's "validate at every boundary" -- a server response-shape change
+ * now produces a loud, descriptive `ZodError` here instead of silently
+ * wrong numbers on the dashboard). `apiGet`'s type parameter is inferred
+ * FROM each schema (no separately declared `ValuePoint`/`Returns` type to
+ * drift out of sync with it); `AllocationSlice` is imported from
+ * AllocationChart.tsx (it also describes `<AllocationChart
+ * slices={...} />`'s prop shape), so its schema instead carries an
+ * explicit `z.ZodType<AllocationSlice>` annotation -- TypeScript rejects
+ * this file if the two shapes disagree.
+ */
+const ValuePointSchema = z.object({ date: z.string(), valueEur: z.string(), stale: z.boolean() });
+
+const ReturnsSchema = z.object({
+  valueEur: z.string(),
+  stale: z.boolean(),
+  twr: z.number(),
+  mwr: z.number().nullable(),
+  from: z.string(),
+  to: z.string(),
+});
+
+const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
+  key: z.string(),
+  label: z.string(),
+  valueEur: z.string(),
+  weight: z.number(),
+});
 
 const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "gain" | "loss" }) => (
   <div className="card">
@@ -30,15 +52,15 @@ const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "ga
 export const DashboardPage = () => {
   const series = useQuery({
     queryKey: ["value-series"],
-    queryFn: () => apiGet<ValuePoint[]>("/api/value-series"),
+    queryFn: () => apiGet("/api/value-series", z.array(ValuePointSchema)),
   });
   const returns = useQuery({
     queryKey: ["returns"],
-    queryFn: () => apiGet<Returns>("/api/returns"),
+    queryFn: () => apiGet("/api/returns", ReturnsSchema),
   });
   const allocation = useQuery({
     queryKey: ["allocation", "kind"],
-    queryFn: () => apiGet<AllocationSlice[]>("/api/allocation?by=kind"),
+    queryFn: () => apiGet("/api/allocation?by=kind", z.array(AllocationSliceSchema)),
   });
 
   if (series.isError || returns.isError || allocation.isError) {

@@ -42,19 +42,38 @@ const unwrap = async (response: Response) => {
   return body;
 };
 
-export const apiGet = async <T>(path: string, fetchImpl: FetchLike = fetch): Promise<T> => {
+/**
+ * `schema` is OPTIONAL on all three functions below, not because casting
+ * is an accepted alternative going forward -- spec §9.2 requires
+ * validation at every boundary, and every NEW call site should always
+ * pass one, turning a server response-shape change into a loud
+ * `ZodError` instead of silently wrong UI. It stays optional because
+ * dashboard.tsx and holdings.tsx (Tasks 18/19) were already written and
+ * committed against the no-schema, `as T`-cast form of this API by the
+ * time this was tightened, and holdings.tsx was mid-edit by a concurrent
+ * task when this was fixed -- making `schema` mandatory would have broken
+ * their typecheck out from under them. dashboard.tsx has since been
+ * migrated to pass real schemas (see its own top comment); holdings.tsx
+ * is the one tracked exception left on the cast fallback.
+ */
+export const apiGet = async <T>(
+  path: string,
+  schema?: z.ZodType<T>,
+  fetchImpl: FetchLike = fetch,
+): Promise<T> => {
   const response = await fetchImpl(path, { credentials: "include" });
   const body = await unwrap(response);
-  // SAFETY: `T` is the response shape documented at each call site (the
-  // matching API route's JSON contract, e.g. GET /api/holdings). No route
-  // yet has a shared Zod schema on the client side; this cast is the
-  // boundary where trust in that documented contract begins.
+  if (schema) return schema.parse(body);
+  // SAFETY: no schema was supplied at this call site; `T` is the response
+  // shape documented there instead (see this function's own doc comment
+  // for why that's still possible here).
   return body as T;
 };
 
 export const apiPost = async <T, B>(
   path: string,
   body: B,
+  schema?: z.ZodType<T>,
   fetchImpl: FetchLike = fetch,
 ): Promise<T> => {
   const response = await fetchImpl(path, {
@@ -64,17 +83,20 @@ export const apiPost = async <T, B>(
     body: JSON.stringify(body),
   });
   const parsed = await unwrap(response);
-  // SAFETY: see apiGet -- same call-site response contract.
+  if (schema) return schema.parse(parsed);
+  // SAFETY: see apiGet's doc comment -- same call-site response contract.
   return parsed as T;
 };
 
 export const apiUpload = async <T>(
   path: string,
   form: FormData,
+  schema?: z.ZodType<T>,
   fetchImpl: FetchLike = fetch,
 ): Promise<T> => {
   const response = await fetchImpl(path, { method: "POST", credentials: "include", body: form });
   const parsed = await unwrap(response);
-  // SAFETY: see apiGet -- same call-site response contract.
+  if (schema) return schema.parse(parsed);
+  // SAFETY: see apiGet's doc comment -- same call-site response contract.
   return parsed as T;
 };
