@@ -88,7 +88,10 @@ test("skips a row already present by content hash when there is no external id",
   const { db, accountId } = seed();
   const row = draftTxn({ accountId });
   commitDraft(db, args(accountId, draftOf([row])));
-  expect(commitDraft(db, args(accountId, draftOf([row]))).skipped).toBe(1);
+  const second = commitDraft(db, args(accountId, draftOf([row])));
+  expect(second.inserted).toBe(0);
+  expect(second.skipped).toBe(1);
+  expect(db.select().from(transactions).all()).toHaveLength(1);
 });
 
 // Both rows below have identical material (same type, date, isin,
