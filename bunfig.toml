@@ -8,7 +8,13 @@ minimumReleaseAge = 86400
 # within the last 24h (see task-1-report.md). Excluded so `bun install` can
 # complete; revisit and drop this exclusion once an older matching release
 # exists.
-minimumReleaseAgeExcludes = ["@tanstack/react-table", "@tanstack/react-charts"]
+#
+# @tanstack/charts@0.16.0 is @tanstack/react-charts's own runtime dependency
+# (same release batch) and Task 18 needs it as a direct dependency too --
+# TimeSeriesChart.tsx imports `defineChart`/`lineY`/scale factories from it
+# directly, so it belongs in this project's own dependency list rather than
+# riding along as an undeclared transitive package.
+minimumReleaseAgeExcludes = ["@tanstack/react-table", "@tanstack/react-charts", "@tanstack/charts"]
 
 [run]
 # oxlint and oxfmt ship `#!/usr/bin/env node` wrapper bins. Forcing every
