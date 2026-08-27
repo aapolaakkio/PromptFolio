@@ -1,28 +1,21 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { getDb, migrate } from "../db";
 
 // Instruments are shared reference data across the family instance: any
 // authenticated user can read and create them, unlike accounts, which are
 // scoped per user. This file exercises instrumentRoutes against a real,
 // migrated database and a real Better Auth session, mirroring
-// src/server/api/accounts.test.ts's setup — including its choice to never
-// call resetDbHandleForTests(). See that file's comment: auth.ts is a
-// process-wide singleton, and every file in this situation must converge
-// on the one shared getDb() handle rather than each minting its own.
-
-const TEST_SECRET = "test-secret-at-least-32-characters-long";
+// src/server/api/accounts.test.ts's setup — including its reliance on
+// ../test-setup.ts (a bunfig.toml `[test] preload` script) to have already
+// pinned the shared getDb() handle to a migrated in-memory database before
+// this file's own code runs. This file must NOT call
+// resetDbHandleForTests(), set DATABASE_PATH, or call getDb()/migrate()
+// itself — see test-setup.ts's comment for why, and accounts.test.ts's
+// comment for the real bug that duplicating that setup caused.
 
 let auth: (typeof import("../auth"))["auth"];
 let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
 
 beforeAll(async () => {
-  Bun.env.DATABASE_PATH = ":memory:";
-  Bun.env.BETTER_AUTH_SECRET = TEST_SECRET;
-  Bun.env.ALLOW_SIGNUP = "true";
-
-  const { db } = getDb();
-  migrate(db);
-
   const authModule = await import("../auth");
   const instrumentsModule = await import("./instruments");
   auth = authModule.auth;

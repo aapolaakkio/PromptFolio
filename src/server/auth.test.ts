@@ -1,21 +1,25 @@
 import { beforeAll, expect, test } from "bun:test";
-import { getDb, migrate, resetDbHandleForTests } from "./db";
 import { HttpError } from "./errors";
 import { hashPassword, verifyPassword } from "./password";
 
 // --- Shared, migrated in-memory database + a single Better Auth instance ---
 //
 // auth.ts calls getDb() at module scope, and getDb() memoises a shared
-// handle for the lifetime of the process (see db/index.ts). To hand auth.ts
-// a migrated in-memory database instead of the real on-disk one, the handle
-// must be reset, pointed at ":memory:", and migrated *before* anything
-// imports auth.ts or auth-guard.ts. A static top-level `import` would run
-// too early (import statements are hoisted above this file's own top-level
-// code), so auth.ts/auth-guard.ts are imported dynamically from beforeAll
-// instead, once the database and required env vars are ready.
+// handle for the lifetime of the process (see db/index.ts). test-setup.ts
+// (a bunfig.toml `[test] preload` script — see its own comment for the
+// full story) has already pointed that handle at a migrated in-memory
+// database before this file's own code runs, so this file must NOT call
+// resetDbHandleForTests(): doing so would mint a second database that only
+// *this* file's own dynamically-imported auth.ts would bind to (auth.ts is
+// itself a process-wide ES module singleton — whichever code imports it
+// first anywhere in the process wins for the rest of the run), desyncing
+// it from every other test file's already-cached auth.ts. A static
+// top-level `import` would run too early regardless (import statements are
+// hoisted above this file's own top-level code), so auth.ts/auth-guard.ts
+// are imported dynamically from beforeAll instead.
 //
-// ALLOW_SIGNUP is set to 'true' before that import so this file's one
-// `auth` instance permits sign-up, which lets tests create a real,
+// ALLOW_SIGNUP is set to 'true' by test-setup.ts, which lets this file's
+// one `auth` instance permit sign-up, so tests here can create a real,
 // correctly-issued session to exercise requireUser's happy path.
 let auth: (typeof import("./auth"))["auth"];
 let resolveAuthSecret: (typeof import("./auth"))["resolveAuthSecret"];
@@ -25,14 +29,6 @@ let requireUser: (typeof import("./auth-guard"))["requireUser"];
 const TEST_SECRET = "test-secret-at-least-32-characters-long";
 
 beforeAll(async () => {
-  resetDbHandleForTests();
-  Bun.env.DATABASE_PATH = ":memory:";
-  Bun.env.BETTER_AUTH_SECRET = TEST_SECRET;
-  Bun.env.ALLOW_SIGNUP = "true";
-
-  const { db } = getDb();
-  migrate(db);
-
   const authModule = await import("./auth");
   const authGuardModule = await import("./auth-guard");
   auth = authModule.auth;

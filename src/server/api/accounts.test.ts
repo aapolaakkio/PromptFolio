@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { getDb, migrate } from "../db";
 import { HttpError, handle, json } from "../http";
 
 // --- handle() / json() (src/server/http.ts) ---
@@ -85,38 +84,26 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
 // import would run before the database below is ready) — mirroring
 // src/server/auth.test.ts.
 //
-// Deliberately does NOT call resetDbHandleForTests(): auth.ts calls
-// getDb() at module scope and is an ES module singleton for the lifetime
-// of this `bun test` process — the *first* file to dynamically import it
-// (this one, src/server/auth.test.ts, or a sibling in this directory)
-// permanently binds it to whichever database was current at that moment.
-// Resetting the shared handle here would desync this file's own
-// database from that already-cached auth.ts if some other file happened
-// to import it first, causing sign-up to write to one database while
-// accountRoutes queries another (they'd fail with a foreign-key error
-// that has nothing to do with the behaviour under test — this happened
-// during development; see task-9-report.md). Every file in this
-// situation uses the same DATABASE_PATH/BETTER_AUTH_SECRET/ALLOW_SIGNUP
-// values and simply calls getDb() (which memoizes) + migrate() (which is
-// idempotent), so whichever file runs first establishes the one shared
-// database and every later file — and every module that reads it via
-// getDb() at its own first import, including accounts.ts — converges on
-// that same instance regardless of run order.
-
-const TEST_SECRET = "test-secret-at-least-32-characters-long";
+// This file must NOT call resetDbHandleForTests(), set DATABASE_PATH, or
+// call getDb()/migrate() itself: ../test-setup.ts (a bunfig.toml
+// `[test] preload` script, see its own comment for the full story) has
+// already done all of that, deterministically, before this file's own
+// code runs — regardless of file scheduling. auth.ts is a process-wide ES
+// module singleton (whichever code imports it first anywhere in the
+// process wins for the rest of the run), so this file simply trusts that
+// the shared getDb() handle already points at a migrated in-memory
+// database and dynamically imports auth.ts/accounts.ts, both of which
+// bind to that same handle at their own first import. Duplicating that
+// setup here (an earlier version of this file did) is exactly what caused
+// a real foreign-key failure during Task 9's development when another
+// file's independent reset desynced it from this one — see
+// task-9-report.md's fix-up report.
 
 let auth: (typeof import("../auth"))["auth"];
 let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
 let assertAccountOwned: (typeof import("./accounts"))["assertAccountOwned"];
 
 beforeAll(async () => {
-  Bun.env.DATABASE_PATH = ":memory:";
-  Bun.env.BETTER_AUTH_SECRET = TEST_SECRET;
-  Bun.env.ALLOW_SIGNUP = "true";
-
-  const { db } = getDb();
-  migrate(db);
-
   const authModule = await import("../auth");
   const accountsModule = await import("./accounts");
   auth = authModule.auth;

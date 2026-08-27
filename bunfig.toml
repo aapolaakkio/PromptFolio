@@ -25,6 +25,12 @@ coverageThreshold = 0.8
 # AST transfer Bun's test runner doesn't implement. Keep them out of `bun
 # test` entirely; oxlint.config.ts already excludes the same tree from lint.
 pathIgnorePatterns = ["tools/oxlint/anti-slop/**"]
+# Pins the shared getDb() handle (auth.ts calls it at module scope and is
+# itself a process-wide ES module singleton) to a migrated in-memory
+# database before any *.test.ts file's own code runs, regardless of file
+# scheduling. See src/server/test-setup.ts for the full story and
+# task-9-report.md's fix-up report for the bug this closes.
+preload = ["./src/server/test-setup.ts"]
 
 # Bun's HTML bundler runs Tailwind directly - no vite, no postcss config.
 [serve.static]

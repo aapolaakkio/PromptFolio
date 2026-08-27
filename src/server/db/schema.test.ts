@@ -245,3 +245,39 @@ test("getDb memoizes a single shared handle across calls", () => {
     else Bun.env.DATABASE_PATH = originalPath;
   }
 });
+
+// resetDbHandleForTests() has no callers left in this suite: test-setup.ts
+// (a bunfig.toml `[test] preload` script) pins the one shared handle
+// before any test file runs, and no file may reset it afterward without
+// desyncing auth.ts/accounts.ts/instruments.ts from each other again (see
+// test-setup.ts's comment and task-9-report.md's fix-up report for the bug
+// that caused). So this runs the reset in a genuinely separate child
+// process instead, where resetting is safe because nothing else shares
+// that process's handle.
+test("resetDbHandleForTests() forces the next getDb() call to open a new handle", () => {
+  const dbIndexPath = new URL("./index.ts", import.meta.url).pathname;
+  const script = `
+    const { getDb, resetDbHandleForTests } = await import(${JSON.stringify(dbIndexPath)});
+    Bun.env.DATABASE_PATH = ":memory:";
+    const first = getDb();
+    first.sqlite.exec("CREATE TABLE marker (id INTEGER)");
+    resetDbHandleForTests();
+    Bun.env.DATABASE_PATH = ":memory:";
+    const second = getDb();
+    const hasMarker = second.sqlite
+      .query("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
+      .get();
+    console.log(JSON.stringify({ sameHandle: second === first, hasMarker: hasMarker !== null }));
+  `;
+  const result = Bun.spawnSync({ cmd: ["bun", "-e", script] });
+  expect(result.exitCode).toBe(0);
+  // SAFETY: the script above unconditionally prints exactly one JSON line
+  // as its only stdout output, or the exit-code check above would already
+  // have thrown.
+  const parsed = JSON.parse(result.stdout.toString().trim()) as {
+    sameHandle: boolean;
+    hasMarker: boolean;
+  };
+  expect(parsed.sameHandle).toBe(false);
+  expect(parsed.hasMarker).toBe(false);
+});
