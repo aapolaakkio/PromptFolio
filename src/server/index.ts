@@ -6,6 +6,7 @@ import { auth } from "./auth";
 import { accountRoutes } from "./api/accounts";
 import { importRoutes } from "./api/imports";
 import { instrumentRoutes } from "./api/instruments";
+import { portfolioRoutes } from "./api/portfolio";
 import { getDb } from "./db";
 import { startScheduler } from "./prices/refresh";
 
@@ -17,6 +18,7 @@ const server = Bun.serve({
     ...accountRoutes,
     ...instrumentRoutes,
     ...importRoutes,
+    ...portfolioRoutes,
     // '/*': index, // Task 17 restores this once src/web/index.html exists.
   },
 });
