@@ -56,6 +56,25 @@ export const positionsAt = (txns: readonly Txn[], on: IsoDate): Map<number, Quan
   return positions;
 };
 
+/**
+ * Instrument ids whose net position at `on` is negative -- the ledger has recorded
+ * disposing of more units than it has recorded acquiring, for that instrument, by
+ * that date. `positionsAt` above deliberately keeps a negative quantity as-is (it is
+ * core ledger state, reported verbatim), but a negative quantity must never be
+ * multiplied by a price and folded into a value or allocation total -- see
+ * `allocation.ts`'s `allocateBy` and `returns.ts`'s `valueSeries`, which both skip
+ * these instruments' contribution rather than let a negative amount silently drag a
+ * total down, and `server/api/portfolio.ts`, which uses this list to tell the caller
+ * which instruments were left out and why, instead of the anomaly just vanishing.
+ *
+ * (The matching cost-basis-side signal is `costbasis.ts`'s `UnmatchedDisposalError`,
+ * which also carries the offending trade's date; `holdingsFor` in
+ * `server/valuation.ts` uses that richer signal instead of this one, since a holdings
+ * row can show a proper Finnish explanation per position.)
+ */
+export const negativePositionIds = (txns: readonly Txn[], on: IsoDate): number[] =>
+  [...positionsAt(txns, on)].filter(([, qty]) => qty.scaled < 0n).map(([id]) => id);
+
 export const cashAt = (txns: readonly Txn[], on: IsoDate, currency: Currency): Money =>
   upTo(txns, on)
     .filter((t) => t.currency === currency)

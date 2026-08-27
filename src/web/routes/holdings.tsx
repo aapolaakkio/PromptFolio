@@ -46,6 +46,22 @@ const PriceCell = ({ priceDate, stale }: { priceDate: string | null; stale: bool
   );
 };
 
+/**
+ * The third state alongside `PriceCell`'s "priced, but not today" and "never
+ * priced": cost basis, market value and unrealised gain are not stale and not
+ * zero, they are genuinely unknown -- a SELL on the ledger has no matching
+ * earlier BUY (typically one page of a multi-page OP import pasted out of
+ * order, with the purchase on a page not yet imported). Rendered the same way
+ * as `PriceCell`'s badges (a short label, full explanation on hover/focus via
+ * `title`) so all three "not a plain number" states read consistently rather
+ * than one being an error-red banner and the others a quiet badge.
+ */
+const UnknownCostCell = ({ message }: { message: string }) => (
+  <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted" title={message}>
+    tuntematon
+  </span>
+);
+
 export const HoldingsPage = () => {
   const [sortKey, setSortKey] = useState<SortKey>("valueEur");
   const [direction, setDirection] = useState<SortDirection>("desc");
@@ -130,10 +146,37 @@ export const HoldingsPage = () => {
               <td>{KIND_LABELS[row.kind]}</td>
               <td>{row.currency}</td>
               <td className="num">{qty(row.quantity)}</td>
-              <td className="num">{eur(row.costEur)}</td>
-              <td className="num">{eur(row.valueEur)}</td>
-              <td className={`num ${Number(row.unrealisedEur) >= 0 ? "text-gain" : "text-loss"}`}>
-                {eur(row.unrealisedEur)}
+              <td className="num">
+                {row.costEur === null ? (
+                  // SAFETY: costEur/costBasisError are null together (see
+                  // Holding's own docs); the `?? ""` fallback only guards a
+                  // shape TypeScript itself cannot correlate across fields.
+                  <UnknownCostCell message={row.costBasisError?.message ?? ""} />
+                ) : (
+                  eur(row.costEur)
+                )}
+              </td>
+              <td className="num">
+                {row.valueEur === null ? (
+                  <UnknownCostCell message={row.costBasisError?.message ?? ""} />
+                ) : (
+                  eur(row.valueEur)
+                )}
+              </td>
+              <td
+                className={`num ${
+                  row.unrealisedEur === null
+                    ? ""
+                    : Number(row.unrealisedEur) >= 0
+                      ? "text-gain"
+                      : "text-loss"
+                }`}
+              >
+                {row.unrealisedEur === null ? (
+                  <UnknownCostCell message={row.costBasisError?.message ?? ""} />
+                ) : (
+                  eur(row.unrealisedEur)
+                )}
               </td>
               <td className="num">
                 <PriceCell priceDate={row.priceDate} stale={row.stale} />

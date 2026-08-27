@@ -15,6 +15,15 @@ export type ValuePoint = {
   readonly date: IsoDate;
   readonly valueEur: Money;
   readonly stale: boolean;
+  /**
+   * Instrument ids excluded from `valueEur` on this date because their net position
+   * was negative (an unmatched disposal -- see `ledger.ts`'s `negativePositionIds`).
+   * Deliberately a distinct field from `stale`: `stale` means "this price is old, not
+   * wrong"; an excluded instrument's value is not merely old, it is not included at
+   * all, which is a different fact the caller needs to be able to act on separately.
+   * Normally empty.
+   */
+  readonly excludedInstrumentIds: readonly number[];
 };
 
 /**
@@ -76,9 +85,18 @@ export const valueSeries = (
   return datesBetween(from, to).map((date) => {
     let value = zeroMoney(EUR);
     let stale = false;
+    const excludedInstrumentIds: number[] = [];
     for (const [instrumentId, qty] of positionsAt(txns, date)) {
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
+      // A negative quantity is an unmatched disposal, not a real short position --
+      // multiplying it by a price would drag the total down by a fabricated negative
+      // amount. Excluded from the sum, but recorded here rather than silently
+      // dropped, so the caller knows this day's value is missing that instrument.
+      if (qty.scaled < 0n) {
+        excludedInstrumentIds.push(instrumentId);
+        continue;
+      }
       const price = prices.priceOn(instrumentId, date);
       if (price === null) {
         stale = true;
@@ -97,7 +115,7 @@ export const valueSeries = (
       }
       value = addMoney(value, toEur(native, rate, "half-up"));
     }
-    return { date, valueEur: value, stale };
+    return { date, valueEur: value, stale, excludedInstrumentIds };
   });
 };
 

@@ -1,5 +1,10 @@
 import { test, expect } from "bun:test";
-import { buildLots, costBasisAt } from "./costbasis";
+import {
+  buildLots,
+  costBasisAt,
+  costBasisPerInstrument,
+  UnmatchedDisposalError,
+} from "./costbasis";
 import type { Txn, TransactionType } from "./types";
 import {
   parseMoney,
@@ -95,6 +100,28 @@ test("selling more units than held is a domain error", () => {
       txn("SELL", "2025-02-10", { qty: "6", amount: "700,00" }),
     ]),
   ).toThrow(/instrument 7.*2025-02-10/i);
+});
+
+test("costBasisPerInstrument isolates one instrument's UnmatchedDisposalError from another instrument's own cost basis", () => {
+  // Instrument 7 (this file's `txn()` default) has a perfectly ordinary buy.
+  // Instrument 8 has a SELL with no matching prior BUY at all -- e.g. one page
+  // of a multi-page OP import pasted out of order.
+  const ok = txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00" });
+  const broken = { ...txn("SELL", "2025-01-05", { qty: "5", amount: "500,00" }), instrumentId: 8 };
+
+  const outcomes = costBasisPerInstrument([ok, broken], "2025-12-31");
+
+  const okOutcome = outcomes.get(7);
+  expect(okOutcome?.ok).toBe(true);
+  if (!okOutcome?.ok) throw new Error("expected instrument 7 to resolve");
+  expect(formatMoney(okOutcome.costEur)).toBe("1000.00");
+
+  const brokenOutcome = outcomes.get(8);
+  expect(brokenOutcome?.ok).toBe(false);
+  if (!brokenOutcome || brokenOutcome.ok) throw new Error("expected instrument 8 to fail");
+  expect(brokenOutcome.error).toBeInstanceOf(UnmatchedDisposalError);
+  expect(brokenOutcome.error.instrumentId).toBe(8);
+  expect(brokenOutcome.error.tradeDate).toBe("2025-01-05");
 });
 
 test("a split rescales open lots without creating a disposal", () => {

@@ -194,6 +194,39 @@ test("the same instrument held across two accounts aggregates into a single slic
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
 });
 
+test("an instrument with a negative net position (unmatched disposal) is excluded from the totals, not counted negatively", () => {
+  // A SELL with no matching prior BUY -- positionsAt() reports -10 units, which is
+  // correct ledger state, but allocateBy must not multiply that by a price and
+  // subtract it from a bucket's total.
+  const sell = (id: number, accountId: number, qty: string): Txn => ({
+    id,
+    accountId,
+    instrumentId: 1,
+    type: "SELL",
+    tradeDate: "2025-01-01",
+    quantity: parseQuantity(qty),
+    unitPrice: null,
+    amount: parseMoney("1,00", EUR),
+    fee: parseMoney("0", EUR),
+    tax: parseMoney("0", EUR),
+    currency: EUR,
+    fxRateEur: parseFxRate("1", EUR),
+  });
+
+  const slices = allocateBy(
+    [sell(1, 1, "10"), buy(2, 1, "10")],
+    instruments,
+    prices,
+    "2025-06-01",
+    "kind",
+  );
+  // Only the ETF (instrument 2) contributes; the negative Nokia position is
+  // excluded entirely -- not present as a negative "stock" slice, and not
+  // silently folded into another bucket as zero either.
+  expect(slices.map((s) => s.key)).toEqual(["etf"]);
+  expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
+});
+
 test("the same instrument held across two accounts still produces two account slices", () => {
   const slices = allocateBy(
     [buy(1, 1, "60"), buy(1, 2, "40")],

@@ -60,6 +60,14 @@ export const allocateBy = (
 
   for (const { accountId, positions } of buckets) {
     for (const [instrumentId, qty] of positions) {
+      // A negative quantity means an unmatched disposal (see ledger.ts's
+      // `negativePositionIds`, which the server layer uses to tell the caller
+      // which instruments this excluded) -- price * qty would be negative, and
+      // silently subtracting that from a bucket's total is exactly the
+      // "plausible but wrong number" this must not produce. Skip its
+      // contribution entirely rather than count it as either a negative or a
+      // zero amount.
+      if (qty.scaled < 0n) continue;
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
       const price = prices.priceOn(instrumentId, on);

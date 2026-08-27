@@ -242,16 +242,18 @@ describe("GET /api/holdings", () => {
 
   // Regression: an OP import pasted one page at a time can easily land a
   // SELL on the ledger before the BUY it disposes of, which is on an
-  // earlier page not yet imported. core/costbasis.ts's buildLots() throws
-  // a correct, well-worded domain error for this (UnmatchedDisposalError),
-  // but nothing used to catch it -- handle()'s generic-500 fallback turned
-  // it into a bare, unexplained `{"error":"Palvelinvirhe"}` and took down
-  // the whole holdings screen. This must come back as a 400 (bad ledger
-  // state, not a server fault) whose message names the actual instrument
-  // (ISIN and name -- user-facing facts) and trade date so the user can
-  // find the offending row, tells them what to do about it, and leaks
-  // neither the internal numeric instrumentId nor a raw exception string.
-  test("responds with 400 naming the instrument and date, not a 500, when a sale has no matching purchase", async () => {
+  // earlier page not yet imported. core/costbasis.ts's buildLots() throws a
+  // correct, well-worded domain error for this (UnmatchedDisposalError).
+  // This USED TO take the whole holdings screen down with a whole-request
+  // 400 (see git history on this file) -- during a page-by-page import that
+  // is the normal state, so the user would be locked out of their whole
+  // portfolio until the last page landed. It must instead degrade per
+  // position: every holding is still returned, and only the affected one is
+  // marked, with the same instrument (ISIN and name -- user-facing facts,
+  // never the internal numeric instrumentId) and trade date, and the same
+  // "what to do about it" wording this app has shown for this condition
+  // since it was first caught.
+  test("degrades the affected position instead of 400ing the whole request when a sale has no matching purchase", async () => {
     const { cookie } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db");
     const { transactions } = await import("../db/schema");
@@ -282,20 +284,94 @@ describe("GET /api/holdings", () => {
     const response = await portfolioRoutes["/api/holdings"].GET(
       new Request("http://x/api/holdings?on=2025-01-01", { headers: { cookie } }),
     );
-    expect(response.status).toBe(400);
-    // SAFETY: a 400 from handle() (asserted above) always returns
-    // { error: string } (see http.ts's HttpError branch).
-    const body = (await response.json()) as { error: string };
-    expect(body.error).toContain(isin);
-    expect(body.error).toContain("Test Co"); // createInstrument()'s fixed instrument name
-    expect(body.error).toContain("2025-01-01");
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/holdings (asserted above) always returns
+    // the HoldingView[] shape holdingsFor() builds.
+    const body = (await response.json()) as Array<{
+      isin: string;
+      quantity: string;
+      costEur: string | null;
+      valueEur: string | null;
+      unrealisedEur: string | null;
+      costBasisError: { tradeDate: string; message: string } | null;
+    }>;
+    expect(body).toHaveLength(1);
+    const holding = body[0]!;
+    // The raw ledger fact is still reported honestly: 10 units disposed, 0
+    // ever acquired, so -10.
+    expect(holding.quantity).toBe("-10.000000");
+    expect(holding.costEur).toBeNull();
+    expect(holding.valueEur).toBeNull();
+    expect(holding.unrealisedEur).toBeNull();
+    expect(holding.costBasisError).not.toBeNull();
+    expect(holding.costBasisError!.tradeDate).toBe("2025-01-01");
+    const message = holding.costBasisError!.message;
+    expect(message).toContain(isin);
+    expect(message).toContain("Test Co"); // createInstrument()'s fixed instrument name
+    expect(message).toContain("2025-01-01");
     // Tells the user what to do: import the missing purchase or remove the row.
-    expect(body.error).toMatch(/tuo|poista/i);
-    // No internal detail leaked: not core's own raw exception wording,
-    // which names the instrument by its internal numeric id ("instrument N")
+    expect(message).toMatch(/tuo|poista/i);
+    // No internal detail leaked: not core's own raw exception wording, which
+    // names the instrument by its internal numeric id ("instrument N")
     // rather than the user-facing ISIN/name used above.
-    expect(body.error).not.toMatch(/cannot dispose/i);
-    expect(body.error).not.toMatch(/instrument \d/i);
+    expect(message).not.toMatch(/cannot dispose/i);
+    expect(message).not.toMatch(/instrument \d/i);
+  });
+
+  test("an unmatched sale on one instrument does not affect another instrument's holding", async () => {
+    const { cookie } = await signUp(`holdings-unmatched-other-${crypto.randomUUID()}@example.com`);
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+
+    // A perfectly ordinary holding...
+    const { accountId } = await seedHolding(cookie, {
+      buyDate: "2024-01-10",
+      quantity: 10_000_000,
+      unitPrice: 100,
+      principal: 1_000,
+      prices: [{ date: "2024-01-10", close: 100 }],
+    });
+
+    // ...alongside a second instrument with an unmatched sale.
+    const brokenIsin = randomIsin();
+    const brokenInstrumentId = await createInstrument(cookie, brokenIsin);
+    db.insert(transactions)
+      .values({
+        accountId,
+        instrumentId: brokenInstrumentId,
+        type: "SELL",
+        tradeDate: "2024-06-01",
+        quantity: 5_000_000,
+        unitPrice: 100,
+        amount: 500_00,
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: crypto.randomUUID(),
+        externalId: null,
+        importId: null,
+      })
+      .run();
+
+    const response = await portfolioRoutes["/api/holdings"].GET(
+      new Request("http://x/api/holdings?on=2024-06-01", { headers: { cookie } }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/holdings (asserted above) always returns
+    // the HoldingView[] shape holdingsFor() builds.
+    const body = (await response.json()) as Array<{
+      isin: string;
+      costEur: string | null;
+      costBasisError: unknown | null;
+    }>;
+    expect(body).toHaveLength(2);
+    const ok = body.find((h) => h.isin !== brokenIsin)!;
+    const broken = body.find((h) => h.isin === brokenIsin)!;
+    expect(ok.costBasisError).toBeNull();
+    expect(ok.costEur).toBe("10.00"); // principal 1_000 minor units = 10.00 EUR, no fee
+    expect(broken.costBasisError).not.toBeNull();
   });
 });
 
@@ -327,11 +403,22 @@ describe("GET /api/value-series", () => {
       date: string;
       valueEur: string;
       stale: boolean;
+      excludedInstrumentIds: number[];
     }>;
     expect(body).toHaveLength(5);
     // 10 units at 10.00/unit = 100.00; at 11.00/unit = 110.00.
-    expect(body[0]).toEqual({ date: "2024-01-01", valueEur: "100.00", stale: false });
-    expect(body.at(-1)).toEqual({ date: "2024-01-05", valueEur: "110.00", stale: false });
+    expect(body[0]).toEqual({
+      date: "2024-01-01",
+      valueEur: "100.00",
+      stale: false,
+      excludedInstrumentIds: [],
+    });
+    expect(body.at(-1)).toEqual({
+      date: "2024-01-05",
+      valueEur: "110.00",
+      stale: false,
+      excludedInstrumentIds: [],
+    });
     // 2024-01-02..04 carry the 1.1. price forward -- stale.
     expect(body.slice(1, 4).every((p) => p.stale)).toBe(true);
   });
@@ -395,8 +482,62 @@ describe("GET /api/value-series", () => {
       date: string;
       valueEur: string;
       stale: boolean;
+      excludedInstrumentIds: number[];
     }>;
-    expect(body).toEqual([{ date: "2024-01-01", valueEur: "0.00", stale: false }]);
+    expect(body).toEqual([
+      { date: "2024-01-01", valueEur: "0.00", stale: false, excludedInstrumentIds: [] },
+    ]);
+  });
+
+  // Regression: verified directly against positionsAt() that an unmatched SELL
+  // reports a negative quantity for that instrument (e.g. instrument 7, quantity
+  // -10.000000 for a bare 10-unit sale with no prior buy). valueSeries() must not
+  // multiply that by a price and report a negative "value" for the day -- and it
+  // must not silently disappear from the total either, so the instrument is named
+  // in excludedInstrumentIds instead.
+  test("a negative (unmatched-disposal) position never makes the daily value negative", async () => {
+    const { cookie } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    const accountId = await createAccount(cookie);
+    const instrumentId = await createInstrument(cookie, randomIsin());
+
+    db.insert(transactions)
+      .values({
+        accountId,
+        instrumentId,
+        type: "SELL",
+        tradeDate: "2024-01-01",
+        quantity: 10_000_000, // 10 units, nothing ever bought
+        unitPrice: 100,
+        amount: 1_000_00,
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: crypto.randomUUID(),
+        externalId: null,
+        importId: null,
+      })
+      .run();
+
+    const response = await portfolioRoutes["/api/value-series"].GET(
+      new Request("http://x/api/value-series?from=2024-01-01&to=2024-01-01", {
+        headers: { cookie },
+      }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/value-series (asserted above) always
+    // returns an array of { date, valueEur, stale, excludedInstrumentIds } points.
+    const body = (await response.json()) as Array<{
+      valueEur: string;
+      excludedInstrumentIds: number[];
+    }>;
+    expect(body).toHaveLength(1);
+    expect(body[0]!.valueEur).toBe("0.00");
+    expect(Number(body[0]!.valueEur)).toBeGreaterThanOrEqual(0);
+    expect(body[0]!.excludedInstrumentIds).toEqual([instrumentId]);
   });
 });
 
@@ -418,15 +559,18 @@ describe("GET /api/allocation", () => {
     );
     expect(response.status).toBe(200);
     // SAFETY: a 200 from GET /api/allocation (asserted above) always
-    // returns the Slice[] shape allocateBy() builds.
-    const body = (await response.json()) as Array<{
-      key: string;
-      label: string;
-      valueEur: string;
-      weight: number;
-    }>;
+    // returns { slices: Slice[], excludedInstruments } (allocateBy() builds
+    // `slices`; negativePositionIds() -- enriched with ISIN/name -- builds
+    // `excludedInstruments`).
+    const body = (await response.json()) as {
+      slices: Array<{ key: string; label: string; valueEur: string; weight: number }>;
+      excludedInstruments: Array<{ instrumentId: number; isin: string; name: string }>;
+    };
     // 10 units at 10.00/unit = 100.00.
-    expect(body).toEqual([{ key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 }]);
+    expect(body.slices).toEqual([
+      { key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 },
+    ]);
+    expect(body.excludedInstruments).toEqual([]);
   });
 
   test("accepts by=currency", async () => {
@@ -444,9 +588,74 @@ describe("GET /api/allocation", () => {
     );
     expect(response.status).toBe(200);
     // SAFETY: a 200 from GET /api/allocation (asserted above) always
-    // returns the Slice[] shape allocateBy() builds.
-    const body = (await response.json()) as Array<{ key: string }>;
-    expect(body.map((s) => s.key)).toContain("EUR");
+    // returns { slices, excludedInstruments } -- see the previous test.
+    const body = (await response.json()) as { slices: Array<{ key: string }> };
+    expect(body.slices.map((s) => s.key)).toContain("EUR");
+  });
+
+  // Regression: a SELL with no matching earlier BUY drives positionsAt() negative
+  // for that instrument (core/ledger.ts). allocateBy() must never multiply that
+  // negative quantity by a price and fold it into a slice's total -- and the
+  // instrument must not just vanish from the response either, which would be
+  // just as misleading as a fabricated negative amount.
+  test("a negative (unmatched-disposal) position never contributes a negative amount, and is named in excludedInstruments instead", async () => {
+    const { cookie } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+
+    // One ordinary holding...
+    await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    // ...and a second instrument sold with nothing ever bought.
+    const cookieAccountId = await createAccount(cookie);
+    const brokenIsin = randomIsin();
+    const brokenInstrumentId = await createInstrument(cookie, brokenIsin);
+    db.insert(transactions)
+      .values({
+        accountId: cookieAccountId,
+        instrumentId: brokenInstrumentId,
+        type: "SELL",
+        tradeDate: "2024-01-01",
+        quantity: 5_000_000,
+        unitPrice: 100,
+        amount: 500_00,
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: crypto.randomUUID(),
+        externalId: null,
+        importId: null,
+      })
+      .run();
+
+    const response = await portfolioRoutes["/api/allocation"].GET(
+      new Request("http://x/api/allocation?on=2024-01-01", { headers: { cookie } }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/allocation (asserted above) always
+    // returns { slices, excludedInstruments } -- see this describe block's
+    // first test.
+    const body = (await response.json()) as {
+      slices: Array<{ key: string; label: string; valueEur: string; weight: number }>;
+      excludedInstruments: Array<{ instrumentId: number; isin: string; name: string }>;
+    };
+    // Only the ordinary holding's 100.00 -- the broken instrument contributes
+    // nothing, positive or negative.
+    expect(body.slices).toEqual([
+      { key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 },
+    ]);
+    expect(body.slices.every((s) => Number(s.valueEur) >= 0)).toBe(true);
+    expect(body.excludedInstruments).toEqual([
+      { instrumentId: brokenInstrumentId, isin: brokenIsin, name: "Test Co" },
+    ]);
   });
 
   test("rejects an unknown dimension with 400", async () => {
@@ -475,7 +684,7 @@ describe("GET /api/allocation", () => {
       }),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([]);
+    expect(await response.json()).toEqual({ slices: [], excludedInstruments: [] });
   });
 });
 

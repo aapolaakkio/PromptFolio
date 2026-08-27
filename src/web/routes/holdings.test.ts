@@ -13,6 +13,7 @@ const row = (name: string, valueEur: string, unrealisedEur: string): Holding => 
   unrealisedEur,
   priceDate: "2025-06-02",
   stale: false,
+  costBasisError: null,
 });
 
 test("sorts by value descending by default", () => {
@@ -40,6 +41,20 @@ test("sorting is stable and does not mutate the input array", () => {
   const sorted = sortHoldings(rows, "valueEur", "desc");
   expect(sorted).not.toBe(rows);
   expect(rows.map((r) => r.name)).toEqual(["A", "B"]);
+});
+
+test("a holding with an unknown cost basis (null costEur/valueEur/unrealisedEur) sorts as zero, not NaN", () => {
+  const rows: Holding[] = [
+    {
+      ...row("A", "0.00", "0.00"),
+      costEur: null,
+      valueEur: null,
+      unrealisedEur: null,
+      costBasisError: { tradeDate: "2025-01-01", message: "ei voi käsitellä" },
+    },
+    row("B", "50.00", "0.00"),
+  ];
+  expect(sortHoldings(rows, "valueEur", "desc").map((r) => r.name)).toEqual(["B", "A"]);
 });
 
 test("a never-priced holding (priceDate null) sorts as zero value, not NaN", () => {

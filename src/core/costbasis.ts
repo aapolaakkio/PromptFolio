@@ -207,3 +207,51 @@ export const costBasisAt = (txns: readonly Txn[], on: IsoDate): Map<number, Mone
   }
   return totals;
 };
+
+/** One instrument's cost-basis outcome: either a total, or the disposal that could not be matched. */
+export type CostBasisOutcome =
+  | { readonly ok: true; readonly costEur: Money }
+  | { readonly ok: false; readonly error: UnmatchedDisposalError };
+
+/**
+ * Like `costBasisAt`, but resolves each instrument's lots independently, so one
+ * instrument's `UnmatchedDisposalError` (e.g. one page of a multi-page OP import
+ * pasted newest-first, landing a SELL before the BUY it disposes of, which is on a
+ * page not yet imported) does not prevent every OTHER instrument's cost basis from
+ * being computed. This is safe because `buildLots`'s per-transaction step only ever
+ * reads/writes `openByInstrument.get(t.instrumentId)` -- no instrument's lot-building
+ * ever consults another instrument's transactions or lots -- so re-running it on one
+ * instrument's own transactions in isolation produces exactly the same lots and
+ * disposals (and the same error, if any) as running it on the whole ledger together.
+ *
+ * The caller (`server/valuation.ts`'s `holdingsFor`) uses this to degrade per
+ * position: every OTHER holding still gets a real cost basis and gain, and only the
+ * instrument with the incomplete ledger is marked unknown, instead of one bad row
+ * taking the whole request down (see `UnmatchedDisposalError`'s own docs for why that
+ * used to happen, and why rejecting the sale at commit time is deliberately not the
+ * fix -- the ledger is append-only and paged imports are expected to be temporarily
+ * incomplete).
+ */
+export const costBasisPerInstrument = (
+  txns: readonly Txn[],
+  on: IsoDate,
+): Map<number, CostBasisOutcome> => {
+  const instrumentIds = new Set<number>();
+  for (const t of txns) if (t.instrumentId !== null) instrumentIds.add(t.instrumentId);
+
+  const outcomes = new Map<number, CostBasisOutcome>();
+  for (const instrumentId of instrumentIds) {
+    const own = txns.filter((t) => t.instrumentId === instrumentId);
+    try {
+      const totals = costBasisAt(own, on);
+      outcomes.set(instrumentId, {
+        ok: true,
+        costEur: totals.get(instrumentId) ?? zeroMoney(EUR),
+      });
+    } catch (cause) {
+      if (!(cause instanceof UnmatchedDisposalError)) throw cause;
+      outcomes.set(instrumentId, { ok: false, error: cause });
+    }
+  }
+  return outcomes;
+};

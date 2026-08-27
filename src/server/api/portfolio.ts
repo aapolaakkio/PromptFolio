@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { allocateBy } from "../../core/allocation";
-import { externalCashFlows } from "../../core/ledger";
+import { externalCashFlows, negativePositionIds } from "../../core/ledger";
 import { formatMoney, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
@@ -60,6 +60,11 @@ export const portfolioRoutes = {
           date: point.date,
           valueEur: formatMoney(point.valueEur),
           stale: point.stale,
+          // Instruments excluded from this day's valueEur because their net
+          // position was negative (an unmatched disposal -- see core/ledger.ts's
+          // negativePositionIds). Cross-reference against /api/holdings, which
+          // carries each instrument's ISIN, name and Finnish explanation.
+          excludedInstrumentIds: point.excludedInstrumentIds,
         })),
       );
     }),
@@ -72,14 +77,29 @@ export const portfolioRoutes = {
       const dimension = DimensionSchema.parse(url.searchParams.get("by") ?? "kind");
       const on = IsoDateSchema.parse(url.searchParams.get("on") ?? today());
       const { txns, instruments, prices } = loadPortfolio(db, userId);
-      return json(
-        allocateBy(txns, instruments, prices, on, dimension).map((slice) => ({
+      const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
+
+      // allocateBy() already excludes a negative (unmatched-disposal) position
+      // from every slice's total rather than counting it as a negative amount
+      // (see core/allocation.ts) -- but that must not mean the position just
+      // vanishes from the response with no trace. negativePositionIds() names
+      // exactly which instruments were left out, enriched here with the
+      // ISIN/name a caller needs to act on it (the same instrumentId /api/holdings
+      // reports the same instrument's costBasisError under).
+      const excludedInstruments = negativePositionIds(txns, on).flatMap((instrumentId) => {
+        const instrument = byId.get(instrumentId);
+        return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
+      });
+
+      return json({
+        slices: allocateBy(txns, instruments, prices, on, dimension).map((slice) => ({
           key: slice.key,
           label: slice.label,
           valueEur: formatMoney(slice.valueEur),
           weight: slice.weight,
         })),
-      );
+        excludedInstruments,
+      });
     }),
   },
 

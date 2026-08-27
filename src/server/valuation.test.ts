@@ -200,6 +200,44 @@ test("a position with no price at all values at zero EUR and is reported stale",
   expect(neste.stale).toBe(true);
 });
 
+test("holdingsFor marks only the affected position's cost basis unknown when a sale has no matching purchase, leaving other holdings unaffected", () => {
+  const { db, sqlite, accountId } = seed();
+  // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
+  // single row with an `id` column on success.
+  const broken = sqlite
+    .query(
+      "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .get("FI0009009999", "BROKEN.HE", "Broken Co", "stock", "EUR", "yahoo", "BROKEN.HE") as {
+    id: number;
+  };
+  sqlite
+    .query(
+      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'SELL', '2025-01-01', 5000000, 100, 500, 0, 0, 'EUR', 100000000, 'broken-sell')",
+    )
+    .run(accountId, broken.id);
+
+  const holdings = holdingsFor(db, "u1", "2025-07-01");
+  const nokia = holdings.find((h) => h.isin === "FI0009000681")!;
+  const brokenHolding = holdings.find((h) => h.isin === "FI0009009999")!;
+
+  // The ordinary Nokia holding still gets a real cost basis, unaffected by the
+  // other instrument's incomplete ledger.
+  expect(nokia.costEur).toBe("418.00");
+  expect(nokia.costBasisError).toBeNull();
+
+  // The 5 sold units are still reported honestly (the raw ledger fact), but
+  // every money field is null, not zero and not a fabricated negative amount.
+  expect(brokenHolding.quantity).toBe("-5.000000");
+  expect(brokenHolding.costEur).toBeNull();
+  expect(brokenHolding.valueEur).toBeNull();
+  expect(brokenHolding.unrealisedEur).toBeNull();
+  expect(brokenHolding.costBasisError).not.toBeNull();
+  expect(brokenHolding.costBasisError!.tradeDate).toBe("2025-01-01");
+  expect(brokenHolding.costBasisError!.message).toContain("FI0009009999");
+  expect(brokenHolding.costBasisError!.message).toContain("Broken Co");
+});
+
 test("holdings are empty for a user with no accounts", () => {
   const { db } = seed();
   expect(holdingsFor(db, "nobody", "2025-07-01")).toEqual([]);

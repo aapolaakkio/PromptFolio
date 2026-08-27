@@ -179,6 +179,26 @@ test("a priced USD instrument with no known fx rate contributes nothing and mark
   expect(series.map((p) => p.stale)).toEqual([true]);
 });
 
+test("a SELL with no matching prior BUY drives the position negative, and that day's value excludes it rather than going negative", () => {
+  // No prior BUY at all -- e.g. one page of a paged OP import that only
+  // contains the SELL, with the matching BUY on a page not yet imported.
+  // positionsAt() (core/ledger.ts) still reports the raw signed quantity
+  // (-10), which is correct ledger state, but valueSeries must not turn
+  // that into a -1000.00 "value".
+  const txns = [txn("SELL", "2025-01-01", { qty: "10", amount: "1000,00" })];
+  const series = valueSeries(
+    txns,
+    [instrument],
+    lookup({ "2025-01-01": "100,00" }),
+    "2025-01-01",
+    "2025-01-01",
+  );
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
+  expect(series[0]!.excludedInstrumentIds).toEqual([7]);
+  // Distinct from staleness: the price is perfectly current, the position is not.
+  expect(series[0]!.stale).toBe(false);
+});
+
 test("xirr recovers a known 10% annual return", () => {
   const flows: CashFlow[] = [{ date: "2024-01-01", amountEur: parseMoney("-1000,00", EUR) }];
   const final: CashFlow = { date: "2025-01-01", amountEur: parseMoney("1100,00", EUR) };
@@ -221,9 +241,24 @@ test("xirr falls back to bisection when Newton-Raphson fails to converge", () =>
 test("twr ignores the timing of deposits", () => {
   // Portfolio doubles, but a deposit lands halfway. TWR must stay ~100%, not be diluted.
   const values = [
-    { date: "2024-01-01", valueEur: parseMoney("1000,00", EUR), stale: false },
-    { date: "2024-07-01", valueEur: parseMoney("1400,00", EUR), stale: false },
-    { date: "2024-12-31", valueEur: parseMoney("3360,00", EUR), stale: false },
+    {
+      date: "2024-01-01",
+      valueEur: parseMoney("1000,00", EUR),
+      stale: false,
+      excludedInstrumentIds: [],
+    },
+    {
+      date: "2024-07-01",
+      valueEur: parseMoney("1400,00", EUR),
+      stale: false,
+      excludedInstrumentIds: [],
+    },
+    {
+      date: "2024-12-31",
+      valueEur: parseMoney("3360,00", EUR),
+      stale: false,
+      excludedInstrumentIds: [],
+    },
   ];
   const flows: CashFlow[] = [{ date: "2024-07-01", amountEur: parseMoney("1000,00", EUR) }];
   expect(twr(values, flows)).toBeCloseTo(0.96, 2);
@@ -231,8 +266,18 @@ test("twr ignores the timing of deposits", () => {
 
 test("twr of a flat portfolio is zero", () => {
   const values = [
-    { date: "2024-01-01", valueEur: parseMoney("1000,00", EUR), stale: false },
-    { date: "2024-12-31", valueEur: parseMoney("1000,00", EUR), stale: false },
+    {
+      date: "2024-01-01",
+      valueEur: parseMoney("1000,00", EUR),
+      stale: false,
+      excludedInstrumentIds: [],
+    },
+    {
+      date: "2024-12-31",
+      valueEur: parseMoney("1000,00", EUR),
+      stale: false,
+      excludedInstrumentIds: [],
+    },
   ];
   expect(twr(values, [])).toBeCloseTo(0, 6);
 });

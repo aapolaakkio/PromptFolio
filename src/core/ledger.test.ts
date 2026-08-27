@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { positionsAt, cashAt, externalCashFlows } from "./ledger";
+import { positionsAt, cashAt, externalCashFlows, negativePositionIds } from "./ledger";
 import type { Txn, TransactionType } from "./types";
 import {
   parseMoney,
@@ -48,6 +48,19 @@ test("accumulates buys and sells into positions", () => {
   ];
   const pos = positionsAt(txns, "2025-12-31");
   expect(formatQuantity(pos.get(7)!)).toBe("12.000000");
+});
+
+test("negativePositionIds reports an instrument sold with no matching prior buy", () => {
+  const txns = [txn("SELL", "2025-01-10", { instrumentId: 7, qty: "10", amount: "1000,00" })];
+  expect(negativePositionIds(txns, "2025-01-10")).toEqual([7]);
+});
+
+test("negativePositionIds is empty for an ordinary, fully-covered position", () => {
+  const txns = [
+    txn("BUY", "2025-01-10", { instrumentId: 7, qty: "10", amount: "-1000,00" }),
+    txn("SELL", "2025-02-10", { instrumentId: 7, qty: "3", amount: "330,00" }),
+  ];
+  expect(negativePositionIds(txns, "2025-12-31")).toEqual([]);
 });
 
 test("ignores transactions after the as-of date", () => {

@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from "drizzle-orm";
-import { costBasisAt, UnmatchedDisposalError } from "../core/costbasis";
+import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis";
 import { positionsAt } from "../core/ledger";
 import {
   EUR,
@@ -18,7 +18,6 @@ import type { PriceLookup } from "../core/returns";
 import type { Instrument, IsoDate, Txn } from "../core/types";
 import type { getDb } from "./db";
 import { accounts, fxRates, instruments, prices, transactions } from "./db/schema";
-import { HttpError } from "./errors";
 
 type Db = ReturnType<typeof getDb>["db"];
 
@@ -162,52 +161,40 @@ export type HoldingView = {
   readonly kind: Instrument["kind"];
   readonly currency: Currency;
   readonly quantity: string;
-  readonly costEur: string;
-  readonly valueEur: string;
-  readonly unrealisedEur: string;
+  /**
+   * `costEur`, `valueEur` and `unrealisedEur` are `null` together, exactly when
+   * `costBasisError` is non-null: a SELL/TRANSFER_OUT with no matching earlier BUY
+   * (e.g. one page of a multi-page OP import pasted out of order) makes this
+   * instrument's cost basis genuinely unknown, and an unrealised gain cannot be
+   * computed without it. `valueEur` is nulled too rather than left as a lone
+   * price-times-quantity figure: `quantity` for this instrument is the ledger's raw
+   * signed total (see `positionsAt`), and can itself be negative in exactly this
+   * situation -- reporting a "market value" computed from a nonsensical negative
+   * holding would be the same class of wrong-but-plausible number this whole type
+   * exists to avoid. The row is still returned, with `quantity` shown as-is (that is
+   * the honest ledger fact) and `costBasisError` explaining why the money fields
+   * are missing, instead of one bad position taking down every other holding's
+   * response (see `costBasisPerInstrument` in `core/costbasis.ts`).
+   */
+  readonly costEur: string | null;
+  readonly valueEur: string | null;
+  readonly unrealisedEur: string | null;
   readonly priceDate: IsoDate | null;
   readonly stale: boolean;
+  readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
 };
 
 /**
- * Wraps `costBasisAt` so an `UnmatchedDisposalError` -- a SELL/TRANSFER_OUT
- * with no matching earlier BUY, e.g. one page of a multi-page OP import
- * pasted out of order -- becomes a client-facing `HttpError` that names the
- * actual instrument (its ISIN and name, not the internal `instrumentId`,
- * which is not client-facing) and trade date, with a one-sentence
- * instruction, instead of an unhandled throw that `handle()` would
- * otherwise flatten into a detail-free 500 (see `server/http.ts`).
- *
- * 400 (not 422, which this codebase never uses) to match the existing
- * precedent for "an earlier step must happen first" failures --
- * `import/commit.ts`'s "Tuntemattomat arvopaperit on lisättävä ensin" for
- * unknown ISINs is the same shape of problem: data the ledger needs is
- * missing, and the fix is to import it, not to retry this request as-is.
- *
- * Any other error out of `costBasisAt` (e.g. a BUY with a non-negative
- * amount) is left to propagate untouched -- that is a different defect,
- * and `handle()`'s generic, detail-free 500 is the correct, safe fallback
- * for an error nobody has classified yet.
+ * The same Finnish wording this project has shown for this condition since it was
+ * first caught (originally as a whole-request 400 -- see git history on this file):
+ * names the instrument by its user-facing ISIN/name (never the internal numeric
+ * `instrumentId`), names the trade date, and tells the user what to do about it.
+ * Reuses `UnmatchedDisposalError.tradeDate` rather than re-deriving it.
  */
-const costBasisOrExplain = (
-  txns: readonly Txn[],
-  on: IsoDate,
-  byId: ReadonlyMap<number, Instrument>,
-): Map<number, Money> => {
-  try {
-    return costBasisAt(txns, on);
-  } catch (cause) {
-    if (!(cause instanceof UnmatchedDisposalError)) throw cause;
-    const instrument = byId.get(cause.instrumentId);
-    if (!instrument) throw cause;
-    throw new HttpError(
-      400,
-      `Myyntiä ${instrument.name} (${instrument.isin}) päivältä ${cause.tradeDate} ei voi käsitellä, ` +
-        `koska instrumentille ei ole kirjattu ostotapahtumaa ennen tätä myyntiä: tuo puuttuvat ` +
-        `ostotapahtumat tai poista myyntirivi.`,
-    );
-  }
-};
+const explainUnmatchedDisposal = (instrument: Instrument, tradeDate: IsoDate): string =>
+  `Myyntiä ${instrument.name} (${instrument.isin}) päivältä ${tradeDate} ei voi käsitellä, ` +
+  `koska instrumentille ei ole kirjattu ostotapahtumaa ennen tätä myyntiä: tuo puuttuvat ` +
+  `ostotapahtumat tai poista myyntirivi.`;
 
 /**
  * Current holdings, valued as of `on`. `stale` is `true` whenever the price
@@ -215,11 +202,19 @@ const costBasisOrExplain = (
  * date, per `PriceLookup.priceDateOn`'s contract) or was missing entirely --
  * either way the UI must show the staleness badge rather than a number that
  * looks as current as it is not.
+ *
+ * Cost basis is resolved per instrument (`costBasisPerInstrument`), so one
+ * instrument's `UnmatchedDisposalError` marks only that row's money fields
+ * unknown via `costBasisError` -- it never 400s the whole response. Rejecting the
+ * sale at commit time is deliberately not done instead: the ledger is append-only
+ * and the user pages OP imports in newest-first order, so a page legitimately
+ * contains a sale whose purchase is on a page not yet imported, and the state is
+ * correct again once every page has landed.
  */
 export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] => {
   const { txns, instruments: all, prices: lookup } = loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
-  const costs = costBasisOrExplain(txns, on, byId);
+  const costs = costBasisPerInstrument(txns, on);
 
   return [...positionsAt(txns, on)]
     .flatMap(([instrumentId, quantity]) => {
@@ -230,13 +225,27 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
       const priceDate = lookup.priceDateOn(instrumentId, on);
       const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
 
-      const valueEur =
+      const nativeValueEur =
         price === null || (instrument.currency !== EUR && rate === null)
           ? zeroMoney(EUR)
           : rate === null
             ? mulMoney(price, quantity)
             : toEur(mulMoney(price, quantity), rate);
-      const costEur = costs.get(instrumentId) ?? zeroMoney(EUR);
+
+      const outcome: CostBasisOutcome | undefined = costs.get(instrumentId);
+      const costBasisError =
+        outcome && !outcome.ok
+          ? {
+              tradeDate: outcome.error.tradeDate,
+              message: explainUnmatchedDisposal(instrument, outcome.error.tradeDate),
+            }
+          : null;
+      // `outcome` is only ever absent for an instrument `positionsAt` did not
+      // itself derive from `costBasisPerInstrument`'s own txn scan -- both walk
+      // the same set of instrumentId-bearing transactions, so this defaults to
+      // zero purely as a defensive fallback, matching this function's prior
+      // behaviour for that case.
+      const costEur = costBasisError ? null : outcome?.ok ? outcome.costEur : zeroMoney(EUR);
 
       const holding: HoldingView = {
         instrumentId,
@@ -245,13 +254,14 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
         kind: instrument.kind,
         currency: instrument.currency,
         quantity: formatQuantity(quantity),
-        costEur: formatMoney(costEur),
-        valueEur: formatMoney(valueEur),
-        unrealisedEur: formatMoney(subMoney(valueEur, costEur)),
+        costEur: costEur === null ? null : formatMoney(costEur),
+        valueEur: costBasisError === null ? formatMoney(nativeValueEur) : null,
+        unrealisedEur: costEur === null ? null : formatMoney(subMoney(nativeValueEur, costEur)),
         priceDate,
         stale: priceDate !== on,
+        costBasisError,
       };
       return [holding];
     })
-    .sort((a, b) => Number(b.valueEur) - Number(a.valueEur));
+    .sort((a, b) => Number(b.valueEur ?? "0") - Number(a.valueEur ?? "0"));
 };

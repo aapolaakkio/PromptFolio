@@ -289,7 +289,8 @@ Three classes, handled differently:
 |---|---|---|
 | Ingest | malformed CSV row, OCR garbage | never reaches the ledger; shown in review with the offending raw row |
 | External | scraper down, HTTP 429, ECB gap | logged to `price_fetch_log`, degrade to stale, retry next cycle; badge in UI |
-| Domain | sell more units than held, negative cash | rejected at commit with a message naming the instrument and date |
+| Domain | negative cash | rejected at commit with a message naming the instrument and date |
+| Domain | sell more units than held | **not** rejected at commit, by design — see §10b |
 
 No error is swallowed. Server logs carry full context; UI messages are specific and actionable
 and never contain stack traces or internal identifiers.
@@ -449,6 +450,38 @@ ship unimplemented.
   behaves exactly like `manual`, rather than to a guessed scraper. Any instrument on either bank
   should be configured with `price_source: 'manual'` until a real holding and a real page can be
   checked.
+
+## 10b. Amendment — 2026-08-27, negative-position handling
+
+§9.1's Domain row and an earlier controller ruling both claimed a sale that exceeds the held
+quantity is "rejected at commit with a message naming the instrument and date." Verified directly:
+it is not implemented anywhere. `import/commit.ts` has no oversell check, and a SELL with no
+matching earlier BUY commits cleanly, leaving `positionsAt` reporting a negative quantity for that
+instrument (verified: a single unmatched 10-unit SELL yields quantity `-10.000000`).
+
+Rejecting such a sale at commit is also, on reflection, the wrong fix — deliberately not done, not
+merely not yet done. The user imports OP transactions by pasting one page of their web transaction
+table at a time, **newest page first**, so a page legitimately contains sales whose matching
+purchases are on a page not yet imported. The ledger is append-only and order-independent: state is
+correct once every page has landed. Rejecting a draft that would drive a position negative mid-import
+would make this paging workflow impossible.
+
+Instead, the incomplete state is made visible rather than silently wrong, and degrades per position
+rather than failing whole screens:
+
+- `GET /api/holdings` resolves each instrument's cost basis independently
+  (`costBasisPerInstrument`, `core/costbasis.ts`). An instrument with an unmatched disposal reports
+  `costEur`/`valueEur`/`unrealisedEur: null` and a `costBasisError` naming the trade date and giving
+  the same Finnish explanation the earlier (whole-request) 400 used to carry — every other holding
+  is unaffected.
+- `GET /api/allocation` and `GET /api/value-series` never fold a negative quantity into a total
+  (a negative position priced and summed would silently drag the reported value down). The
+  instrument is excluded from the total and named explicitly instead — `excludedInstruments` on
+  `/api/allocation`, `excludedInstrumentIds` per point on `/api/value-series` — so the gap is visible
+  and actionable rather than a vanished holding or a fabricated negative number.
+
+See `.superpowers/sdd/2026-08-27-promptfolio-phase-1/fix-negative-positions-report.md` for the full
+implementation report.
 
 ## 11. Open questions
 
