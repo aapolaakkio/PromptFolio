@@ -58,3 +58,51 @@ export const requireOk = async (response: Response, label: string): Promise<Resp
 /** `date` is within `[from, to]`, both inclusive, as plain ISO-date string compares. */
 export const inRange = (date: string, from: string, to: string): boolean =>
   date >= from && date <= to;
+
+/**
+ * A zero or negative close/NAV is never a real price -- no listed security
+ * or fund unit trades at or below zero. Reproduced live against all three
+ * real sources during review (`OP_FUND` with `0,00 EUR`, `NORDNET_FUND`
+ * with `"value":0`, `YAHOO` with `close: [0]` and `close: [-5]`): every one
+ * of them passed the bogus value straight through as a `FetchedPrice`
+ * before this check existed. A zero NAV would silently value a holding at
+ * nothing and drag the whole portfolio total down; a negative one is
+ * nonsense that would flow straight into the growth chart -- exactly the
+ * "never yield a plausible wrong number" failure this task is written
+ * against. Every source calls this at the point it builds a
+ * `FetchedPrice`, so a bad value fails the whole fetch loudly instead of
+ * being returned as one wrong point among otherwise-good ones.
+ *
+ * Deliberately does **not** also reject a "suspiciously large" jump: unlike
+ * zero/negative, there is no threshold that is a fact rather than a guess
+ * -- a real overnight move (a split, a large dividend adjustment, a
+ * genuine crash) can legitimately be large, and this module sees one
+ * fetch at a time with no prior price to compare against. Inventing a
+ * percentage here would be exactly the kind of unverified guess this task
+ * exists to avoid; that check belongs at a layer with historical context
+ * (Task 15's reconciliation/stale-badge work), not here.
+ */
+export const requirePositiveMinor = (closeMinor: number, label: string): number => {
+  if (!(closeMinor > 0)) {
+    throw new Error(`${label}: epäkelpo hinta ${closeMinor} (nolla tai negatiivinen)`);
+  }
+  return closeMinor;
+};
+
+/**
+ * Thrown by a `PriceSource` whose `id` is real (part of `PriceSourceId`
+ * and the registry) but whose `fetch` has deliberately not been built --
+ * currently `spankki_fund` and `danske_fund`, see `funds.ts`'s
+ * `notYetImplemented`. Distinct from any other thrown `Error` so a caller
+ * (Task 15's refresh job) can tell "this source is not built" apart from
+ * "this source's fetch genuinely failed" or "this source is fine, nothing
+ * new today" (`MANUAL`/a real source both resolve normally) purely by
+ * `instanceof`, without hardcoding a specific `PriceSourceId` at the call
+ * site.
+ */
+export class SourceNotImplementedError extends Error {
+  constructor(readonly id: PriceSourceId) {
+    super(`${id}: hintalähdettä ei ole vielä toteutettu`);
+    this.name = "SourceNotImplementedError";
+  }
+}

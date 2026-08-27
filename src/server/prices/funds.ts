@@ -1,7 +1,15 @@
 import { z } from "zod";
 
 import { parseCurrency, parseMoney } from "../../core/money";
-import { requireOk, inRange, type FetchArgs, type FetchedPrice, type PriceSource } from "./types";
+import {
+  requireOk,
+  requirePositiveMinor,
+  inRange,
+  SourceNotImplementedError,
+  type FetchArgs,
+  type FetchedPrice,
+  type PriceSource,
+} from "./types";
 
 /**
  * ## What the brief guessed, and what is actually true
@@ -98,12 +106,18 @@ export const NORDNET_FUND: PriceSource = {
     const points: FetchedPrice[] = [
       {
         date: parsed.latestDate,
-        closeMinor: Number(parseMoney(parsed.latestValue, currency).minor),
+        closeMinor: requirePositiveMinor(
+          Number(parseMoney(parsed.latestValue, currency).minor),
+          `nordnet_fund ${sourceKey} ${parsed.latestDate}`,
+        ),
         currency,
       },
       {
         date: parsed.previousDate,
-        closeMinor: Number(parseMoney(parsed.previousValue, currency).minor),
+        closeMinor: requirePositiveMinor(
+          Number(parseMoney(parsed.previousValue, currency).minor),
+          `nordnet_fund ${sourceKey} ${parsed.previousDate}`,
+        ),
         currency,
       },
     ];
@@ -179,8 +193,9 @@ export const OP_FUND: PriceSource = {
     const date = `${year}-${parsed.month}-${parsed.day}`;
     const currency = parseCurrency(parsed.currency);
     const { minor } = parseMoney(parsed.value, currency);
+    const closeMinor = requirePositiveMinor(Number(minor), `op_fund ${sourceKey} ${date}`);
 
-    const point: FetchedPrice = { date, closeMinor: Number(minor), currency };
+    const point: FetchedPrice = { date, closeMinor, currency };
     return inRange(point.date, from, to) ? [point] : [];
   },
 };
@@ -200,17 +215,26 @@ export const OP_FUND: PriceSource = {
  * config's wrong encoding/delimiter) -- so this stays an explicit,
  * loud non-implementation instead.
  *
- * Behaviour is identical to `MANUAL` (returns no prices; the instrument's
- * price stays whatever a human enters), but kept as its own value -- not
- * a re-export of `MANUAL` -- so `id` still reports the source that was
- * actually configured, and so a future implementation only has to change
- * this one factory call, not touch the registry or any instrument row's
- * `price_source`.
+ * **Not the same as `MANUAL`, on purpose.** An earlier draft of this made
+ * `fetch()` resolve `[]` -- identical to `MANUAL`'s "the instrument's price
+ * stays whatever a human enters" contract. Review caught that this makes
+ * the two indistinguishable to a caller: Task 15's refresh job iterates
+ * every configured source and would log "not built" and "fine, nothing new
+ * today" as the exact same outcome, and the only way to tell them apart
+ * would be hardcoding `id === 'spankki_fund'` at the call site, defeating
+ * the whole point of the `PriceSource` abstraction. `fetch()` now *throws*
+ * `SourceNotImplementedError` instead -- a distinct, exported class a
+ * caller can `instanceof`-check, without needing to know which specific
+ * `PriceSourceId`s are unimplemented. This fits the design doc's own
+ * refresh-job shape ("Sources run isolated -- one throwing scraper must
+ * not stop the others. Every attempt writes to price_fetch_log"): an
+ * attempt is made, it fails in a specific, recognisable way, and gets
+ * logged as such.
  */
 const notYetImplemented = (id: "spankki_fund" | "danske_fund"): PriceSource => ({
   id,
   async fetch(): Promise<FetchedPrice[]> {
-    return [];
+    throw new SourceNotImplementedError(id);
   },
 });
 

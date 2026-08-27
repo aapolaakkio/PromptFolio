@@ -94,6 +94,50 @@ test("rejects an unparseable currency code loudly instead of guessing", async ()
   ).rejects.toThrow();
 });
 
+// Reproduced live during review: `close: [0]` returned `closeMinor: 0`,
+// `close: [-5]` returned `closeMinor: -500`, both as if they were valid
+// closes, before `requirePositiveMinor` existed. A zero/negative close is
+// never real for a listed security and must fail loudly instead of
+// flowing into the portfolio total.
+
+test("rejects a zero close instead of returning it as a valid price", async () => {
+  const zero = async (): Promise<Response> =>
+    Response.json({
+      chart: {
+        result: [
+          {
+            meta: { currency: "EUR" },
+            timestamp: [1735689600],
+            indicators: { quote: [{ close: [0] }] },
+          },
+        ],
+        error: null,
+      },
+    });
+  await expect(
+    YAHOO.fetch({ sourceKey: "X", from: "2025-01-01", to: "2025-01-02", fetchImpl: zero }),
+  ).rejects.toThrow(/epäkelpo hinta/);
+});
+
+test("rejects a negative close instead of returning it as a valid price", async () => {
+  const negative = async (): Promise<Response> =>
+    Response.json({
+      chart: {
+        result: [
+          {
+            meta: { currency: "EUR" },
+            timestamp: [1735689600],
+            indicators: { quote: [{ close: [-5] }] },
+          },
+        ],
+        error: null,
+      },
+    });
+  await expect(
+    YAHOO.fetch({ sourceKey: "X", from: "2025-01-01", to: "2025-01-02", fetchImpl: negative }),
+  ).rejects.toThrow(/epäkelpo hinta/);
+});
+
 test("rejects a payload that does not match the expected schema", async () => {
   const garbage = async (): Promise<Response> => Response.json({ unexpected: true });
   await expect(

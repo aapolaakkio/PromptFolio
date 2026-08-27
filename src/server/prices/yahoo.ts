@@ -1,7 +1,14 @@
 import { z } from "zod";
 
 import { parseCurrency } from "../../core/money";
-import { requireOk, toMinor, type FetchArgs, type FetchedPrice, type PriceSource } from "./types";
+import {
+  requireOk,
+  requirePositiveMinor,
+  toMinor,
+  type FetchArgs,
+  type FetchedPrice,
+  type PriceSource,
+} from "./types";
 
 /**
  * Verified 2026-08-27 by fetching
@@ -60,13 +67,9 @@ export const YAHOO: PriceSource = {
     return result.timestamp.flatMap((seconds, index) => {
       const close = closes[index];
       if (close === null || close === undefined) return [];
-      return [
-        {
-          date: new Date(seconds * 1000).toISOString().slice(0, 10),
-          closeMinor: toMinor(close),
-          currency,
-        },
-      ];
+      const date = new Date(seconds * 1000).toISOString().slice(0, 10);
+      const closeMinor = requirePositiveMinor(toMinor(close), `Yahoo ${sourceKey} ${date}`);
+      return [{ date, closeMinor, currency }];
     });
   },
 };
