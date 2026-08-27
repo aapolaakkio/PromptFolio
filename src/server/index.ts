@@ -1,7 +1,4 @@
-// Task 17 creates src/web/index.html and restores this import plus the
-// '/*' route below, which serves the compiled SPA shell for any path that
-// isn't an API route. Until then, importing it would fail to resolve.
-// import index from "../web/index.html";
+import index from "../web/index.html";
 import { auth } from "./auth";
 import { accountRoutes } from "./api/accounts";
 import { importRoutes } from "./api/imports";
@@ -19,7 +16,7 @@ const server = Bun.serve({
     ...instrumentRoutes,
     ...importRoutes,
     ...portfolioRoutes,
-    // '/*': index, // Task 17 restores this once src/web/index.html exists.
+    "/*": index,
   },
 });
 

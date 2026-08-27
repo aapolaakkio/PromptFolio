@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #fbfaf8;
+  --color-surface: #ffffff;
+  --color-ink: #14171a;
+  --color-muted: #5c6670;
+  --color-line: #e3e0da;
+  --color-gain: #1f7a3f;
+  --color-loss: #b3261e;
+  --color-accent: #14484f;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --radius-card: 0.625rem;
+}
+
+/*
+ * Dark mode is the same token names with different values, not a second
+ * set of component styles: every utility built from --color-* (bg-surface,
+ * text-muted, text-gain, ...) follows this redefinition automatically, so
+ * no component ever needs a `dark:` variant.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #14171a;
+    --color-surface: #1c2024;
+    --color-ink: #f2f1ee;
+    --color-muted: #9aa4ad;
+    --color-line: #2c3136;
+    --color-gain: #4ade80;
+    --color-loss: #f87171;
+    --color-accent: #5eead4;
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+  h1 {
+    @apply text-2xl font-semibold tracking-tight mb-6;
+  }
+  h2 {
+    @apply text-lg font-medium mb-4;
+  }
+  label {
+    @apply grid gap-1 text-sm text-muted mb-3;
+  }
+  input,
+  select {
+    @apply bg-surface text-ink border border-line rounded-md px-3 py-2 text-base;
+  }
+  button {
+    @apply bg-accent text-white rounded-md px-4 py-2 font-medium disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  table {
+    @apply w-full border-collapse;
+  }
+  th {
+    @apply text-left text-sm font-medium text-muted px-3 py-2 border-b border-line;
+  }
+  td {
+    @apply px-3 py-2 border-b border-line;
+  }
+}
+
+/* Every figure is tabular and right-aligned so columns of money line up. */
+@utility num {
+  @apply font-mono tabular-nums text-right;
+}
+
+@utility card {
+  @apply bg-surface border border-line rounded-[--radius-card] p-5;
+}
+
+/* Undoes the base button styling for sort headers inside a table. */
+@utility header-button {
+  @apply bg-transparent text-inherit p-0 font-medium;
+}
