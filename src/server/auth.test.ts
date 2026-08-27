@@ -74,6 +74,19 @@ test("the same password hashes differently each time", async () => {
   expect(a).not.toBe(b);
 });
 
+test("verifyPassword fails closed (returns false, doesn't throw) on a malformed stored hash", async () => {
+  // Bun.password.verify throws on a hash it can't parse (unsupported
+  // algorithm, invalid encoding). A corrupted/hand-edited row must not
+  // crash sign-in; it must be treated the same as a wrong password.
+  expect(await verifyPassword({ password: "x", hash: "not-a-valid-hash-at-all" })).toBe(false);
+  expect(
+    await verifyPassword({
+      password: "x",
+      hash: "$2b$10$notreallybcryptgarbagegarbagegarbagegarba",
+    }),
+  ).toBe(false);
+});
+
 // --- requireUser (src/server/auth-guard.ts) ---
 
 test("requireUser rejects a request with no session cookie", async () => {
@@ -137,6 +150,57 @@ test("resolveDisableSignUp closes sign-up unless ALLOW_SIGNUP is exactly 'true'"
   expect(resolveDisableSignUp({ ALLOW_SIGNUP: "false" })).toBe(true);
   expect(resolveDisableSignUp({ ALLOW_SIGNUP: "TRUE" })).toBe(true);
   expect(resolveDisableSignUp({ ALLOW_SIGNUP: "true" })).toBe(false);
+});
+
+test("sign-up is rejected end-to-end when ALLOW_SIGNUP is not set", () => {
+  // This is the control that stops an anonymous stranger who reaches the
+  // URL from creating an account on an application holding financial
+  // records. resolveDisableSignUp's unit tests above prove the boolean is
+  // computed correctly; this proves an actual /sign-up/email request is
+  // actually refused. It runs in a real child process (not a second
+  // same-process module instance via a cache-busted dynamic import)
+  // because a same-process second `auth` instance made Bun's coverage
+  // instrumentation misattribute hits on this file - see task-8-report.md.
+  const authPath = new URL("./auth.ts", import.meta.url).pathname;
+  const envWithoutAllowSignup = Object.fromEntries(
+    Object.entries(Bun.env).filter(([key]) => key !== "ALLOW_SIGNUP"),
+  );
+  const envForChild = { ...envWithoutAllowSignup, DATABASE_PATH: ":memory:" };
+  const payload = {
+    name: "Nope",
+    email: "blocked@example.com",
+    password: "correct horse battery staple",
+  };
+
+  const script = `
+const { auth } = await import(${JSON.stringify(authPath)});
+const response = await auth.handler(
+  new Request("http://localhost/api/auth/sign-up/email", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(${JSON.stringify(payload)}),
+  }),
+);
+const body = await response.json();
+console.log(JSON.stringify({ status: response.status, body }));
+`;
+
+  const result = Bun.spawnSync({
+    cmd: ["bun", "-e", script],
+    cwd: import.meta.dir,
+    env: envForChild,
+  });
+
+  expect(result.exitCode).toBe(0);
+  // SAFETY: the child script above unconditionally prints exactly
+  // `{ status, body }` as its only stdout line, or the process would have
+  // exited non-zero and failed the assertion above instead.
+  const parsed = JSON.parse(result.stdout.toString().trim()) as {
+    status: number;
+    body: { code?: string };
+  };
+  expect(parsed.status).not.toBe(200);
+  expect(parsed.body.code).toBe("EMAIL_PASSWORD_SIGN_UP_DISABLED");
 });
 
 // --- BETTER_AUTH_SECRET must be a real secret, or the process refuses to boot ---
