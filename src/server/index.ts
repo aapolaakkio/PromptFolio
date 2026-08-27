@@ -4,6 +4,7 @@
 // import index from "../web/index.html";
 import { auth } from "./auth";
 import { accountRoutes } from "./api/accounts";
+import { importRoutes } from "./api/imports";
 import { instrumentRoutes } from "./api/instruments";
 
 const server = Bun.serve({
@@ -13,6 +14,7 @@ const server = Bun.serve({
     "/api/auth/*": (request) => auth.handler(request),
     ...accountRoutes,
     ...instrumentRoutes,
+    ...importRoutes,
     // '/*': index, // Task 17 restores this once src/web/index.html exists.
   },
 });
