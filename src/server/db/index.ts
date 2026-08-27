@@ -1,6 +1,9 @@
+import { resolve } from "node:path";
+
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as runMigrations } from "drizzle-orm/bun-sqlite/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 
 export const openDb = (path: string = Bun.env.DATABASE_PATH ?? "./data/promptfolio.db") => {
   const sqlite = new Database(path, { create: true, strict: true });
@@ -10,8 +13,41 @@ export const openDb = (path: string = Bun.env.DATABASE_PATH ?? "./data/promptfol
   return { sqlite, db: drizzle({ client: sqlite }) };
 };
 
-export const migrate = (db: ReturnType<typeof openDb>["db"]): void => {
-  runMigrations(db, { migrationsFolder: "./drizzle" });
+/**
+ * Resolved against this module's own location (`import.meta.dir`), not
+ * `process.cwd()` -- a relative `"./drizzle"` would otherwise depend on
+ * whatever directory the process happened to be started from, which a
+ * container image or a different launcher can easily get wrong.
+ */
+const MIGRATIONS_FOLDER = resolve(import.meta.dir, "../../../drizzle");
+
+/**
+ * `runMigrations` can silently apply zero migrations and return
+ * `undefined` -- indistinguishable from success -- when pointed at a
+ * migrations folder that exists but has nothing in it (reproduced
+ * directly; see task-15-report.md's fix-up section). `readMigrationFiles`
+ * is the same function `runMigrations` uses internally to find what to
+ * apply, called here up front so that silent no-op becomes a loud error
+ * instead of a trusted empty return value. Its own return value
+ * (`void | MigratorInitFailResponse`) is checked too, rather than
+ * discarded, for the same reason.
+ */
+export const migrate = (
+  db: ReturnType<typeof openDb>["db"],
+  opts: { migrationsFolder?: string } = {},
+): void => {
+  const migrationsFolder = opts.migrationsFolder ?? MIGRATIONS_FOLDER;
+
+  if (readMigrationFiles({ migrationsFolder }).length === 0) {
+    throw new Error(`Migraatiohakemistosta ei löytynyt yhtään migraatiota: ${migrationsFolder}`);
+  }
+
+  const result = runMigrations(db, { migrationsFolder });
+  if (result !== undefined) {
+    throw new Error(
+      `Tietokannan migraatio epäonnistui (${result.exitCode}). Migraatiohakemisto: ${migrationsFolder}`,
+    );
+  }
 };
 
 /** In-memory database with migrations applied. Used by every server-side test. */
