@@ -1,0 +1,36 @@
+# Build output and local dev artifacts -- rebuilt inside the image itself.
+node_modules
+dist
+
+# Real data never belongs in the image. `data/` is where the dev SQLite
+# file lives; `*.db*` catches one anywhere else on disk; `.superpowers/`
+# is this project's own planning/task-tracking tree (specs, task briefs,
+# session notes -- some of which discuss real holdings by name); and
+# `fixtures/real/` is a path convention reserved for real (as opposed to
+# synthetic/anonymised) broker exports, should one ever be added under
+# that name, even though none exists in the repo today. The user's actual
+# broker exports were deliberately deleted from this repo entirely --
+# this list is defense in depth, not the only thing standing between a
+# real export and a built image.
+data
+*.db
+*.db-wal
+*.db-shm
+.superpowers
+**/fixtures/real/**
+
+# Secrets. `.env.example` is a template with no real secret in it and is
+# NOT excluded; `.env`/`.env.local` (git-ignored, holds the real
+# BETTER_AUTH_SECRET) must never be copied into a build layer, even
+# though only the runtime stage's explicit COPY list -- not this file --
+# decides what reaches the final image; this stops it reaching the build
+# stage's layers at all.
+.env
+.env.local
+
+.git
+
+# Not needed to build or run the image.
+docs
+e2e
+tools

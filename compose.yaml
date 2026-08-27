@@ -1,0 +1,25 @@
+services:
+  promptfolio:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      # No default: a self-hosted financial app booting with a guessable
+      # or missing secret is a silent authentication bypass. See
+      # src/server/auth.ts's resolveAuthSecret -- the process itself
+      # already refuses to start below 32 characters; this just makes
+      # Compose refuse just as loudly if .env is missing entirely.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set this in .env -- see .env.example}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      # Bun.cron is given tz: 'Europe/Helsinki' explicitly for the price
+      # refresh schedule regardless of this setting, but log timestamps
+      # and any other new Date() formatting follow the container clock --
+      # set here so both agree.
+      TZ: Europe/Helsinki
+    volumes:
+      - promptfolio-data:/data
+
+volumes:
+  promptfolio-data:

@@ -4,8 +4,20 @@ import { accountRoutes } from "./api/accounts";
 import { importRoutes } from "./api/imports";
 import { instrumentRoutes } from "./api/instruments";
 import { portfolioRoutes } from "./api/portfolio";
-import { getDb } from "./db";
+import { getDb, migrate } from "./db";
 import { startScheduler } from "./prices/refresh";
+
+/**
+ * Liveness check for the container's `HEALTHCHECK` (and any external
+ * uptime monitor). Deliberately does not query the database: a slow or
+ * locked SQLite file (WAL checkpoint, a long-running import) must not
+ * read as "unhealthy" and cause Docker to restart a container that is
+ * otherwise fine -- that would turn a slow query into a restart loop.
+ * Deliberately unauthenticated too, same reason `auth.handler` is never
+ * consulted here: a health check that requires a session cookie cannot be
+ * called by `docker inspect`'s HEALTHCHECK or a bare `curl`.
+ */
+const healthRoute = { GET: () => Response.json({ ok: true }) };
 
 /**
  * Builds and starts the real `Bun.serve` instance -- routes unchanged from
@@ -23,6 +35,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
     port: opts.port ?? Number(Bun.env.PORT ?? 3000),
     development: Bun.env.NODE_ENV !== "production",
     routes: {
+      "/api/health": healthRoute,
       "/api/auth/*": (request) => auth.handler(request),
       ...accountRoutes,
       ...instrumentRoutes,
@@ -40,6 +53,16 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
 // module Bun itself was invoked with, so this whole block is skipped on
 // every import that isn't that.
 if (import.meta.main) {
+  // Applies any migration the current database file is missing before the
+  // server starts accepting requests -- a fresh Docker volume has no
+  // database file at all until `openDb()` creates one, and no tables in
+  // it until this runs. Migrations are additive and idempotent (drizzle
+  // tracks what has already been applied in its own bookkeeping table),
+  // so re-running this against an already-current database on every boot
+  // is safe and cheap, not just safe on first boot.
+  const { db } = getDb();
+  migrate(db);
+
   const server = createServer();
   console.log(`PromptFolio kuuntelee osoitteessa ${server.url}`);
 
