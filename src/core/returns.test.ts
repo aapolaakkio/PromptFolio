@@ -152,6 +152,31 @@ test("an instrument with no known price contributes nothing and marks the day st
   expect(series.map((p) => p.stale)).toEqual([true]);
 });
 
+test("a priced USD instrument with no known fx rate contributes nothing and marks the day stale", () => {
+  const usdTxn: Txn = {
+    id: nextId++,
+    accountId: 1,
+    instrumentId: 9,
+    type: "BUY",
+    tradeDate: "2025-01-01",
+    quantity: parseQuantity("1"),
+    unitPrice: null,
+    amount: parseMoney("-100,00", "USD"),
+    fee: parseMoney("0", "USD"),
+    tax: parseMoney("0", "USD"),
+    currency: "USD",
+    fxRateEur: parseFxRate("0.85005000", "USD"),
+  };
+  const noFxRate: PriceLookup = {
+    priceOn: () => parseMoney("100,00", "USD"),
+    priceDateOn: () => "2025-01-01",
+    fxOn: () => null,
+  };
+  const series = valueSeries([usdTxn], [usdInstrument], noFxRate, "2025-01-01", "2025-01-01");
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
+  expect(series.map((p) => p.stale)).toEqual([true]);
+});
+
 test("xirr recovers a known 10% annual return", () => {
   const flows: CashFlow[] = [{ date: "2024-01-01", amountEur: parseMoney("-1000,00", "EUR") }];
   const final: CashFlow = { date: "2025-01-01", amountEur: parseMoney("1100,00", "EUR") };
