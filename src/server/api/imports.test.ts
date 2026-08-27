@@ -91,11 +91,93 @@ const registerNokia = async (cookie: string): Promise<void> => {
   );
 };
 
-const NORDNET_HEADER =
-  "Id;Kauppapäivä;Tapahtumatyyppi;Arvopaperi;ISIN;Määrä;Kurssi;Kokonaiskulut;Valuutta;Summa";
+const NORDNET_HEADER = [
+  "Id",
+  "Kirjauspäivä",
+  "Kauppapäivä",
+  "Maksupäivä",
+  "Salkku",
+  "Tapahtumatyyppi",
+  "Arvopaperi",
+  "ISIN",
+  "Määrä",
+  "Kurssi",
+  "Korko",
+  "Kokonaiskulut",
+  "Valuutta",
+  "Summa",
+  "Valuutta",
+  "Hankinta-arvo",
+  "Valuutta",
+  "Tulos",
+  "Valuutta",
+  "Kokonaismäärä",
+  "Saldo",
+  "Vaihtokurssi",
+  "Tapahtumateksti",
+  "Mitätöintipäivä",
+  "Laskelma",
+  "Vahvistusnumero",
+  "Välityspalkkio",
+  "Valuutta",
+  "Viitevaluuttakurssi",
+  "Alkuperäinen korko",
+].join("\t");
+
+/** Builds one 30-column real-format Nordnet row, blank everywhere not given. */
+const nordnetRow = (o: {
+  id: string;
+  date: string;
+  type: string;
+  name?: string;
+  isin?: string;
+  qty?: string;
+  price?: string;
+  fee?: string;
+  currency?: string;
+  amount: string;
+}): string => {
+  const c = Array.from({ length: 30 }, () => "");
+  c[0] = o.id;
+  c[1] = o.date;
+  c[2] = o.date;
+  c[3] = o.date;
+  c[4] = "11223344";
+  c[5] = o.type;
+  c[6] = o.name ?? "";
+  c[7] = o.isin ?? "";
+  c[8] = o.qty ?? "";
+  c[9] = o.price ?? "";
+  c[10] = "0";
+  c[11] = o.fee ?? "";
+  c[12] = o.currency ?? "";
+  c[13] = o.amount;
+  c[14] = "EUR";
+  return c.join("\t");
+};
+
+/** UTF-16LE-with-BOM bytes, matching NORDNET's real encoding, for a tab-joined body of text. */
+const nordnetBytes = (text: string): ArrayBuffer => {
+  const withBom = `﻿${text}`;
+  const bytes = new Uint8Array(withBom.length * 2);
+  for (let i = 0; i < withBom.length; i++) {
+    const code = withBom.charCodeAt(i);
+    bytes[i * 2] = code & 0xff;
+    bytes[i * 2 + 1] = (code >> 8) & 0xff;
+  }
+  return bytes.buffer;
+};
 
 const csvFile = (contents: string, name = "export.csv"): File =>
   new File([contents], name, { type: "text/csv" });
+
+/** A File built directly from bytes, for an already-encoded (e.g. UTF-16LE) body. */
+const binaryFile = (bytes: ArrayBuffer, name = "export.csv"): File =>
+  new File([bytes], name, { type: "text/csv" });
+
+/** A Nordnet-shaped upload: real header + one real-format row, UTF-16LE-with-BOM encoded. */
+const nordnetFile = (row: string, name = "export.csv"): File =>
+  binaryFile(nordnetBytes(`${NORDNET_HEADER}\n${row}\n`), name);
 
 const uploadRequest = (
   url: string,
@@ -113,7 +195,8 @@ const uploadRequest = (
   });
 };
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).text();
+const fixtureBytes = (name: string) =>
+  Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).arrayBuffer();
 
 // --- detectBrokerConfig (delimiter/encoding independence) ---
 //
@@ -126,26 +209,28 @@ const fixture = (name: string) => Bun.file(`${import.meta.dir}/../import/fixture
 
 describe("detectBrokerConfig", () => {
   test("still detects a real Nordnet export with the default broker list", async () => {
-    const bytes = new TextEncoder().encode(await fixture("nordnet-sample.csv")).buffer;
+    const bytes = await fixtureBytes("nordnet-sample.csv"); // already UTF-16LE on disk
     expect(detectBrokerConfig(bytes)?.broker).toBe("nordnet");
   });
 
   test("still detects a real OP export with the default broker list", async () => {
-    const bytes = new TextEncoder().encode(await fixture("op-sample.csv")).buffer;
+    const bytes = await fixtureBytes("op-web-paste-sample.csv"); // already UTF-8 on disk
     expect(detectBrokerConfig(bytes)?.broker).toBe("op");
   });
 
-  test("detects a broker whose export uses a different delimiter than ';'", () => {
+  test("detects a broker whose export uses a different delimiter than the real config", () => {
+    // Both real configs (Nordnet, OP) now use tab delimiters, so a
+    // hardcoded-tab regression wouldn't be caught by BROKER_CONFIGS alone.
     // Same header text as Nordnet's real signature columns, but joined
-    // with tabs instead of ';'. A hardcoded ';' split would leave this as
-    // one unsplit field and never find "Tapahtumatyyppi"/"ISIN"/"Summa" as
-    // separate headers.
-    const header = NORDNET_HEADER.replaceAll(";", "\t");
+    // with ',' instead of a tab -- neither shipped broker uses ',', so this
+    // still proves detectBrokerConfig tries each candidate's own delimiter
+    // rather than one fixed one.
+    const header = NORDNET_HEADER.replaceAll("\t", ",");
     const bytes = new TextEncoder().encode(`${header}\n`).buffer;
-    const tabDelimited = { ...NORDNET, delimiter: "\t" };
-    expect(detectBrokerConfig(bytes, [tabDelimited])?.broker).toBe("nordnet");
-    // The same bytes, probed only with the real (';'-delimited) config,
-    // must NOT be detected -- confirms the delimiter substitution above is
+    const commaDelimited = { ...NORDNET, delimiter: ",", encoding: "utf-8" as const };
+    expect(detectBrokerConfig(bytes, [commaDelimited])?.broker).toBe("nordnet");
+    // The same bytes, probed only with the real (tab-delimited, UTF-16LE)
+    // config, must NOT be detected -- confirms the substitution above is
     // actually doing something, not a no-op.
     expect(detectBrokerConfig(bytes, [NORDNET])).toBeNull();
   });
@@ -232,12 +317,17 @@ describe("POST /api/imports/preview", () => {
     expect(body.error).toContain("välittäjää");
   });
 
-  test("previews a real Nordnet export and reports the unresolved isin", async () => {
+  test("previews a real Nordnet export and reports the unresolved isins", async () => {
     const { cookie } = await signUp(`imp-preview-ok-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(cookie);
-    const nordnetCsv = await fixture("nordnet-sample.csv");
+    const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await importRoutes["/api/imports/preview"].POST(
-      uploadRequest("http://x/api/imports/preview", cookie, csvFile(nordnetCsv), accountId),
+      uploadRequest(
+        "http://x/api/imports/preview",
+        cookie,
+        binaryFile(nordnetBytesFile),
+        accountId,
+      ),
     );
     expect(response.status).toBe(200);
     // SAFETY: a 200 from POST /api/imports/preview (asserted above) always
@@ -245,11 +335,16 @@ describe("POST /api/imports/preview", () => {
     const body = (await response.json()) as {
       broker: string;
       txns: unknown[];
-      unknownIsins: Array<{ isin: string }>;
+      unknownIsins: Array<{ isin: string | null }>;
     };
     expect(body.broker).toBe("nordnet");
-    expect(body.txns).toHaveLength(5);
-    expect(body.unknownIsins.some((u) => u.isin === "IE00B4L5Y983")).toBe(true);
+    // 13 data rows in the fixture, 2 of them (the DESIM rows) deliberately
+    // unmapped -- see brokers.ts -- so 11 reach the draft as transactions.
+    expect(body.txns).toHaveLength(11);
+    // No instrument is pre-registered for this fresh user, so every isin
+    // among the mapped rows is unresolved; IE00BG5J1M21 (the VAIHTO
+    // AP-OTTO leg) is one of the three.
+    expect(body.unknownIsins.some((u) => u.isin === "IE00BG5J1M21")).toBe(true);
   });
 });
 
@@ -281,25 +376,36 @@ describe("POST /api/imports/commit", () => {
   test("refuses to commit a draft with an unresolved isin", async () => {
     const { cookie } = await signUp(`imp-commit-unknown-isin-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(cookie);
-    const nordnetCsv = await fixture("nordnet-sample.csv");
+    const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await importRoutes["/api/imports/commit"].POST(
-      uploadRequest("http://x/api/imports/commit", cookie, csvFile(nordnetCsv), accountId),
+      uploadRequest("http://x/api/imports/commit", cookie, binaryFile(nordnetBytesFile), accountId),
     );
     expect(response.status).toBe(400);
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain("IE00B4L5Y983");
+    expect(body.error).toContain("IE00BG5J1M21");
   });
 
   test("commits a clean EUR-only export and undoes it", async () => {
     const { cookie } = await signUp(`imp-commit-ok-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(cookie);
     await registerNokia(cookie);
-    const csv = `${NORDNET_HEADER}\n2001;2025-01-10;OSTO;NOKIA;FI0009000681;100;4,15;3,00;EUR;-418,00\n`;
+    const row = nordnetRow({
+      id: "2001",
+      date: "2025-01-10",
+      type: "OSTO",
+      name: "NOKIA",
+      isin: "FI0009000681",
+      qty: "100",
+      price: "4,15",
+      fee: "3,00",
+      currency: "EUR",
+      amount: "-418,00",
+    });
 
     const commitResponse = await importRoutes["/api/imports/commit"].POST(
-      uploadRequest("http://x/api/imports/commit", cookie, csvFile(csv), accountId),
+      uploadRequest("http://x/api/imports/commit", cookie, nordnetFile(row), accountId),
     );
     expect(commitResponse.status).toBe(201);
     // SAFETY: a 201 from POST /api/imports/commit (asserted above) always
@@ -338,9 +444,9 @@ describe("POST /api/imports/:id/undo", () => {
     const stranger = await signUp(`imp-undo-stranger-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(owner.cookie);
     await registerNokia(owner.cookie);
-    const csv = `${NORDNET_HEADER}\n3001;2025-01-10;TALLETUS;;;0;0;0;EUR;500,00\n`;
+    const row = nordnetRow({ id: "3001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
     const commitResponse = await importRoutes["/api/imports/commit"].POST(
-      uploadRequest("http://x/api/imports/commit", owner.cookie, csvFile(csv), accountId),
+      uploadRequest("http://x/api/imports/commit", owner.cookie, nordnetFile(row), accountId),
     );
     // SAFETY: commit succeeded (the csv above is a plain EUR deposit,
     // nothing to resolve), so the body carries an importId.

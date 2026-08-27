@@ -10,4 +10,7 @@ data
 # This session's scratch workspace - never commit.
 .superpowers
 
+# Real broker exports (actual financial records) - never commit.
+src/server/import/fixtures/real/
+
 .DS_Store

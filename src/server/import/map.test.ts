@@ -1,9 +1,118 @@
 import { test, expect } from "bun:test";
 import { mapRows, normaliseDate, contentHash } from "./map";
 import { parseCsv } from "./csv";
-import { NORDNET, OP } from "./brokers";
+import { NORDNET, OP_WEB_PASTE } from "./brokers";
+import type { RawRow } from "./types";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
+
+/** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
+const nordnetBytes = (text: string): ArrayBuffer => {
+  const withBom = `﻿${text}`;
+  const bytes = new Uint8Array(withBom.length * 2);
+  for (let i = 0; i < withBom.length; i++) {
+    const code = withBom.charCodeAt(i);
+    bytes[i * 2] = code & 0xff;
+    bytes[i * 2 + 1] = (code >> 8) & 0xff;
+  }
+  return bytes.buffer;
+};
+
+const NORDNET_HEADER = [
+  "Id",
+  "Kirjauspäivä",
+  "Kauppapäivä",
+  "Maksupäivä",
+  "Salkku",
+  "Tapahtumatyyppi",
+  "Arvopaperi",
+  "ISIN",
+  "Määrä",
+  "Kurssi",
+  "Korko",
+  "Kokonaiskulut",
+  "Valuutta",
+  "Summa",
+  "Valuutta",
+  "Hankinta-arvo",
+  "Valuutta",
+  "Tulos",
+  "Valuutta",
+  "Kokonaismäärä",
+  "Saldo",
+  "Vaihtokurssi",
+  "Tapahtumateksti",
+  "Mitätöintipäivä",
+  "Laskelma",
+  "Vahvistusnumero",
+  "Välityspalkkio",
+  "Valuutta",
+  "Viitevaluuttakurssi",
+  "Alkuperäinen korko",
+].join("\t");
+
+/** Builds one 30-column Nordnet row, blank everywhere not given. */
+const nordnetRow = (o: {
+  id: string;
+  date: string;
+  type: string;
+  name?: string;
+  isin?: string;
+  qty?: string;
+  price?: string;
+  fee?: string;
+  currency?: string;
+  amount: string;
+}): string => {
+  const c = Array.from({ length: 30 }, () => "");
+  c[0] = o.id;
+  c[1] = o.date;
+  c[2] = o.date;
+  c[3] = o.date;
+  c[4] = "11223344";
+  c[5] = o.type;
+  c[6] = o.name ?? "";
+  c[7] = o.isin ?? "";
+  c[8] = o.qty ?? "";
+  c[9] = o.price ?? "";
+  c[10] = "0";
+  c[11] = o.fee ?? "";
+  c[12] = o.currency ?? "";
+  c[13] = o.amount;
+  c[14] = "EUR";
+  return c.join("\t");
+};
+
+/** `NORDNET_HEADER`'s real 1-based column position (0-indexed here) for each field name used below. */
+const REAL_INDEX = {
+  Id: 0,
+  Kauppapäivä: 2,
+  Tapahtumatyyppi: 5,
+  Arvopaperi: 6,
+  ISIN: 7,
+  Määrä: 8,
+  Kurssi: 9,
+  Kokonaiskulut: 11,
+  Valuutta: 12,
+  Summa: 13,
+} satisfies Record<string, number>;
+
+/**
+ * Builds a hand-rolled `RawRow` for a test that only cares about a handful
+ * of fields (type/amount/currency validation, unrelated to the duplicate-
+ * `Valuutta` fix itself). `cells` is populated at each field's real column
+ * index, so the row can be fed straight to the real `NORDNET` config --
+ * these tests predate `columnPositions` but must still exercise the config
+ * that actually ships, not a stand-in with `currency` addressed by name.
+ */
+const rawRow = (line: number, values: Record<string, string>): RawRow => {
+  const cells = Array.from({ length: 30 }, () => "");
+  for (const [key, index] of Object.entries(REAL_INDEX)) {
+    const value = values[key];
+    if (value !== undefined) cells[index] = value;
+  }
+  return { line, values, cells };
+};
 
 test("normalises both date formats to ISO", () => {
   expect(normaliseDate("2025-01-10", "iso")).toBe("2025-01-10");
@@ -12,68 +121,139 @@ test("normalises both date formats to ISO", () => {
   expect(() => normaliseDate("", "iso")).toThrow();
 });
 
-test("maps the Nordnet fixture into draft transactions", async () => {
+test("maps the real-format Nordnet fixture into draft transactions", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
-  const known = new Map([["FI0009000681", 7]]);
+  const known = new Map([["IE0002Y8CX98", 7]]);
   const draft = mapRows(rows, NORDNET, known);
 
-  expect(draft.problems).toEqual([]);
-  expect(draft.txns).toHaveLength(5);
+  expect(draft.problems).toHaveLength(2); // the two DESIM rows -- see below
+  expect(draft.txns).toHaveLength(11);
 
   const buy = draft.txns[0]!;
   expect(buy.type).toBe("BUY");
   expect(buy.tradeDate).toBe("2025-01-10");
   expect(buy.instrumentId).toBe(7);
-  expect(buy.quantity).toBe(100_000_000); // 100 units, scaled 1e6
-  expect(buy.unitPrice).toBe(415); // 4,15 EUR
-  expect(buy.amount).toBe(-41800);
-  expect(buy.fee).toBe(300);
+  expect(buy.quantity).toBe(2_000_000); // 2 units, scaled 1e6
+  expect(buy.unitPrice).toBe(3400); // 34,00 EUR
+  expect(buy.amount).toBe(-6800);
   expect(buy.currency).toBe("EUR");
 });
 
 test("a deposit has no instrument and no quantity", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
-  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
-  const deposit = draft.txns.find((t) => t.type === "DEPOSIT")!;
+  const draft = mapRows(rows, NORDNET, new Map());
+  const deposit = draft.txns.find((t) => t.type === "DEPOSIT" && t.amount === 50000)!;
   expect(deposit.instrumentId).toBeNull();
   expect(deposit.quantity).toBe(0);
-  expect(deposit.amount).toBe(500000);
+});
+
+test("Reaaliaikainen talle and TALLETUS both map to DEPOSIT", async () => {
+  const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+  const deposits = draft.txns.filter((t) => t.type === "DEPOSIT");
+  expect(deposits).toHaveLength(2);
+});
+
+test("the ETF service fee and its reversal (Nordnet's own typo) both map to FEE", async () => {
+  const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+  const fees = draft.txns.filter((t) => t.type === "FEE");
+  expect(fees).toHaveLength(2);
+  expect(fees.some((t) => t.amount < 0)).toBe(true); // the charge
+  expect(fees.some((t) => t.amount > 0)).toBe(true); // "PER ETF-KK SÄÄSTÖN PALVEMAKSU", the reversal
+});
+
+test("PÄÄOMIT YLIT.KORKO and LAINAKORKO both map to INTEREST", async () => {
+  const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+  expect(draft.txns.filter((t) => t.type === "INTEREST")).toHaveLength(2);
+});
+
+test("a VAIHTO merger pair maps to a TRANSFER_OUT leg and a TRANSFER_IN leg", async () => {
+  const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+  const out = draft.txns.find((t) => t.type === "TRANSFER_OUT")!;
+  const inLeg = draft.txns.find((t) => t.type === "TRANSFER_IN")!;
+  expect(out.isin).toBe("IE00BG5J1M21");
+  expect(inLeg.isin).toBe("IE00BJQTJ848");
+  expect(out.amount).toBe(0);
+  expect(inLeg.amount).toBe(0);
+});
+
+test("the two DESIM rows are left unmapped and surface as problems, not guesses", async () => {
+  const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+  expect(draft.problems).toHaveLength(2);
+  expect(draft.problems.every((p) => p.message.includes("Tuntematon tapahtumatyyppi"))).toBe(true);
+  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM. ULOSKIRJ. KÄT")).toBe(
+    true,
+  );
+  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM KIRJAUS OTTO")).toBe(true);
 });
 
 test("collects ISINs it has never seen instead of inventing instruments", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
-  const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
-  expect(draft.unknownIsins).toEqual([{ isin: "IE00B4L5Y983", name: "ISHARES CORE MSCI WORLD" }]);
-  expect(draft.txns.find((t) => t.isin === "IE00B4L5Y983")!.instrumentId).toBeNull();
+  const draft = mapRows(rows, NORDNET, new Map([["IE0002Y8CX98", 7]]));
+  const isins = draft.unknownIsins.map((u) => u.isin).sort();
+  expect(isins).toEqual(["IE00BG5J1M21", "IE00BJQTJ848", "SE0005993102"]);
+  expect(draft.txns.find((t) => t.isin === "SE0005993102")!.instrumentId).toBeNull();
 });
 
-test("maps the OP fixture with fi dates and fractional fund units", async () => {
-  const { rows } = parseCsv(await fixture("op-sample.csv"), OP);
-  const draft = mapRows(rows, OP, new Map([["FI0008803812", 3]]));
-  const subscription = draft.txns[0]!;
-  expect(subscription.type).toBe("BUY");
-  expect(subscription.tradeDate).toBe("2025-01-15");
-  expect(subscription.quantity).toBe(12_345_600);
-  expect(subscription.amount).toBe(-18827);
+test("maps the OP web-paste fixture: fi dates, unit-suffixed cells, and a name-only instrument", async () => {
+  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  expect(draft.problems).toEqual([]);
+  expect(draft.txns).toHaveLength(3);
+
+  const buy = draft.txns[0]!;
+  expect(buy.type).toBe("BUY");
+  expect(buy.tradeDate).toBe("2025-08-04"); // dd.mm.yyyy -> ISO
+  expect(buy.quantity).toBe(1_200_000); // "1,2000 kpl" -> 1.2, scaled 1e6
+  expect(buy.unitPrice).toBe(25000); // "250,00 EUR" -> 250.00
+  expect(buy.fee).toBe(1); // "0,01 EUR" -> 0.01
+  expect(buy.amount).toBe(-30001); // unsigned "300,01 EUR", signed negative by OSTO
+  expect(buy.isin).toBeNull(); // OP's web view has no ISIN column at all
+});
+
+test("a buy row with a blank fee cell (no fee charged) still parses", async () => {
+  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const noFee = draft.txns[1]!;
+  expect(noFee.fee).toBe(0);
+  expect(noFee.amount).toBe(-30000);
+});
+
+test("a sell row's unsigned total is re-signed positive from MYYNTI", async () => {
+  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const sell = draft.txns[2]!;
+  expect(sell.type).toBe("SELL");
+  expect(sell.amount).toBe(5950); // unsigned "59,50 EUR", signed positive by MYYNTI
+  expect(sell.quantity).toBe(20_000_000); // "20,00 kpl"
+});
+
+test("an OP row with no ISIN is tracked as unknown by name, never given an invented ISIN", async () => {
+  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const names = draft.unknownIsins.map((u) => u.name).sort();
+  expect(names).toEqual(["Esimerkki Oyj", "OP-Maailma Indeksi A"]);
+  expect(draft.unknownIsins.every((u) => u.isin === null)).toBe(true);
 });
 
 test("an unrecognised transaction type becomes a problem, not a guess", () => {
   const rows = [
-    {
-      line: 2,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "YHTIÖKOKOUS",
-        Arvopaperi: "X",
-        ISIN: "FI0009000681",
-        Määrä: "0",
-        Kurssi: "0",
-        Kokonaiskulut: "0",
-        Valuutta: "EUR",
-        Summa: "0,00",
-      },
-    },
+    rawRow(2, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "YHTIÖKOKOUS",
+      Arvopaperi: "X",
+      ISIN: "FI0009000681",
+      Määrä: "0",
+      Kurssi: "0",
+      Kokonaiskulut: "0",
+      Valuutta: "EUR",
+      Summa: "0,00",
+    }),
   ];
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
   expect(draft.txns).toHaveLength(0);
@@ -83,21 +263,18 @@ test("an unrecognised transaction type becomes a problem, not a guess", () => {
 
 test("an unparseable amount becomes a problem carrying the raw row", () => {
   const rows = [
-    {
-      line: 2,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "OSTO",
-        Arvopaperi: "X",
-        ISIN: "FI0009000681",
-        Määrä: "10",
-        Kurssi: "1,00",
-        Kokonaiskulut: "0",
-        Valuutta: "EUR",
-        Summa: "n/a",
-      },
-    },
+    rawRow(2, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "OSTO",
+      Arvopaperi: "X",
+      ISIN: "FI0009000681",
+      Määrä: "10",
+      Kurssi: "1,00",
+      Kokonaiskulut: "0",
+      Valuutta: "EUR",
+      Summa: "n/a",
+    }),
   ];
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
   expect(draft.txns).toHaveLength(0);
@@ -150,23 +327,18 @@ test("content hash accepts a row with no line field at all", () => {
 });
 
 test("mapRows stamps options.accountId onto every draft transaction", () => {
-  const rows = [
-    {
-      line: 2,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "OSTO",
-        Arvopaperi: "NOKIA",
-        ISIN: "FI0009000681",
-        Määrä: "10",
-        Kurssi: "1,00",
-        Kokonaiskulut: "0",
-        Valuutta: "EUR",
-        Summa: "-10,00",
-      },
-    },
-  ];
+  const csv = `${NORDNET_HEADER}\n${nordnetRow({
+    id: "1",
+    date: "2025-01-10",
+    type: "OSTO",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "10",
+    price: "1,00",
+    currency: "EUR",
+    amount: "-10,00",
+  })}\n`;
+  const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), { accountId: 42 });
   expect(draft.txns[0]!.accountId).toBe(42);
 });
@@ -183,43 +355,49 @@ test("mapRows stamps options.accountId onto every draft transaction", () => {
 // either kind without a `typeof` check (barred by anti-slop/no-runtime-typeof).
 
 test("merges CSV structural problems into Draft.problems, carrying the raw line text", () => {
-  const csv =
-    "Id;Kauppapäivä;Tapahtumatyyppi;Arvopaperi;ISIN;Määrä;Kurssi;Kokonaiskulut;Valuutta;Summa\n" +
-    "1;2025-01-10;OSTO;NOKIA;FI0009000681;10;4,15;3,00;EUR;-41,50\n" +
-    "2;3\n";
-  const { rows, problems: csvProblems } = parseCsv(new TextEncoder().encode(csv).buffer, NORDNET);
+  const goodRow = nordnetRow({
+    id: "1",
+    date: "2025-01-10",
+    type: "OSTO",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "10",
+    price: "4,15",
+    fee: "3,00",
+    currency: "EUR",
+    amount: "-41,50",
+  });
+  const csv = `${NORDNET_HEADER}\n${goodRow}\n2\t3\n`;
+  const { rows, problems: csvProblems } = parseCsv(nordnetBytes(csv), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), { csvProblems });
 
   expect(draft.txns).toHaveLength(1);
   expect(draft.problems).toHaveLength(1);
   expect(draft.problems[0]!.line).toBe(3);
   expect(draft.problems[0]!.raw).toEqual({});
-  expect(draft.problems[0]!.rawLine).toBe("2;3");
+  expect(draft.problems[0]!.rawLine).toBe("2\t3");
 });
 
 test("keeps structural CSV problems and row-mapping problems together, sorted by line", () => {
   const rows = [
-    {
-      line: 5,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "YHTIÖKOKOUS",
-        Arvopaperi: "X",
-        ISIN: "FI0009000681",
-        Määrä: "0",
-        Kurssi: "0",
-        Kokonaiskulut: "0",
-        Valuutta: "EUR",
-        Summa: "0,00",
-      },
-    },
+    rawRow(5, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "YHTIÖKOKOUS",
+      Arvopaperi: "X",
+      ISIN: "FI0009000681",
+      Määrä: "0",
+      Kurssi: "0",
+      Kokonaiskulut: "0",
+      Valuutta: "EUR",
+      Summa: "0,00",
+    }),
   ];
-  const csvProblems = [{ line: 3, message: "CSV rivi 3: 2 saraketta, odotettiin 10", raw: "2;3" }];
+  const csvProblems = [{ line: 3, message: "CSV rivi 3: 2 saraketta, odotettiin 30", raw: "2\t3" }];
   const draft = mapRows(rows, NORDNET, new Map(), { csvProblems });
 
   expect(draft.problems.map((p) => p.line)).toEqual([3, 5]);
-  expect(draft.problems[0]!.rawLine).toBe("2;3");
+  expect(draft.problems[0]!.rawLine).toBe("2\t3");
   expect(draft.problems[0]!.raw).toEqual({});
   expect(draft.problems[1]!.rawLine).toBeUndefined();
   expect(draft.problems[1]!.raw["Tapahtumatyyppi"]).toBe("YHTIÖKOKOUS");
@@ -234,21 +412,18 @@ test("csvProblems defaults to none when omitted", () => {
 
 test("an unsupported currency becomes a problem, not a silent EUR assumption", () => {
   const rows = [
-    {
-      line: 2,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "OSTO",
-        Arvopaperi: "X",
-        ISIN: "FI0009000681",
-        Määrä: "10",
-        Kurssi: "1,00",
-        Kokonaiskulut: "0",
-        Valuutta: "GBP",
-        Summa: "10,00",
-      },
-    },
+    rawRow(2, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "OSTO",
+      Arvopaperi: "X",
+      ISIN: "FI0009000681",
+      Määrä: "10",
+      Kurssi: "1,00",
+      Kokonaiskulut: "0",
+      Valuutta: "GBP",
+      Summa: "10,00",
+    }),
   ];
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]));
   expect(draft.txns).toHaveLength(0);
@@ -257,24 +432,68 @@ test("an unsupported currency becomes a problem, not a silent EUR assumption", (
 
 test("an empty unit-price cell yields no unit price, distinct from a literal 0", () => {
   const rows = [
-    {
-      line: 2,
-      values: {
-        Id: "1",
-        Kauppapäivä: "2025-01-10",
-        Tapahtumatyyppi: "PALKKIO",
-        Arvopaperi: "",
-        ISIN: "",
-        Määrä: "",
-        Kurssi: "",
-        Kokonaiskulut: "5,00",
-        Valuutta: "EUR",
-        Summa: "-5,00",
-      },
-    },
+    rawRow(2, {
+      Id: "1",
+      Kauppapäivä: "2025-01-10",
+      Tapahtumatyyppi: "PALKKIO",
+      Arvopaperi: "",
+      ISIN: "",
+      Määrä: "",
+      Kurssi: "",
+      Kokonaiskulut: "5,00",
+      Valuutta: "EUR",
+      Summa: "-5,00",
+    }),
   ];
-  const draft = mapRows(rows, NORDNET, new Map());
+  // NORDNET's real typeMap has no "palkkio" label (see brokers.ts -- only
+  // the 13 labels actually observed in the real export are mapped). This
+  // test only cares about the empty-vs-zero unit-price distinction, so it
+  // overrides typeMap locally rather than asserting on an invented label.
+  const draft = mapRows(rows, { ...NORDNET, typeMap: { palkkio: "FEE" } }, new Map());
   expect(draft.txns[0]!.unitPrice).toBeNull();
   expect(draft.txns[0]!.quantity).toBe(0);
   expect(draft.txns[0]!.fee).toBe(500);
+});
+
+// --- Task 15: duplicate-column addressing and per-broker amount signing --
+
+test("cell() prefers columnPositions over columns when both could apply", () => {
+  // A config carrying both a name mapping (which, given the duplicate-name
+  // header below, would resolve to the *wrong* occurrence) and a
+  // positional one for the same field: the positional one must win.
+  const header = ["Tapahtumatyyppi", "Kauppapäivä", "ISIN", "Valuutta", "Summa", "Valuutta"].join(
+    "\t",
+  );
+  const row = ["OSTO", "2025-01-10", "FI0009000681", "EUR", "-10,00", "USD"].join("\t");
+  const { rows } = parseCsv(nordnetBytes(`${header}\n${row}\n`), NORDNET);
+  const config = {
+    ...NORDNET,
+    columns: { ...NORDNET.columns, currency: "Valuutta" },
+    columnPositions: { currency: 4 }, // 1-based: the first "Valuutta"
+  };
+  const draft = mapRows(rows, config, new Map());
+  expect(draft.txns[0]!.currency).toBe("EUR");
+});
+
+test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
+  // The OP fixture's own rows already exercise the suffix-stripping path;
+  // this confirms a cell with no suffix at all still parses.
+  const rows = [
+    {
+      line: 2,
+      values: {
+        LAJI: "Test Fund",
+        TAPAHTUMA: "OSTO",
+        TAPAHTUMAPÄIVÄMÄÄRÄ: "01.01.2025",
+        MÄÄRÄ: "1,0000",
+        KURSSI: "100,00",
+        "KULUT / KOROT / VEROT": "",
+        YHTEENSÄ: "100,00",
+      },
+      cells: [],
+    },
+  ];
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  expect(draft.txns[0]!.quantity).toBe(1_000_000);
+  expect(draft.txns[0]!.amount).toBe(-10000);
 });

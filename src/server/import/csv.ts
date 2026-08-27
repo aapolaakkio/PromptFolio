@@ -107,6 +107,7 @@ export const parseCsv = (bytes: ArrayBuffer, config: BrokerCsvConfig) => {
     rows.push({
       line: lineNumber,
       values: Object.fromEntries(headers.map((h, index) => [h, cells[index] ?? ""])),
+      cells,
     });
   }
   return { rows, headers, problems };

@@ -36,7 +36,14 @@ export type DraftProblem = {
 export type Draft = {
   readonly txns: DraftTxn[];
   readonly problems: DraftProblem[];
-  readonly unknownIsins: Array<{ isin: string; name: string }>;
+  /**
+   * Instruments this import couldn't resolve to a known `instrumentId`.
+   * `isin` is set when the broker's export carries one (Nordnet); it is
+   * `null` when the broker's export has none at all (OP's web-paste
+   * transaction view carries no ISIN column) -- resolution then has to go
+   * by `name` alone, and no ISIN is ever invented to fill the gap.
+   */
+  readonly unknownIsins: Array<{ isin: string | null; name: string }>;
 };
 
 /**
@@ -118,6 +125,23 @@ export type MapRowsOptions = {
  * review screen gets one merged, line-ordered list of everything wrong
  * with the file instead of two separate ones.
  */
+/** The canonical fields that ever hold a plain decimal, as opposed to a label or date. */
+const NUMERIC_FIELDS: ReadonlySet<CanonicalField> = new Set([
+  "quantity",
+  "unitPrice",
+  "fee",
+  "amount",
+]);
+
+/**
+ * Strips a trailing unit label (e.g. "kpl", "EUR") that a broker's
+ * web-paste export appends to an otherwise plain decimal cell, so the bare
+ * number reaches `parseMoney`/`parseQuantity`. Only the trailing run of
+ * letters (plus the whitespace separating it from the number) is removed;
+ * a cell that is only a number is returned unchanged.
+ */
+const stripUnitSuffix = (text: string): string => text.replace(/\s*\p{L}+\.?\s*$/u, "").trim();
+
 export const mapRows = (
   rows: readonly RawRow[],
   config: BrokerCsvConfig,
@@ -127,11 +151,44 @@ export const mapRows = (
   const { csvProblems = [], accountId = 0 } = options;
   const txns: DraftTxn[] = [];
   const problems: DraftProblem[] = [];
-  const unknown = new Map<string, string>();
+  const unknown = new Map<string, { isin: string | null; name: string }>();
 
+  /**
+   * A field's cell text. `columnPositions` (set for a header that repeats,
+   * e.g. Nordnet's five `Valuutta` columns) takes priority and reads
+   * `row.cells` by 1-based position; otherwise the field falls back to
+   * `columns`' name lookup through `row.values`. `stripUnitSuffixes`
+   * additionally strips a trailing unit label off a numeric field, for a
+   * broker whose export renders "1,0453 kpl" rather than a bare number.
+   */
   const cell = (row: RawRow, field: CanonicalField): string => {
-    const header = config.columns[field];
-    return header ? (row.values[header] ?? "") : "";
+    const position = config.columnPositions?.[field];
+    const raw =
+      position !== undefined
+        ? (row.cells[position - 1] ?? "")
+        : (() => {
+            const header = config.columns[field];
+            return header ? (row.values[header] ?? "") : "";
+          })();
+    return config.stripUnitSuffixes && NUMERIC_FIELDS.has(field) ? stripUnitSuffix(raw) : raw;
+  };
+
+  /**
+   * The cash-flow amount for one row. Nordnet's `Summa` already carries the
+   * correct sign. OP's web-paste `YHTEENSÄ` is unsigned -- a 300 EUR buy
+   * and a 300 EUR sell render identically -- so when `config.amountSign`
+   * is set, the parsed magnitude is re-signed from the row's (lowercased)
+   * type label instead of trusted as printed. A label with no entry in
+   * `amountSign` defaults to a positive sign; that only happens for a
+   * broker that opted into re-signing but left one of its own labels out,
+   * a config gap rather than a data problem, so it is not raised here.
+   */
+  const resolveAmount = (amountText: string, currency: "EUR" | "USD", label: string): bigint => {
+    const parsed = parseMoney(amountText || "0", currency).minor;
+    if (!config.amountSign) return parsed;
+    const magnitude = parsed < 0n ? -parsed : parsed;
+    const sign = config.amountSign[label] ?? 1;
+    return BigInt(sign) * magnitude;
   };
 
   for (const row of rows) {
@@ -148,9 +205,16 @@ export const mapRows = (
 
       const isinText = cell(row, "isin").trim();
       const isin = isinText === "" ? null : isinText;
+      const nameText = cell(row, "instrumentName").trim();
       const instrumentId = isin ? (knownIsins.get(isin) ?? null) : null;
       if (isin && instrumentId === null) {
-        unknown.set(isin, cell(row, "instrumentName").trim());
+        unknown.set(isin, { isin, name: nameText });
+      } else if (!isin && nameText !== "") {
+        // No ISIN to key on at all (OP's web-paste view). Resolution is
+        // deferred to the review flow, by name, exactly like an unresolved
+        // ISIN -- never silently attached to a guessed instrument, and
+        // never given an invented ISIN.
+        unknown.set(nameText, { isin: null, name: nameText });
       }
 
       const quantityText = cell(row, "quantity").trim();
@@ -169,7 +233,7 @@ export const mapRows = (
           priceText === "" || priceText === "0"
             ? null
             : Number(parseMoney(priceText, currency).minor),
-        amount: Number(parseMoney(cell(row, "amount") || "0", currency).minor),
+        amount: Number(resolveAmount(cell(row, "amount"), currency, label)),
         fee: feeText === "" ? 0 : Number(parseMoney(feeText, currency).minor),
         tax: 0,
         currency,
@@ -190,6 +254,6 @@ export const mapRows = (
   return {
     txns,
     problems: merged,
-    unknownIsins: [...unknown].map(([isin, name]) => ({ isin, name })),
+    unknownIsins: [...unknown.values()],
   };
 };
