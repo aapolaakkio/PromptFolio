@@ -1,10 +1,12 @@
 import { test, expect } from "bun:test";
 import { mapRows, normaliseDate, contentHash } from "./map";
 import { parseCsv } from "./csv";
+import { parseOpPaste } from "./op-paste";
 import { NORDNET, OP_WEB_PASTE } from "./brokers";
 import type { RawRow } from "./types";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
+const opFixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {
@@ -126,8 +128,10 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
   const known = new Map([["IE0002Y8CX98", 7]]);
   const draft = mapRows(rows, NORDNET, known);
 
-  expect(draft.problems).toHaveLength(2); // the two DESIM rows -- see below
-  expect(draft.txns).toHaveLength(11);
+  // 4 of the fixture's 13 rows are deliberately unmapped: the VAIHTO
+  // merger pair and the two DESIM rows -- see below and brokers.ts.
+  expect(draft.problems).toHaveLength(4);
+  expect(draft.txns).toHaveLength(9);
 
   const buy = draft.txns[0]!;
   expect(buy.type).toBe("BUY");
@@ -169,21 +173,26 @@ test("PÄÄOMIT YLIT.KORKO and LAINAKORKO both map to INTEREST", async () => {
   expect(draft.txns.filter((t) => t.type === "INTEREST")).toHaveLength(2);
 });
 
-test("a VAIHTO merger pair maps to a TRANSFER_OUT leg and a TRANSFER_IN leg", async () => {
+// Review finding: an earlier version of this config mapped VAIHTO
+// AP-OTTO/AP-JÄTTÖ to TRANSFER_OUT/TRANSFER_IN with `amount: 0` (matching
+// the real `Summa`). That silently booked the merged-in holding at EUR 0
+// acquisition cost in core/costbasis.ts (which derives a TRANSFER_IN lot's
+// cost from `-amount`), so its entire eventual sale would be reported as
+// gain -- see brokers.ts's typeMap comment for the full reasoning on why
+// no field in DraftTxn can carry the real cost basis (Hankinta-arvo)
+// without a different corruption. Left unmapped instead, alongside DESIM.
+test("the VAIHTO merger pair is left unmapped and surfaces as problems, not booked at a wrong cost basis", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
-  const out = draft.txns.find((t) => t.type === "TRANSFER_OUT")!;
-  const inLeg = draft.txns.find((t) => t.type === "TRANSFER_IN")!;
-  expect(out.isin).toBe("IE00BG5J1M21");
-  expect(inLeg.isin).toBe("IE00BJQTJ848");
-  expect(out.amount).toBe(0);
-  expect(inLeg.amount).toBe(0);
+  expect(draft.txns.some((t) => t.type === "TRANSFER_OUT" || t.type === "TRANSFER_IN")).toBe(false);
+  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "VAIHTO AP-OTTO")).toBe(true);
+  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "VAIHTO AP-JÄTTÖ")).toBe(true);
 });
 
 test("the two DESIM rows are left unmapped and surface as problems, not guesses", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
-  expect(draft.problems).toHaveLength(2);
+  expect(draft.problems).toHaveLength(4); // VAIHTO AP-OTTO, VAIHTO AP-JÄTTÖ, and the two DESIM rows
   expect(draft.problems.every((p) => p.message.includes("Tuntematon tapahtumatyyppi"))).toBe(true);
   expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM. ULOSKIRJ. KÄT")).toBe(
     true,
@@ -194,49 +203,68 @@ test("the two DESIM rows are left unmapped and surface as problems, not guesses"
 test("collects ISINs it has never seen instead of inventing instruments", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map([["IE0002Y8CX98", 7]]));
+  // Only the MYYNTI row's ISIN reaches unknown-instrument tracking at all:
+  // an unmapped type (VAIHTO, DESIM) throws at the typeMap lookup, before
+  // isin/name extraction ever runs -- see mapRows.
   const isins = draft.unknownIsins.map((u) => u.isin).sort();
-  expect(isins).toEqual(["IE00BG5J1M21", "IE00BJQTJ848", "SE0005993102"]);
+  expect(isins).toEqual(["SE0005993102"]);
   expect(draft.txns.find((t) => t.isin === "SE0005993102")!.instrumentId).toBeNull();
 });
 
-test("maps the OP web-paste fixture: fi dates, unit-suffixed cells, and a name-only instrument", async () => {
-  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+// --- OP web-paste (op-paste.ts's own shape-anchored parser, not parseCsv) --
+
+test("maps the OP fixture's OSTO-with-fee row: fi dates, unit suffixes, and a name-only instrument", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
   const draft = mapRows(rows, OP_WEB_PASTE, new Map());
   expect(draft.problems).toEqual([]);
-  expect(draft.txns).toHaveLength(3);
+  expect(draft.txns).toHaveLength(4);
 
   const buy = draft.txns[0]!;
   expect(buy.type).toBe("BUY");
-  expect(buy.tradeDate).toBe("2025-08-04"); // dd.mm.yyyy -> ISO
-  expect(buy.quantity).toBe(1_200_000); // "1,2000 kpl" -> 1.2, scaled 1e6
-  expect(buy.unitPrice).toBe(25000); // "250,00 EUR" -> 250.00
-  expect(buy.fee).toBe(1); // "0,01 EUR" -> 0.01
-  expect(buy.amount).toBe(-30001); // unsigned "300,01 EUR", signed negative by OSTO
+  expect(buy.tradeDate).toBe("2025-08-10"); // dd.mm.yyyy -> ISO
+  expect(buy.quantity).toBe(1_200_000); // "1,2000   kpl" -> 1.2, scaled 1e6
+  expect(buy.unitPrice).toBe(25000); // "250,00   EUR" -> 250.00
+  expect(buy.fee).toBe(2); // "0,02   EUR" -> 0.02
+  expect(buy.amount).toBe(-30002); // unsigned "300,02   EUR", signed negative by OSTO
   expect(buy.isin).toBeNull(); // OP's web view has no ISIN column at all
 });
 
-test("a buy row with a blank fee cell (no fee charged) still parses", async () => {
-  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+test("the OP fixture's OSTO-without-fee row (the fee line is absent, not blank) still parses", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
   const draft = mapRows(rows, OP_WEB_PASTE, new Map());
   const noFee = draft.txns[1]!;
   expect(noFee.fee).toBe(0);
   expect(noFee.amount).toBe(-30000);
 });
 
-test("a sell row's unsigned total is re-signed positive from MYYNTI", async () => {
-  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+test("the OP fixture's MYYNTI row: unsigned total re-signed positive, never cross-checked against quantity × Kurssi", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
   const draft = mapRows(rows, OP_WEB_PASTE, new Map());
   const sell = draft.txns[2]!;
   expect(sell.type).toBe("SELL");
-  expect(sell.amount).toBe(5950); // unsigned "59,50 EUR", signed positive by MYYNTI
-  expect(sell.quantity).toBe(20_000_000); // "20,00 kpl"
+  expect(sell.quantity).toBe(15_000_000); // "15,00   kpl"
+  expect(sell.unitPrice).toBe(310); // "3,10   EUR" -- rounded for display, not authoritative
+  // 15 * 3.10 - 0.45 = 46.05, but the real (never-recomputed) total is 44.55.
+  expect(sell.amount).toBe(4455);
 });
 
-test("an OP row with no ISIN is tracked as unknown by name, never given an invented ISIN", async () => {
-  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
+test("the OP fixture's OSINKO row maps to DIVIDEND, positive amount, and quantity forced to 0", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
+  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const dividend = draft.txns[3]!;
+  expect(dividend.type).toBe("DIVIDEND");
+  expect(dividend.amount).toBe(160); // unsigned "1,60   EUR", signed positive by OSINKO
+  // "20,00   kpl" here is shares *held*, not units transacted -- must never
+  // flow through as though 20 units were bought or sold on this date.
+  expect(dividend.quantity).toBe(0);
+  expect(dividend.unitPrice).toBe(8); // "0,08   EUR" -- dividend per share, kept as informational
+});
+
+test("every OP fixture row with no ISIN is tracked as unknown by name, never given an invented ISIN", async () => {
+  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
   const draft = mapRows(rows, OP_WEB_PASTE, new Map());
   const names = draft.unknownIsins.map((u) => u.name).sort();
-  expect(names).toEqual(["Esimerkki Oyj", "OP-Maailma Indeksi A"]);
+  expect(names).toEqual(["ESIMERKKI OYJ", "OP-MAAILMA INDEKSI A"]);
   expect(draft.unknownIsins.every((u) => u.isin === null)).toBe(true);
 });
 
@@ -482,13 +510,13 @@ test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
     {
       line: 2,
       values: {
-        LAJI: "Test Fund",
-        TAPAHTUMA: "OSTO",
-        TAPAHTUMAPÄIVÄMÄÄRÄ: "01.01.2025",
-        MÄÄRÄ: "1,0000",
-        KURSSI: "100,00",
-        "KULUT / KOROT / VEROT": "",
-        YHTEENSÄ: "100,00",
+        Laji: "Test Fund",
+        Tapahtuma: "OSTO",
+        Tapahtumapäivämäärä: "01.01.2025",
+        Määrä: "1,0000",
+        Kurssi: "100,00",
+        "Kulut / Korot / Verot": "",
+        Yhteensä: "100,00",
       },
       cells: [],
     },

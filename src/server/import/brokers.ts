@@ -1,4 +1,4 @@
-import type { BrokerCsvConfig } from "./types";
+import type { BrokerCsvConfig, OpPasteConfig } from "./types";
 
 /**
  * Derived from a real Nordnet transaction export (288 rows, 30 columns),
@@ -19,8 +19,9 @@ import type { BrokerCsvConfig } from "./types";
  * (Swedish/English variants, "Osinko" for a dividend). A label outside
  * this set surfaces as a review problem instead of being silently
  * mis-booked -- see docs/superpowers/sdd/2026-08-27-promptfolio-phase-1/fix-real-fixtures-report.md
- * for the reasoning behind each mapping, including the two labels
- * (DESIM. ULOSKIRJ. KÄT, DESIM KIRJAUS OTTO) left unmapped on purpose.
+ * for the reasoning behind each mapping, including the four labels
+ * (DESIM. ULOSKIRJ. KÄT, DESIM KIRJAUS OTTO, VAIHTO AP-OTTO, VAIHTO
+ * AP-JÄTTÖ) left unmapped on purpose.
  */
 export const NORDNET: BrokerCsvConfig = {
   broker: "nordnet",
@@ -53,23 +54,38 @@ export const NORDNET: BrokerCsvConfig = {
     "per etf-kk säästön palvemaksu": "FEE",
     "pääomit ylit.korko": "INTEREST",
     lainakorko: "INTEREST",
-    // A same-day ISIN-to-ISIN conversion (an ETF/fund merger), paired: the
-    // old ISIN's units are removed at zero cash cost (AP-OTTO, "taken
-    // out"), the new ISIN's units are added at zero cash cost (AP-JÄTTÖ,
-    // "left/deposited"). Modelled as a TRANSFER_OUT leg on the old
-    // instrument and a TRANSFER_IN leg on the new one, mirroring the
-    // existing "arvopaperisiirto sisään/ulos" TRANSFER_IN/OUT usage --
-    // both types already move units with no cash effect.
-    "vaihto ap-otto": "TRANSFER_OUT",
-    "vaihto ap-jättö": "TRANSFER_IN",
-    // "DESIM. ULOSKIRJ. KÄT" and "DESIM KIRJAUS OTTO" are deliberately
-    // absent. Both are Nordnet's internal handling of one fractional-share
-    // cash-out event (paired rows, same ISIN/quantity/price/amount) but
-    // their `Kokonaismäärä` running-balance snapshots are inconsistent
-    // between the two rows in the real export, and no combination of the
-    // existing TransactionType values represents that without risking a
-    // wrong quantity or double-counted cash. Left unmapped so each
-    // instance surfaces as a review problem rather than being guessed.
+    // "VAIHTO AP-OTTO"/"VAIHTO AP-JÄTTÖ" (a same-day ETF/fund merger: the
+    // old ISIN's units removed, the new ISIN's units added, both legs at
+    // `Summa: 0`) and "DESIM. ULOSKIRJ. KÄT"/"DESIM KIRJAUS OTTO" (Nordnet's
+    // internal handling of one fractional-share cash-out event) are all
+    // deliberately absent.
+    //
+    // An earlier version of this config mapped the VAIHTO pair to
+    // TRANSFER_OUT/TRANSFER_IN with `amount: 0`, matching the real
+    // `Summa`. Review caught that this silently corrupts tax data:
+    // `core/costbasis.ts` derives a TRANSFER_IN lot's cost basis from
+    // `-amount` (+ fee), so a zero amount books the merged-in holding at
+    // EUR 0 acquisition cost -- its *entire* eventual sale proceeds would
+    // be reported as gain. The real cost basis is sitting in the export's
+    // `Hankinta-arvo` column, but there is no field in `DraftTxn` that can
+    // carry it without a different corruption: setting `amount` to
+    // `-Hankinta-arvo` (to get a true cost basis) would also falsely
+    // reduce the account's cash balance in `core/ledger.ts`'s `cashAt`,
+    // which sums every transaction's `amount` unconditionally -- no cash
+    // actually moved in a merger. Routing it through `fee` instead avoids
+    // the cash-balance corruption but corrupts fee-total reporting
+    // instead (there was no real EUR 300+ commission on this trade).
+    // A same-day offsetting pair (TRANSFER_OUT `amount: +Hankinta-arvo`,
+    // TRANSFER_IN `amount: -Hankinta-arvo`, netting to zero cash) was also
+    // considered and rejected: it requires assuming `Hankinta-arvo` is the
+    // *carried-over* cost basis rather than a fair-market-value repricing
+    // at conversion (some ETF share-class conversions carry the original
+    // cost basis forward for tax purposes; others are a taxable disposal
+    // and reacquisition) -- a real tax-treatment judgement call, not
+    // something inferable from one CSV row, and getting it wrong here
+    // corrupts the same tax data this whole task exists to protect.
+    // Left unmapped so each instance surfaces as a review problem instead
+    // of entering the ledger with a silently wrong cost basis.
   },
   signature: ["Tapahtumatyyppi", "ISIN", "Summa"],
 };
@@ -78,50 +94,85 @@ export const NORDNET: BrokerCsvConfig = {
  * OP offers no CSV export. What existed here before (a `csv_op` config
  * describing a semicolon-delimited file) described a file that does not
  * exist -- see §10a A3. Transactions instead come from copying OP's web
- * transaction table and pasting it in, tab-separated, as a browser copy
- * produces it.
+ * transaction table and pasting it in.
  *
- * Three things differ from a broker CSV and are handled here:
+ * This is **not a delimited format** -- see `op-paste.ts` for the parser
+ * and the full reasoning; this config only carries the field mapping
+ * `parseOpPaste`'s output (a `RawRow[]` shaped like any other) feeds into
+ * `mapRows`. It is an `OpPasteConfig`, not a `BrokerCsvConfig`: there is no
+ * `encoding`/`delimiter` (there is no delimiter at all) and no single
+ * header row for a `signature` match to run against.
+ *
+ * Column names match `parseOpPaste`'s canonical headers, which already
+ * merge OP's two-line-wrapped labels ("Tapahtumapäivämäärä", "Kulut /
+ * Korot / Verot") -- see that file.
+ *
+ * Two things specific to this broker, beyond the parsing itself:
  *  - Dates are `dd.mm.yyyy` (`dateFormat: "fi"`).
- *  - Every numeric cell carries a trailing unit label ("1,0453 kpl",
- *    "286,99 EUR") -- `stripUnitSuffixes: true` strips it before parsing.
- *  - `YHTEENSÄ` (the total) is unsigned: a 300 EUR buy and a 300 EUR sell
+ *  - Every numeric cell carries a trailing unit label ("1,0453   kpl",
+ *    "286,99   EUR", with multiple internal spaces) -- `stripUnitSuffixes:
+ *    true` strips it before parsing.
+ *  - `Yhteensä` (the total) is unsigned: a 300 EUR buy and a 300 EUR sell
  *    render identically. `amountSign` re-signs the parsed magnitude from
- *    the row's own OSTO/MYYNTI label instead of trusting the printed text.
+ *    the row's own type label instead of trusting the printed text. A
+ *    label with no entry here defaults to +1 in `mapRows`, but every
+ *    label actually mapped below has an explicit entry so that default is
+ *    never reached for a real row -- only for a bug that adds a type to
+ *    `typeMap` and forgets `amountSign`.
  *
  * There is no ISIN column at all -- `columns` has no `isin` entry, so
  * every row resolves (or fails to resolve) by instrument name alone
  * through mapRows' unknown-instrument tracking. No ISIN is invented.
  *
- * Only OSTO and MYYNTI are mapped: those are the only labels the real OP
- * web view we inspected actually produced. A label outside this set (a
- * dividend payout, a deposit made through OP rather than a purchase)
- * surfaces as a review problem instead of being guessed at.
+ * OSTO (buy), MYYNTI (sell) and OSINKO (dividend) are mapped -- the three
+ * labels observed across real pastes. OSINKO's `Määrä` is shares *held* on
+ * the payment date, not units transacted, and `Kurssi` is the dividend per
+ * share, not a trade price; `mapRows` forces `quantity: 0` for every
+ * DIVIDEND-typed row precisely so this shares-held figure can never be
+ * mistaken for a trade. A label outside this set (e.g. a deposit made
+ * through OP rather than a purchase) surfaces as a review problem instead
+ * of being guessed at.
+ *
+ * Unverified, flagged rather than assumed: whether OP's web view ever
+ * emits a transaction type beyond these three, and whether a MYYNTI row
+ * ever appears without a fee (every real MYYNTI example seen so far has
+ * one).
  */
-export const OP_WEB_PASTE: BrokerCsvConfig = {
+export const OP_WEB_PASTE: OpPasteConfig = {
   broker: "op",
-  encoding: "utf-8",
-  delimiter: "\t",
   dateFormat: "fi",
   stripUnitSuffixes: true,
   columns: {
-    instrumentName: "LAJI",
-    type: "TAPAHTUMA",
-    tradeDate: "TAPAHTUMAPÄIVÄMÄÄRÄ",
-    quantity: "MÄÄRÄ",
-    unitPrice: "KURSSI",
-    fee: "KULUT / KOROT / VEROT",
-    amount: "YHTEENSÄ",
+    instrumentName: "Laji",
+    type: "Tapahtuma",
+    tradeDate: "Tapahtumapäivämäärä",
+    quantity: "Määrä",
+    unitPrice: "Kurssi",
+    fee: "Kulut / Korot / Verot",
+    amount: "Yhteensä",
   },
   typeMap: {
     osto: "BUY",
     myynti: "SELL",
+    osinko: "DIVIDEND",
   },
   amountSign: {
     osto: -1,
     myynti: 1,
+    osinko: 1,
   },
-  signature: ["TAPAHTUMA", "TAPAHTUMAPÄIVÄMÄÄRÄ", "YHTEENSÄ"],
 };
 
-export const BROKER_CONFIGS: readonly BrokerCsvConfig[] = [NORDNET, OP_WEB_PASTE];
+/**
+ * Every genuinely delimited (CSV-shaped) broker config, for `parseCsv` and
+ * `detectBroker`. `OP_WEB_PASTE` is deliberately not here: it is not a
+ * `BrokerCsvConfig` and does not go through `parseCsv` at all (see
+ * `op-paste.ts`). Wiring an OP-paste upload into an HTTP route is left for
+ * a follow-up task -- `src/server/api/imports.ts` currently only accepts a
+ * `multipart/form-data` file upload and calls `parseCsv`/`detectBrokerConfig`
+ * unconditionally, and reworking that route is out of this task's scope.
+ * A real OP paste would arrive as pasted text (e.g. a JSON request body),
+ * not a file, which is a genuinely different upload shape, not just a new
+ * entry in this array.
+ */
+export const BROKER_CONFIGS: readonly BrokerCsvConfig[] = [NORDNET];

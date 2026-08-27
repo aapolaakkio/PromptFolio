@@ -1,5 +1,5 @@
 import { parseMoney, parseQuantity } from "../../core/money";
-import type { BrokerCsvConfig, CanonicalField, CsvProblem, RawRow } from "./types";
+import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types";
 
 export type DraftTxn = {
   readonly line: number;
@@ -144,7 +144,7 @@ const stripUnitSuffix = (text: string): string => text.replace(/\s*\p{L}+\.?\s*$
 
 export const mapRows = (
   rows: readonly RawRow[],
-  config: BrokerCsvConfig,
+  config: FieldMapping,
   knownIsins: ReadonlyMap<string, number>,
   options: MapRowsOptions = {},
 ): Draft => {
@@ -220,6 +220,15 @@ export const mapRows = (
       const quantityText = cell(row, "quantity").trim();
       const priceText = cell(row, "unitPrice").trim();
       const feeText = cell(row, "fee").trim();
+      // Still parsed (and so still validated -- a malformed cell surfaces
+      // as a problem the same as any other row) even for DIVIDEND, whose
+      // stored quantity is forced to 0 below regardless of what this
+      // yields: a dividend's "Määrä"-shaped cell is shares *held*, not
+      // units bought or sold, and core/ledger's positionsAt already treats
+      // DIVIDEND as a non-unit-moving type -- but a raw parsed value sitting
+      // in DraftTxn.quantity/transactions.quantity would still read as a
+      // trade to any future consumer that doesn't know that convention.
+      const quantityScaled = quantityText === "" ? 0n : parseQuantity(quantityText).scaled;
 
       txns.push({
         line: row.line,
@@ -228,7 +237,7 @@ export const mapRows = (
         isin,
         type,
         tradeDate: normaliseDate(cell(row, "tradeDate"), config.dateFormat),
-        quantity: quantityText === "" ? 0 : Number(parseQuantity(quantityText).scaled),
+        quantity: type === "DIVIDEND" ? 0 : Number(quantityScaled),
         unitPrice:
           priceText === "" || priceText === "0"
             ? null

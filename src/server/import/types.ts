@@ -36,10 +36,17 @@ export type CanonicalField =
   | "currency"
   | "amount";
 
-export type BrokerCsvConfig = {
-  readonly broker: "nordnet" | "op";
-  readonly encoding: "utf-8" | "latin1" | "utf-16le";
-  readonly delimiter: string;
+/**
+ * The part of a broker's configuration `mapRows` actually consumes:
+ * how to find each canonical field's cell, and how to turn its raw text
+ * into a `DraftTxn`. Deliberately has no opinion on *how the bytes reached
+ * `RawRow[]`* -- that is `BrokerCsvConfig`'s job for a genuinely delimited
+ * export (Nordnet). OP's web-paste view is not delimited at all (see
+ * `op-paste.ts`), so `OpPasteConfig` carries a `FieldMapping` without ever
+ * claiming an `encoding`/`delimiter`/`signature` that wouldn't mean
+ * anything for it.
+ */
+export type FieldMapping = {
   readonly dateFormat: "iso" | "fi";
   /** Canonical field -> the broker's column header. Missing entries mean the broker omits it. */
   readonly columns: Partial<Record<CanonicalField, string>>;
@@ -56,7 +63,7 @@ export type BrokerCsvConfig = {
   readonly typeMap: Record<string, string>;
   /**
    * Set when the broker's `amount` cell is an unsigned magnitude rather
-   * than a signed cash flow (OP's web-paste `YHTEENSÄ`: a 300 EUR buy and
+   * than a signed cash flow (OP's web-paste `Yhteensä`: a 300 EUR buy and
    * a 300 EUR sell render identically). Maps the row's type label
    * (lowercased, matching `typeMap`'s keys) to the sign the parsed
    * magnitude must be given. A label with no entry here defaults to +1.
@@ -66,11 +73,29 @@ export type BrokerCsvConfig = {
   readonly amountSign?: Record<string, 1 | -1>;
   /**
    * Set when this broker's numeric cells carry a trailing unit label (OP's
-   * web-paste view renders "1,0453 kpl" and "286,99 EUR", not bare
+   * web-paste view renders "1,0453   kpl" and "286,99   EUR", not bare
    * numbers). Strips a trailing letter-run from `quantity`, `unitPrice`,
    * `fee` and `amount` before they reach `parseMoney`/`parseQuantity`.
    */
   readonly stripUnitSuffixes?: boolean;
+};
+
+/** A genuinely delimited broker export, parseable by `parseCsv`. Currently only Nordnet. */
+export type BrokerCsvConfig = FieldMapping & {
+  readonly broker: "nordnet";
+  readonly encoding: "utf-8" | "latin1" | "utf-16le";
+  readonly delimiter: string;
   /** Headers that identify this broker's export. */
   readonly signature: readonly string[];
+};
+
+/**
+ * OP's web-paste transaction view: newline-separated, no delimiter, no
+ * fixed column count per row (a fee line is present or absent). Parsed by
+ * `parseOpPaste`, not `parseCsv` -- there is no `encoding`/`delimiter` to
+ * declare, and no single header row for `detectBroker`'s signature match
+ * to run against, so this type carries none of those fields.
+ */
+export type OpPasteConfig = FieldMapping & {
+  readonly broker: "op";
 };

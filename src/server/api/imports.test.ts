@@ -199,13 +199,6 @@ const fixtureBytes = (name: string) =>
   Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).arrayBuffer();
 
 // --- detectBrokerConfig (delimiter/encoding independence) ---
-//
-// Both shipped brokers (Nordnet, OP) happen to use ';' and utf-8 today, so
-// a hardcoded ';'+utf-8 probe (what the task brief originally coded, see
-// task-12-report.md) would pass every test built only from real fixtures.
-// These tests force a different combination via the `configs` parameter to
-// prove detectBrokerConfig tries each candidate's own delimiter/encoding,
-// not one fixed pair.
 
 describe("detectBrokerConfig", () => {
   test("still detects a real Nordnet export with the default broker list", async () => {
@@ -213,18 +206,27 @@ describe("detectBrokerConfig", () => {
     expect(detectBrokerConfig(bytes)?.broker).toBe("nordnet");
   });
 
-  test("still detects a real OP export with the default broker list", async () => {
-    const bytes = await fixtureBytes("op-web-paste-sample.csv"); // already UTF-8 on disk
-    expect(detectBrokerConfig(bytes)?.broker).toBe("op");
+  // OP's web-paste view is newline-separated with no delimiter at all (see
+  // src/server/import/op-paste.ts) -- it is not a `BrokerCsvConfig` and is
+  // deliberately absent from `BROKER_CONFIGS`, so `detectBrokerConfig`
+  // (which only ever tries `parseCsv`-shaped candidates) correctly does
+  // not, and cannot, detect it. Wiring OP paste into an HTTP route needs
+  // its own endpoint (it arrives as pasted text, not a file upload) --
+  // out of this task's scope; see brokers.ts's `BROKER_CONFIGS` comment.
+  test("does not detect an OP paste -- it is not wired into the CSV-upload broker list", async () => {
+    const text = await Bun.file(
+      `${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`,
+    ).text();
+    const bytes = new TextEncoder().encode(text).buffer;
+    expect(detectBrokerConfig(bytes)).toBeNull();
   });
 
   test("detects a broker whose export uses a different delimiter than the real config", () => {
-    // Both real configs (Nordnet, OP) now use tab delimiters, so a
-    // hardcoded-tab regression wouldn't be caught by BROKER_CONFIGS alone.
-    // Same header text as Nordnet's real signature columns, but joined
-    // with ',' instead of a tab -- neither shipped broker uses ',', so this
-    // still proves detectBrokerConfig tries each candidate's own delimiter
-    // rather than one fixed one.
+    // `BROKER_CONFIGS` only has one real entry (Nordnet, tab-delimited)
+    // now, so this forces a different (comma) delimiter via the `configs`
+    // parameter to prove detectBrokerConfig tries each candidate's own
+    // delimiter/encoding rather than one hardcoded pair (what the task
+    // brief originally coded, see task-12-report.md).
     const header = NORDNET_HEADER.replaceAll("\t", ",");
     const bytes = new TextEncoder().encode(`${header}\n`).buffer;
     const commaDelimited = { ...NORDNET, delimiter: ",", encoding: "utf-8" as const };
@@ -338,13 +340,15 @@ describe("POST /api/imports/preview", () => {
       unknownIsins: Array<{ isin: string | null }>;
     };
     expect(body.broker).toBe("nordnet");
-    // 13 data rows in the fixture, 2 of them (the DESIM rows) deliberately
-    // unmapped -- see brokers.ts -- so 11 reach the draft as transactions.
-    expect(body.txns).toHaveLength(11);
+    // 13 data rows in the fixture, 4 of them (the VAIHTO merger pair and
+    // the two DESIM rows) deliberately unmapped -- see brokers.ts -- so 9
+    // reach the draft as transactions.
+    expect(body.txns).toHaveLength(9);
     // No instrument is pre-registered for this fresh user, so every isin
-    // among the mapped rows is unresolved; IE00BG5J1M21 (the VAIHTO
-    // AP-OTTO leg) is one of the three.
-    expect(body.unknownIsins.some((u) => u.isin === "IE00BG5J1M21")).toBe(true);
+    // among the mapped rows is unresolved; SE0005993102 (the MYYNTI row)
+    // is one of them. VAIHTO's isins never reach unknown-instrument
+    // tracking at all -- an unmapped type throws before isin extraction.
+    expect(body.unknownIsins.some((u) => u.isin === "SE0005993102")).toBe(true);
   });
 });
 
@@ -384,7 +388,7 @@ describe("POST /api/imports/commit", () => {
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain("IE00BG5J1M21");
+    expect(body.error).toContain("SE0005993102");
   });
 
   test("commits a clean EUR-only export and undoes it", async () => {

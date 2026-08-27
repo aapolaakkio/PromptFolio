@@ -180,9 +180,15 @@ export const commitDraft = (
 ): CommitResult => {
   const { draft } = args;
   if (draft.unknownIsins.length > 0) {
+    // `isin` is null for a broker whose export carries no ISIN at all
+    // (OP's web-paste view -- see brokers.ts). Falling back to `name`
+    // there is required, not cosmetic: `Array.prototype.join` renders a
+    // null entry as an empty string, so without this fallback every real
+    // OP commit refusal would read as a bare ", " with nothing named.
+    const label = (u: Draft["unknownIsins"][number]): string => u.isin ?? u.name;
     throw new HttpError(
       400,
-      `Tuntemattomat arvopaperit on lisättävä ensin: ${draft.unknownIsins.map((u) => u.isin).join(", ")}`,
+      `Tuntemattomat arvopaperit on lisättävä ensin: ${draft.unknownIsins.map(label).join(", ")}`,
     );
   }
 

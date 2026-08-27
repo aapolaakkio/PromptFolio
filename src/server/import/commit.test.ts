@@ -123,6 +123,21 @@ test("refuses a draft with unresolved isins", () => {
   expect(() => commitDraft(db, args(accountId, draft))).toThrow(/IE00B4L5Y983/);
 });
 
+// Review finding: a broker with no ISIN column at all (OP's web-paste view,
+// see brokers.ts) reports its unknown instruments with `isin: null`. The
+// refusal message must fall back to `name` there -- `Array.prototype.join`
+// renders a null array entry as an empty string, so without the fallback
+// this would throw a message naming nothing at all.
+test("refuses a draft with an unresolved instrument that has no isin, naming it by name instead", () => {
+  const { db, accountId } = seed();
+  const draft: Draft = {
+    txns: [draftTxn({ accountId })],
+    problems: [],
+    unknownIsins: [{ isin: null, name: "OP-Maailma Indeksi A" }],
+  };
+  expect(() => commitDraft(db, args(accountId, draft))).toThrow(/OP-Maailma Indeksi A/);
+});
+
 // DraftTxn.type (Task 11) is a plain string -- nothing upstream guarantees
 // it matches the ledger's stricter enum. commitDraft validates it against
 // the schema's own enum before trusting it, rather than asserting past

@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { parseCsv, detectBroker } from "./csv";
-import { NORDNET, OP_WEB_PASTE } from "./brokers";
+import { NORDNET } from "./brokers";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
 
@@ -33,18 +33,14 @@ test("parses the real-format Nordnet fixture into labelled rows", async () => {
   expect(rows[0]!.line).toBe(2);
 });
 
-test("parses the OP web-paste fixture with its own delimiter and headers", async () => {
-  const { rows } = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
-  expect(rows).toHaveLength(3);
-  expect(rows[0]!.values["TAPAHTUMA"]).toBe("OSTO");
-  expect(rows[0]!.values["MÄÄRÄ"]).toBe("1,2000 kpl");
-});
+// OP's web-paste view is not delimited at all (newline-separated, no
+// fixed column count per row -- see op-paste.ts and op-paste.test.ts for
+// its own parser and tests) so it no longer has a parseCsv/detectBroker
+// test here; `BROKER_CONFIGS` (brokers.ts) carries only NORDNET now.
 
 test("detects the broker from the header row", async () => {
   const nordnet = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
-  const op = parseCsv(await fixture("op-web-paste-sample.csv"), OP_WEB_PASTE);
   expect(detectBroker(nordnet.headers)?.broker).toBe("nordnet");
-  expect(detectBroker(op.headers)?.broker).toBe("op");
   expect(detectBroker(["Date", "Amount"])).toBeNull();
 });
 
