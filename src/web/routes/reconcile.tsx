@@ -5,6 +5,7 @@ import { z } from "zod";
 import { apiGet } from "../lib/api";
 import { fiDate, qty } from "../lib/format";
 import { AccountsSchema } from "./imports-draft";
+import { SnapshotForm } from "./SnapshotForm";
 import {
   explain,
   needsAttention,
@@ -106,6 +107,10 @@ export const ReconcilePage = () => {
 
       {reconciliation.data && (
         <Result rows={reconciliation.data.rows} asOf={reconciliation.data.asOf} />
+      )}
+
+      {chosenAccount !== null && (
+        <SnapshotForm accountId={chosenAccount} onCreated={(id) => setSnapshotId(id)} />
       )}
     </section>
   );
