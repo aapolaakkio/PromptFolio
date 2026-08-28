@@ -221,7 +221,15 @@ const byName = async (
   currency: Currency | null,
   fetchImpl: typeof fetch,
 ): Promise<InstrumentLookup> => {
-  const hits = (await settle(yahooSearchByName(name, fetchImpl))) ?? [];
+  const hits: NamedHit[] = [];
+  const seen = new Set<string>();
+  for (const term of searchTerms(name)) {
+    for (const hit of (await settle(yahooSearchByName(term, fetchImpl))) ?? []) {
+      if (seen.has(hit.symbol)) continue;
+      seen.add(hit.symbol);
+      hits.push(hit);
+    }
+  }
   const matching = hits.filter((hit) => namesAgree(name, hit.registryName));
   if (matching.length === 0) return NOTHING;
 
@@ -242,6 +250,22 @@ const byName = async (
     listingCurrency: listing.currency,
   };
 };
+
+/**
+ * The queries to try, in order. A broker prints the legal company form and
+ * Yahoo's relevance ranking is thrown by it: searching a name with "OYJ" appended returns
+ * seven German and American listings and not the Helsinki one at all, while
+ * the bare name puts the Helsinki listing first. Verified against several Helsinki-listed shares, including
+ * a Helsinki-listed share; the bare name is tried first for that reason, with the broker's
+ * own spelling kept as a fallback for a name the stripping mangles.
+ */
+const searchTerms = (name: string): string[] => {
+  const bare = name.replace(COMPANY_FORM, " ").replace(/\s+/g, " ").trim();
+  return bare !== "" && bare.toLowerCase() !== name.toLowerCase() ? [bare, name] : [name];
+};
+
+/** The legal-form words a broker appends, which are noise to a name search. */
+const COMPANY_FORM = /\b(oyj|oy|abp|plc|ab|asa|as|inc|corp|corporation|group|nv|sa)\b/gi;
 
 /** Lowercased, punctuation-stripped, and without the company-form suffixes a broker prints. */
 const normaliseName = (value: string): string =>

@@ -449,3 +449,30 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
     expect(result.sourceKey).toBe("0P0001BP5K.F");
   });
 });
+
+describe("name search, company-form suffix", () => {
+  test("tries the bare name first, which is what surfaces the home listing", async () => {
+    const asked: string[] = [];
+    // SAFETY: as in stubFetch above -- only a URL is ever passed and only the
+    // Response is read, which `typeof fetch` cannot express structurally.
+    const stub = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("op.fi")) return new Response("", { status: 404 });
+      if (url.includes("finance/search")) {
+        const term = new URL(url).searchParams.get("q") ?? "";
+        asked.push(term);
+        // Yahoo's own behaviour, recorded 2026-08-28: the bare name returns the
+        // Helsinki listing first; with "OYJ" appended it is absent entirely.
+        const quotes =
+          term === "ESIMERKKI"
+            ? [{ symbol: "KCR.HE", quoteType: "EQUITY", longname: "Esimerkki Plc" }]
+            : [{ symbol: "K34.F", quoteType: "EQUITY", longname: "Esimerkki Plc" }];
+        return new Response(JSON.stringify({ quotes }));
+      }
+      return new Response(JSON.stringify({ chart: { result: [{ meta: { currency: "EUR" } }] } }));
+    }) as typeof fetch;
+    const byName = await lookupInstrument(null, "ESIMERKKI OYJ", EUR, stub);
+    expect(asked[0]).toBe("ESIMERKKI");
+    expect(byName.sourceKey).toBe("KCR.HE");
+  });
+});
