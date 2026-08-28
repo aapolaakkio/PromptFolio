@@ -126,5 +126,6 @@ currencies (EUR, SEK and NOK — not EUR and USD). Recorded at §10a.
 - Every ruling, deferral and review finding:
   `.superpowers/sdd/2026-08-27-promptfolio-phase-1/progress.md` (gitignored — a
   working record, not source).
-- Phase 2 onward, unstarted: reconciliation, PDF import, screenshot/vision import,
-  AI chat, the Finnish tax module, rebalancing.
+- Phase 2 is built -- reconciliation and PDF import; see `docs/PHASE-2-HANDOVER.md`.
+  Vision import was dropped (spec 10c/C8).
+- Phase 3 onward, unstarted: AI chat, the Finnish tax module, rebalancing.
