@@ -513,3 +513,74 @@ describe("POST /api/snapshots/pdf", () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe("DELETE /api/snapshots/:id", () => {
+  const remove = async (cookie: string, id: number): Promise<Response> =>
+    snapshotRoutes["/api/snapshots/:id"].DELETE(
+      new Request(`http://x/api/snapshots/${id}`, { method: "DELETE", headers: { cookie } }),
+    );
+
+  test("removes the statement and its rows", async () => {
+    const { cookie } = await signUp(`del-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(cookie);
+    const instrumentId = await createInstrument(cookie);
+    const created = await postSnapshot(cookie, {
+      accountId,
+      asOf: "2026-06-30",
+      source: "manual",
+      rows: [{ instrumentId, quantity: "10" }],
+    });
+    // SAFETY: a 201 always returns the inserted snapshot.
+    const snapshot = (await created.json()) as { id: number };
+
+    expect((await remove(cookie, snapshot.id)).status).toBe(200);
+    expect((await reconcileOf(cookie, snapshot.id)).status).toBe(404);
+  });
+
+  test("an adjustment the statement produced survives its deletion", async () => {
+    const { cookie } = await signUp(`del-adj-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(cookie);
+    const instrumentId = await createInstrument(cookie);
+    buy(accountId, instrumentId, "10000000", "2026-01-05");
+    const created = await postSnapshot(cookie, {
+      accountId,
+      asOf: "2026-06-30",
+      source: "manual",
+      rows: [{ instrumentId, quantity: "15" }],
+    });
+    // SAFETY: as above.
+    const snapshot = (await created.json()) as { id: number };
+    await snapshotRoutes["/api/snapshots/:id/adjust"].POST(
+      new Request(`http://x/api/snapshots/${snapshot.id}/adjust`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ instrumentId, costEur: "500" }),
+      }),
+    );
+
+    const before = db.select().from(transactions).all().length;
+    expect((await remove(cookie, snapshot.id)).status).toBe(200);
+    // Tidying up a statement must never retract a ledger entry the user chose
+    // to make -- that would change holdings as a side effect.
+    expect(db.select().from(transactions).all().length).toBe(before);
+  });
+
+  test("refuses a statement belonging to someone else", async () => {
+    const owner = await signUp(`del-owner-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(owner.cookie);
+    const instrumentId = await createInstrument(owner.cookie);
+    const created = await postSnapshot(owner.cookie, {
+      accountId,
+      asOf: "2026-06-30",
+      source: "manual",
+      rows: [{ instrumentId, quantity: "1" }],
+    });
+    // SAFETY: as above.
+    const snapshot = (await created.json()) as { id: number };
+
+    const stranger = await signUp(`del-stranger-${crypto.randomUUID()}@example.com`);
+    expect((await remove(stranger.cookie, snapshot.id)).status).toBe(404);
+    // And it is still there afterwards.
+    expect((await reconcileOf(owner.cookie, snapshot.id)).status).toBe(200);
+  });
+});

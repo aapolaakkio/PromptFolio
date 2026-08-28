@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiGet } from "../lib/api";
+import { apiDelete, apiGet } from "../lib/api";
 import { fiDate, qty } from "../lib/format";
 import { AccountsSchema } from "./imports-draft";
 import { AdjustRow } from "./AdjustRow";
@@ -30,6 +30,7 @@ const SOURCE_LABELS = new Map<string, string>([
  * never happen as a side effect of looking at a statement.
  */
 export const ReconcilePage = () => {
+  const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
 
@@ -47,6 +48,14 @@ export const ReconcilePage = () => {
   });
 
   const chosenSnapshot = snapshotId ?? snapshots.data?.at(-1)?.id ?? null;
+
+  const remove = useMutation({
+    mutationFn: (id: number) => apiDelete(`/api/snapshots/${id}`),
+    onSuccess: () => {
+      setSnapshotId(null);
+      void queryClient.invalidateQueries({ queryKey: ["snapshots", chosenAccount] });
+    },
+  });
 
   const reconciliation = useQuery({
     queryKey: ["reconcile", chosenSnapshot],
@@ -93,6 +102,28 @@ export const ReconcilePage = () => {
             ))}
           </select>
         </label>
+
+        {chosenSnapshot !== null && (
+          <button
+            type="button"
+            className="self-end"
+            disabled={remove.isPending}
+            onClick={() => {
+              // Deleting a statement leaves any adjustment it produced in place,
+              // so this is not a destructive act on the ledger -- said plainly
+              // rather than left to be discovered.
+              if (
+                globalThis.confirm(
+                  "Poistetaanko tämä ote? Sen perusteella tehdyt korjaukset jäävät voimaan.",
+                )
+              ) {
+                remove.mutate(chosenSnapshot);
+              }
+            }}
+          >
+            Poista ote
+          </button>
+        )}
       </div>
 
       {snapshots.isSuccess && snapshots.data.length === 0 && (

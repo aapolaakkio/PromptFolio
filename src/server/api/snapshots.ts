@@ -248,6 +248,34 @@ export const snapshotRoutes = {
     }),
   },
 
+  "/api/snapshots/:id": {
+    /**
+     * Removes a statement. Its rows go with it through the schema's cascade;
+     * any adjusting transaction it produced deliberately does not.
+     *
+     * An adjustment is a ledger entry the user chose to make. Deleting the
+     * statement it came from must not silently retract it -- that would change
+     * holdings as a side effect of tidying up. The transaction stays, still
+     * carrying the note naming a statement that no longer exists, which is
+     * honest: it records what was decided and on what basis.
+     */
+    DELETE: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const snapshotId = z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(new URL(request.url).pathname.split("/").at(-1));
+
+      const snapshot = db.select().from(snapshots).where(eq(snapshots.id, snapshotId)).get();
+      if (!snapshot) throw new HttpError(404, "Tilannevedosta ei löydy");
+      assertAccountOwned(userId, snapshot.accountId);
+
+      db.delete(snapshots).where(eq(snapshots.id, snapshotId)).run();
+      return json({ deleted: snapshotId });
+    }),
+  },
+
   "/api/snapshots/:id/adjust": {
     POST: handle(async (request) => {
       const { userId } = await requireUser(request);

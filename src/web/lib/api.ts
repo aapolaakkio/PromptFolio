@@ -70,6 +70,16 @@ export const apiGet = async <T>(
   return body as T;
 };
 
+/**
+ * Deletes a resource. No body either way: every DELETE this app makes answers
+ * with a small acknowledgement the caller does not read, so there is nothing to
+ * parse and no schema to demand.
+ */
+export const apiDelete = async (path: string, fetchImpl: FetchLike = fetch): Promise<void> => {
+  const response = await fetchImpl(path, { method: "DELETE", credentials: "include" });
+  await unwrap(response);
+};
+
 export const apiPost = async <T, B>(
   path: string,
   body: B,
