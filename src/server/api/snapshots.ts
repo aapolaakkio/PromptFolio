@@ -1,13 +1,13 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { reconcile, type SnapshotPosition } from "../../core/reconcile";
-import { formatQuantity, parseQuantity } from "../../core/money";
+import { EUR, formatQuantity, parseQuantity } from "../../core/money";
 import type { Txn } from "../../core/types";
 import { assertAccountOwned } from "./accounts";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
-import { instruments, snapshotRows, snapshots } from "../db/schema";
+import { instruments, snapshotRows, snapshots, transactions } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { loadPortfolio } from "../valuation";
 
@@ -16,6 +16,21 @@ const { db } = getDb();
 const IsoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+
+/**
+ * Resolving one reconciliation row into a transaction the ledger did not have.
+ *
+ * `costEur` is required when units are arriving and refused when they are
+ * leaving. An acquisition's cost basis cannot be guessed: defaulting it to zero
+ * would report the holding's entire eventual value as gain, which is the exact
+ * failure this project has already had to fix from three other causes. The
+ * statement's own NAV can be offered as a default in the UI, but the figure
+ * stored is one a person chose.
+ */
+const Adjust = z.object({
+  instrumentId: z.number().int().positive(),
+  costEur: z.string().min(1).optional(),
+});
 
 /**
  * A holdings statement as the user supplies it: what the broker says was held on
@@ -172,6 +187,95 @@ export const snapshotRoutes = {
         rows,
         differences: rows.filter((row) => !row.withinTolerance).length,
       });
+    }),
+  },
+
+  "/api/snapshots/:id/adjust": {
+    POST: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const snapshotId = z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(new URL(request.url).pathname.split("/").at(-2));
+      const body = Adjust.parse(await request.json());
+
+      const snapshot = db.select().from(snapshots).where(eq(snapshots.id, snapshotId)).get();
+      if (!snapshot) throw new HttpError(404, "Tilannevedosta ei löydy");
+      assertAccountOwned(userId, snapshot.accountId);
+
+      const stated: SnapshotPosition[] = db
+        .select()
+        .from(snapshotRows)
+        .where(eq(snapshotRows.snapshotId, snapshotId))
+        .all()
+        .map((row) => ({
+          instrumentId: row.instrumentId,
+          quantity: { scaled: BigInt(row.quantity) },
+        }));
+
+      const { txns } = loadPortfolio(db, userId);
+      const own = txns.filter((t) => t.accountId === snapshot.accountId);
+      const row = reconcile(own, stated, snapshot.asOf).find(
+        (candidate) => candidate.instrumentId === body.instrumentId,
+      );
+      if (!row) throw new HttpError(404, "Riviä ei löydy tästä otteesta");
+      // Identifiable forever, and idempotent: the unique (accountId, externalId)
+      // index means adjusting the same row twice is a conflict, not a silent
+      // duplicate. An adjustment is the user asserting units exist with no
+      // broker record behind it, so it must never blend in with imported rows.
+      const externalId = `adjustment:${snapshotId}:${body.instrumentId}`;
+      const existing = db
+        .select({ id: transactions.id })
+        .from(transactions)
+        .where(
+          and(
+            eq(transactions.accountId, snapshot.accountId),
+            eq(transactions.externalId, externalId),
+          ),
+        )
+        .get();
+      if (existing) throw new HttpError(409, "Tämä rivi on jo korjattu");
+
+      if (row.withinTolerance) {
+        throw new HttpError(400, "Rivi täsmää jo — korjattavaa ei ole");
+      }
+
+      const arriving = row.delta.scaled > 0n;
+      if (arriving && body.costEur === undefined) {
+        throw new HttpError(400, "Hankintameno vaaditaan, kun osuuksia lisätään");
+      }
+      if (!arriving && body.costEur !== undefined) {
+        throw new HttpError(400, "Hankintamenoa ei anneta, kun osuuksia poistetaan");
+      }
+
+      const quantity = row.delta.scaled > 0n ? row.delta.scaled : -row.delta.scaled;
+      const amount = arriving ? -Math.round(Number(body.costEur!.replace(",", ".")) * 100) : 0;
+      if (!Number.isFinite(amount))
+        throw new HttpError(400, "Hankintameno ei ole kelvollinen luku");
+
+      const inserted = db
+        .insert(transactions)
+        .values({
+          accountId: snapshot.accountId,
+          instrumentId: body.instrumentId,
+          type: arriving ? "TRANSFER_IN" : "TRANSFER_OUT",
+          tradeDate: snapshot.asOf,
+          quantity: Number(quantity),
+          unitPrice: null,
+          amount,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          externalId,
+          contentHash: externalId,
+          note: `Täsmäytyskorjaus otteesta ${snapshotId} (${snapshot.asOf})`,
+        })
+        .returning()
+        .get();
+
+      return json(inserted, 201);
     }),
   },
 };

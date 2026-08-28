@@ -299,3 +299,103 @@ describe("GET /api/snapshots/:id/reconcile", () => {
     expect((await reconcileOf(cookie, 999_999)).status).toBe(404);
   });
 });
+
+describe("POST /api/snapshots/:id/adjust", () => {
+  /** The wire shape POST /api/snapshots/:id/adjust accepts; the route parses it itself. */
+  type AdjustRequest = { instrumentId: number; costEur?: string };
+
+  const adjust = async (cookie: string, id: number, body: AdjustRequest): Promise<Response> =>
+    snapshotRoutes["/api/snapshots/:id/adjust"].POST(
+      new Request(`http://x/api/snapshots/${id}/adjust`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  const setup = async (statementQty: string, ledgerQty: string | null) => {
+    const { cookie } = await signUp(`adj-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(cookie);
+    const instrumentId = await createInstrument(cookie);
+    if (ledgerQty !== null) buy(accountId, instrumentId, ledgerQty, "2026-01-05");
+    const created = await postSnapshot(cookie, {
+      accountId,
+      asOf: "2026-06-30",
+      source: "manual",
+      rows: [{ instrumentId, quantity: statementQty }],
+    });
+    // SAFETY: a 201 always returns the inserted snapshot.
+    const snapshot = (await created.json()) as { id: number };
+    return { cookie, accountId, instrumentId, snapshotId: snapshot.id };
+  };
+
+  test("adding units requires a cost basis rather than inventing one", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("15", "10000000");
+    const response = await adjust(cookie, snapshotId, { instrumentId });
+    // Defaulting it to zero would report the whole holding as gain later.
+    expect(response.status).toBe(400);
+  });
+
+  test("adding units writes a marked, identifiable transaction", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("15", "10000000");
+    const response = await adjust(cookie, snapshotId, { instrumentId, costEur: "500.00" });
+    expect(response.status).toBe(201);
+    // SAFETY: a 201 returns the inserted transaction row.
+    const txn = (await response.json()) as {
+      type: string;
+      quantity: number;
+      amount: number;
+      externalId: string;
+      note: string;
+    };
+    expect(txn.type).toBe("TRANSFER_IN");
+    expect(txn.quantity).toBe(5_000_000);
+    // Negative: an acquisition's amount is the cash that left.
+    expect(txn.amount).toBe(-50000);
+    expect(txn.externalId).toBe(`adjustment:${snapshotId}:${instrumentId}`);
+    expect(txn.note).toContain("Täsmäytyskorjaus");
+  });
+
+  test("removing units takes no cost basis", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("4", "10000000");
+    expect((await adjust(cookie, snapshotId, { instrumentId, costEur: "10" })).status).toBe(400);
+
+    const response = await adjust(cookie, snapshotId, { instrumentId });
+    expect(response.status).toBe(201);
+    // SAFETY: as above.
+    const txn = (await response.json()) as { type: string; quantity: number };
+    expect(txn.type).toBe("TRANSFER_OUT");
+    expect(txn.quantity).toBe(6_000_000);
+  });
+
+  test("the same row cannot be adjusted twice", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("15", "10000000");
+    expect((await adjust(cookie, snapshotId, { instrumentId, costEur: "500" })).status).toBe(201);
+    // Idempotency comes from the unique (accountId, externalId) index, so a
+    // second attempt is a conflict rather than a silent duplicate holding.
+    expect((await adjust(cookie, snapshotId, { instrumentId, costEur: "500" })).status).toBe(409);
+  });
+
+  test("a row that already matches has nothing to adjust", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("10", "10000000");
+    expect((await adjust(cookie, snapshotId, { instrumentId })).status).toBe(400);
+  });
+
+  test("adjusting reconciles the row it fixed", async () => {
+    const { cookie, instrumentId, snapshotId } = await setup("15", "10000000");
+    await adjust(cookie, snapshotId, { instrumentId, costEur: "500" });
+
+    const response = await reconcileOf(cookie, snapshotId);
+    // SAFETY: as above.
+    const body = (await response.json()) as { differences: number };
+    expect(body.differences).toBe(0);
+  });
+
+  test("refuses a snapshot belonging to someone else", async () => {
+    const { instrumentId, snapshotId } = await setup("15", "10000000");
+    const stranger = await signUp(`adj-stranger-${crypto.randomUUID()}@example.com`);
+    expect(
+      (await adjust(stranger.cookie, snapshotId, { instrumentId, costEur: "500" })).status,
+    ).toBe(404);
+  });
+});
