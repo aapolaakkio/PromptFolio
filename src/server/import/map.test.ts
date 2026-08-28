@@ -440,6 +440,7 @@ test("content hash is stable for identical rows and differs otherwise", () => {
     currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
+    accountRef: null,
     line: 2,
   };
   expect(contentHash(base)).toBe(contentHash({ ...base, line: 99 }));
@@ -465,6 +466,7 @@ test("content hash accepts a row with no line field at all", () => {
     currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
+    accountRef: null,
     line: 2,
   };
   expect(contentHash(withoutLine)).toBe(contentHash({ ...withoutLine, line: 2 }));

@@ -58,10 +58,16 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   currency: EUR,
   fxRateEur: 100_000_000,
   externalId: null,
+  accountRef: null,
   ...over,
 });
 
-const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [] });
+const draftOf = (txns: DraftTxn[]): Draft => ({
+  txns,
+  problems: [],
+  unknownIsins: [],
+  accountRefs: [],
+});
 
 const args = (accountId: number, draft: Draft, fetchImpl?: FetchImpl) => ({
   userId: "u1",
@@ -150,6 +156,7 @@ test("refuses a draft with unresolved isins", async () => {
     txns: [draftTxn({ accountId })],
     problems: [],
     unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA", currency: EUR }],
+    accountRefs: [],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/IE00B4L5Y983/);
 });
@@ -165,6 +172,7 @@ test("refuses a draft with an unresolved instrument that has no isin, naming it 
     txns: [draftTxn({ accountId })],
     problems: [],
     unknownIsins: [{ isin: null, name: "OP-Maailma Indeksi A", currency: EUR }],
+    accountRefs: [],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/OP-Maailma Indeksi A/);
 });
@@ -473,4 +481,68 @@ test("undo refuses an already-undone import", async () => {
 test("undo of an unknown import id throws", () => {
   const { db } = seed();
   expect(() => undoImport(db, { userId: "u1", importId: 999_999 })).toThrow();
+});
+
+// A Nordnet export routinely covers several accounts -- an arvo-osuustili and
+// an osakesäästötili sit in one file and are taxed differently. Filing them all
+// under the account picked on the import screen merges two portfolios, and every
+// per-account figure downstream is then wrong: a reconciliation compares against
+// one account, and the broker reports its return per account.
+test("rows carrying different broker account numbers are filed into separate accounts", async () => {
+  const { db, accountId } = seed();
+  const draft: Draft = {
+    txns: [
+      draftTxn({ accountId, type: "DEPOSIT", amount: 10_000, accountRef: "11223344" }),
+      draftTxn({ accountId, type: "DEPOSIT", amount: 20_000, accountRef: "55667788" }),
+    ],
+    problems: [],
+    unknownIsins: [],
+    accountRefs: [
+      { ref: "11223344", rows: 1 },
+      { ref: "55667788", rows: 1 },
+    ],
+  };
+
+  const result = await commitDraft(db, args(accountId, draft));
+  expect(result.inserted).toBe(2);
+
+  const rows = db.select().from(transactions).all();
+  const accountIds = new Set(rows.map((r) => r.accountId));
+  expect(accountIds.size).toBe(2);
+
+  // The new account is named after the number, so the mapping is visible and
+  // correctable rather than hidden.
+  const created = db.select().from(accounts).all();
+  expect(created.some((a) => a.name.includes("55667788"))).toBe(true);
+});
+
+test("a row with no broker account number goes to the account the user picked", async () => {
+  const { db, accountId } = seed();
+  const draft: Draft = {
+    txns: [draftTxn({ accountId, type: "DEPOSIT", amount: 10_000 })],
+    problems: [],
+    unknownIsins: [],
+    accountRefs: [],
+  };
+
+  await commitDraft(db, args(accountId, draft));
+  expect(db.select().from(transactions).all()[0]!.accountId).toBe(accountId);
+  // No stray account was invented for an export that names none.
+  expect(db.select().from(accounts).all()).toHaveLength(1);
+});
+
+test("re-importing the same multi-account file reuses the accounts it created", async () => {
+  const { db, accountId } = seed();
+  const draft: Draft = {
+    txns: [draftTxn({ accountId, type: "DEPOSIT", amount: 10_000, accountRef: "55667788" })],
+    problems: [],
+    unknownIsins: [],
+    accountRefs: [{ ref: "55667788", rows: 1 }],
+  };
+
+  await commitDraft(db, args(accountId, draft));
+  await commitDraft(db, args(accountId, draft));
+  // Matched by the number appearing in the name, so the second import does not
+  // create a duplicate account beside the first.
+  expect(db.select().from(accounts).all()).toHaveLength(2);
 });

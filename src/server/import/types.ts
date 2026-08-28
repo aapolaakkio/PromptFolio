@@ -42,7 +42,15 @@ export type CanonicalField =
    * such a row, so without this the new holding would get a cost basis of
    * zero and report its entire value as gain.
    */
-  | "costBasis";
+  | "costBasis"
+  /**
+   * The broker's own number for the account a row belongs to -- Nordnet prints
+   * it in every row's `Salkku` column. One export routinely covers several
+   * accounts (an arvo-osuustili and an osakesäästötili are separate accounts,
+   * taxed differently), so rows are filed per account rather than all under
+   * whichever one happened to be selected on the import screen.
+   */
+  | "accountRef";
 
 /**
  * The part of a broker's configuration `mapRows` actually consumes:
