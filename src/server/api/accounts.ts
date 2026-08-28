@@ -9,6 +9,17 @@ import { HttpError, handle, json } from "../http";
 
 const { db } = getDb();
 
+/**
+ * Renaming only. A broker and a base currency are facts about the account that
+ * its stored transactions were already interpreted under -- changing either
+ * after rows exist would silently reinterpret them -- so neither is editable
+ * here. The name is a label for the owner's benefit and carries no meaning the
+ * ledger depends on.
+ */
+const RenameAccount = z.object({
+  name: z.string().trim().min(1, "Nimi ei voi olla tyhjä").max(100),
+});
+
 const CreateAccount = z.object({
   name: z.string().min(1).max(100),
   broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
@@ -48,6 +59,28 @@ export const accountRoutes = {
         .returning()
         .get();
       return json(created, 201);
+    }),
+  },
+
+  "/api/accounts/:id": {
+    PATCH: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const accountId = z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(new URL(request.url).pathname.split("/").at(-1));
+      assertAccountOwned(userId, accountId);
+
+      const body = RenameAccount.parse(await request.json());
+      return json(
+        db
+          .update(accounts)
+          .set({ name: body.name })
+          .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
+          .returning()
+          .get(),
+      );
     }),
   },
 };

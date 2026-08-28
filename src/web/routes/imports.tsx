@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
 import { eur, fiDate } from "../lib/format";
 import { CreateAccountForm } from "./CreateAccountForm";
+import { RenameAccount } from "./RenameAccount";
 import { ImportHistory } from "./ImportHistory";
 import {
   AccountsSchema,
@@ -82,6 +83,7 @@ export const ImportsPage = () => {
     undo.mutate(record.id);
   };
   const hasAccounts = (accounts.data?.length ?? 0) > 0;
+  const selectedAccount = (accounts.data ?? []).find((a) => a.id === accountId);
   // A brand-new install has zero accounts and, per spec §10 item 3, no way
   // to reach account creation except `curl` -- the gap this form closes.
   // The create form shows automatically once accounts have loaded and there
@@ -196,13 +198,18 @@ export const ImportsPage = () => {
         </label>
 
         {hasAccounts && (
-          <button
-            type="button"
-            className="mt-3 text-sm"
-            onClick={() => setShowCreateAccount((v) => !v)}
-          >
-            {showCreateAccount ? "Peruuta" : "+ Uusi tili"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="mt-3 text-sm"
+              onClick={() => setShowCreateAccount((v) => !v)}
+            >
+              {showCreateAccount ? "Peruuta" : "+ Uusi tili"}
+            </button>
+            {selectedAccount && (
+              <RenameAccount accountId={selectedAccount.id} currentName={selectedAccount.name} />
+            )}
+          </div>
         )}
         {!accounts.isPending && !hasAccounts && (
           <p className="mt-3 text-sm text-muted">

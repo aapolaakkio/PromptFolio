@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { z } from "zod";
-import { ApiError, apiGet, apiPost, apiUpload } from "./api";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiUpload } from "./api";
 
 test("apiGet returns the parsed JSON body on a 2xx response (no schema, cast fallback)", async () => {
   const stub = async () => Response.json({ holdings: [] }, { status: 200 });
@@ -128,4 +128,65 @@ test("apiUpload rejects with the server's error on a non-2xx response", async ()
   await expect(apiUpload("/api/imports/nordnet", new FormData(), undefined, stub)).rejects.toThrow(
     "Tiedosto on liian suuri",
   );
+});
+
+test("apiPatch sends a JSON body with credentials and the right method", async () => {
+  let seenInit: RequestInit | undefined;
+  const stub = async (_path: string | URL | Request, init?: RequestInit) => {
+    seenInit = init;
+    return Response.json({ id: 1, name: "Nordnet OST" }, { status: 200 });
+  };
+
+  const body = await apiPatch<{ id: number; name: string }, { name: string }>(
+    "/api/accounts/1",
+    { name: "Nordnet OST" },
+    undefined,
+    stub,
+  );
+  expect(body.name).toBe("Nordnet OST");
+  expect(seenInit?.method).toBe("PATCH");
+  expect(seenInit?.credentials).toBe("include");
+  expect(seenInit?.body).toBe(JSON.stringify({ name: "Nordnet OST" }));
+});
+
+test("apiPatch parses the response through a supplied schema", async () => {
+  const schema = z.object({ id: z.number(), name: z.string() });
+  const stub = async () => Response.json({ id: 7, name: "OP" }, { status: 200 });
+  expect(await apiPatch("/api/accounts/7", { name: "OP" }, schema, stub)).toEqual({
+    id: 7,
+    name: "OP",
+  });
+});
+
+test("apiPatch surfaces the server's message on a rejected change", async () => {
+  const stub = async () => Response.json({ error: "Nimi ei voi olla tyhjä" }, { status: 400 });
+  try {
+    await apiPatch("/api/accounts/1", { name: "" }, undefined, stub);
+    throw new Error("expected a rejection");
+  } catch (cause) {
+    expect(expectApiError(cause).message).toBe("Nimi ei voi olla tyhjä");
+  }
+});
+
+test("apiDelete sends DELETE with credentials and reads no body", async () => {
+  let seenInit: RequestInit | undefined;
+  const stub = async (_path: string | URL | Request, init?: RequestInit) => {
+    seenInit = init;
+    return Response.json({ deleted: 3 }, { status: 200 });
+  };
+
+  await apiDelete("/api/snapshots/3", stub);
+  expect(seenInit?.method).toBe("DELETE");
+  expect(seenInit?.credentials).toBe("include");
+  expect(seenInit?.body).toBeUndefined();
+});
+
+test("apiDelete surfaces the server's message when the delete is refused", async () => {
+  const stub = async () => Response.json({ error: "Tilannevedosta ei löydy" }, { status: 404 });
+  try {
+    await apiDelete("/api/snapshots/999", stub);
+    throw new Error("expected a rejection");
+  } catch (cause) {
+    expect(expectApiError(cause).message).toBe("Tilannevedosta ei löydy");
+  }
 });

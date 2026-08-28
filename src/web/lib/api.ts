@@ -75,6 +75,25 @@ export const apiGet = async <T>(
  * with a small acknowledgement the caller does not read, so there is nothing to
  * parse and no schema to demand.
  */
+/** Partial update. Same wire rules as apiPost: JSON in, parsed JSON out. */
+export const apiPatch = async <T, B>(
+  path: string,
+  body: B,
+  schema?: z.ZodType<T>,
+  fetchImpl: FetchLike = fetch,
+): Promise<T> => {
+  const response = await fetchImpl(path, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = await unwrap(response);
+  if (schema) return schema.parse(parsed);
+  // SAFETY: see apiGet's doc comment -- same call-site response contract.
+  return parsed as T;
+};
+
 export const apiDelete = async (path: string, fetchImpl: FetchLike = fetch): Promise<void> => {
   const response = await fetchImpl(path, { method: "DELETE", credentials: "include" });
   await unwrap(response);

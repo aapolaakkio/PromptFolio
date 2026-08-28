@@ -299,3 +299,87 @@ describe("assertAccountOwned", () => {
     );
   });
 });
+
+/** Creates an account and returns its id; this file otherwise posts inline. */
+const createAccount = async (
+  cookie: string,
+  body: { name: string; broker: string },
+): Promise<number> => {
+  const response = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify(body),
+    }),
+  );
+  expect(response.status).toBe(201);
+  // SAFETY: a 201 from POST /api/accounts always returns the inserted row.
+  return ((await response.json()) as { id: number }).id;
+};
+
+describe("PATCH /api/accounts/:id", () => {
+  const rename = async (cookie: string, id: number, name: string): Promise<Response> =>
+    accountRoutes["/api/accounts/:id"].PATCH(
+      new Request(`http://x/api/accounts/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name }),
+      }),
+    );
+
+  test("rejects a request with no session", async () => {
+    expect((await rename("", 1, "Uusi nimi")).status).toBe(401);
+  });
+
+  test("renames an account the caller owns", async () => {
+    const { cookie } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
+    const id = await createAccount(cookie, { name: "Vanha nimi", broker: "nordnet" });
+
+    const response = await rename(cookie, id, "Nordnet OST");
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from PATCH always returns the updated row.
+    expect(((await response.json()) as { name: string }).name).toBe("Nordnet OST");
+  });
+
+  test("refuses an account belonging to someone else, as 404 rather than 403", async () => {
+    const owner = await signUp(`rename-owner-${crypto.randomUUID()}@example.com`);
+    const id = await createAccount(owner.cookie, { name: "Omistajan tili", broker: "op" });
+    const stranger = await signUp(`rename-stranger-${crypto.randomUUID()}@example.com`);
+
+    expect((await rename(stranger.cookie, id, "Kaapattu")).status).toBe(404);
+
+    // And the name is untouched.
+    const listed = await accountRoutes["/api/accounts"].GET(
+      new Request("http://x/api/accounts", { headers: { cookie: owner.cookie } }),
+    );
+    // SAFETY: a 200 from GET /api/accounts always returns the owner's rows.
+    const rows = (await listed.json()) as Array<{ id: number; name: string }>;
+    expect(rows.find((row) => row.id === id)?.name).toBe("Omistajan tili");
+  });
+
+  test("refuses an empty name", async () => {
+    const { cookie } = await signUp(`rename-empty-${crypto.randomUUID()}@example.com`);
+    const id = await createAccount(cookie, { name: "Tili", broker: "op" });
+    expect((await rename(cookie, id, "   ")).status).toBe(400);
+  });
+
+  // The broker and base currency are facts the stored transactions were already
+  // interpreted under; changing either after rows exist would reinterpret them.
+  test("cannot change the broker or the base currency", async () => {
+    const { cookie } = await signUp(`rename-fixed-${crypto.randomUUID()}@example.com`);
+    const id = await createAccount(cookie, { name: "Tili", broker: "op" });
+
+    const response = await accountRoutes["/api/accounts/:id"].PATCH(
+      new Request(`http://x/api/accounts/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name: "Tili", broker: "nordnet", baseCurrency: "USD" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: as above.
+    const updated = (await response.json()) as { broker: string; baseCurrency: string };
+    expect(updated.broker).toBe("op");
+    expect(updated.baseCurrency).toBe("EUR");
+  });
+});
