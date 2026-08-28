@@ -61,13 +61,20 @@ test("a PDF with no text layer is refused rather than read as an empty statement
   expect(() => parseOpHoldings(notAPdf)).toThrow(/ei löytynyt tekstiä/);
 });
 
-test("a PDF whose text is not an OP holdings report is refused", () => {
-  const runs = ["Kuitti", "Kiitos ostoksestasi", "12,34"];
+test("a PDF whose text is readable but is not an OP holdings report is refused", () => {
   const { deflateSync } = require("node:zlib");
-  const content = runs.map((r) => `(${r}) Tj`).join("\n");
+  const content = ["Kuitti", "Kiitos ostoksestasi", "12,34"].map((r) => `(${r}) Tj`).join("\n");
   const body = deflateSync(Buffer.from(content, "latin1"));
+  // A real page, so the text is genuinely extracted -- the point of this test is
+  // that recognisable text which is not a holdings statement gets refused, which
+  // is a different failure from a file with no text at all.
   const pdf = Buffer.concat([
-    Buffer.from("%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+    Buffer.from("%PDF-1.4\n", "latin1"),
+    Buffer.from(
+      "1 0 obj\n<< /Type /Page /Resources << /Font << >> >> /Contents 2 0 R >>\nendobj\n",
+      "latin1",
+    ),
+    Buffer.from(`2 0 obj\n<< /Length ${body.length} /Filter /FlateDecode >>\nstream\n`, "latin1"),
     body,
     Buffer.from("\nendstream\nendobj\n%%EOF\n", "latin1"),
   ]);
