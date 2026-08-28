@@ -5,6 +5,7 @@ import { z } from "zod";
 import { apiGet } from "../lib/api";
 import { fiDate, qty } from "../lib/format";
 import { AccountsSchema } from "./imports-draft";
+import { AdjustRow } from "./AdjustRow";
 import { SnapshotForm } from "./SnapshotForm";
 import {
   explain,
@@ -106,7 +107,11 @@ export const ReconcilePage = () => {
       )}
 
       {reconciliation.data && (
-        <Result rows={reconciliation.data.rows} asOf={reconciliation.data.asOf} />
+        <Result
+          rows={reconciliation.data.rows}
+          asOf={reconciliation.data.asOf}
+          snapshotId={reconciliation.data.snapshotId}
+        />
       )}
 
       {chosenAccount !== null && (
@@ -119,9 +124,11 @@ export const ReconcilePage = () => {
 const Result = ({
   rows,
   asOf,
+  snapshotId,
 }: {
   readonly rows: readonly ReconcileRow[];
   readonly asOf: string;
+  readonly snapshotId: number;
 }) => {
   const attention = needsAttention(rows);
 
@@ -142,6 +149,7 @@ const Result = ({
               <th className="num">Ote</th>
               <th className="num">Ero</th>
               <th>Selitys</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -152,6 +160,7 @@ const Result = ({
                 <td className="num">{qty(row.snapshot)}</td>
                 <td className="num">{row.withinTolerance ? "—" : qty(row.delta)}</td>
                 <td className={row.withinTolerance ? "text-muted" : "text-loss"}>{explain(row)}</td>
+                <td>{!row.withinTolerance && <AdjustRow snapshotId={snapshotId} row={row} />}</td>
               </tr>
             ))}
           </tbody>
