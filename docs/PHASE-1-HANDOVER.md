@@ -38,32 +38,31 @@ for manual review instead. Two rows, once.
 investments, not your bank balance. A deposit you have not spent shows as 0,00 €
 with an explanation rather than a bare zero.
 
-## Known gaps, ranked
+## Known gaps
 
-Four of the original eight were closed after the final review; what remains:
+All eight of the original gaps are closed except these, and neither can bite you today:
 
-1. **No import history screen.** Undo works over the API and refuses correctly when
-   a later sale depends on the import's units, but the import id is shown once in a
-   toast and is then unrecoverable from the UI.
-2. **No weight column** on the holdings table (percentage of portfolio). It was on
-   the Phase 1 list; the API computes weight for allocation but not for holdings.
-3. **`@tanstack/react-table` is installed and unused.** Your stack choice — keep it
-   and add grouping, or drop the package.
-4. **`TRANSFER_IN`/`TRANSFER_OUT` carry no amount**, so they can reintroduce the
-   time-weighted-return mismatch fixed in `eb29f28`. Documented in the code, untested.
-
-Closed since the review: price backfill is now wired in (`cf6ae97`), account creation
-and manual price entry have UIs (`89967b5`), and historical ECB rates are ingested
-(`aa4b497`).
+1. **`@tanstack/react-table` is installed and unused.** Your stack choice — keep it and
+   add grouping to the holdings table, or drop the package. Nothing depends on it.
+2. **A position transferred out in kind collapses the time-weighted return to −100 %.**
+   Unreachable through any import path: the only source would be Nordnet's `VAIHTO`
+   share-swap rows, which are deliberately unmapped and surface for manual review.
+   Only a hand-inserted transfer row could trigger it. Covered by a `KNOWN GAP` test.
 
 ## Watch this on first run
 
-The historical FX parser was built against ECB's documented format, but the sandbox
-this was developed in returned a truncated `eurofxref-hist.csv` whose rows looked
-synthetic, so it could not be cross-checked against genuine 2020s data. The one real
-difference found — the historical file uses ISO dates while the daily file uses
-"D Month YYYY" — is handled. **Watch the first production backfill's log line** and
-sanity-check one known rate against ecb.europa.eu before trusting the SEK history.
+**The historical FX parser.** It was built against ECB's documented format, but the
+sandbox returned a truncated sample, so it could not be cross-checked against genuine
+2020s data. It now refuses loudly if the file does not reach the date it asked for,
+rather than storing one ancient row and declaring itself finished. After your first
+import of the Nordnet Sverige holding, check that `fx_rates` has SEK rows going back
+to that holding's earliest trade — not a single old row.
+
+**A holding with no price yet.** Set an S-Pankki or Danske fund to `manual`, or import
+a Nordnet fund before the evening refresh runs, and the return figure will read
+"tuntematon" rather than a number. That is correct: a return computed while part of the
+portfolio cannot be valued would be a confident guess. Enter a price or wait for the
+refresh and it resolves.
 
 ## Things I got wrong, and what caught them
 
