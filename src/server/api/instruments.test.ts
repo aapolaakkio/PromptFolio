@@ -219,3 +219,26 @@ describe("POST /api/instruments", () => {
     expect(body.fields.map((f) => f.path)).toContain("currency");
   });
 });
+
+describe("GET /api/instruments/lookup", () => {
+  test("rejects a request with no session", async () => {
+    const response = await instrumentRoutes["/api/instruments/lookup"].GET(
+      new Request("http://x/api/instruments/lookup?isin=FI0009000681&name=Nokia"),
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Kirjautuminen vaaditaan" });
+  });
+
+  test("rejects a malformed ISIN before reaching any registry", async () => {
+    const { cookie } = await signUp(`lookup-${crypto.randomUUID()}@example.com`);
+    // No fetch stub is installed and test-network-guard makes the real global
+    // fetch throw, so this passing at all is itself the proof that validation
+    // runs before any outbound call.
+    const response = await instrumentRoutes["/api/instruments/lookup"].GET(
+      new Request("http://x/api/instruments/lookup?isin=NOT-AN-ISIN&name=Jotain", {
+        headers: { cookie },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+});

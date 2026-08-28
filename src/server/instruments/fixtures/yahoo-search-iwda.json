@@ -1,0 +1,35 @@
+{
+  "explains": [],
+  "count": 1,
+  "quotes": [
+    {
+      "exchange": "LSE",
+      "shortname": "ISHARES III PLC ISHRS CORE MSCI",
+      "quoteType": "ETF",
+      "symbol": "IWDA.L",
+      "index": "quotes",
+      "score": 20003.0,
+      "typeDisp": "ETF",
+      "longname": "iShares Core MSCI World UCITS ETF USD (Acc)",
+      "exchDisp": "London",
+      "isYahooFinance": true
+    }
+  ],
+  "news": [],
+  "nav": [],
+  "lists": [],
+  "researchReports": [],
+  "screenerFieldResults": [],
+  "totalTime": 19,
+  "timeTakenForQuotes": 412,
+  "timeTakenForNews": 0,
+  "timeTakenForAlgowatchlist": 400,
+  "timeTakenForPredefinedScreener": 400,
+  "timeTakenForCrunchbase": 0,
+  "timeTakenForNav": 400,
+  "timeTakenForResearchReports": 0,
+  "timeTakenForQuestions": 0,
+  "timeTakenForScreenerField": 0,
+  "timeTakenForCulturalAssets": 0,
+  "timeTakenForSearchLists": 0
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "data": [
+      {
+        "figi": "BBG00HTQXTL0",
+        "name": "OP-WORLD INDEX FUND-A EUR",
+        "ticker": "OPMAINA",
+        "exchCode": "FH",
+        "compositeFIGI": "BBG00HTQXTL0",
+        "securityType": "Open-End Fund",
+        "marketSector": "Equity",
+        "shareClassFIGI": "BBG00HVPRS38",
+        "securityType2": "Mutual Fund",
+        "securityDescription": "OPMAINA"
+      }
+    ]
+  }
+]

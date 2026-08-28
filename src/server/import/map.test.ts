@@ -386,7 +386,7 @@ test("still tracks a name-only row as unknown when knownNames has no match", () 
     knownNames: new Map([["eri rahasto", 1]]),
   });
   expect(draft.txns[0]!.instrumentId).toBeNull();
-  expect(draft.unknownIsins).toEqual([{ isin: null, name: "JOKU RAHASTO" }]);
+  expect(draft.unknownIsins).toEqual([{ isin: null, name: "JOKU RAHASTO", currency: EUR }]);
 });
 
 test("an unrecognised transaction type becomes a problem, not a guess", () => {

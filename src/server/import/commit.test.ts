@@ -149,7 +149,7 @@ test("refuses a draft with unresolved isins", async () => {
   const draft: Draft = {
     txns: [draftTxn({ accountId })],
     problems: [],
-    unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA" }],
+    unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA", currency: EUR }],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/IE00B4L5Y983/);
 });
@@ -164,7 +164,7 @@ test("refuses a draft with an unresolved instrument that has no isin, naming it 
   const draft: Draft = {
     txns: [draftTxn({ accountId })],
     problems: [],
-    unknownIsins: [{ isin: null, name: "OP-Maailma Indeksi A" }],
+    unknownIsins: [{ isin: null, name: "OP-Maailma Indeksi A", currency: EUR }],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/OP-Maailma Indeksi A/);
 });

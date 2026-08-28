@@ -46,7 +46,7 @@ export type DraftResponse = {
     raw: Record<string, string>;
     rawLine?: string;
   }>;
-  unknownIsins: Array<{ isin: string | null; name: string }>;
+  unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
 };
 
 export const DraftResponseSchema: z.ZodType<DraftResponse> = z.object({
@@ -72,7 +72,9 @@ export const DraftResponseSchema: z.ZodType<DraftResponse> = z.object({
       rawLine: z.string().optional(),
     }),
   ),
-  unknownIsins: z.array(z.object({ isin: z.string().nullable(), name: z.string() })),
+  unknownIsins: z.array(
+    z.object({ isin: z.string().nullable(), name: z.string(), currency: z.string() }),
+  ),
 });
 
 export type CommitResult = { importId: number; inserted: number; skipped: number };

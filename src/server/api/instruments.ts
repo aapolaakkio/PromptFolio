@@ -5,6 +5,7 @@ import { currencyField } from "./currency-field";
 import { getDb } from "../db";
 import { instruments } from "../db/schema";
 import { HttpError, handle, json } from "../http";
+import { lookupInstrument } from "../instruments/lookup";
 
 const { db } = getDb();
 
@@ -29,7 +30,33 @@ const UpsertInstrument = z.object({
 // household member's transactions can reference the same Nokia share), so
 // they are readable and creatable by any authenticated user; only ledger
 // rows (accounts, transactions, ...) are scoped per user.
+const LookupQuery = z.object({
+  isin: z
+    .string()
+    .regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen")
+    .nullable(),
+  name: z.string().max(200),
+});
+
 export const instrumentRoutes = {
+  /**
+   * Best-effort resolution of an unregistered holding, so the review screen
+   * can pre-fill the form instead of asking the user to type what public
+   * registries already know. Never creates anything, and answers with nulls
+   * rather than failing when no registry recognises the security -- see
+   * ../instruments/lookup.ts.
+   */
+  "/api/instruments/lookup": {
+    GET: handle(async (request) => {
+      await requireUser(request);
+      const params = new URL(request.url).searchParams;
+      const query = LookupQuery.parse({
+        isin: params.get("isin"),
+        name: params.get("name") ?? "",
+      });
+      return json(await lookupInstrument(query.isin, query.name));
+    }),
+  },
   "/api/instruments": {
     GET: handle(async (request) => {
       await requireUser(request);

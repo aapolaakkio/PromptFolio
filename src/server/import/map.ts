@@ -43,7 +43,7 @@ export type Draft = {
    * transaction view carries no ISIN column) -- resolution then has to go
    * by `name` alone, and no ISIN is ever invented to fill the gap.
    */
-  readonly unknownIsins: Array<{ isin: string | null; name: string }>;
+  readonly unknownIsins: Array<{ isin: string | null; name: string; currency: Currency }>;
 };
 
 /**
@@ -170,7 +170,10 @@ export const mapRows = (
   const { csvProblems = [], accountId = 0, knownNames = new Map<string, number>() } = options;
   const txns: DraftTxn[] = [];
   const problems: DraftProblem[] = [];
-  const unknown = new Map<string, { isin: string | null; name: string }>();
+  // First occurrence wins. The value now carries the row currency, so a
+  // later row for the same holding in a different currency must not quietly
+  // replace what the review screen was already going to show.
+  const unknown = new Map<string, { isin: string | null; name: string; currency: Currency }>();
   // Normalised once per call, not per row: `knownNames`' own keys are
   // uppercased here so the lookup below is case-insensitive regardless of
   // how the caller cased them, without re-scanning the map on every row.
@@ -245,13 +248,13 @@ export const mapRows = (
           ? (knownNamesUpper.get(nameText.toUpperCase()) ?? null)
           : null;
       if (isin && instrumentId === null) {
-        unknown.set(isin, { isin, name: nameText });
+        if (!unknown.has(isin)) unknown.set(isin, { isin, name: nameText, currency });
       } else if (!isin && nameText !== "" && instrumentId === null) {
         // No ISIN to key on at all (OP's web-paste view). Resolution is
         // deferred to the review flow, by name, exactly like an unresolved
         // ISIN -- never silently attached to a guessed instrument, and
         // never given an invented ISIN.
-        unknown.set(nameText, { isin: null, name: nameText });
+        if (!unknown.has(nameText)) unknown.set(nameText, { isin: null, name: nameText, currency });
       }
 
       const quantityText = cell(row, "quantity").trim();

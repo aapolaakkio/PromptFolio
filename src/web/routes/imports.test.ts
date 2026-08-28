@@ -28,7 +28,7 @@ test("counts rows, problems and unknown instruments", () => {
     draft({
       txns: [txnStub(2), txnStub(3)],
       problems: [{ line: 4, message: "x", raw: {} }],
-      unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA" }],
+      unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA", currency: "EUR" }],
     }),
   );
   expect(summary).toMatchObject({ good: 2, problems: 1, unknown: 1 });
@@ -39,7 +39,7 @@ test("cannot commit while an isin is unresolved", () => {
     summarise(
       draft({
         txns: [txnStub(2)],
-        unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA" }],
+        unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA", currency: "EUR" }],
       }),
     ).canCommit,
   ).toBe(false);
@@ -66,7 +66,7 @@ test("counts an OP-style unknown instrument (null isin, resolved by name)", () =
   const summary = summarise(
     draft({
       txns: [txnStub(2)],
-      unknownIsins: [{ isin: null, name: "OP-MAAILMA INDEKSI A" }],
+      unknownIsins: [{ isin: null, name: "OP-MAAILMA INDEKSI A", currency: "EUR" }],
     }),
   );
   expect(summary).toMatchObject({ good: 1, unknown: 1 });

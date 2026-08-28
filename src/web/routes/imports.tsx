@@ -358,6 +358,7 @@ export const ImportsPage = () => {
                     key={u.isin ?? u.name}
                     isin={u.isin}
                     name={u.name}
+                    rowCurrency={u.currency}
                     onResolved={() => preview.mutate()}
                   />
                 ))}

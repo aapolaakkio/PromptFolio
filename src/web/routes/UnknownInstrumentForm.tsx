@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
-import { apiPost, ApiError } from "../lib/api";
+import { apiGet, apiPost, ApiError } from "../lib/api";
 
 const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut)" },
@@ -28,6 +28,22 @@ type Kind = (typeof KIND_VALUES)[number];
  */
 const isKind = (value: string): value is Kind => KIND_VALUES.some((k) => k === value);
 
+/** GET /api/instruments/lookup -- see src/server/instruments/lookup.ts. */
+const LookupSchema = z.object({
+  kind: z.enum(KIND_VALUES).nullable(),
+  name: z.string().nullable(),
+  priceSource: z.enum(["yahoo", "op_fund"]).nullable(),
+  sourceKey: z.string().nullable(),
+  isin: z.string().nullable(),
+  listingCurrency: z.string().nullable(),
+});
+type Lookup = z.infer<typeof LookupSchema>;
+
+type LookupState =
+  | { readonly status: "loading" }
+  | { readonly status: "resolved"; readonly result: Lookup }
+  | { readonly status: "unresolved" };
+
 export type UnknownInstrumentFormProps = {
   /**
    * `null` for a broker whose export carries no ISIN at all -- OP's
@@ -38,21 +54,82 @@ export type UnknownInstrumentFormProps = {
    */
   readonly isin: string | null;
   readonly name: string;
+  /**
+   * The currency of the imported rows this holding appeared in. It is the
+   * instruments own currency and is never taken from a price registry: one
+   * ISIN can trade on several venues in different currencies, so the brokers
+   * record of what was actually bought is the only authority here.
+   */
+  readonly rowCurrency: string;
   readonly onResolved: () => void;
 };
 
-export const UnknownInstrumentForm = ({ isin, name, onResolved }: UnknownInstrumentFormProps) => {
+export const UnknownInstrumentForm = ({
+  isin,
+  name,
+  rowCurrency,
+  onResolved,
+}: UnknownInstrumentFormProps) => {
   const [isinInput, setIsinInput] = useState(isin ?? "");
   const [kind, setKind] = useState<Kind>("fund");
+  const [lookup, setLookup] = useState<LookupState>({ status: "loading" });
   // Any ISO 4217 code is valid (spec §10a A1 -- the real portfolio holds
   // both EUR and SEK), so this is a plain validated text input, not a
   // closed EUR/USD dropdown that would make a SEK holding unregisterable
   // from this screen.
-  const [currency, setCurrency] = useState("EUR");
+  const [currency, setCurrency] = useState(rowCurrency);
   const [priceSource, setPriceSource] = useState<string>("yahoo");
   const [sourceKey, setSourceKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  /**
+   * Fills the form from public registries once, on mount. Everything it sets
+   * stays editable: the lookup is a starting point the user confirms, never a
+   * decision made on their behalf. A failure is not surfaced as an error --
+   * an unresolved instrument simply leaves the empty form that existed before
+   * this lookup did.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const query = new URLSearchParams({ name });
+    if (isin !== null) query.set("isin", isin);
+
+    apiGet(`/api/instruments/lookup?${query.toString()}`, LookupSchema)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.kind === null && result.priceSource === null) {
+          setLookup({ status: "unresolved" });
+          return;
+        }
+        setLookup({ status: "resolved", result });
+        if (result.kind !== null) setKind(result.kind);
+        if (result.priceSource !== null) setPriceSource(result.priceSource);
+        if (result.sourceKey !== null) setSourceKey(result.sourceKey);
+        if (result.isin !== null) setIsinInput(result.isin);
+      })
+      .catch(() => {
+        if (!cancelled) setLookup({ status: "unresolved" });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isin, name]);
+
+  /**
+   * Set when the registry's matched listing trades in a different currency
+   * than the holding does -- one ISIN, several venues (IE00B4L5Y983 is USD in
+   * London and EUR in Amsterdam). Advisory only: it means the pre-filled
+   * ticker may be the wrong listing, which is exactly the kind of thing a
+   * person should look at rather than a heuristic decide.
+   */
+  const listingMismatch =
+    lookup.status === "resolved" &&
+    lookup.result.listingCurrency !== null &&
+    lookup.result.listingCurrency !== currency.trim().toUpperCase()
+      ? lookup.result.listingCurrency
+      : null;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -83,6 +160,27 @@ export const UnknownInstrumentForm = ({ isin, name, onResolved }: UnknownInstrum
   return (
     <form className="card" onSubmit={submit}>
       <strong>{name || isin}</strong>
+      {lookup.status === "loading" && (
+        <div className="text-xs text-muted">Haetaan tietoja rekistereistä…</div>
+      )}
+      {lookup.status === "resolved" && (
+        <div className="text-xs text-muted">
+          Esitäytetty automaattisesti
+          {lookup.result.name !== null && <> · rekisterin nimi: {lookup.result.name}</>} · tarkista
+          ja tallenna.
+        </div>
+      )}
+      {lookup.status === "unresolved" && (
+        <div className="text-xs text-muted">
+          Rekistereistä ei löytynyt tietoja — täytä kentät itse.
+        </div>
+      )}
+      {listingMismatch !== null && (
+        <p role="alert" className="text-xs text-loss">
+          Löydetty noteeraus on {listingMismatch}, mutta tapahtumat ovat {currency.toUpperCase()}.
+          Lähdetunnus voi osoittaa väärään pörssiin — tarkista ennen tallennusta.
+        </p>
+      )}
       {isin !== null ? (
         <div className="mb-3 font-mono text-xs text-muted">{isin}</div>
       ) : (
