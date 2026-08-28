@@ -38,6 +38,8 @@ const ReturnsSchema = z.object({
     // as a generic "could not load".
     z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
   ),
+  /** Accounts whose contributions are inferred from purchases -- see the note below. */
+  accountsMissingCashRecord: z.array(z.object({ accountId: z.number(), name: z.string() })),
 });
 
 const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
@@ -190,6 +192,20 @@ export const DashboardPage = () => {
           label="Oma tuotto (XIRR)"
           value={returns.data.mwr === null ? "—" : pct(returns.data.mwr)}
           tone={returns.data.mwr === null ? undefined : returns.data.mwr >= 0 ? "gain" : "loss"}
+          // Said out loud rather than left implicit: for an account whose broker
+          // exports no deposits (OP's transaction view), contributions are read
+          // from purchases instead, so this figure answers a slightly different
+          // question there. Quietly choosing a definition is what let this show
+          // roughly three times the true annual rate.
+          note={
+            returns.data.accountsMissingCashRecord.length > 0
+              ? `Tilien ${returns.data.accountsMissingCashRecord
+                  .map((a) => a.name)
+                  .join(
+                    ", ",
+                  )} sijoitetut summat on päätelty ostoista: välittäjä ei vie talletuksia.`
+              : undefined
+          }
         />
       </section>
 

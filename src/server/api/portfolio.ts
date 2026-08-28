@@ -1,11 +1,18 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { allocateBy } from "../../core/allocation";
-import { externalCashFlows, investedCashFlows, negativePositionIds } from "../../core/ledger";
+import {
+  accountsMissingCashRecord,
+  fundingCashFlows,
+  investedCashFlows,
+  negativePositionIds,
+} from "../../core/ledger";
 import { formatMoney, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
+import { accounts } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { holdingsFor, loadPortfolio } from "../valuation";
 
@@ -127,7 +134,11 @@ export const portfolioRoutes = {
       // function's doc and `investedCashFlows`'s doc in core/ledger.ts for why the two
       // must NOT be the same list: `series` prices invested positions only (spec §7),
       // so the flow describing money entering it is a purchase, not a deposit.
-      const mwrFlows = externalCashFlows(txns).filter(
+      // Chosen per account from whichever record that account keeps: deposits
+      // where a broker reports cash, purchases where it reports none. See
+      // fundingCashFlows -- measuring OP's holdings against Nordnet's deposits
+      // alone reported roughly three times the true annual rate.
+      const mwrFlows = fundingCashFlows(txns).filter(
         (flow) => flow.date >= from && flow.date <= to,
       );
       const twrFlows = investedCashFlows(txns).filter(
@@ -194,6 +205,15 @@ export const portfolioRoutes = {
       // when the final day's own value is complete. Deduped and enriched with
       // isin/name the same way `/api/allocation`'s `excludedInstruments` already is,
       // so the dashboard can name the holding instead of showing a bare id.
+      const ownedAccounts = new Map(
+        db
+          .select({ id: accounts.id, name: accounts.name })
+          .from(accounts)
+          .where(eq(accounts.userId, userId))
+          .all()
+          .map((row) => [row.id, row.name] as const),
+      );
+
       const excludedIds = new Set(series.flatMap((point) => point.excludedInstrumentIds));
       const excludedInstruments = [...excludedIds].flatMap((instrumentId) => {
         const instrument = byId.get(instrumentId);
@@ -208,6 +228,17 @@ export const portfolioRoutes = {
         twr: twr(series, twrFlows),
         mwr,
         excludedInstruments,
+        /**
+         * Accounts whose broker exports no cash movements at all, so their
+         * contributions are inferred from purchases. Named here rather than
+         * left implicit: the money-weighted figure means something slightly
+         * different for them, and silently picking a definition is what
+         * produced a confidently wrong number before.
+         */
+        accountsMissingCashRecord: accountsMissingCashRecord(txns).flatMap((accountId) => {
+          const account = ownedAccounts.get(accountId);
+          return account ? [{ accountId, name: account }] : [];
+        }),
       });
     }),
   },

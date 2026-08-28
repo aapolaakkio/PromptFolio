@@ -124,3 +124,56 @@ export const investedCashFlows = (txns: readonly Txn[]): CashFlow[] =>
     .slice()
     .sort(byTradeDateThenId)
     .map((t) => ({ date: t.tradeDate, amountEur: negateMoney(toEur(t.amount, t.fxRateEur)) }));
+
+/**
+ * Accounts holding purchases but no cash record of any kind: no DEPOSIT, no
+ * WITHDRAWAL, ever. OP's web transaction view is one -- it lists securities
+ * transactions only, so the money that funded them never appears, and a
+ * money-weighted return computed from deposits alone measures a portfolio
+ * against a fraction of what was actually put into it.
+ */
+export const accountsMissingCashRecord = (txns: readonly Txn[]): number[] => {
+  const withCash = new Set<number>();
+  const withPurchases = new Set<number>();
+  for (const t of txns) {
+    if (t.type === "DEPOSIT" || t.type === "WITHDRAWAL") withCash.add(t.accountId);
+    if (t.type === "BUY" || t.type === "SELL") withPurchases.add(t.accountId);
+  }
+  return [...withPurchases].filter((id) => !withCash.has(id)).sort((a, b) => a - b);
+};
+
+/**
+ * The contributions and withdrawals a money-weighted return should be measured
+ * against, chosen per account from whichever record that account actually keeps.
+ *
+ * Where a broker reports cash (Nordnet), its deposits and withdrawals are the
+ * better evidence: they capture money sitting uninvested, which purchases cannot
+ * see. Where it reports none (OP), a purchase is unambiguous evidence that money
+ * arrived from outside, whether or not a deposit line was ever printed -- and
+ * using deposits alone there would treat those holdings as having appeared from
+ * nowhere. Measured against recorded deposits alone, a real portfolio reported a
+ * money-weighted return roughly three times the truth; against the money actually
+ * put to work, it came out where it should.
+ *
+ * Deliberately per account rather than a blanket switch to purchases: mixing the
+ * two definitions across one account would double-count a deposit and the buy it
+ * funded.
+ */
+export const fundingCashFlows = (txns: readonly Txn[]): CashFlow[] => {
+  const fallback = new Set(accountsMissingCashRecord(txns));
+  const relevant = txns.filter((t) =>
+    fallback.has(t.accountId)
+      ? (t.type === "BUY" || t.type === "SELL") && t.instrumentId !== null
+      : t.type === "DEPOSIT" || t.type === "WITHDRAWAL",
+  );
+  return relevant
+    .slice()
+    .sort(byTradeDateThenId)
+    .map((t) => ({
+      date: t.tradeDate,
+      amountEur:
+        t.type === "BUY" || t.type === "SELL"
+          ? negateMoney(toEur(t.amount, t.fxRateEur))
+          : toEur(t.amount, t.fxRateEur),
+    }));
+};

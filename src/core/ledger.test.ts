@@ -1,5 +1,12 @@
 import { test, expect } from "bun:test";
-import { positionsAt, cashAt, externalCashFlows, negativePositionIds } from "./ledger";
+import {
+  accountsMissingCashRecord,
+  cashAt,
+  externalCashFlows,
+  fundingCashFlows,
+  negativePositionIds,
+  positionsAt,
+} from "./ledger";
 import type { Txn, TransactionType } from "./types";
 import {
   parseMoney,
@@ -125,4 +132,50 @@ test("external cash flows are deposits and withdrawals only, in EUR", () => {
   const flows = externalCashFlows(txns);
   expect(flows.map((f) => f.date)).toEqual(["2025-01-01", "2025-09-01", "2025-10-01"]);
   expect(flows.map((f) => formatMoney(f.amountEur))).toEqual(["5000.00", "-500.00", "920.00"]);
+});
+
+// OP's web transaction view exports securities transactions only: no deposits,
+// ever. Measured against Nordnet's deposits alone, a real portfolio reported a
+// money-weighted return roughly three times the truth, because the money that
+// funded OP's purchases never entered the ledger at all.
+const inAccount = (accountId: number, t: Txn): Txn => ({ ...t, accountId });
+
+test("an account with no cash record has its contributions read from purchases", () => {
+  const txns: Txn[] = [
+    inAccount(1, txn("DEPOSIT", "2020-01-01", { amount: "1000.00" })),
+    inAccount(1, txn("BUY", "2020-01-02", { instrumentId: 7, amount: "-900.00" })),
+    inAccount(2, txn("BUY", "2020-02-01", { instrumentId: 8, amount: "-500.00" })),
+  ];
+
+  expect(accountsMissingCashRecord(txns)).toEqual([2]);
+  // Account 1 keeps cash, so its deposit counts and its purchase does not --
+  // counting both would double the same money.
+  expect(fundingCashFlows(txns).map((f) => formatMoney(f.amountEur))).toEqual([
+    "1000.00",
+    "500.00",
+  ]);
+});
+
+test("an account that records cash contributes only its deposits and withdrawals", () => {
+  const txns: Txn[] = [
+    inAccount(1, txn("DEPOSIT", "2020-01-01", { amount: "1000.00" })),
+    inAccount(1, txn("BUY", "2020-01-02", { instrumentId: 7, amount: "-900.00" })),
+    inAccount(1, txn("WITHDRAWAL", "2020-03-01", { amount: "-200.00" })),
+  ];
+  expect(accountsMissingCashRecord(txns)).toEqual([]);
+  expect(fundingCashFlows(txns).map((f) => formatMoney(f.amountEur))).toEqual([
+    "1000.00",
+    "-200.00",
+  ]);
+});
+
+test("a sale in a cash-less account is a withdrawal of invested money", () => {
+  const txns: Txn[] = [
+    inAccount(2, txn("BUY", "2020-02-01", { instrumentId: 8, amount: "-500.00" })),
+    inAccount(2, txn("SELL", "2021-02-01", { instrumentId: 8, amount: "700.00" })),
+  ];
+  expect(fundingCashFlows(txns).map((f) => formatMoney(f.amountEur))).toEqual([
+    "500.00",
+    "-700.00",
+  ]);
 });
