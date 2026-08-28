@@ -32,7 +32,11 @@ const ReturnsSchema = z.object({
   from: z.string(),
   to: z.string(),
   excludedInstruments: z.array(
-    z.object({ instrumentId: z.number(), isin: z.string(), name: z.string() }),
+    // Null for an instrument no registry carries -- a delisted share, or a
+    // temporary line from a corporate action (see instruments.isin). Rejecting
+    // it here failed the whole dashboard query, which the UI could only report
+    // as a generic "could not load".
+    z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
   ),
 });
 
@@ -57,7 +61,11 @@ const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
 const AllocationResponseSchema = z.object({
   slices: z.array(AllocationSliceSchema),
   excludedInstruments: z.array(
-    z.object({ instrumentId: z.number(), isin: z.string(), name: z.string() }),
+    // Null for an instrument no registry carries -- a delisted share, or a
+    // temporary line from a corporate action (see instruments.isin). Rejecting
+    // it here failed the whole dashboard query, which the UI could only report
+    // as a generic "could not load".
+    z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
   ),
 });
 

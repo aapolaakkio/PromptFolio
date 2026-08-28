@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { z } from "zod";
 import { minorToEur, summarise, type DraftResponse } from "./imports-draft";
 
 // Test rows carry only the fields `summarise` reads; a typed factory keeps the
@@ -93,4 +94,17 @@ test("minorToEur renders integer minor units as a two-decimal string", () => {
 
 test("minorToEur keeps the sign for a negative (outflow) amount", () => {
   expect(minorToEur(-30002)).toBe("-300.02");
+});
+
+// A holding no registry carries has no ISIN at all (a delisted share, or the
+// temporary line a corporate action creates). The dashboard's own schemas
+// rejected that, which failed the whole page with a generic "could not load"
+// and made TanStack Query retry -- two /api/returns calls for one render.
+test("the dashboard's excluded-instrument shape accepts a holding with no ISIN", () => {
+  const schema = z.array(
+    z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
+  );
+  expect(schema.parse([{ instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" }])).toEqual([
+    { instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" },
+  ]);
 });

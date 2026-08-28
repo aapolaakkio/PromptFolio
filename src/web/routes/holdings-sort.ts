@@ -41,7 +41,8 @@
  */
 export type Holding = {
   instrumentId: number;
-  isin: string;
+  /** Null for a holding no registry carries -- see instruments.isin. */
+  isin: string | null;
   name: string;
   kind: "stock" | "etf" | "fund" | "cash";
   currency: string;
