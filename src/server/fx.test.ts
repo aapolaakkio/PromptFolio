@@ -4,23 +4,22 @@ import { eq } from "drizzle-orm";
 import { EUR, parseCurrency, type Currency } from "../core/money";
 import { testDb } from "./db";
 import { accounts, fxRates, instruments, transactions, user } from "./db/schema";
-import {
-  backfillFxRates,
-  ECB_HIST_URL,
-  ECB_URL,
-  ensureFxRate,
-  fxRateOn,
-  parseEcbCsv,
-  parseEcbHistCsv,
-  refreshFxRates,
-} from "./fx";
+import { backfillFxRates, ensureFxRate, fxRateOn, refreshFxRates } from "./fx";
+import { ECB_DATA_URL, ecbSeriesUrl, parseEcbSdmxCsv } from "./fx-ecb";
 import type { FetchImpl } from "./prices/types";
 
 const SEK = parseCurrency("SEK");
 const USD = parseCurrency("USD");
 
-const fixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-eurofxref.csv`).text();
-const histFixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-eurofxref-hist.csv`).text();
+/**
+ * ECB's SDMX `csvdata` responses, recorded in the shape a real fetch returns (see
+ * fx-ecb.ts for why the flat CSV files this used to read are unusable). `fixtureText`
+ * carries one day, `histFixtureText` the same five days the ledger tests range over --
+ * the rates are unchanged from the earlier fixtures, so every expected value below still
+ * describes the same arithmetic.
+ */
+const fixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-daily.csv`).text();
+const histFixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`).text();
 
 /**
  * Independently computed (Python `Decimal`, not this project's own code)
@@ -116,75 +115,33 @@ const seedTransaction = (db: ReturnType<typeof testDb>["db"], currency: Currency
     .run();
 };
 
-// --- parseEcbCsv -----------------------------------------------------------
+// --- parseEcbSdmxCsv --------------------------------------------------------
 
 test("inverts the ECB rate (foreign-per-EUR) to EUR-per-foreign, scaled 1e8", async () => {
-  const parsed = parseEcbCsv(await fixtureText(), new Set(["USD"]));
-  expect(parsed).toHaveLength(1);
-  expect(parsed[0]).toEqual({
-    date: "2026-08-27",
-    currency: parseCurrency("USD"),
-    rateEur: expectedRate("USD"),
-  });
+  const parsed = parseEcbSdmxCsv(await fixtureText(), new Set(["USD"]));
+  expect(parsed).toEqual([{ date: "2026-08-27", currency: USD, rateEur: EXPECTED_RATE_EUR.USD }]);
 });
 
-test("returns exactly the wanted currencies, ignoring the rest of the row", async () => {
-  const parsed = parseEcbCsv(await fixtureText(), new Set(["SEK"]));
-  expect(parsed).toEqual([
-    { date: "2026-08-27", currency: parseCurrency("SEK"), rateEur: expectedRate("SEK") },
-  ]);
+test("returns exactly the wanted currencies, ignoring every other row", async () => {
+  const parsed = parseEcbSdmxCsv(await fixtureText(), new Set(["SEK"]));
+  expect(parsed).toEqual([{ date: "2026-08-27", currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK }]);
 });
 
 test("returns every wanted currency present, each inverted correctly", async () => {
-  const parsed = parseEcbCsv(await fixtureText(), new Set(["USD", "JPY", "GBP", "SEK", "NOK"]));
+  const parsed = parseEcbSdmxCsv(await fixtureText(), new Set(["USD", "JPY", "GBP", "SEK", "NOK"]));
   expect(parsed).toHaveLength(5);
   for (const row of parsed) {
     expect(row.rateEur).toBe(expectedRate(row.currency));
   }
 });
 
-test("rejects a file whose header is not the ECB layout", () => {
-  expect(() => parseEcbCsv("nope\n1;2\n", new Set(["USD"]))).toThrow(/ECB/i);
-});
-
-test("never returns EUR, even if a caller's wanted set asks for it", () => {
-  // Synthetic: the real ECB file has no EUR column (EUR is its implicit
-  // base), but this proves the guard holds even against a malformed or
-  // future file that did carry one.
-  const withEurColumn = "Date, EUR, USD\n27 August 2026, 1.0000, 1.0870\n";
-  const parsed = parseEcbCsv(withEurColumn, new Set(["EUR", "USD"]));
-  expect(parsed.map((row) => row.currency)).toEqual([parseCurrency("USD")]);
-});
-
-test("skips a single unparseable rate cell instead of failing the whole file", () => {
-  const withNA = "Date, USD, JPY\n27 August 2026, N/A, 158.42\n";
-  const parsed = parseEcbCsv(withNA, new Set(["USD", "JPY"]));
-  expect(parsed).toEqual([
-    { date: "2026-08-27", currency: parseCurrency("JPY"), rateEur: expectedRate("JPY") },
-  ]);
-});
-
-test("rejects an unparseable date instead of guessing", () => {
-  const badDate = "Date, USD\n32 Somemonth 2026, 1.0870\n";
-  expect(() => parseEcbCsv(badDate, new Set(["USD"]))).toThrow(/ECB/i);
-});
-
-// --- parseEcbHistCsv ---------------------------------------------------------
-
-test("parses every row of the historical fixture, newest first, for the wanted currencies", async () => {
-  const parsed = parseEcbHistCsv(await histFixtureText(), new Set(["USD", "SEK"]));
-  // 5 dates * 2 wanted currencies.
-  expect(parsed).toHaveLength(10);
+test("parses every day of a multi-day response", async () => {
+  const parsed = parseEcbSdmxCsv(await histFixtureText(), new Set(["SEK"]));
   expect(parsed.map((row) => row.date)).toEqual([
     "2026-08-27",
-    "2026-08-27",
-    "2026-08-26",
     "2026-08-26",
     "2026-08-25",
-    "2026-08-25",
     "2026-08-24",
-    "2026-08-24",
-    "2020-01-02",
     "2020-01-02",
   ]);
   for (const row of parsed) {
@@ -192,95 +149,46 @@ test("parses every row of the historical fixture, newest first, for the wanted c
   }
 });
 
-test("the historical fixture's 2026-08-27 row resolves to the exact same rate as the daily fixture's own row for that date", async () => {
-  const fromHist = parseEcbHistCsv(await histFixtureText(), new Set(["USD"])).find(
-    (row) => row.date === "2026-08-27",
-  );
-  const fromDaily = parseEcbCsv(await fixtureText(), new Set(["USD"]))[0];
-  expect(fromHist).toEqual(fromDaily);
+test("never returns EUR, even if a caller's wanted set asks for it", () => {
+  const text =
+    "KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n" +
+    "EXR.D.EUR.EUR.SP00.A,D,EUR,EUR,SP00,A,2026-08-27,1.0000\n";
+  expect(parseEcbSdmxCsv(text, new Set(["EUR"]))).toEqual([]);
 });
 
-test("`since` stops after including exactly one row dated before it, matching fxRateOn's own on-or-before fallback", async () => {
-  const parsed = parseEcbHistCsv(await histFixtureText(), new Set(["SEK"]), {
-    since: "2026-08-26",
-  });
-  // 27 and 26 are on/after `since`; 25 is the one deliberate row *before* it (the
-  // fallback for any date between 25 and 26); 24 and the old 2020 row are never reached.
-  expect(parsed.map((row) => row.date)).toEqual(["2026-08-27", "2026-08-26", "2026-08-25"]);
-});
-
-test("without `since`, every row is parsed, including the old boundary row", async () => {
-  const parsed = parseEcbHistCsv(await histFixtureText(), new Set(["SEK"]));
-  expect(parsed.map((row) => row.date)).toEqual([
-    "2026-08-27",
-    "2026-08-26",
-    "2026-08-25",
-    "2026-08-24",
-    "2020-01-02",
+test("skips a day ECB did not publish rather than discarding the days it did", () => {
+  const text =
+    "KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n" +
+    "EXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2026-08-26,\n" +
+    "EXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2026-08-27,11.2340\n";
+  expect(parseEcbSdmxCsv(text, new Set(["SEK"]))).toEqual([
+    { date: "2026-08-27", currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK },
   ]);
 });
 
-test("rejects a historical file whose header is not the ECB layout", () => {
-  expect(() => parseEcbHistCsv("nope\n2026-08-27,1\n", new Set(["USD"]))).toThrow(/ECB/i);
-});
-
-test("rejects a truncated row with fewer columns than the header, instead of silently dropping trailing currencies", () => {
-  // A cut-off download drops trailing columns, not the whole line -- exactly this shape.
-  const truncated = "Date,USD,JPY,GBP\n2026-08-27,1.0870,158.42\n";
-  expect(() => parseEcbHistCsv(truncated, new Set(["USD", "GBP"]))).toThrow(/rikki/i);
-});
-
-test("rejects an unparseable historical date instead of guessing", () => {
-  const badDate = "Date,USD\n27-08-2026,1.0870\n";
-  expect(() => parseEcbHistCsv(badDate, new Set(["USD"]))).toThrow(/ECB/i);
-});
-
-test("never returns EUR from the historical file either, even if a caller's wanted set asks for it", () => {
-  const withEurColumn = "Date,EUR,USD\n2026-08-27,1.0000,1.0870\n";
-  const parsed = parseEcbHistCsv(withEurColumn, new Set(["EUR", "USD"]));
-  expect(parsed.map((row) => row.currency)).toEqual([parseCurrency("USD")]);
-});
-
-// --- newest-first ordering guard (never verified against a real fetch -- see this
-// file's own report) ---------------------------------------------------------------
-
-test("rejects an oldest-first historical file instead of silently keeping only its first (most ancient) row", () => {
-  // Exactly the failure this project was one bad assumption away from: `since`'s
-  // early-break assumes each row is dated before the one above it. Fed a file in the
-  // opposite order, the *un*-guarded implementation would push the 1999 row, see the
-  // very next (newer) row, and -- because that row is NOT before `since` -- just keep
-  // going past `since` without ever breaking, silently returning every row rather than
-  // stopping at the intended boundary. Reversed here relative to that failure mode: an
-  // oldest-first file must be rejected outright, loudly, the moment the second row
-  // proves the file isn't counting backwards -- not silently mis-windowed.
-  const oldestFirst = [
-    "Date,USD",
-    "1999-01-04,1.1789",
-    "2020-01-02,1.1234",
-    "2026-08-27,1.0870",
-  ].join("\n");
-  expect(() => parseEcbHistCsv(oldestFirst, new Set(["USD"]), { since: "2020-01-01" })).toThrow(
-    /järjestyksessä/i,
+test("rejects a response whose header is not the SDMX layout", () => {
+  expect(() => parseEcbSdmxCsv("Date,SEK\n2026-08-27,11.2340\n", new Set(["SEK"]))).toThrow(
+    /puuttuu odotettu sarake/,
   );
 });
 
-test("rejects a historical file with even one out-of-order row in the middle, not just a fully reversed one", () => {
-  const outOfOrder = [
-    "Date,USD",
-    "2026-08-27,1.0870",
-    "2020-01-02,1.1234",
-    "2026-08-26,1.0900",
-  ].join("\n");
-  expect(() => parseEcbHistCsv(outOfOrder, new Set(["USD"]))).toThrow(/järjestyksessä/i);
+test("rejects an empty response instead of reporting no rates", () => {
+  expect(() => parseEcbSdmxCsv("", new Set(["SEK"]))).toThrow(/tyhjä/);
 });
 
-test("accepts a genuinely newest-first file with a gap, same as the real fixture", async () => {
-  // Sanity check that the ordering guard does not reject legitimate non-consecutive
-  // dates (ECB only publishes on TARGET business days) -- only actual reversals.
-  const parsed = parseEcbHistCsv(await histFixtureText(), new Set(["USD"]), {
-    since: "2020-01-01",
-  });
-  expect(parsed.length).toBeGreaterThan(0);
+test("reads columns by name, so a response with extra columns still parses", () => {
+  const text =
+    "TITLE,CURRENCY,TIME_PERIOD,OBS_VALUE,UNIT\n" + "Swedish krona,SEK,2026-08-27,11.2340,SEK\n";
+  expect(parseEcbSdmxCsv(text, new Set(["SEK"]))).toEqual([
+    { date: "2026-08-27", currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK },
+  ]);
+});
+
+test("the request asks for exactly the wanted currencies, from the given date", () => {
+  const url = ecbSeriesUrl(["SEK", "NOK"], "2020-01-02");
+  expect(url).toStartWith(ECB_DATA_URL);
+  expect(url).toContain("D.NOK+SEK.EUR.SP00.A");
+  expect(url).toContain("startPeriod=2020-01-02");
 });
 
 // --- refreshFxRates ----------------------------------------------------------
@@ -309,14 +217,14 @@ test("fetches exactly the ledger's held currency (SEK), never defaulting to USD"
   const { db } = testDb();
   seedTransaction(db, SEK);
   const stub = async (url: string | URL | Request): Promise<Response> => {
-    expect(String(url)).toBe(ECB_URL);
+    expect(String(url)).toStartWith(ECB_DATA_URL);
     return new Response(await fixtureText());
   };
   const result = await refreshFxRates(db, { fetchImpl: stub });
   expect(result).toEqual({ inserted: 1 });
   const rows = db.select().from(fxRates).all();
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ currency: "SEK", rateEur: EXPECTED_RATE_EUR.SEK });
+  expect(rows[0]).toMatchObject({ currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK });
 });
 
 test("stores rates idempotently: a second run for the same date inserts nothing new", async () => {
@@ -371,7 +279,7 @@ test("fetches a currency held only by an instrument's own quotation currency, wi
   expect(result).toEqual({ inserted: 1 });
   const rows = db.select().from(fxRates).all();
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ currency: "SEK", rateEur: EXPECTED_RATE_EUR.SEK });
+  expect(rows[0]).toMatchObject({ currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK });
 });
 
 test("unions transaction and instrument currencies without fetching a currency twice", async () => {
@@ -434,59 +342,36 @@ test("ensureFxRate fetches and stores ECB's rate on demand when nothing exists y
   expect(db.select().from(fxRates).all()).toHaveLength(1);
 });
 
-test("ensureFxRate returns null (not a thrown error) when even the historical fallback has nothing older than the requested date", async () => {
+test("ensureFxRate returns null (not a thrown error) when ECB has nothing older than the requested date", async () => {
   const { db } = testDb();
-  // The daily file's rate (dated 2026-08-27) can't satisfy a date this old on its own --
-  // the historical fallback is what used to be missing (C1's old comment: "nothing
-  // observed so far needs it"). It is tried here, and genuinely has nothing either: the
-  // fixture's own earliest row is 2020-01-02, one day after the requested date.
-  const dispatch: FetchImpl = async (input) => {
-    const url = String(input);
-    if (url === ECB_URL) return new Response(await fixtureText());
-    if (url === ECB_HIST_URL) return new Response(await histFixtureText());
-    throw new Error(`unexpected fetch: ${url}`);
-  };
+  const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const rate = await ensureFxRate(db, SEK, "2020-01-01", dispatch);
   expect(rate).toBeNull();
-  // Both fetches' rows are still stored, so a later row on/after either date benefits
-  // for free -- every row the historical fixture carries (the daily fetch's own row,
-  // dated 2026-08-27, is one of the same five: see HIST_EXPECTED_RATE_EUR's own doc for
-  // why that date is deliberately identical in both fixtures).
+  // Everything the request did return is still stored, so a later lookup on or after
+  // any of those dates is served without another fetch.
   expect(db.select().from(fxRates).all()).toHaveLength(5);
 });
 
-test("ensureFxRate falls back to the historical file when the daily file's own date can't satisfy a back-dated request -- the previously-blocked case", async () => {
+test("ensureFxRate resolves a back-dated request in one ranged fetch -- the previously-blocked case", async () => {
   const { db } = testDb();
-  const dispatch: FetchImpl = async (input) => {
-    const url = String(input);
-    if (url === ECB_URL) return new Response(await fixtureText());
-    if (url === ECB_HIST_URL) return new Response(await histFixtureText());
-    throw new Error(`unexpected fetch: ${url}`);
-  };
+  const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const rate = await ensureFxRate(db, SEK, "2020-01-02", dispatch);
   expect(rate).toBe(expectedHistRate("2020-01-02", "SEK"));
   const rows = db.select().from(fxRates).all();
-  // The daily fetch's own row is still there (tried first, cheaply, and kept)...
-  expect(rows.some((r) => r.date === "2026-08-27" && r.currency === "SEK")).toBe(true);
-  // ...alongside every row the historical fallback fetched to resolve the back-dated one.
   expect(rows.some((r) => r.date === "2020-01-02" && r.currency === "SEK")).toBe(true);
 });
 
-test("ensureFxRate never touches the historical file at all once the daily fetch already satisfies the date", async () => {
+test("ensureFxRate asks ECB once, for the requested currency and from the requested date", async () => {
   const { db } = testDb();
-  let histCalls = 0;
+  const urls: string[] = [];
   const dispatch: FetchImpl = async (input) => {
-    const url = String(input);
-    if (url === ECB_URL) return new Response(await fixtureText());
-    if (url === ECB_HIST_URL) {
-      histCalls++;
-      return new Response(await histFixtureText());
-    }
-    throw new Error(`unexpected fetch: ${url}`);
+    urls.push(String(input));
+    return new Response(await histFixtureText());
   };
-  const rate = await ensureFxRate(db, SEK, "2026-08-27", dispatch);
-  expect(rate).toBe(EXPECTED_RATE_EUR.SEK);
-  expect(histCalls).toBe(0);
+  await ensureFxRate(db, SEK, "2020-01-02", dispatch);
+  expect(urls).toHaveLength(1);
+  expect(urls[0]).toContain("D.SEK.EUR.SP00.A");
+  expect(urls[0]).toContain("startPeriod=2020-01-02");
 });
 
 test("ensureFxRate swallows a fetch failure to null instead of throwing out of a commit", async () => {
@@ -519,11 +404,12 @@ test("backfills nothing when the ledger only ever traded EUR", async () => {
   expect(result).toEqual({ inserted: 0, currencies: 0 });
 });
 
-test("only ever calls the historical URL, never the daily one -- this is the backfill path, not the nightly daily fetch", async () => {
+test("asks from the ledger's own earliest needed date, not from a recent window", async () => {
   const { db } = testDb();
   seedTransaction(db, SEK); // tradeDate 2026-01-01, see seedTransaction's own doc
   const dispatch: FetchImpl = async (input) => {
-    expect(String(input)).toBe(ECB_HIST_URL);
+    expect(String(input)).toStartWith(ECB_DATA_URL);
+    expect(String(input)).toContain("startPeriod=2026-01-01");
     return new Response(await histFixtureText());
   };
   const result = await backfillFxRates(db, { fetchImpl: dispatch });

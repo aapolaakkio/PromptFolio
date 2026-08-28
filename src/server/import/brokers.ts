@@ -14,14 +14,27 @@ import type { BrokerCsvConfig, OpPasteConfig } from "./types";
  * name-keyed (and therefore last-wins) `values` map is never consulted for
  * this field. See src/server/import/types.ts's `BrokerCsvConfig` comment.
  *
- * `typeMap` covers exactly the 13 transaction-type labels observed in the
- * real export; nothing here is a guess at a label Nordnet might also emit
- * (Swedish/English variants, "Osinko" for a dividend). A label outside
- * this set surfaces as a review problem instead of being silently
- * mis-booked -- see docs/superpowers/sdd/2026-08-27-promptfolio-phase-1/fix-real-fixtures-report.md
- * for the reasoning behind each mapping, including the four labels
- * (DESIM. ULOSKIRJ. KÄT, DESIM KIRJAUS OTTO, VAIHTO AP-OTTO, VAIHTO
- * AP-JÄTTÖ) left unmapped on purpose.
+ * `typeMap` covers exactly the transaction-type labels observed in real
+ * exports; nothing here is a guess at a label Nordnet might also emit
+ * (Swedish or English variants). A label outside this set surfaces as a
+ * review problem instead of being silently mis-booked -- see
+ * docs/superpowers/sdd/2026-08-27-promptfolio-phase-1/fix-real-fixtures-report.md
+ * for the reasoning behind each mapping.
+ *
+ * A second, wider export (2026-08-28, covering a second Nordnet account
+ * rather than one) added five labels: OSINKO, TALLETUS OST., NOSTO OST.
+ * and PÄÄOMATULOVERO OST, all mapped below, and four more left unmapped
+ * beside the original four.
+ *
+ * **Deliberately unmapped**, because each is one leg of a two-row event
+ * whose other leg carries the same units or the same cash, so booking
+ * either leg on its own would double a position or a cash balance:
+ * DESIM. ULOSKIRJ. KÄT / DESIM KIRJAUS OTTO (a fractional-share cash-out),
+ * VAIHTO AP-OTTO / VAIHTO AP-JÄTTÖ (a share swap), JÄTTÖ SIIRTO / AP OTTO
+ * (a subscription commitment converting into shares, both legs at
+ * `Summa: 0`), and LUNASTUS AP OTTO / LUNASTUS AP KÄT. (a tender offer:
+ * one leg removes the shares, the other brings the cash, and both state
+ * the full quantity and price). Each surfaces for manual review.
  */
 export const NORDNET: BrokerCsvConfig = {
   broker: "nordnet",
@@ -54,6 +67,18 @@ export const NORDNET: BrokerCsvConfig = {
     "per etf-kk säästön palvemaksu": "FEE",
     "pääomit ylit.korko": "INTEREST",
     lainakorko: "INTEREST",
+    osinko: "DIVIDEND",
+    // "OST." here is *osakesäästötili* (a Finnish equity savings account), not
+    // "osto" -- these are that account's own cash legs, and every one observed
+    // carries a "Internal from/to <other account number>" transaction text.
+    "talletus ost.": "DEPOSIT",
+    "nosto ost.": "WITHDRAWAL",
+    // Capital income tax withheld on an equity-savings-account withdrawal. Booked
+    // as FEE, not WITHDRAWAL: the money leaves the portfolio permanently but does
+    // not reach the investor, and calling it a withdrawal would tell the
+    // money-weighted return that it was money taken out and enjoyed. Phase 4's tax
+    // reporting will want these rows specifically -- see the spec's 10c/C3.
+    "pääomatulovero ost": "FEE",
     // "VAIHTO AP-OTTO"/"VAIHTO AP-JÄTTÖ" (a same-day ETF/fund merger: the
     // old ISIN's units removed, the new ISIN's units added, both legs at
     // `Summa: 0`) and "DESIM. ULOSKIRJ. KÄT"/"DESIM KIRJAUS OTTO" (Nordnet's

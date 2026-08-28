@@ -3,7 +3,8 @@ import { EUR, formatMoney, parseCurrency } from "../core/money";
 import { valueSeries } from "../core/returns";
 import { testDb } from "./db";
 import { accounts, instruments, prices, transactions, user } from "./db/schema";
-import { backfillFxRates, ECB_HIST_URL } from "./fx";
+import { backfillFxRates } from "./fx";
+import { ECB_DATA_URL } from "./fx-ecb";
 import { holdingsFor, loadPortfolio } from "./valuation";
 
 const seed = () => {
@@ -386,10 +387,9 @@ test("before/after: a SEK-quoted holding's historical value series is excluded (
 
   // Backfill fx history -- exactly what the nightly job (`runScheduledRefresh`) and a
   // fresh import commit (`backfillCommittedInstruments`) now both trigger.
-  const histFixtureText = () =>
-    Bun.file(`${import.meta.dir}/fixtures/ecb-eurofxref-hist.csv`).text();
+  const histFixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`).text();
   const dispatch = async (input: string | URL | Request): Promise<Response> => {
-    expect(String(input)).toBe(ECB_HIST_URL);
+    expect(String(input)).toStartWith(ECB_DATA_URL);
     return new Response(await histFixtureText());
   };
   const backfillResult = await backfillFxRates(db, { fetchImpl: dispatch });

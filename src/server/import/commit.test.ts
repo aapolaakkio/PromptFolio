@@ -6,7 +6,7 @@ import { EUR, parseCurrency } from "../../core/money";
 import { commitDraft, undoImport } from "./commit";
 import type { Draft, DraftTxn } from "./map";
 import type { FetchImpl } from "../prices/types";
-import { ECB_HIST_URL, ECB_URL } from "../fx";
+import { ECB_DATA_URL } from "../fx-ecb";
 
 const USD = parseCurrency("USD");
 const SEK = parseCurrency("SEK");
@@ -282,10 +282,13 @@ test("a first-ever non-EUR transaction commits by fetching ECB's rate on demand 
   const { db, accountId, instrumentId } = seed();
   // No fx_rates row exists at all for SEK -- exactly the deadlock C1b describes:
   // refreshFxRates() would never have fetched SEK either, since the ledger doesn't hold
-  // it yet. `fetchImpl` here plays ECB's real eurofxref.csv shape (a header row of
-  // currency codes, one value row), dated on/after the trade so `fxRateOn`'s `lte` finds it.
+  // it yet. `fetchImpl` here plays ECB's SDMX csvdata response (see fx-ecb.ts), dated on
+  // the trade date so `fxRateOn`'s `lte` finds it.
   const fetchImpl: FetchImpl = async () =>
-    new Response("Date,USD,SEK\n2 May 2025,1.0870,10.9160\n");
+    new Response(
+      "KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n" +
+        "EXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2025-05-02,10.9160\n",
+    );
   const sek = draftTxn({
     accountId,
     instrumentId,
@@ -320,11 +323,10 @@ test("a back-dated transaction in a currency never held before now commits, by f
   // comment), which is what actually covers 2020-01-02.
   const fetchImpl: FetchImpl = async (input) => {
     const url = String(input);
-    if (url === ECB_URL) return new Response("Date,SEK\n27 August 2026,11.2340\n");
-    if (url === ECB_HIST_URL) {
-      return new Response("Date,SEK\n2026-08-27,11.2340\n2020-01-03,10.9200\n2020-01-02,10.9160\n");
-    }
-    throw new Error(`unexpected fetch: ${url}`);
+    if (!url.startsWith(ECB_DATA_URL)) throw new Error(`unexpected fetch: ${url}`);
+    return new Response(
+      "KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\nEXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2020-01-02,10.9160\nEXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2020-01-03,10.9200\nEXR.D.SEK.EUR.SP00.A,D,SEK,EUR,SP00,A,2026-08-27,11.2340\n",
+    );
   };
   const sek = draftTxn({
     accountId,

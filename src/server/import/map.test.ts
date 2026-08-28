@@ -670,3 +670,78 @@ test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
   expect(draft.txns[0]!.quantity).toBe(1_000_000);
   expect(draft.txns[0]!.amount).toBe(-10000);
 });
+
+// A second, wider Nordnet export (2026-08-28) covering a second account carried
+// five transaction-type labels the first one never showed. These map the ones
+// that can be booked from a single row; the paired-leg events below stay
+// unmapped on purpose -- see brokers.ts's own typeMap comment.
+test("maps the labels a second Nordnet account introduced: dividend, equity-savings cash legs, withheld tax", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({
+      id: "1",
+      date: "2025-03-11",
+      type: "OSINKO",
+      name: "Esimerkki Oyj",
+      isin: "FI0009007132",
+      qty: "12",
+      price: "2",
+      amount: "24",
+    }),
+    nordnetRow({ id: "2", date: "2025-03-12", type: "TALLETUS OST.", amount: "500" }),
+    nordnetRow({ id: "3", date: "2025-03-13", type: "NOSTO OST.", amount: "-120" }),
+    nordnetRow({ id: "4", date: "2025-03-13", type: "PÄÄOMATULOVERO OST", amount: "-15" }),
+  ].join("\r\n");
+
+  const { rows, problems } = parseCsv(nordnetBytes(csv), NORDNET);
+  expect(problems).toEqual([]);
+  const draft = mapRows(rows, NORDNET, new Map([["FI0009007132", 7]]));
+  expect(draft.problems).toEqual([]);
+  expect(draft.txns.map((t) => t.type)).toEqual(["DIVIDEND", "DEPOSIT", "WITHDRAWAL", "FEE"]);
+
+  // A dividend's "Määrä" is shares *held*, not units bought, so it must never
+  // move the position -- map.ts forces it to zero regardless of the cell.
+  expect(draft.txns[0]!.quantity).toBe(0);
+  expect(draft.txns[0]!.amount).toBe(2400);
+  // Withheld capital income tax is a cost, not money the investor received.
+  expect(draft.txns[3]!.amount).toBe(-1500);
+});
+
+test("refuses both legs of every paired securities event rather than booking one of them", () => {
+  const paired = [
+    "VAIHTO AP-OTTO",
+    "VAIHTO AP-JÄTTÖ",
+    "AP OTTO",
+    "JÄTTÖ SIIRTO",
+    "LUNASTUS AP OTTO",
+    "LUNASTUS AP KÄT.",
+    "DESIM. ULOSKIRJ. KÄT",
+    "DESIM KIRJAUS OTTO",
+  ];
+  const csv = [
+    NORDNET_HEADER,
+    ...paired.map((type, index) =>
+      nordnetRow({
+        id: String(index + 1),
+        date: "2026-06-15",
+        type,
+        name: "Jokin",
+        isin: "FI0009000681",
+        qty: "150",
+        price: "7,43",
+        amount: "0",
+      }),
+    ),
+  ].join("\r\n");
+
+  const draft = mapRows(
+    parseCsv(nordnetBytes(csv), NORDNET).rows,
+    NORDNET,
+    new Map([["FI0009000681", 1]]),
+  );
+  expect(draft.txns).toEqual([]);
+  expect(draft.problems).toHaveLength(paired.length);
+  for (const type of paired) {
+    expect(draft.problems.some((p) => p.message.includes(type))).toBe(true);
+  }
+});

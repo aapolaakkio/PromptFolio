@@ -544,6 +544,73 @@ The user wants this supported. Requirements, to be designed properly in a later 
 The `instruments.kind` enum already carries a `"cash"` member, unused today; whether cash holdings
 reuse it or get their own table is a design question for that phase, not a settled decision.
 
+### C3. ECB's flat CSV files are dead; rates now come from the SDMX API
+
+§4.2 and A4 name `eurofxref.csv` and `eurofxref-hist.csv` as the FX source. Both were verified
+dead on 2026-08-28 — still `200 OK`, still `text/csv`, and both frozen:
+
+| URL | newest row | contents |
+| --- | --- | --- |
+| `eurofxref.csv` | 14 July 2017 | real rates, nine years stale |
+| `eurofxref-hist.csv` | 2010-02-14 | placeholders (`2,1,2,N/A,1,2,…`), not rates |
+
+The second one is the damaging case. Its currency columns hold single-digit placeholders, which
+invert into rates off by roughly a factor of five from the truth. A holding quoted in such a
+currency was valued several times too high — and reported no error at all, because a well-formed CSV parsed cleanly
+into a plausible number. Live data still exists at the `.zip` variants of those URLs, which
+would need unzipping inside the server.
+
+Rates now come from ECB's SDMX data API
+(`https://data-api.ecb.europa.eu/service/data/EXR/D.<CCY>.EUR.SP00.A?format=csvdata`), which
+needs no unzipping, serves the current day, reaches back to 1999, takes a date range, and takes
+several currencies in one request. `src/server/fx-ecb.ts` owns the fetch and parse;
+`refreshFxRates`, `backfillFxRates` and `ensureFxRate` keep their existing roles, and the old
+daily-then-historical two-step in `ensureFxRate` collapses into one ranged request.
+
+**Which currencies are supported.** Any ISO 4217 code is accepted structurally (A1), but a
+holding can only be *converted* in a currency ECB publishes — roughly 30, including SEK, NOK,
+USD, GBP, DKK and CHF. Only the currencies the ledger actually holds are ever fetched.
+
+**Still open: FX staleness is not checked.** `fxOn` takes the newest rate dated on or before the
+valuation date, with no limit on how far before. That is correct for valuing a historical date,
+and it is exactly what let a 2010 rate value a 2026 holding in silence. A distance bound — a rate
+more than a few days older than the date being valued is treated as missing, surfacing the
+existing `valuationError` rather than a wrong number — is wanted and not yet built.
+
+### C4. Nordnet exports: more transaction types, and more than one account
+
+A wider export (2026-08-28, covering a second Nordnet account rather than one) carried nine
+labels A2's export never showed. Four are now mapped in `brokers.ts`:
+
+- `OSINKO` → `DIVIDEND`. Seven dividends were being refused before this.
+- `TALLETUS OST.` → `DEPOSIT` and `NOSTO OST.` → `WITHDRAWAL`. "OST." is *osakesäästötili*, a
+  Finnish equity savings account — not "osto".
+- `PÄÄOMATULOVERO OST` → `FEE`. Capital income tax withheld on an equity-savings withdrawal:
+  the money leaves permanently but never reaches the investor, so booking it as a withdrawal
+  would tell the money-weighted return it was money taken out and enjoyed. Phase 4's tax
+  reporting will want these rows specifically.
+
+Five more are refused on purpose, joining A2's four. Every one is a single leg of a two-row
+event whose other leg carries the same units or the same cash: `AP OTTO` / `JÄTTÖ SIIRTO` (a
+subscription commitment converting into shares, both legs at `Summa: 0`) and `LUNASTUS AP OTTO`
+/ `LUNASTUS AP KÄT.` (a tender offer — one leg removes the shares, the other brings the cash,
+both stating the full quantity and price). Booking either leg alone would double a position or
+a cash balance.
+
+**Two problems this export surfaces that are not yet solved:**
+
+1. **One file, several accounts.** The export's `Salkku` column holds the account number, and
+   the importer never reads it: every row is filed under the single account the user picks on
+   the import screen. A multi-account export therefore merges two portfolios into one. The
+   column is present in every row, so splitting by it — or refusing a file whose rows disagree
+   with the chosen account — is straightforward, and undecided.
+2. **Internal transfers are counted as external flows.** Cash moved between the user's own two
+   Nordnet accounts appears twice: as `NOSTO` in one and `TALLETUS` in the other, each tagged
+   `Internal to <number>` / `Internal from <number>` in `Tapahtumateksti`. Imported as-is, both
+   count as external cash flows, which is what the money-weighted return is defined over. The
+   marker text makes them identifiable; what to do with them is a returns-definition question
+   tied up with C2's cash decision.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

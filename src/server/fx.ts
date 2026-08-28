@@ -1,306 +1,23 @@
 import { and, asc, desc, eq, lte } from "drizzle-orm";
-import { z } from "zod";
 
-import { EUR, parseCurrency, parseFxRate, type Currency } from "../core/money";
+import { EUR, type Currency } from "../core/money";
 import type { getDb } from "./db";
 import { fxRates, instruments, transactions } from "./db/schema";
+import { fetchEcbRates, type EcbRow } from "./fx-ecb";
 import type { FetchImpl } from "./prices/types";
 
 type Db = ReturnType<typeof getDb>["db"];
 
-export const ECB_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref.csv";
-
 /**
- * ECB's full daily-history file -- same currency columns as `eurofxref.csv`, one row per
- * TARGET business day back to 1999-01-04, newest first. Verified by a real fetch
- * (2026-08-28): `Content-Type: text/csv`, a `Date,USD,JPY,...` header identical in shape to
- * the daily file's, and one crucial difference the daily file's own format does not have --
- * each row's date is already ISO `YYYY-MM-DD` (e.g. `2010-02-14`), not the daily file's
- * spelled-out `D Month YYYY` (e.g. `27 August 2026`). `parseEcbHistDate` below exists
- * because of that one verified difference; everything else (comma-separated cells, `N/A`
- * for a currency ECB did not yet publish or has stopped publishing, values scaled and
- * inverted exactly like the daily file's) reuses `parseEcbValueRow`, the same per-row logic
- * `parseEcbCsv` itself calls.
+ * How far back the nightly refresh asks for. Long enough to cover a run missed over a long
+ * weekend or a short outage, short enough that the routine case stays a small response;
+ * anything older is backfillFxRates' job.
  */
-export const ECB_HIST_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.csv";
+const REFRESH_WINDOW_DAYS = 10;
 
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-] as const;
-
-const ECB_DATE_PATTERN = /^(\d{1,2}) ([A-Za-z]+) (\d{4})$/;
-/** Matches ECB's plain decimal rate cells ("1.0870"). Never negative -- ECB never publishes one. */
-const ECB_RATE_PATTERN = /^\d+(\.\d+)?$/;
-
-const EcbDateParts = z.object({
-  day: z.string().regex(/^([1-9]|[12]\d|3[01])$/),
-  month: z.enum(MONTH_NAMES),
-  year: z.string().regex(/^\d{4}$/),
-});
-
-/**
- * ECB's date column is always "D Month YYYY" in English (e.g. "27 August
- * 2026") -- but rather than lean on JS `Date`'s locale-and-engine-dependent
- * free-text parser for something this load-bearing (every fx_rates row's
- * primary key), the month name is resolved against an explicit table and
- * the whole shape validated by zod before anything is trusted.
- */
-const parseEcbDate = (text: string): string => {
-  const match = ECB_DATE_PATTERN.exec(text.trim());
-  const parsed = match
-    ? EcbDateParts.safeParse({ day: match[1], month: match[2], year: match[3] })
-    : undefined;
-  if (!match || !parsed?.success) {
-    throw new Error(`ECB-tiedoston päivämäärä ei kelpaa: ${JSON.stringify(text)}`);
-  }
-  const monthNumber = MONTH_NAMES.indexOf(parsed.data.month) + 1;
-  return `${parsed.data.year}-${String(monthNumber).padStart(2, "0")}-${parsed.data.day.padStart(2, "0")}`;
-};
-
-/**
- * Inverts a rate already scaled by 1e8 (foreign-per-EUR, `parseFxRate`'s
- * own representation of the raw ECB cell) into EUR-per-foreign, also
- * scaled by 1e8 -- exact bigint arithmetic (`(1e8)^2 / scaled`, half-up
- * rounded on the remainder) rather than a float division, so this is
- * exactly as precise as `core/money.ts`'s own scale contract and uses the
- * same rounding rule `parseScaled` already applies elsewhere in this
- * project. Verified against the brief's own worked example: 1 EUR =
- * 1.0870 USD inverts to 91_996_320 (0.91996320... EUR per USD).
- */
-const invertScaledRate = (scaled: bigint): number => {
-  const numerator = 10n ** 16n;
-  const quotient = numerator / scaled;
-  const remainder = numerator % scaled;
-  return Number(remainder * 2n >= scaled ? quotient + 1n : quotient);
-};
-
-type EcbRow = { readonly date: string; readonly currency: Currency; readonly rateEur: number };
-
-/**
- * Extracts every `wanted` currency's rate from one already-date-resolved ECB CSV line,
- * shared by `parseEcbCsv` (the daily file's single value line) and `parseEcbHistCsv` (each
- * of the historical file's many value lines) -- the two files' rows have the exact same
- * shape (a header of currency codes, a value per column), only their date column's text
- * format and the number of value lines differ.
- *
- * Throws if `values` has a different number of cells than `headers`: a genuinely truncated
- * download (the connection dropped mid-row) silently drops trailing columns rather than
- * raising an HTTP error, and without this check that would read as "this row just happens
- * to have no rate for its last few currencies" -- indistinguishable from a legitimate `N/A`
- * -- producing partial rates that look complete. A short row is exactly the shape a cut-off
- * response leaves behind, so it fails loudly here instead.
- *
- * EUR itself is excluded even if a caller's `wanted` set somehow contains it: the file has
- * no EUR column (EUR is its implicit base), and an EUR/EUR rate would be meaningless --
- * `fx_rates` must never carry one (see that table's schema comment).
- *
- * A single unparseable currency column (a non-numeric cell, e.g. an ECB "N/A" for a
- * currency ECB has stopped publishing) is skipped rather than failing the whole row: the
- * other columns' rates are still good data and one bad cell should not block them,
- * mirroring this project's "one failing source must not stop the others" rule at column
- * granularity.
- */
-const parseEcbValueRow = (
-  headers: readonly string[],
-  values: readonly string[],
-  wanted: ReadonlySet<string>,
-  date: string,
-): EcbRow[] => {
-  if (values.length !== headers.length) {
-    throw new Error(
-      `ECB-tiedoston rivi on rikki (${date}): odotettiin ${headers.length} saraketta, saatiin ${values.length}`,
-    );
-  }
-  const out: EcbRow[] = [];
-  for (let i = 1; i < headers.length; i++) {
-    const rawCurrency = headers[i];
-    if (rawCurrency === undefined || rawCurrency === "EUR" || !wanted.has(rawCurrency)) continue;
-    const rawValue = values[i];
-    if (rawValue === undefined || !ECB_RATE_PATTERN.test(rawValue)) continue;
-
-    const currency = parseCurrency(rawCurrency);
-    const { scaled } = parseFxRate(rawValue, currency);
-    if (scaled <= 0n) continue;
-
-    out.push({ date, currency, rateEur: invertScaledRate(scaled) });
-  }
-  return out;
-};
-
-/**
- * Parses the ECB `eurofxref.csv` daily file (two lines: a header row of
- * currency codes, one value row) into EUR-per-foreign-unit rates, scaled
- * 1e8 -- the direction `core/money.ts`'s `toEur` multiplies by. ECB
- * publishes the opposite direction (1 EUR = N foreign units), so every
- * value is inverted.
- *
- * Only currencies present in `wanted` are returned: §10a A1 -- the real
- * portfolio holds EUR and SEK, no USD -- so this never assumes which
- * foreign currencies matter and never defaults to a guessed set; the
- * caller (`refreshFxRates`) passes exactly the currencies its own ledger
- * holds.
- */
-export const parseEcbCsv = (
-  text: string,
-  wanted: ReadonlySet<string>,
-): Array<{ date: string; currency: Currency; rateEur: number }> => {
-  const [headerLine, valueLine] = text.split(/\r?\n/);
-  if (headerLine === undefined || valueLine === undefined || !/^Date\b/i.test(headerLine.trim())) {
-    throw new Error("ECB-tiedoston muoto ei kelpaa: otsikkorivi puuttuu");
-  }
-  const headers = headerLine.split(",").map((cell) => cell.trim());
-  const values = valueLine.split(",").map((cell) => cell.trim());
-
-  const dateText = values[0];
-  if (dateText === undefined) {
-    throw new Error("ECB-tiedoston muoto ei kelpaa: päivämääräsarake puuttuu");
-  }
-  const date = parseEcbDate(dateText);
-
-  return parseEcbValueRow(headers, values, wanted, date);
-};
-
-const ECB_HIST_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-const EcbHistDateParts = z.object({
-  year: z.string().regex(/^\d{4}$/),
-  month: z.string().regex(/^(0[1-9]|1[0-2])$/),
-  day: z.string().regex(/^([0-2]\d|3[01])$/),
-});
-
-/**
- * The historical file's date column, verified by a real fetch to already be ISO
- * `YYYY-MM-DD` (unlike the daily file's spelled-out `D Month YYYY`, see `ECB_HIST_URL`'s own
- * comment) -- so unlike `parseEcbDate`, this never resolves a month name, but it is
- * zod-validated the same way and just as strictly (a real calendar day-of-month range, a
- * real month range) rather than trusted as-is, for the same reason `parseEcbDate` does not
- * lean on JS `Date`'s free-text parser: this is every historical `fx_rates` row's primary
- * key.
- */
-const parseEcbHistDate = (text: string): string => {
-  const trimmed = text.trim();
-  const match = ECB_HIST_DATE_PATTERN.exec(trimmed);
-  const parsed = match
-    ? EcbHistDateParts.safeParse({ year: match[1], month: match[2], day: match[3] })
-    : undefined;
-  if (!match || !parsed?.success) {
-    throw new Error(`ECB-historiatiedoston päivämäärä ei kelpaa: ${JSON.stringify(text)}`);
-  }
-  return trimmed;
-};
-
-/**
- * Parses the ECB `eurofxref-hist.csv` historical file: one header row of currency codes,
- * then one value row per TARGET business day, newest first (verified by a real fetch --
- * see `ECB_HIST_URL`'s comment). Reuses `parseEcbValueRow` for each line, exactly like
- * `parseEcbCsv` does for the daily file's one line.
- *
- * `opts.since`, when given, bounds how much of a multi-thousand-row file is actually kept:
- * since the file is newest-first, this stops as soon as it has pushed one row dated before
- * `since` -- that one extra row is deliberate, not an off-by-one, so a caller doing a
- * backfill "from `since` onward" still gets the last known rate for any date between
- * `since` and that row's own date, exactly matching `fxRateOn`'s own "newest row on or
- * before" semantics. Without `opts.since`, every row is parsed and returned.
- *
- * **Newest-first is asserted, not assumed.** This early-break only reads the correct window
- * if the file genuinely counts backwards -- something this project's own sandbox could never
- * verify against a real fetch (only a truncated, possibly synthetic sample was ever
- * available). Every consecutive pair of rows is checked to be non-increasing in date; a row
- * dated *after* the one before it means the file is not newest-first (or is otherwise out of
- * order), and the early-break above would otherwise silently stop after the very first old row
- * it meets -- for a genuinely oldest-first file that is the very first data row, so `since`
- * would return just that one ancient rate and `needsFxBackfill` would then consider the
- * currency satisfied forever. Crucially, this check keeps scanning dates (cheaply -- just the
- * date column, not the full per-currency parse `parseEcbValueRow` does) for every remaining
- * row even after the `since` cutoff has already been reached and collection has stopped: the
- * bug this guards against is defined by what happens *after* the row that looks like a
- * plausible stopping point, so verifying order only up to that same row would never catch it.
- * Failing loudly the moment the assumption is violated, anywhere in the file, is the only way
- * to avoid twenty years of every later valuation silently carrying forward a 1999 rate with no
- * signal anything is wrong.
- */
-export const parseEcbHistCsv = (
-  text: string,
-  wanted: ReadonlySet<string>,
-  opts: { since?: string } = {},
-): EcbRow[] => {
-  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
-  const headerLine = lines[0];
-  if (headerLine === undefined || !/^Date\b/i.test(headerLine.trim())) {
-    throw new Error("ECB-historiatiedoston muoto ei kelpaa: otsikkorivi puuttuu");
-  }
-  const headers = headerLine.split(",").map((cell) => cell.trim());
-  const since = opts.since;
-
-  const out: EcbRow[] = [];
-  let previousDate: string | null = null;
-  // Once `since` has been satisfied, remaining rows are still scanned (for the ordering
-  // guard, see this function's own doc) but no longer collected into `out` -- this is the
-  // one flag that keeps "read the whole file to verify its order" and "only keep the rows
-  // this caller actually asked for" as two independent decisions.
-  let collecting = true;
-  for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (line === undefined) continue;
-    const values = line.split(",").map((cell) => cell.trim());
-    const dateText = values[0];
-    if (dateText === undefined) {
-      throw new Error(`ECB-historiatiedoston rivi ${lineIndex + 1}: päivämääräsarake puuttuu`);
-    }
-    const date = parseEcbHistDate(dateText);
-    if (previousDate !== null && date > previousDate) {
-      throw new Error(
-        `ECB-historiatiedosto ei ole odotetussa uusin-ensin -järjestyksessä: rivi ${lineIndex + 1} ` +
-          `(${date}) tulee myöhemmin kuin edellinen rivi (${previousDate})`,
-      );
-    }
-    previousDate = date;
-    if (!collecting) continue;
-
-    out.push(...parseEcbValueRow(headers, values, wanted, date));
-    if (since !== undefined && date < since) collecting = false;
-  }
-  return out;
-};
-
-/** Fetches and parses one ECB daily file for exactly `wanted`'s currencies. No DB access. */
-const fetchEcbRows = async (
-  fetchImpl: FetchImpl,
-  wanted: ReadonlySet<string>,
-): Promise<EcbRow[]> => {
-  const response = await fetchImpl(ECB_URL);
-  if (!response.ok) {
-    throw new Error(`ECB vastasi ${response.status} ${response.statusText}`);
-  }
-  return parseEcbCsv(await response.text(), wanted);
-};
-
-/**
- * Fetches and parses the ECB historical file for exactly `wanted`'s currencies, from
- * `since` onward (see `parseEcbHistCsv`'s own doc for the exact boundary). No DB access.
- */
-const fetchEcbHistRows = async (
-  fetchImpl: FetchImpl,
-  wanted: ReadonlySet<string>,
-  since: string,
-): Promise<EcbRow[]> => {
-  const response = await fetchImpl(ECB_HIST_URL);
-  if (!response.ok) {
-    throw new Error(`ECB (historia) vastasi ${response.status} ${response.statusText}`);
-  }
-  return parseEcbHistCsv(await response.text(), wanted, { since });
-};
+/** An ISO date `days` before today, for bounding a request rather than for any stored value. */
+const isoDaysAgo = (days: number): string =>
+  new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 /**
  * Inserts every row, idempotently (`fx_rates`' primary key is `(date, currency)`, so a
@@ -398,7 +115,10 @@ export const refreshFxRates = async (
   if (held.length === 0) return { inserted: 0 };
   const wanted = new Set<string>(held);
 
-  const rows = await fetchEcbRows(fetchImpl, wanted);
+  // A short trailing window rather than the whole history: this runs nightly and only
+  // needs whatever ECB published since the last run. backfillFxRates owns reaching back
+  // to the ledger's own earliest date.
+  const rows = await fetchEcbRates(fetchImpl, wanted, isoDaysAgo(REFRESH_WINDOW_DAYS));
   const inserted = insertFxRates(db, rows);
   return { inserted };
 };
@@ -510,7 +230,7 @@ export const backfillFxRates = async (
   // date to compare and cannot return `null`.
   if (since === null) return { inserted: 0, currencies: 0 };
 
-  const rows = await fetchEcbHistRows(fetchImpl, wanted, since);
+  const rows = await fetchEcbRates(fetchImpl, wanted, since);
   const inserted = insertFxRates(db, rows);
   return { inserted, currencies: pending.length };
 };
@@ -552,13 +272,10 @@ export const ensureFxRate = async (
   if (existing !== null) return existing;
 
   try {
-    const dailyRows = await fetchEcbRows(fetchImpl, new Set([currency]));
-    insertFxRates(db, dailyRows);
-    const afterDaily = fxRateOn(db, currency, date);
-    if (afterDaily !== null) return afterDaily;
-
-    const histRows = await fetchEcbHistRows(fetchImpl, new Set([currency]), date);
-    insertFxRates(db, histRows);
+    // One ranged request covers both cases the old daily/historical two-step handled: a
+    // recent trade and a back-dated one differ only in how far back `date` reaches.
+    const rows = await fetchEcbRates(fetchImpl, new Set([currency]), date);
+    insertFxRates(db, rows);
     return fxRateOn(db, currency, date);
   } catch {
     return null;
