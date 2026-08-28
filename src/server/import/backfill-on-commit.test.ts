@@ -65,16 +65,10 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   currency: EUR,
   fxRateEur: 100_000_000,
   externalId: null,
-  accountRef: null,
   ...over,
 });
 
-const draftOf = (txns: DraftTxn[]): Draft => ({
-  txns,
-  problems: [],
-  unknownIsins: [],
-  accountRefs: [],
-});
+const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [] });
 
 const commitArgs = (accountId: number, draft: Draft) => ({
   userId: "u1",

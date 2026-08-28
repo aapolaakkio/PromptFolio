@@ -47,7 +47,6 @@ export const NORDNET: BrokerCsvConfig = {
     type: "Tapahtumatyyppi",
     instrumentName: "Arvopaperi",
     isin: "ISIN",
-    accountRef: "Salkku",
     quantity: "Määrä",
     unitPrice: "Kurssi",
     costBasis: "Hankinta-arvo",

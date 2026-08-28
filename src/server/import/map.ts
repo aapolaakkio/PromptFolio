@@ -16,11 +16,6 @@ export type DraftTxn = {
   readonly currency: Currency;
   readonly fxRateEur: number;
   readonly externalId: string | null;
-  /**
-   * The broker's own account number for this row, or null for an export that
-   * carries none. `commit.ts` files rows by it.
-   */
-  readonly accountRef: string | null;
 };
 
 /**
@@ -49,12 +44,6 @@ export type Draft = {
    * by `name` alone, and no ISIN is ever invented to fill the gap.
    */
   readonly unknownIsins: Array<{ isin: string | null; name: string; currency: Currency }>;
-  /**
-   * Every distinct broker account number the file mentions, with how many rows
-   * each covers. Empty for an export with no such column. More than one entry
-   * means the file spans several accounts.
-   */
-  readonly accountRefs: Array<{ ref: string; rows: number }>;
 };
 
 /**
@@ -185,7 +174,6 @@ export const mapRows = (
   // later row for the same holding in a different currency must not quietly
   // replace what the review screen was already going to show.
   const unknown = new Map<string, { isin: string | null; name: string; currency: Currency }>();
-  const refCounts = new Map<string, number>();
   // Normalised once per call, not per row: `knownNames`' own keys are
   // uppercased here so the lookup below is case-insensitive regardless of
   // how the caller cased them, without re-scanning the map on every row.
@@ -276,9 +264,6 @@ export const mapRows = (
       // that throw is caught below like every other per-row failure,
       // turning it into a `DraftProblem` rather than a silent EUR default
       // or a rejection of a real, valid, non-EUR/USD code such as "SEK".
-      const accountRef = cell(row, "accountRef").trim();
-      if (accountRef !== "") refCounts.set(accountRef, (refCounts.get(accountRef) ?? 0) + 1);
-
       const currencyText = cell(row, "currency").trim().toUpperCase() || "EUR";
       const currency = parseCurrency(currencyText);
 
@@ -337,7 +322,6 @@ export const mapRows = (
         currency,
         fxRateEur: currency === EUR ? 100_000_000 : 0, // marker; Task 12 resolves from fx_rates at commit
         externalId: cell(row, "externalId").trim() || null,
-        accountRef: accountRef === "" ? null : accountRef,
       });
     } catch (cause) {
       problems.push({
@@ -354,8 +338,5 @@ export const mapRows = (
     txns,
     problems: merged,
     unknownIsins: [...unknown.values()],
-    accountRefs: [...refCounts]
-      .map(([ref, rows]) => ({ ref, rows }))
-      .sort((a, b) => (a.ref < b.ref ? -1 : 1)),
   };
 };

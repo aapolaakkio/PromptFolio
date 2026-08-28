@@ -1,7 +1,7 @@
 import { and, eq, gt, sql } from "drizzle-orm";
 import { EUR, type Currency } from "../../core/money";
 import type { getDb } from "../db";
-import { accounts, imports, transactions } from "../db/schema";
+import { imports, transactions } from "../db/schema";
 import { HttpError } from "../errors";
 import { ensureFxRate, fxRateOn } from "../fx";
 import type { FetchImpl } from "../prices/types";
@@ -219,49 +219,6 @@ export const commitDraft = async (
   let skipped = 0;
   let importId = 0;
 
-  /**
-   * Where each row is filed. A broker's export can cover several accounts -- an
-   * arvo-osuustili and an osakesäästötili sit in one Nordnet file, and are
-   * separate accounts with different tax treatment -- so filing them all under
-   * the account picked on the import screen merges two portfolios into one, and
-   * every per-account figure downstream is then wrong: a reconciliation
-   * compares against one account, and a broker reports its return per account.
-   *
-   * A row's account is matched by the broker's own number appearing in an
-   * account's name, and an account is created for a number that matches none.
-   * The number lives in the name because that is the only place the schema
-   * offers; naming it explicitly is better than a hidden mapping the user
-   * cannot see or correct.
-   */
-  const accountFor = (tx: TxDb, ref: string | null): number => {
-    if (ref === null) return args.accountId;
-
-    const owned = tx
-      .select({
-        id: accounts.id,
-        name: accounts.name,
-        broker: accounts.broker,
-        baseCurrency: accounts.baseCurrency,
-      })
-      .from(accounts)
-      .where(eq(accounts.userId, args.userId))
-      .all();
-    const match = owned.find((account) => account.name.includes(ref));
-    if (match) return match.id;
-
-    const template = owned.find((account) => account.id === args.accountId);
-    return tx
-      .insert(accounts)
-      .values({
-        userId: args.userId,
-        name: `${template?.name ?? "Tili"} ${ref}`,
-        broker: template?.broker ?? "other",
-        baseCurrency: template?.baseCurrency ?? EUR,
-      })
-      .returning()
-      .get().id;
-  };
-
   db.transaction((tx) => {
     const created = tx
       .insert(imports)
@@ -277,17 +234,8 @@ export const commitDraft = async (
       .get();
     importId = created.id;
 
-    // Resolved once per distinct number rather than per row: a 342-row export
-    // covering two accounts would otherwise re-query (and possibly re-create)
-    // on every single row.
-    const byRef = new Map<string | null, number>();
     for (const row of draft.txns) {
-      let accountId = byRef.get(row.accountRef);
-      if (accountId === undefined) {
-        accountId = accountFor(tx, row.accountRef);
-        byRef.set(row.accountRef, accountId);
-      }
-      if (insertRow(tx, accountId, importId, row) === "inserted") inserted++;
+      if (insertRow(tx, args.accountId, importId, row) === "inserted") inserted++;
       else skipped++;
     }
 
