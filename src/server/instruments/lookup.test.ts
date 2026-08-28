@@ -4,62 +4,124 @@ import { parseCurrency } from "../../core/money";
 import { lookupInstrument } from "./lookup";
 import { figiLookup } from "./openfigi";
 import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug";
+import { candidateSymbols } from "./venues";
+
+const EUR = parseCurrency("EUR");
+const USD = parseCurrency("USD");
 
 const fixture = (name: string): Promise<string> =>
   Bun.file(new URL(`./fixtures/${name}`, import.meta.url)).text();
 
 /**
- * A fetch stub keyed by substring of the requested URL. Anything not listed
- * throws, so a test that reaches an unexpected endpoint fails loudly rather
- * than silently returning undefined -- and no test here touches the network
- * (test-network-guard.ts enforces that globally).
+ * A fetch stub keyed by substring of the requested URL, longest key first so
+ * a per-symbol chart route wins over a generic one. Anything unmatched throws,
+ * so a test that reaches an unexpected endpoint fails loudly instead of
+ * silently resolving; no test here touches the network (test-network-guard.ts
+ * enforces that globally).
  */
-const stubFetch = (routes: Record<string, { body: string; status?: number }>): typeof fetch =>
+const stubFetch = (routes: Record<string, { body: string; status?: number }>): typeof fetch => {
+  const ordered = Object.entries(routes).sort(([a], [b]) => b.length - a.length);
   // SAFETY: every call site below passes only a URL and reads only the
   // Response, so this single-argument function covers the whole of fetch as
   // this codebase uses it; the assertion exists because fetch's own type
   // cannot be satisfied structurally without restating its overloads.
-  (async (input: RequestInfo | URL) => {
+  return (async (input: RequestInfo | URL) => {
     const url = String(input instanceof Request ? input.url : input);
-    for (const [needle, response] of Object.entries(routes)) {
+    for (const [needle, response] of ordered) {
       if (url.includes(needle)) {
         return new Response(response.body, { status: response.status ?? 200 });
       }
     }
     throw new Error(`odottamaton pyyntö: ${url}`);
   }) as typeof fetch;
+};
+
+const chart = (currency: string) => ({
+  body: JSON.stringify({ chart: { result: [{ meta: { currency } }] } }),
+});
+
+const figiBody = (
+  name: string,
+  securityType: string,
+  venues: Array<{ ticker: string; exchCode: string }> = [],
+): string =>
+  JSON.stringify([
+    { data: [{ name, securityType, ...venues[0] }, ...venues.slice(1).map((v) => ({ ...v }))] },
+  ]);
 
 describe("figiLookup", () => {
-  test("resolves a listed share to its kind and registry name", async () => {
-    const body = await fixture("figi-nokia.json");
-    expect(await figiLookup("FI0009000681", stubFetch({ openfigi: { body } }))).toEqual({
-      name: "NOKIA OYJ",
-      kind: "stock",
-    });
+  test("resolves a listed share to its kind, name and venues", async () => {
+    const result = await figiLookup(
+      "FI0009000681",
+      stubFetch({ openfigi: { body: await fixture("figi-nokia.json") } }),
+    );
+    expect(result?.kind).toBe("stock");
+    expect(result?.name).toBe("NOKIA OYJ");
+    expect(result?.venues.some((v) => v.exchCode === "FH" && v.ticker === "NOKIA")).toBe(true);
   });
 
   test("resolves a Finnish non-listed fund", async () => {
-    const body = await fixture("figi-op-maailma.json");
-    expect(await figiLookup("FI4000261128", stubFetch({ openfigi: { body } }))).toEqual({
-      name: "OP-WORLD INDEX FUND-A EUR",
-      kind: "fund",
-    });
+    const result = await figiLookup(
+      "FI4000261128",
+      stubFetch({ openfigi: { body: await fixture("figi-op-maailma.json") } }),
+    );
+    expect(result?.kind).toBe("fund");
+    expect(result?.name).toBe("OP-WORLD INDEX FUND-A EUR");
   });
 
   test("returns null for a well-formed ISIN the registry does not know", async () => {
-    const body = await fixture("figi-unknown.json");
-    expect(await figiLookup("FI0000000003", stubFetch({ openfigi: { body } }))).toBeNull();
+    expect(
+      await figiLookup(
+        "FI0000000003",
+        stubFetch({ openfigi: { body: await fixture("figi-unknown.json") } }),
+      ),
+    ).toBeNull();
   });
 
   test("returns null for a malformed ISIN rather than throwing", async () => {
-    const body = await fixture("figi-invalid.json");
-    expect(await figiLookup("XX0000000000", stubFetch({ openfigi: { body } }))).toBeNull();
+    expect(
+      await figiLookup(
+        "XX0000000000",
+        stubFetch({ openfigi: { body: await fixture("figi-invalid.json") } }),
+      ),
+    ).toBeNull();
   });
 
-  test("returns null on a non-OK response", async () => {
+  test("returns null when the registry is unavailable", async () => {
     expect(
       await figiLookup("FI0009000681", stubFetch({ openfigi: { body: "", status: 503 } })),
     ).toBeNull();
+  });
+});
+
+describe("candidateSymbols", () => {
+  test("puts Yahoo's own hits first, then one symbol per known venue", () => {
+    expect(
+      candidateSymbols(
+        ["IWDA.L"],
+        [
+          { ticker: "IWDA", exchCode: "NA" },
+          { ticker: "EUNL", exchCode: "GR" },
+        ],
+      ),
+    ).toEqual(["IWDA.L", "IWDA.AS", "EUNL.DE"]);
+  });
+
+  test("skips venues with no Yahoo suffix and never repeats a symbol", () => {
+    expect(
+      candidateSymbols(
+        ["IWDA.AS"],
+        [
+          { ticker: "IWDA", exchCode: "NA" },
+          { ticker: "IWDA", exchCode: "XJ" },
+        ],
+      ),
+    ).toEqual(["IWDA.AS"]);
+  });
+
+  test("caps the probe list so a 100-venue security stays one quick registration", () => {
+    const venues = Array.from({ length: 40 }, (_, i) => ({ ticker: `T${i}`, exchCode: "GR" }));
+    expect(candidateSymbols([], venues, 3)).toHaveLength(3);
   });
 });
 
@@ -79,30 +141,42 @@ describe("opSlugFor", () => {
 
 describe("resolveOpSlug", () => {
   test("confirms a guessed slug against the page's own ISIN", async () => {
-    const body = await fixture("op-fund-maailma.html");
     expect(
-      await resolveOpSlug("OP-MAAILMA INDEKSI A", "FI4000261128", stubFetch({ "op.fi": { body } })),
+      await resolveOpSlug(
+        "OP-MAAILMA INDEKSI A",
+        "FI4000261128",
+        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
+      ),
     ).toEqual({ slug: "op-maailma-indeksi", isin: "FI4000261128", name: "OP-MAAILMA INDEKSI A" });
   });
 
   test("refuses a page whose ISIN is not the one asked for", async () => {
-    const body = await fixture("op-fund-maailma.html");
     expect(
-      await resolveOpSlug("OP-MAAILMA INDEKSI A", "FI4000315692", stubFetch({ "op.fi": { body } })),
+      await resolveOpSlug(
+        "OP-MAAILMA INDEKSI A",
+        "FI4000315692",
+        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
+      ),
     ).toBeNull();
   });
 
   test("harvests the ISIN when the import carried none, proving the match by name", async () => {
-    const body = await fixture("op-fund-maailma.html");
     expect(
-      await resolveOpSlug("OP-MAAILMA INDEKSI A", null, stubFetch({ "op.fi": { body } })),
+      await resolveOpSlug(
+        "OP-MAAILMA INDEKSI A",
+        null,
+        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
+      ),
     ).toEqual({ slug: "op-maailma-indeksi", isin: "FI4000261128", name: "OP-MAAILMA INDEKSI A" });
   });
 
   test("refuses a page whose title is a different fund", async () => {
-    const body = await fixture("op-fund-maailma.html");
     expect(
-      await resolveOpSlug("OP-Suomi Indeksi", null, stubFetch({ "op.fi": { body } })),
+      await resolveOpSlug(
+        "OP-Suomi Indeksi",
+        null,
+        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
+      ),
     ).toBeNull();
   });
 
@@ -114,16 +188,15 @@ describe("resolveOpSlug", () => {
 });
 
 describe("lookupInstrument", () => {
-  test("a listed share resolves to a Yahoo ticker and its listing currency", async () => {
+  test("a listed share resolves to its home listing", async () => {
     const result = await lookupInstrument(
       "FI0009000681",
       "NOKIA",
+      EUR,
       stubFetch({
         openfigi: { body: await fixture("figi-nokia.json") },
         "finance/search": { body: await fixture("yahoo-search-nokia.json") },
-        "finance/chart": {
-          body: JSON.stringify({ chart: { result: [{ meta: { currency: "EUR" } }] } }),
-        },
+        "chart/NOKIA.HE": chart("EUR"),
       }),
     );
     expect(result).toEqual({
@@ -132,55 +205,99 @@ describe("lookupInstrument", () => {
       priceSource: "yahoo",
       sourceKey: "NOKIA.HE",
       isin: "FI0009000681",
-      listingCurrency: parseCurrency("EUR"),
+      listingCurrency: EUR,
     });
   });
 
-  test("an ETF's listing currency is reported even when it differs from the holding's", async () => {
+  test("an ETF padded with an ISIN placeholder quote still resolves", async () => {
+    const result = await lookupInstrument(
+      "IE0002Y8CX98",
+      "WISDOMTREE EUROPE DEFENCE",
+      EUR,
+      stubFetch({
+        openfigi: { body: figiBody("WT EUROPE DEFENCE UCITS ETF", "ETP") },
+        "finance/search": { body: await fixture("yahoo-search-eudf.json") },
+        "chart/EUDF.DE": chart("EUR"),
+      }),
+    );
+    expect(result.sourceKey).toBe("EUDF.DE");
+    expect(result.kind).toBe("etf");
+  });
+
+  test("picks the listing quoted in the holding's currency, not the first one found", async () => {
+    const routes = {
+      openfigi: {
+        body: figiBody("ISHARES CORE MSCI WORLD", "ETP", [
+          { ticker: "IWDA", exchCode: "NA" },
+          { ticker: "EUNL", exchCode: "GR" },
+        ]),
+      },
+      "finance/search": { body: await fixture("yahoo-search-iwda.json") },
+      "chart/IWDA.L": chart("USD"),
+      "chart/IWDA.AS": chart("EUR"),
+    };
+
+    const eurHolding = await lookupInstrument("IE00B4L5Y983", "IWDA", EUR, stubFetch(routes));
+    expect(eurHolding.sourceKey).toBe("IWDA.AS");
+    expect(eurHolding.listingCurrency).toBe(EUR);
+
+    const usdHolding = await lookupInstrument("IE00B4L5Y983", "IWDA", USD, stubFetch(routes));
+    expect(usdHolding.sourceKey).toBe("IWDA.L");
+    expect(usdHolding.listingCurrency).toBe(USD);
+  });
+
+  test("offers the only listing there is, and reports its currency, when none matches", async () => {
     const result = await lookupInstrument(
       "IE00B4L5Y983",
       "IWDA",
+      parseCurrency("SEK"),
       stubFetch({
-        openfigi: {
-          body: JSON.stringify([
-            { data: [{ name: "ISHARES CORE MSCI WORLD", securityType: "ETP" }] },
-          ]),
-        },
+        openfigi: { body: figiBody("ISHARES CORE MSCI WORLD", "ETP") },
         "finance/search": { body: await fixture("yahoo-search-iwda.json") },
-        "finance/chart": {
-          body: JSON.stringify({ chart: { result: [{ meta: { currency: "USD" } }] } }),
-        },
+        "chart/IWDA.L": chart("USD"),
+      }),
+    );
+    expect(result.sourceKey).toBe("IWDA.L");
+    expect(result.listingCurrency).toBe(USD);
+  });
+
+  test("falls back to Yahoo's own quoteType when OpenFIGI answers nothing", async () => {
+    const result = await lookupInstrument(
+      "IE0002Y8CX98",
+      "WISDOMTREE EUROPE DEFENCE",
+      EUR,
+      stubFetch({
+        openfigi: { body: "", status: 429 },
+        "finance/search": { body: await fixture("yahoo-search-eudf.json") },
+        "chart/EUDF.DE": chart("EUR"),
       }),
     );
     expect(result.kind).toBe("etf");
-    expect(result.sourceKey).toBe("IWDA.L");
-    expect(result.listingCurrency).toBe(parseCurrency("USD"));
+    expect(result.sourceKey).toBe("EUDF.DE");
+    expect(result.name).toBeNull();
   });
 
-  test("a fund Yahoo has no match for resolves through OP's own page", async () => {
+  test("a fund Yahoo can price is priced from Yahoo, not from a bank's own page", async () => {
     const result = await lookupInstrument(
       "FI4000261128",
       "OP-MAAILMA INDEKSI A",
+      EUR,
       stubFetch({
         openfigi: { body: await fixture("figi-op-maailma.json") },
-        "finance/search": { body: await fixture("yahoo-search-none.json") },
-        "op.fi": { body: await fixture("op-fund-maailma.html") },
+        "finance/search": { body: JSON.stringify({ quotes: [{ symbol: "0P0001BP5K.F" }] }) },
+        "chart/0P0001BP5K.F": chart("EUR"),
       }),
     );
-    expect(result).toEqual({
-      kind: "fund",
-      name: "OP-WORLD INDEX FUND-A EUR",
-      priceSource: "op_fund",
-      sourceKey: "op-maailma-indeksi",
-      isin: "FI4000261128",
-      listingCurrency: null,
-    });
+    expect(result.priceSource).toBe("yahoo");
+    expect(result.sourceKey).toBe("0P0001BP5K.F");
+    expect(result.kind).toBe("fund");
   });
 
   test("an OP paste row with no ISIN at all still resolves, ISIN included", async () => {
     const result = await lookupInstrument(
       null,
       "OP-MAAILMA INDEKSI A",
+      EUR,
       stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
     );
     expect(result.priceSource).toBe("op_fund");
@@ -188,10 +305,26 @@ describe("lookupInstrument", () => {
     expect(result.isin).toBe("FI4000261128");
   });
 
+  test("a fund with no Yahoo listing falls back to OP's own page", async () => {
+    const result = await lookupInstrument(
+      "FI4000261128",
+      "OP-MAAILMA INDEKSI A",
+      EUR,
+      stubFetch({
+        openfigi: { body: await fixture("figi-op-maailma.json") },
+        "finance/search": { body: await fixture("yahoo-search-none.json") },
+        "op.fi": { body: await fixture("op-fund-maailma.html") },
+      }),
+    );
+    expect(result.priceSource).toBe("op_fund");
+    expect(result.sourceKey).toBe("op-maailma-indeksi");
+  });
+
   test("resolves nothing rather than guessing when every source comes up empty", async () => {
     const result = await lookupInstrument(
       "FI0000000003",
       "Tuntematon",
+      EUR,
       stubFetch({
         openfigi: { body: await fixture("figi-unknown.json") },
         "finance/search": { body: await fixture("yahoo-search-none.json") },
@@ -208,30 +341,18 @@ describe("lookupInstrument", () => {
     });
   });
 
-  test("a non-fund that Yahoo cannot price is reported as its kind, with no source guessed", async () => {
+  test("a share Yahoo cannot price is reported as its kind, with no source guessed", async () => {
     const result = await lookupInstrument(
       "FI0009000681",
       "NOKIA",
+      EUR,
       stubFetch({
-        openfigi: { body: await fixture("figi-nokia.json") },
+        openfigi: { body: figiBody("NOKIA OYJ", "Common Stock") },
         "finance/search": { body: await fixture("yahoo-search-none.json") },
       }),
     );
     expect(result.kind).toBe("stock");
     expect(result.priceSource).toBeNull();
     expect(result.sourceKey).toBeNull();
-  });
-
-  test("a network failure in one leg does not fail the lookup", async () => {
-    const result = await lookupInstrument(
-      "FI4000261128",
-      "OP-MAAILMA INDEKSI A",
-      stubFetch({
-        "finance/search": { body: await fixture("yahoo-search-none.json") },
-        "op.fi": { body: await fixture("op-fund-maailma.html") },
-      }),
-    );
-    expect(result.priceSource).toBe("op_fund");
-    expect(result.name).toBeNull();
   });
 });

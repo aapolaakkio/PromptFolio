@@ -36,6 +36,8 @@ const MappingResponse = z
               name: z.string().optional(),
               securityType: z.string().optional(),
               securityType2: z.string().optional(),
+              ticker: z.string().optional(),
+              exchCode: z.string().optional(),
             }),
           )
           .min(1),
@@ -64,7 +66,17 @@ const KIND_BY_SECURITY_TYPE = new Map<string, InstrumentKind>([
   ["Mutual Fund", "fund"],
 ]);
 
-export type FigiResult = { readonly name: string | null; readonly kind: InstrumentKind };
+export type FigiResult = {
+  readonly name: string | null;
+  readonly kind: InstrumentKind;
+  /**
+   * One entry per venue the registry lists the security on, deduplicated by
+   * exchange. A security can have 100+ of these (IWDA returns 180 rows); they
+   * are what lets a caller find the listing in the currency the holding is
+   * actually denominated in.
+   */
+  readonly venues: readonly { readonly ticker: string; readonly exchCode: string }[];
+};
 
 /**
  * Resolves an ISIN to its registry name and kind, or `null` when the registry
@@ -91,5 +103,16 @@ export const figiLookup = async (
   const kind =
     row.securityType === undefined ? undefined : KIND_BY_SECURITY_TYPE.get(row.securityType);
   if (kind === undefined) return null;
-  return { name: row.name ?? null, kind };
+
+  const byExchange = new Map<string, string>();
+  for (const candidate of first.data) {
+    if (candidate.ticker === undefined || candidate.exchCode === undefined) continue;
+    if (!byExchange.has(candidate.exchCode)) byExchange.set(candidate.exchCode, candidate.ticker);
+  }
+
+  return {
+    name: row.name ?? null,
+    kind,
+    venues: [...byExchange].map(([exchCode, ticker]) => ({ exchCode, ticker })),
+  };
 };

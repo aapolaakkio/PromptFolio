@@ -36,6 +36,12 @@ const LookupQuery = z.object({
     .regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen")
     .nullable(),
   name: z.string().max(200),
+  /**
+   * The holding's own currency, from the broker rows it appeared in. It
+   * decides which of a security's listings is the right price source, so it
+   * is optional only for a caller that genuinely does not know it.
+   */
+  currency: currencyField.nullable(),
 });
 
 export const instrumentRoutes = {
@@ -53,8 +59,9 @@ export const instrumentRoutes = {
       const query = LookupQuery.parse({
         isin: params.get("isin"),
         name: params.get("name") ?? "",
+        currency: params.get("currency"),
       });
-      return json(await lookupInstrument(query.isin, query.name));
+      return json(await lookupInstrument(query.isin, query.name, query.currency));
     }),
   },
   "/api/instruments": {

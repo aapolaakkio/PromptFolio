@@ -92,7 +92,9 @@ export const UnknownInstrumentForm = ({
    */
   useEffect(() => {
     let cancelled = false;
-    const query = new URLSearchParams({ name });
+    // rowCurrency decides which of a security's listings is the right price
+    // source, so it is part of the lookup rather than only a form default.
+    const query = new URLSearchParams({ name, currency: rowCurrency });
     if (isin !== null) query.set("isin", isin);
 
     apiGet(`/api/instruments/lookup?${query.toString()}`, LookupSchema)
@@ -115,7 +117,7 @@ export const UnknownInstrumentForm = ({
     return () => {
       cancelled = true;
     };
-  }, [isin, name]);
+  }, [isin, name, rowCurrency]);
 
   /**
    * Set when the registry's matched listing trades in a different currency
@@ -177,8 +179,9 @@ export const UnknownInstrumentForm = ({
       )}
       {listingMismatch !== null && (
         <p role="alert" className="text-xs text-loss">
-          Löydetty noteeraus on {listingMismatch}, mutta tapahtumat ovat {currency.toUpperCase()}.
-          Lähdetunnus voi osoittaa väärään pörssiin — tarkista ennen tallennusta.
+          Tästä arvopaperista ei löytynyt noteerausta valuutassa {currency.toUpperCase()} —
+          esitäytetty lähde on {listingMismatch}. Hinnat tulevat silloin eri pörssistä kuin omistus;
+          tarkista ennen tallennusta.
         </p>
       )}
       {isin !== null ? (

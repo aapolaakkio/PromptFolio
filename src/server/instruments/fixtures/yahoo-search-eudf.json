@@ -1,0 +1,46 @@
+{
+  "explains": [],
+  "count": 2,
+  "quotes": [
+    {
+      "exchange": "STU",
+      "shortname": "WisdomTree Europe Defence UCITS",
+      "quoteType": "MUTUALFUND",
+      "symbol": "IE0002Y8CX98.SG",
+      "index": "quotes",
+      "score": 20003.0,
+      "typeDisp": "Fund",
+      "exchDisp": "Stuttgart",
+      "isYahooFinance": true
+    },
+    {
+      "exchange": "GER",
+      "shortname": "WisdomTree-Eur.Defence ETF    R",
+      "quoteType": "ETF",
+      "symbol": "EUDF.DE",
+      "index": "quotes",
+      "score": 20001.0,
+      "typeDisp": "ETF",
+      "longname": "WisdomTree Europe Defence UCITS ETF - EUR Acc",
+      "exchDisp": "XETRA",
+      "isYahooFinance": true
+    }
+  ],
+  "news": [],
+  "nav": [],
+  "lists": [],
+  "researchReports": [],
+  "screenerFieldResults": [],
+  "totalTime": 19,
+  "timeTakenForQuotes": 412,
+  "timeTakenForNews": 0,
+  "timeTakenForAlgowatchlist": 400,
+  "timeTakenForPredefinedScreener": 400,
+  "timeTakenForCrunchbase": 0,
+  "timeTakenForNav": 400,
+  "timeTakenForResearchReports": 0,
+  "timeTakenForQuestions": 0,
+  "timeTakenForScreenerField": 0,
+  "timeTakenForCulturalAssets": 0,
+  "timeTakenForSearchLists": 0
+}

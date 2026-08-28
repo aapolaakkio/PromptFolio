@@ -483,6 +483,60 @@ rather than failing whole screens:
 See `.superpowers/sdd/2026-08-27-promptfolio-phase-1/fix-negative-positions-report.md` for the full
 implementation report.
 
+## 10c. Amendment — 2026-08-28, instrument resolution and cash holdings
+
+### C1. Unknown instruments are resolved from public registries, not typed
+
+§5.3 had the user supply an unregistered instrument's kind, currency, price source and source key
+by hand. Three of those are knowable, and are now looked up (`src/server/instruments/`, exposed as
+`GET /api/instruments/lookup`):
+
+- **OpenFIGI** (`POST https://api.openfigi.com/v3/mapping`, free, no key) answers *what* the
+  security is — its `securityType` maps to `instruments.kind` — and lists every venue it trades on.
+  Its coverage includes Finnish non-listed funds.
+- **Yahoo's search** answers *what its price is*, giving the symbol the price fetcher needs. Its
+  coverage also includes Finnish non-listed funds, under synthetic `0P...` symbols, roughly a day
+  behind the fund provider's own page. Verified against four real OP funds.
+- **The holding's own currency decides which listing is correct.** One ISIN trades on several
+  venues in different currencies (one widely held ETF is USD in London and EUR in Amsterdam), so candidate
+  symbols are built from the venue list and probed until one is quoted in the currency of the rows
+  the holding actually appeared in. The currency itself is never taken from a registry — it comes
+  from the broker's own export, which is the only authority on what was bought.
+
+Everything resolved is pre-filled into the form and stays editable; the user confirms it. When no
+listing in the holding's currency exists, the closest one is offered *and* the mismatch stated,
+rather than an error and an empty form.
+
+For OP's paste import, which carries no ISIN column at all (A3), the fund's op.fi page is found by
+slugifying its name and accepted only when the page's own ISIN or title proves it is the right
+fund — so the ISIN is discovered rather than typed. A wrong guess yields the manual form, never an
+instrument pointed at another fund's NAV.
+
+**Consequence for the Finnish bank scrapers (§6).** Since Yahoo covers OP's funds, `op_fund` is now
+a fallback rather than the primary path, and `spankki_fund` / `danske_fund` — never implemented —
+are unlikely to be needed at all. They stay in the `priceSource` enum and the manual dropdown; no
+further scraper work is planned unless a holding turns up that Yahoo genuinely cannot price.
+
+### C2. Cash holdings — planned, not yet built
+
+The ledger already tracks cash movements (`DEPOSIT`, `WITHDRAWAL`, `core/ledger.ts`'s `cashAt`), but
+cash is deliberately excluded from portfolio value and from the returns in §7, and there is no way
+to hold cash as a *position* — a savings balance, a currency account, an unspent deposit sitting at
+a broker.
+
+The user wants this supported. Requirements, to be designed properly in a later phase:
+
+- Cash as a first-class holding, per account and per currency, valued at face value with FX applied
+  the same way every other non-EUR holding is (§4.2).
+- A decision, made explicitly rather than by default, on whether cash counts toward total portfolio
+  value, allocation percentages, and the TWR/MWR figures — each of which changes what the headline
+  numbers mean. §7's current answer ("value is positions × price × FX, cash excluded") is what this
+  amendment puts up for revision.
+- Interest as an income type alongside dividends, for both returns and the phase 4 tax reporting.
+
+The `instruments.kind` enum already carries a `"cash"` member, unused today; whether cash holdings
+reuse it or get their own table is a design question for that phase, not a settled decision.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
