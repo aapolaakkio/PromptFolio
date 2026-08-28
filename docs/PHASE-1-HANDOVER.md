@@ -1,106 +1,130 @@
 # PromptFolio Phase 1 — handover
 
-Written 2026-08-28, at the end of the build. Branch `feat/phase-1`, 50 commits,
-387 tests passing. Nothing is merged to `master`; `master` is untouched.
+Written 2026-08-28, revised the same day after the owner imported real data from
+both brokers. Branch `feat/phase-1`, 75 commits, 508 tests passing. Nothing is
+merged to `master`; `master` is untouched.
 
 ## What works
 
-You can run it, log in, import from both brokers, and see holdings, growth and
-allocation. `docker compose up` from a clean volume produces a working instance —
-this was actually run, not just written.
+Run it, create the first account in the browser, import from both brokers, and see
+holdings, growth, allocation and returns. `docker compose up` from a clean volume
+produces a working instance — this was actually run, not just written.
 
-**Creating the first account no longer needs `curl` or `ALLOW_SIGNUP`.** The login
-page detects an instance with no account yet and shows a "create your account"
-form in its place; the server refuses a second use of that form regardless of
-what the UI shows, so it closes itself the moment the first account exists (see
-`src/server/api/setup.ts`, and README's "First run" section for the walkthrough).
-`ALLOW_SIGNUP` still exists, unchanged, purely for adding accounts for other
-family members afterwards.
-
-- **Nordnet**: upload the transaction export (UTF-16, tab-delimited — its real format).
-- **OP**: copy the web transaction table and paste it. OP publishes no CSV.
-  Paste one page at a time, newest first; sales whose purchases are on a later
-  page show "cost unknown" until that page lands, then resolve themselves.
+- **Nordnet**: upload the transaction export (UTF-16LE, tab-delimited — its real
+  format, with five columns all named `Valuutta`).
+- **OP**: copy the web transaction table and paste it; OP publishes no CSV. Paste
+  one page at a time, newest first. Sales whose purchases are on a later page show
+  "cost unknown" until that page lands, then resolve themselves.
 - Re-importing the same input inserts nothing and reports every row as a duplicate.
 - Undo removes exactly one import, and refuses if a later sale depends on its units.
+- **Unknown instruments resolve themselves.** OpenFIGI supplies the security type,
+  Yahoo the ticker, and the listing is chosen by the holding's own currency, so a
+  EUR holding is not priced from a USD listing of the same ISIN. A holding with no
+  ISIN — OP's paste carries none — resolves by name instead.
+- **Corporate actions import.** Share swaps, fractional cash-outs, tender offers,
+  rights issues and reverse splits all book correctly, with cost basis following
+  the shares across a swap. Verified end to end against a real sequence: shares
+  held, more subscribed through a rights issue, consolidated, reverse split at
+  1:100, then sold — cost basis at the sale is the sum of both purchases.
 
 ## Read this before trusting a number
 
-**Your growth chart starts when you deploy, not in 2020.** Nordnet's price history
-needs a logged-in session; the public page carries only today's and yesterday's NAV.
-Your holdings and cost basis are complete from the transaction import — it is only
-the day-by-day value history that accumulates from first run. Yahoo-priced holdings
-could be backfilled, but nothing calls the backfill yet (see Known gaps).
+The single most useful thing done on this branch was comparing the app's figures
+against the brokers' own. **One broker's reported return matched to the cent**,
+which is real evidence its import and cost basis are right. Do the same check
+after any change that touches valuation.
 
-**Your Swedish fund has no value history yet.** Its NAV is quoted in SEK while its
-transactions are booked in EUR. Only ECB's current daily rate is ingested, so before
-the first refresh it is excluded from historical chart points and allocation slices —
-visibly now, with a staleness badge and a named explanation, not silently.
+**The two return figures answer different questions.** "Oma tuotto (XIRR)" is
+money-weighted — it accounts for when you added money. "Tuotto (aikapainotettu)"
+strips that out. They will not agree, and neither will agree with a broker's
+"tuotto-%", which is usually simple unrealised return on cost. OP's is; Nordnet's
+demonstrably is not.
 
-**Four Nordnet transaction types are deliberately not imported**: the `VAIHTO`
-share-swap pair and the two `DESIM` decimal-adjustment rows. Every way of booking
-them automatically corrupts something — cash, fees, or cost basis — so they surface
-for manual review instead. Two rows, once.
+**Contributions are inferred for OP.** OP's transaction view exports no deposits at
+all, so the money that funded its purchases never appears. Contributions are read
+from purchases for such an account, and the dashboard says so under the figure.
+Without that, a portfolio measured against only the deposits one broker reports
+came out at roughly three times its true annual rate.
+
+**A holding with no price yet is carried at cost.** An IPO subscription bought
+before its share listed, a delisted line, and a fund whose provider serves only a
+few years of history all produce this. Cost is honest for the first and flat-but-
+not-invented for the others. The day a holding stops being cost-valued is skipped
+by the time-weighted return, because that jump is a change of measuring stick.
 
 **Uninvested cash is not counted** in portfolio value, by design: it measures
-investments, not your bank balance. A deposit you have not spent shows as 0,00 €
-with an explanation rather than a bare zero.
+investments, not your bank balance. Whether it should be is spec 10c/C2, undecided.
 
 ## Known gaps
 
-All eight of the original gaps are closed except these, and neither can bite you today:
+Recorded in full in the spec's §10c amendments. The ones that can affect a number
+you look at:
 
-1. **`@tanstack/react-table` is installed and unused.** Your stack choice — keep it and
-   add grouping to the holdings table, or drop the package. Nothing depends on it.
-2. **A position transferred out in kind collapses the time-weighted return to −100 %.**
-   Unreachable through any import path: the only source would be Nordnet's `VAIHTO`
-   share-swap rows, which are deliberately unmapped and surface for manual review.
-   Only a hand-inserted transfer row could trigger it. Covered by a `KNOWN GAP` test.
-
-## Watch this on first run
-
-**The historical FX parser.** It was built against ECB's documented format, but the
-sandbox returned a truncated sample, so it could not be cross-checked against genuine
-2020s data. It now refuses loudly if the file does not reach the date it asked for,
-rather than storing one ancient row and declaring itself finished. After your first
-import of the Nordnet Sverige holding, check that `fx_rates` has SEK rows going back
-to that holding's earliest trade — not a single old row.
-
-**A holding with no price yet.** Set an S-Pankki or Danske fund to `manual`, or import
-a Nordnet fund before the evening refresh runs, and the return figure will read
-"tuntematon" rather than a number. That is correct: a return computed while part of the
-portfolio cannot be valued would be a confident guess. Enter a price or wait for the
-refresh and it resolves.
+1. **One Nordnet export can cover several accounts, and the importer merges them**
+   (10c/C4, C7). `Salkku` is in every row and is ignored, so an arvo-osuustili and
+   an osakesäästötili land as one portfolio. This is why that broker's own reported
+   return could not be reconciled against any figure the app computes. **Fix this first.**
+2. **Account type does not exist in the model** (10c/C7). An OST is taxed entirely
+   differently — untaxed inside, taxed on withdrawal on the gain proportion — and
+   phase 4 cannot be built correctly without it.
+3. **FX rates have no staleness bound.** `fxOn` takes the newest rate on or before
+   the valuation date, however old. That is correct for valuing a historical date
+   and is exactly what let a 2010 rate value a 2026 holding in silence (10c/C3).
+4. **`unit_price` is stored in the row's cash currency, not the instrument's.**
+   Nordnet quotes `Kurssi` in the instrument's currency and `Summa` in euros on the
+   same row, so the two disagree by the FX rate on any foreign-quoted holding. Cost
+   basis is derived from `amount` and is unaffected — a display defect, not a money one.
+5. **A US-listed holding can be mapped to its European line in EUR** when both exist.
+   Check the source key of anything whose first price starts later than its first trade.
+6. **Fund prices lag one to two days.** Yahoo's `0P…` series is the source; it had
+   nothing after 2026-08-26 when checked. Shares and German-listed ETFs are current.
+7. **`bun run dev` is broken** — Bun's hot-reload bundler mishandles a circular
+   import inside `@tanstack/react-router`. `bun run start` (production) works.
+8. **`@tanstack/react-table` is installed and unused.** Keep it or drop it.
 
 ## Things I got wrong, and what caught them
 
-The plan I wrote contained real bugs. Each was caught by an independent review of
-someone else's work, not by me:
+The plan I wrote contained real bugs; each was caught by an independent review, not
+by me. Rounding that truncated toward zero, a time-weighted return formula that was
+wrong twice, a leap-year divisor, double-counted fees, an aborting CSV row, a
+negation done by string formatting, a login page nested inside its own auth gate,
+and a build that tried to bundle the Tailwind plugin into the browser.
 
-- Floor rounding truncated toward zero instead of down (−2 where −3 was right).
-- The time-weighted return formula was wrong, then wrong again in a subtler way:
-  it compared a value series of invested positions against cash-account deposits.
-  Flat prices with three monthly deposits reported −25 %. Now 0.
-- A leap-year divisor that failed its own tolerance.
-- Fees counted twice — brokers report totals that already include commission.
-- One malformed CSV row aborted the whole import, contradicting my own spec.
-- A negation done by string formatting produced `"--500.00"`, silently blanking
-  your money-weighted return whenever a withdrawal fell in range.
-- The login page sat inside the gate that hides everything from logged-out
-  visitors, so the app could not be logged into at all.
-- The production build passed the Tailwind plugin as a CLI flag, which made Bun
-  try to bundle the plugin into the browser.
+The day the owner imported real data added a second, worse category — code that
+produced a confident, plausible number with nothing flagged:
 
-Four of my assumptions about your brokers were falsified by your real exports:
-the file encoding, the delimiter, the existence of an OP CSV, and the currencies
-(EUR and SEK, not EUR and USD). All are recorded in the spec at §10a.
+- **ECB's flat CSV files are dead.** Both still answer 200 with valid CSV;
+  `eurofxref.csv` stops in 2017 and `eurofxref-hist.csv` in 2010 with placeholder
+  cells, which invert into rates off by roughly a factor of five. A holding in that
+  currency read several times its real value. Now on ECB's SDMX API.
+- **Yahoo's name search is thrown by the legal-form word.** A name with "OYJ" appended does
+  not return the Helsinki listing at all; the bare name puts it first. The wrong
+  answer was the right company in the right currency on a thinner market.
+- **Price history is split-adjusted; share counts are not.** Pre-split shares valued
+  at post-split prices invented value that vanished on the split date and read as a
+  large one-day portfolio loss.
+- **The dashboard rejected its own payload** once an instrument had no ISIN, failing
+  the whole page with a generic "could not load" — server 200, browser zod throw.
+
+I also asserted two things without checking, and had to retract both: that the
+fabricated FX rows had been hand-inserted (they came from ECB's dead endpoint), and
+that a phantom jump was inflating the time-weighted return (`twr` already skipped
+those sub-periods). Both were stated confidently before reading the code or the
+source involved.
+
+Four of my original assumptions about the brokers were falsified by the real
+exports: the file encoding, the delimiter, the existence of an OP CSV, and the
+currencies (EUR, SEK and NOK — not EUR and USD). Recorded at §10a.
 
 ## Where things are
 
 - Spec: `docs/superpowers/specs/2026-08-27-portfolio-manager-design.md` — §10a holds
-  the amendments made from your real data.
+  the amendments made from the first real exports, §10b negative positions, and
+  §10c everything found on 2026-08-28 (instrument resolution, cash holdings, the FX
+  source, Nordnet and OP transaction types, ISIN-less instruments, account type).
 - Plan: `docs/superpowers/plans/2026-08-27-promptfolio-phase-1.md`.
-- Every ruling, deferral and review finding: `.superpowers/sdd/2026-08-27-promptfolio-phase-1/progress.md`
-  (gitignored — it is a working record, not source).
+- Every ruling, deferral and review finding:
+  `.superpowers/sdd/2026-08-27-promptfolio-phase-1/progress.md` (gitignored — a
+  working record, not source).
 - Phase 2 onward, unstarted: reconciliation, PDF import, screenshot/vision import,
   AI chat, the Finnish tax module, rebalancing.
