@@ -219,9 +219,43 @@ export const mapRows = (
     return BigInt(sign) * magnitude;
   };
 
+  /**
+   * A TRANSFER_IN brings units in with no cash movement, so its `Summa` is
+   * zero -- but `buildLots` reads an acquisition's cost from `-amount`, which
+   * would give the new holding a cost basis of zero and report its whole value
+   * as gain. The broker states the acquisition value riding across in its own
+   * column instead; it is negated here to match the ledger's convention that an
+   * acquisition's amount is the cash that left. Every other type keeps using
+   * the row's own amount cell.
+   */
+  const acquisitionAmount = (
+    row: RawRow,
+    type: string,
+    currency: Currency,
+    label: string,
+  ): bigint => {
+    if (type !== "TRANSFER_IN") return resolveAmount(cell(row, "amount"), currency, label);
+    const costText = cell(row, "costBasis").trim();
+    if (costText === "") return resolveAmount(cell(row, "amount"), currency, label);
+    const cost = parseMoney(costText, currency).minor;
+    return cost > 0n ? -cost : cost;
+  };
+
   for (const row of rows) {
     try {
       const label = cell(row, "type").trim().toLowerCase();
+      const ignored = config.ignoredTypes?.[label];
+      // Understood and deliberately not imported -- the other leg of this event
+      // already carries it. Reported rather than dropped in silence: a row that
+      // vanishes with no trace is indistinguishable from one the parser missed.
+      if (ignored !== undefined) {
+        problems.push({
+          line: row.line,
+          message: `${cell(row, "type")}: ${ignored}`,
+          raw: row.values,
+        });
+        continue;
+      }
       const type = config.typeMap[label];
       if (!type) throw new Error(`Tuntematon tapahtumatyyppi: ${cell(row, "type")}`);
 
@@ -282,7 +316,7 @@ export const mapRows = (
           priceText === "" || priceText === "0"
             ? null
             : Number(parseMoney(priceText, currency).minor),
-        amount: Number(resolveAmount(cell(row, "amount"), currency, label)),
+        amount: Number(acquisitionAmount(row, type, currency, label)),
         fee: feeText === "" ? 0 : Number(parseMoney(feeText, currency).minor),
         tax: 0,
         currency,

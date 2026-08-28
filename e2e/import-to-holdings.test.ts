@@ -285,6 +285,10 @@ const findHolding = (holdings: readonly HoldingView[], isin: string): HoldingVie
 // by hand.
 const WISDOMTREE = { isin: "IE0002Y8CX98", name: "WisdomTree Europe Defence UCITS ETF - EUR Acc" };
 const NORDNET_SUOMI = { isin: "SE0005993102", name: "Nordnet Suomi Indeksi" };
+// The two sides of the fixture's share swap. Both must exist before commit:
+// the swap is booked as a transfer pair, so each leg names a real instrument.
+const HANETF_OLD = { isin: "IE00BG5J1M21", name: "HANetf Old Theme UCITS ETF - Acc" };
+const HANETF_NEW = { isin: "IE00BJQTJ848", name: "HANetf New Theme UCITS ETF - Acc" };
 
 // The OP paste fixture (src/server/import/fixtures/op-web-paste-sample.txt)
 // carries no ISIN column at all -- every row resolves by instrument name.
@@ -299,12 +303,14 @@ test("Nordnet CSV: signs up, imports real broker rows, reports a degraded unmatc
   const session = await signUp(`e2e-nordnet-${crypto.randomUUID()}@example.com`);
   const accountId = await createAccount(session, { name: "Nordnet", broker: "nordnet" });
 
-  // Both fixture ISINs must be registered before commit will accept the
+  // Every fixture ISIN must be registered before commit will accept the
   // import at all (commitDraft refuses on any unknownIsins) -- see
   // imports.ts's commitDraft() and map.test.ts's own coverage of this
   // exact fixture for the row counts asserted below.
   await registerInstrument(session, { ...WISDOMTREE, kind: "etf", currency: "EUR" });
   await registerInstrument(session, { ...NORDNET_SUOMI, kind: "fund", currency: "EUR" });
+  await registerInstrument(session, { ...HANETF_OLD, kind: "etf", currency: "EUR" });
+  await registerInstrument(session, { ...HANETF_NEW, kind: "etf", currency: "EUR" });
 
   const nordnetBytes = await Bun.file(
     join(PROJECT_ROOT, "src/server/import/fixtures/nordnet-sample.csv"),
@@ -325,18 +331,18 @@ test("Nordnet CSV: signs up, imports real broker rows, reports a degraded unmatc
   // SAFETY: a 200 from POST /api/imports/preview (asserted above) always
   // returns { broker, filename, sha256, txns, problems, unknownIsins }.
   const previewBody = (await preview.json()) as { txns: unknown[]; unknownIsins: unknown[] };
-  // 13 data rows in the fixture; 4 (the VAIHTO merger pair and the two
-  // DESIM rows) are deliberately left unmapped by brokers.ts's typeMap, so
-  // 9 reach the draft as transactions -- see map.test.ts.
+  // 13 data rows in the fixture; one (the fractional adjustment's cash-only
+  // twin) is reported rather than booked -- see brokers.ts's ignoredTypes -- so
+  // 12 reach the draft as transactions.
   expect(previewBody.unknownIsins).toEqual([]);
-  expect(previewBody.txns).toHaveLength(9);
+  expect(previewBody.txns).toHaveLength(12);
 
   const commit = await session.call("/api/imports/commit", { method: "POST", body: buildForm() });
   expect(commit.status).toBe(201);
   // SAFETY: a 201 from POST /api/imports/commit (asserted above) always
   // returns { importId, inserted, skipped }.
   const committed = (await commit.json()) as { inserted: number; skipped: number };
-  expect(committed.inserted).toBe(9);
+  expect(committed.inserted).toBe(12);
   expect(committed.skipped).toBe(0);
 
   // Re-importing the exact same file for the same account must be a no-op:
@@ -352,7 +358,7 @@ test("Nordnet CSV: signs up, imports real broker rows, reports a degraded unmatc
   // SAFETY: see the first commit's SAFETY comment above; same shape.
   const recommitted = (await recommit.json()) as { inserted: number; skipped: number };
   expect(recommitted.inserted).toBe(0);
-  expect(recommitted.skipped).toBe(9);
+  expect(recommitted.skipped).toBe(12);
 
   const holdings = await getHoldings(session);
 

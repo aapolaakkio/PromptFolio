@@ -49,11 +49,21 @@ export const NORDNET: BrokerCsvConfig = {
     isin: "ISIN",
     quantity: "Määrä",
     unitPrice: "Kurssi",
+    costBasis: "Hankinta-arvo",
     fee: "Kokonaiskulut",
     amount: "Summa",
   },
   columnPositions: {
     currency: 13,
+  },
+  ignoredTypes: {
+    "desim. uloskirj. kät":
+      "Murto-osan lunastuksen käteispuoli; sama summa on jo DESIM KIRJAUS OTTO -rivillä.",
+    "lunastus ap kät.": "Lunastuksen käteispuoli; sama summa on jo LUNASTUS AP OTTO -rivillä.",
+    "ap otto":
+      "Merkintäsitoumuksen poisto. Parinsa (JÄTTÖ SIIRTO) kanssa nettovaikutus on nolla eikä rivillä ole ISIN-tunnusta.",
+    "jättö siirto":
+      "Merkintäsitoumuksen kirjaus. Parinsa (AP OTTO) kanssa nettovaikutus on nolla eikä rivillä ole ISIN-tunnusta.",
   },
   typeMap: {
     osto: "BUY",
@@ -79,6 +89,20 @@ export const NORDNET: BrokerCsvConfig = {
     // money-weighted return that it was money taken out and enjoyed. Phase 4's tax
     // reporting will want these rows specifically -- see the spec's 10c/C3.
     "pääomatulovero ost": "FEE",
+    // Both legs of a share swap (an ETF merger, or shares converting into a
+    // tender-offer line). The OTTO leg removes the old instrument's units; the
+    // JÄTTÖ leg brings the new instrument's units in and is the only row that
+    // states the acquisition value riding across (`Hankinta-arvo`), which is
+    // why `columns.costBasis` exists. Both legs share a trade date, so the
+    // portfolio's value does not jump on either side of the swap.
+    "vaihto ap-otto": "TRANSFER_OUT",
+    "vaihto ap-jättö": "TRANSFER_IN",
+    // The units-and-cash leg of a fractional-share cash-out and of a tender
+    // offer's settlement. Each states both the quantity disposed of and the
+    // cash received in `Summa`, so one row is the whole disposal; its "KÄT."
+    // twin repeats the same cash and is ignored below.
+    "desim kirjaus otto": "SELL",
+    "lunastus ap otto": "SELL",
     // "VAIHTO AP-OTTO"/"VAIHTO AP-JÄTTÖ" (a same-day ETF/fund merger: the
     // old ISIN's units removed, the new ISIN's units added, both legs at
     // `Summa: 0`) and "DESIM. ULOSKIRJ. KÄT"/"DESIM KIRJAUS OTTO" (Nordnet's

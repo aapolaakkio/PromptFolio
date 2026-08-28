@@ -9,15 +9,26 @@ import { lookupInstrument } from "../instruments/lookup";
 
 const { db } = getDb();
 
-const UpsertInstrument = z.object({
-  isin: z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen"),
-  ticker: z.string().min(1).max(20).nullable(),
-  name: z.string().min(1).max(200),
-  kind: z.enum(["stock", "etf", "fund", "cash"]),
-  currency: currencyField,
-  priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
-  sourceKey: z.string().min(1).max(200),
-});
+const UpsertInstrument = z
+  .object({
+    isin: z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen"),
+    ticker: z.string().min(1).max(20).nullable(),
+    name: z.string().min(1).max(200),
+    kind: z.enum(["stock", "etf", "fund", "cash"]),
+    currency: currencyField,
+    priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
+    /**
+     * Optional only for `manual`: a delisted share, or anything else no source
+     * can price, has no key to fetch it by. The ISIN stands in so the column
+     * keeps a stable, meaningful value rather than an empty string. Every
+     * fetching source still requires a real key.
+     */
+    sourceKey: z.string().max(200).optional(),
+  })
+  .refine((body) => body.priceSource === "manual" || (body.sourceKey ?? "") !== "", {
+    message: "Lähdetunnus vaaditaan, kun hintalähde hakee hinnat automaattisesti",
+    path: ["sourceKey"],
+  });
 
 // Instruments are shared reference data across the family instance (every
 // household member's transactions can reference the same Nokia share), so
@@ -67,7 +78,15 @@ export const instrumentRoutes = {
       const body = UpsertInstrument.parse(await request.json());
       const existing = db.select().from(instruments).where(eq(instruments.isin, body.isin)).get();
       if (existing) throw new HttpError(409, `ISIN ${body.isin} on jo lisätty`);
-      return json(db.insert(instruments).values(body).returning().get(), 201);
+      const sourceKey = body.sourceKey?.trim() || body.isin;
+      return json(
+        db
+          .insert(instruments)
+          .values({ ...body, sourceKey })
+          .returning()
+          .get(),
+        201,
+      );
     }),
   },
 };

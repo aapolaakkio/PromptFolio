@@ -342,10 +342,10 @@ describe("POST /api/imports/preview", () => {
       unknownIsins: Array<{ isin: string | null }>;
     };
     expect(body.broker).toBe("nordnet");
-    // 13 data rows in the fixture, 4 of them (the VAIHTO merger pair and
-    // the two DESIM rows) deliberately unmapped -- see brokers.ts -- so 9
-    // reach the draft as transactions.
-    expect(body.txns).toHaveLength(9);
+    // 13 data rows in the fixture, one of them (the fractional adjustment's
+    // cash-only twin) reported rather than booked -- see brokers.ts's
+    // ignoredTypes -- so 12 reach the draft as transactions.
+    expect(body.txns).toHaveLength(12);
     // No instrument is pre-registered for this fresh user, so every isin
     // among the mapped rows is unresolved; SE0005993102 (the MYYNTI row)
     // is one of them. VAIHTO's isins never reach unknown-instrument

@@ -131,10 +131,11 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
   const known = new Map([["IE0002Y8CX98", 7]]);
   const draft = mapRows(rows, NORDNET, known);
 
-  // 4 of the fixture's 13 rows are deliberately unmapped: the VAIHTO
-  // merger pair and the two DESIM rows -- see below and brokers.ts.
-  expect(draft.problems).toHaveLength(4);
-  expect(draft.txns).toHaveLength(9);
+  // One of the fixture's 13 rows is reported rather than booked: the
+  // fractional adjustment's cash-only twin, whose quantity and cash the other
+  // leg already carries -- see brokers.ts's ignoredTypes.
+  expect(draft.problems).toHaveLength(1);
+  expect(draft.txns).toHaveLength(12);
 
   const buy = draft.txns[0]!;
   expect(buy.type).toBe("BUY");
@@ -176,41 +177,35 @@ test("PÄÄOMIT YLIT.KORKO and LAINAKORKO both map to INTEREST", async () => {
   expect(draft.txns.filter((t) => t.type === "INTEREST")).toHaveLength(2);
 });
 
-// Review finding: an earlier version of this config mapped VAIHTO
-// AP-OTTO/AP-JÄTTÖ to TRANSFER_OUT/TRANSFER_IN with `amount: 0` (matching
-// the real `Summa`). That silently booked the merged-in holding at EUR 0
-// acquisition cost in core/costbasis.ts (which derives a TRANSFER_IN lot's
-// cost from `-amount`), so its entire eventual sale would be reported as
-// gain -- see brokers.ts's typeMap comment for the full reasoning on why
-// no field in DraftTxn can carry the real cost basis (Hankinta-arvo)
-// without a different corruption. Left unmapped instead, alongside DESIM.
-test("the VAIHTO merger pair is left unmapped and surfaces as problems, not booked at a wrong cost basis", async () => {
+test("the VAIHTO pair is booked as a transfer pair, with the acquisition value carried across", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
-  expect(draft.txns.some((t) => t.type === "TRANSFER_OUT" || t.type === "TRANSFER_IN")).toBe(false);
-  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "VAIHTO AP-OTTO")).toBe(true);
-  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "VAIHTO AP-JÄTTÖ")).toBe(true);
+  expect(draft.txns.some((t) => t.type === "TRANSFER_OUT")).toBe(true);
+  expect(draft.txns.some((t) => t.type === "TRANSFER_IN")).toBe(true);
+  // An acquisition's amount must never be positive -- costbasis.ts throws on
+  // one -- and a zero would price the merged-in holding at no cost at all.
+  const transferIn = draft.txns.find((t) => t.type === "TRANSFER_IN")!;
+  expect(transferIn.amount).toBeLessThan(0);
 });
 
-test("the two DESIM rows are left unmapped and surface as problems, not guesses", async () => {
+test("the DESIM pair books one disposal and reports its cash-only twin as skipped", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
-  expect(draft.problems).toHaveLength(4); // VAIHTO AP-OTTO, VAIHTO AP-JÄTTÖ, and the two DESIM rows
-  expect(draft.problems.every((p) => p.message.includes("Tuntematon tapahtumatyyppi"))).toBe(true);
   expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM. ULOSKIRJ. KÄT")).toBe(
     true,
   );
-  expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM KIRJAUS OTTO")).toBe(true);
+  expect(draft.problems.every((p) => p.message.includes("Tuntematon tapahtumatyyppi"))).toBe(false);
+  expect(draft.txns.some((t) => t.externalId === "5010")).toBe(true);
 });
 
 test("collects ISINs it has never seen instead of inventing instruments", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map([["IE0002Y8CX98", 7]]));
-  // Only the MYYNTI row's ISIN reaches unknown-instrument tracking at all:
-  // an unmapped type (VAIHTO, DESIM) throws at the typeMap lookup, before
-  // isin/name extraction ever runs -- see mapRows.
-  const isins = draft.unknownIsins.map((u) => u.isin).sort();
-  expect(isins).toEqual(["SE0005993102"]);
+  // Every mapped row's ISIN reaches unknown-instrument tracking, including the
+  // swap and fractional-adjustment rows now that those are booked rather than
+  // refused at the typeMap lookup.
+  const isins = draft.unknownIsins.map((u) => u.isin);
+  expect(isins).toContain("SE0005993102");
   expect(draft.txns.find((t) => t.isin === "SE0005993102")!.instrumentId).toBeNull();
 });
 
@@ -707,41 +702,110 @@ test("maps the labels a second Nordnet account introduced: dividend, equity-savi
   expect(draft.txns[3]!.amount).toBe(-1500);
 });
 
-test("refuses both legs of every paired securities event rather than booking one of them", () => {
-  const paired = [
-    "VAIHTO AP-OTTO",
-    "VAIHTO AP-JÄTTÖ",
-    "AP OTTO",
-    "JÄTTÖ SIIRTO",
-    "LUNASTUS AP OTTO",
-    "LUNASTUS AP KÄT.",
-    "DESIM. ULOSKIRJ. KÄT",
-    "DESIM KIRJAUS OTTO",
-  ];
+test("maps a share swap to a transfer pair, carrying the acquisition value across", () => {
   const csv = [
     NORDNET_HEADER,
-    ...paired.map((type, index) =>
-      nordnetRow({
-        id: String(index + 1),
-        date: "2026-06-15",
-        type,
-        name: "Jokin",
-        isin: "FI0009000681",
-        qty: "150",
-        price: "7,43",
+    nordnetRow({
+      id: "1",
+      date: "2019-10-04",
+      type: "VAIHTO AP-OTTO",
+      name: "Vanha ETF",
+      isin: "IE00BG5J1M21",
+      qty: "30",
+      price: "0",
+      amount: "0",
+    }),
+    (() => {
+      // `Hankinta-arvo` is column 16 (1-based), which nordnetRow leaves blank.
+      const cells = nordnetRow({
+        id: "2",
+        date: "2019-10-04",
+        type: "VAIHTO AP-JÄTTÖ",
+        name: "Uusi ETF",
+        isin: "IE00BJQTJ848",
+        qty: "12,5952",
         amount: "0",
-      }),
-    ),
+      }).split("\t");
+      cells[15] = "300,0000";
+      return cells.join("\t");
+    })(),
   ].join("\r\n");
 
   const draft = mapRows(
     parseCsv(nordnetBytes(csv), NORDNET).rows,
     NORDNET,
-    new Map([["FI0009000681", 1]]),
+    new Map([
+      ["IE00BG5J1M21", 1],
+      ["IE00BJQTJ848", 2],
+    ]),
   );
-  expect(draft.txns).toEqual([]);
-  expect(draft.problems).toHaveLength(paired.length);
-  for (const type of paired) {
-    expect(draft.problems.some((p) => p.message.includes(type))).toBe(true);
-  }
+  expect(draft.problems).toEqual([]);
+  expect(draft.txns.map((t) => t.type)).toEqual(["TRANSFER_OUT", "TRANSFER_IN"]);
+  expect(draft.txns[0]!.amount).toBe(0);
+  // Negative, matching the ledger's convention that an acquisition's amount is
+  // the cash that left -- buildLots reads the cost basis from `-amount`, so a
+  // zero here would report the whole holding as gain.
+  expect(draft.txns[1]!.amount).toBe(-32729);
+  expect(draft.txns[1]!.quantity).toBe(12_595_200);
+});
+
+test("books the leg that carries both quantity and cash, and reports its cash-only twin as skipped", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({
+      id: "1",
+      date: "2019-10-10",
+      type: "DESIM KIRJAUS OTTO",
+      name: "ETF",
+      isin: "IE00BJQTJ848",
+      qty: "0,5952",
+      price: "6,116",
+      amount: "3,64",
+    }),
+    nordnetRow({
+      id: "2",
+      date: "2019-10-10",
+      type: "DESIM. ULOSKIRJ. KÄT",
+      name: "ETF",
+      isin: "IE00BJQTJ848",
+      qty: "0,5952",
+      price: "6,116",
+      amount: "3,64",
+    }),
+    nordnetRow({
+      id: "3",
+      date: "2022-04-14",
+      type: "LUNASTUS AP OTTO",
+      name: "Lunastus",
+      isin: "FI4000233267",
+      qty: "15",
+      price: "2,1",
+      amount: "31,5",
+    }),
+    nordnetRow({
+      id: "4",
+      date: "2022-04-14",
+      type: "LUNASTUS AP KÄT.",
+      name: "Lunastus",
+      isin: "FI4000233267",
+      qty: "15",
+      price: "2,1",
+      amount: "31,5",
+    }),
+  ].join("\r\n");
+
+  const draft = mapRows(
+    parseCsv(nordnetBytes(csv), NORDNET).rows,
+    NORDNET,
+    new Map([
+      ["IE00BJQTJ848", 2],
+      ["FI4000233267", 3],
+    ]),
+  );
+  expect(draft.txns.map((t) => t.type)).toEqual(["SELL", "SELL"]);
+  expect(draft.txns[0]!.amount).toBe(364);
+  expect(draft.txns[1]!.amount).toBe(3150);
+  // The twins are reported, not silently dropped -- and say why.
+  expect(draft.problems).toHaveLength(2);
+  expect(draft.problems.every((p) => p.message.includes("käteispuoli"))).toBe(true);
 });

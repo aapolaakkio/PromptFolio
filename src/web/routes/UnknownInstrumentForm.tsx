@@ -3,18 +3,25 @@ import { z } from "zod";
 import { apiGet, apiPost, ApiError } from "../lib/api";
 
 /**
- * `op_fund` is here, rather than only auto-selected, because OP's paste import
- * carries no ISIN to look a fund up by -- the fund's own page is the only route
- * there. S-Pankki and Danske sources were removed entirely (spec 10c/C1): Yahoo
- * prices the Finnish funds this portfolio holds, so neither scraper was ever
- * written and none is planned.
+ * The only two sources worth choosing by hand. Yahoo prices everything this
+ * portfolio holds, Finnish funds included (they appear under synthetic `0P...`
+ * symbols), so scraping a bank's own page is a fallback the resolver reaches for
+ * on its own rather than something to pick from a list.
  */
 const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },
-  { id: "nordnet_fund", label: "Nordnet-rahasto" },
-  { id: "op_fund", label: "OP-rahasto" },
   { id: "manual", label: "Syötän arvon itse" },
 ] as const;
+
+/**
+ * A bank's own fund page, kept selectable only when the lookup already chose it
+ * -- otherwise the `<select>` would show a blank value for a source the user
+ * cannot see or change. Never offered otherwise.
+ */
+const FALLBACK_SOURCES = new Map<string, string>([
+  ["op_fund", "OP-rahasto (haettu automaattisesti)"],
+  ["nordnet_fund", "Nordnet-rahasto (haettu automaattisesti)"],
+]);
 
 /** Only the fields this form actually reads out of POST /api/instruments's response. */
 const CreatedInstrumentSchema = z.object({ id: z.number() });
@@ -151,7 +158,7 @@ export const UnknownInstrumentForm = ({
           kind,
           currency: currency.trim().toUpperCase(),
           priceSource,
-          sourceKey,
+          sourceKey: sourceKey.trim() === "" ? undefined : sourceKey,
           ticker: priceSource === "yahoo" ? sourceKey : null,
         },
         CreatedInstrumentSchema,
@@ -239,16 +246,27 @@ export const UnknownInstrumentForm = ({
               {s.label}
             </option>
           ))}
+          {FALLBACK_SOURCES.has(priceSource) && (
+            <option value={priceSource}>{FALLBACK_SOURCES.get(priceSource)}</option>
+          )}
         </select>
       </label>
       <label>
         Lähdetunnus
         <input
           value={sourceKey}
-          required
+          // Not required for a manual instrument: a delisted share has no
+          // symbol to fetch it by, and demanding one made such a holding
+          // impossible to register at all.
+          required={priceSource !== "manual"}
           onChange={(e) => setSourceKey(e.target.value)}
           placeholder={priceSource === "yahoo" ? "esim. NOKIA.HE" : "rahaston tunnus"}
         />
+        {priceSource === "manual" && (
+          <div className="text-xs text-muted">
+            Voit jättää tyhjäksi. Hinnat syötetään käsin Omistukset-sivulla.
+          </div>
+        )}
       </label>
       {error && (
         <p role="alert" className="text-loss text-sm">

@@ -102,7 +102,16 @@ export const lookupInstrument = async (
   currency: Currency | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<InstrumentLookup> => {
-  if (isin === null) return await viaOpFundPage(name, null, null, fetchImpl);
+  // OP's paste import carries no ISIN column, so the fund's own page is the
+  // only way to learn its ISIN. Once that is known there is nothing special
+  // left about the holding: it goes through the ordinary path, which prices it
+  // from Yahoo when Yahoo has it (it does have OP's funds, under 0P... symbols)
+  // and only falls back to OP's page when it does not.
+  if (isin === null) {
+    const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
+    if (discovered === null) return NOTHING;
+    return await lookupInstrument(discovered.isin, name, currency, fetchImpl);
+  }
 
   const figi = await settle(figiLookup(isin, fetchImpl));
   const hits = (await settle(yahooSearch(isin, fetchImpl))) ?? [];

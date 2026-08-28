@@ -34,7 +34,15 @@ export type CanonicalField =
   | "unitPrice"
   | "fee"
   | "currency"
-  | "amount";
+  | "amount"
+  /**
+   * The acquisition value a broker states for a row that brings units in
+   * without any cash changing hands -- a merger or share swap, where the
+   * original cost rides across to the new instrument. `amount` is zero on
+   * such a row, so without this the new holding would get a cost basis of
+   * zero and report its entire value as gain.
+   */
+  | "costBasis";
 
 /**
  * The part of a broker's configuration `mapRows` actually consumes:
@@ -50,6 +58,15 @@ export type FieldMapping = {
   readonly dateFormat: "iso" | "fi";
   /** Canonical field -> the broker's column header. Missing entries mean the broker omits it. */
   readonly columns: Partial<Record<CanonicalField, string>>;
+  /**
+   * Type labels that are real, understood, and deliberately not imported,
+   * mapped to the reason shown on the review screen. These are the second
+   * leg of a two-row event whose first leg already carries the whole event:
+   * importing both would double a cash balance or a position. Distinct from
+   * a label missing from `typeMap`, which means "nobody has decided what
+   * this is yet".
+   */
+  readonly ignoredTypes?: Readonly<Record<string, string>>;
   /**
    * Canonical field -> 1-based column position, for a header that repeats
    * (Nordnet's transaction export has five columns named `Valuutta`, at

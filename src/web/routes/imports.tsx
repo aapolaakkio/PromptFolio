@@ -296,31 +296,37 @@ export const ImportsPage = () => {
               {summary.unknown > 0 && `, ${summary.unknown} tuntematonta arvopaperia`}.
             </p>
 
-            <table>
-              <thead>
-                <tr>
-                  <th>Rivi</th>
-                  <th>Päivä</th>
-                  <th>Laji</th>
-                  <th>ISIN</th>
-                  <th className="num">Summa</th>
-                </tr>
-              </thead>
-              <tbody>
-                {draft.txns.slice(0, 50).map((t) => (
-                  <tr key={t.line}>
-                    <td className="num">{t.line}</td>
-                    <td>{fiDate(t.tradeDate)}</td>
-                    <td>{t.type}</td>
-                    <td>{t.isin ?? "—"}</td>
-                    <td className="num">{eur(minorToEur(t.amount))}</td>
+            {/*
+              Every row, scrollable, rather than the first 50 and a count of
+              what was hidden: this is the last screen before the rows enter the
+              ledger, so the rows a reviewer most needs to check are exactly the
+              ones a cut-off list hides. The header stays put while the body
+              scrolls.
+            */}
+            <div className="max-h-[28rem] overflow-auto rounded border border-line">
+              <table>
+                <thead className="sticky top-0 bg-surface">
+                  <tr>
+                    <th>Rivi</th>
+                    <th>Päivä</th>
+                    <th>Laji</th>
+                    <th>ISIN</th>
+                    <th className="num">Summa</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {draft.txns.length > 50 && (
-              <p className="mt-3 text-muted">…ja {draft.txns.length - 50} riviä lisää.</p>
-            )}
+                </thead>
+                <tbody>
+                  {draft.txns.map((t) => (
+                    <tr key={t.line}>
+                      <td className="num">{t.line}</td>
+                      <td>{fiDate(t.tradeDate)}</td>
+                      <td>{t.type}</td>
+                      <td>{t.isin ?? "—"}</td>
+                      <td className="num">{eur(minorToEur(t.amount))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           {draft.problems.length > 0 && (
