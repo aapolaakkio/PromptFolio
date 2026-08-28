@@ -182,10 +182,28 @@ export const NORDNET: BrokerCsvConfig = {
  * through OP rather than a purchase) surfaces as a review problem instead
  * of being guessed at.
  *
- * Unverified, flagged rather than assumed: whether OP's web view ever
- * emits a transaction type beyond these three, and whether a MYYNTI row
- * ever appears without a fee (every real MYYNTI example seen so far has
- * one).
+ * A second real paste (2026-08-28) answered that: OP's view also emits the
+ * corporate actions below, rendered with a quantity and **no money lines at
+ * all**. They are a 2023 rights issue and a 2024 reverse split.
+ *
+ *  - MERKINTÄ subscribes new shares for cash, so it is an ordinary BUY.
+ *  - VAIHTO - JÄTTÖ carries the share count a reverse split *results in*
+ *    (1 000 shares became 10), which is exactly what a SPLIT row means here:
+ *    `positionsAt` replaces the position outright and `buildLots` rescales
+ *    the cost lots, so the basis survives the change. Its VAIHTO - OTTO twin
+ *    states the pre-split count and is ignored -- booking both would apply the
+ *    split twice.
+ *  - YHDISTELY moves shares between two lines of the same company (interim
+ *    shares becoming ordinary ones), so it is a transfer pair.
+ *  - IRROTUS - JÄTTÖ and MERKINTÄOIK. OTTO are subscription rights arriving
+ *    and being used up. No cash, no lasting position, and OP's paste carries
+ *    no ISIN to attach them to; both are ignored.
+ *
+ * **Known limitation.** OP's paste has no acquisition-value column, so a
+ * YHDISTELY transfer-in gets no cost basis (Nordnet's exports carry
+ * `Hankinta-arvo` for exactly this; OP's does not). The cost stays with the
+ * line the shares left, which realises there instead of following them. See
+ * the spec's 10c/C4.
  */
 export const OP_WEB_PASTE: OpPasteConfig = {
   broker: "op",
@@ -204,11 +222,27 @@ export const OP_WEB_PASTE: OpPasteConfig = {
     osto: "BUY",
     myynti: "SELL",
     osinko: "DIVIDEND",
+    merkintä: "BUY",
+    "vaihto - jättö": "SPLIT",
+    "yhdistely - jättö": "TRANSFER_IN",
+    "yhdistely - otto": "TRANSFER_OUT",
+  },
+  ignoredTypes: {
+    "vaihto - otto":
+      "Osakkeiden yhdistämisen vanha kappalemäärä; uusi määrä on jo VAIHTO - JÄTTÖ -rivillä.",
+    "irrotus - jättö":
+      "Merkintäoikeuksien irrotus. Parinsa (MERKINTÄOIK. OTTO) kanssa nettovaikutus on nolla.",
+    "merkintäoik. otto":
+      "Merkintäoikeuksien käyttö. Parinsa (IRROTUS - JÄTTÖ) kanssa nettovaikutus on nolla.",
   },
   amountSign: {
     osto: -1,
     myynti: 1,
     osinko: 1,
+    merkintä: -1,
+    "vaihto - jättö": 1,
+    "yhdistely - jättö": -1,
+    "yhdistely - otto": 1,
   },
 };
 

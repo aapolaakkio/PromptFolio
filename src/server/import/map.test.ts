@@ -809,3 +809,60 @@ test("books the leg that carries both quantity and cash, and reports its cash-on
   expect(draft.problems).toHaveLength(2);
   expect(draft.problems.every((p) => p.message.includes("käteispuoli"))).toBe(true);
 });
+
+// A 2023 rights issue and a 2024 reverse split, as OP's web view renders
+// them. The whole sequence has to reconcile: 120 shares, 900 subscribed,
+// consolidated onto the ordinary line, reverse split to 18, then sold.
+test("maps OP's corporate actions so a reverse split lands on the right share count", () => {
+  const block = (lines: string[]) => lines.join("\n");
+  const text = [
+    block([
+      "Laji",
+      "Tapahtuma",
+      "Tapahtuma-",
+      "päivämäärä",
+      "Määrä",
+      "Kurssi",
+      "Kulut / Korot /",
+      "Verot",
+      "Yhteensä",
+    ]),
+    "",
+    block([
+      "ESIMERKKI OYJ/SH NV",
+      "MERKINTÄ",
+      "03.11.2019",
+      "900,00   kpl",
+      "0,00   EUR",
+      "27,00   EUR",
+    ]),
+    "",
+    block(["ESIMERKKI OYJ/SUBS RTS 2023", "IRROTUS - JÄTTÖ", "30.10.2019", "120,00   kpl"]),
+    "",
+    block(["ESIMERKKI OYJ/SH NV", "YHDISTELY - OTTO", "24.11.2019", "900,00   kpl"]),
+    "",
+    block(["ESIMERKKI OYJ", "YHDISTELY - JÄTTÖ", "24.11.2019", "900,00   kpl"]),
+    "",
+    block(["ESIMERKKI OYJ", "VAIHTO - OTTO", "21.03.2020", "1 000,00   kpl"]),
+    "",
+    block(["ESIMERKKI OYJ", "VAIHTO - JÄTTÖ", "21.03.2020", "18,00   kpl"]),
+  ].join("\n");
+
+  const parsed = parseOpPaste(text);
+  expect(parsed.problems).toEqual([]);
+  const draft = mapRows(parsed.rows, OP_WEB_PASTE, new Map(), {
+    knownNames: new Map([
+      ["ESIMERKKI OYJ", 1],
+      ["ESIMERKKI OYJ/SH NV", 2],
+      ["ESIMERKKI OYJ/SUBS RTS 2023", 3],
+    ]),
+  });
+
+  expect(draft.txns.map((t) => t.type)).toEqual(["BUY", "TRANSFER_OUT", "TRANSFER_IN", "SPLIT"]);
+  // The subscription costs cash, so its amount must be negative.
+  expect(draft.txns[0]!.amount).toBe(-2700);
+  // SPLIT's quantity is the resulting total, which is what the JÄTTÖ leg states.
+  expect(draft.txns[3]!.quantity).toBe(18_000_000);
+  // Rights in, rights out, and the split's pre-split count are all reported.
+  expect(draft.problems).toHaveLength(2);
+});

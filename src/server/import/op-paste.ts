@@ -205,7 +205,12 @@ const parseBlock = (lines: readonly string[], startLine: number): BlockResult =>
   }
 
   const currencyLines = afterDate.slice(1);
-  if (currencyLines.length !== 2 && currencyLines.length !== 3) {
+  // A corporate action -- a rights detachment, a share consolidation, a
+  // reverse split -- moves units with no money at all, and OP renders it with
+  // no currency lines whatsoever. That is a real, valid row shape, not a
+  // malformed one; refusing it left a reverse split out of the ledger and the
+  // position wrong by the split ratio.
+  if (currencyLines.length !== 0 && currencyLines.length !== 2 && currencyLines.length !== 3) {
     return problemResult(
       startLine,
       `OP-rivilohkossa odottamaton määrä valuuttamuotoisia rivejä: ${currencyLines.length}`,
@@ -216,8 +221,8 @@ const parseBlock = (lines: readonly string[], startLine: number): BlockResult =>
     return problemResult(startLine, "OP-rivilohkon valuuttamuotoinen rivi ei kelpaa", lines);
   }
 
-  const total = currencyLines[currencyLines.length - 1]!;
-  const kurssi = currencyLines[0]!;
+  const total = currencyLines[currencyLines.length - 1] ?? "";
+  const kurssi = currencyLines[0] ?? "";
   const kulut = currencyLines.length === 3 ? currencyLines[1]! : "";
   const name = nameLines.join(" ");
   const date = lines[dateIndex]!;

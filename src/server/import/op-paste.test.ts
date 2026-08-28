@@ -177,3 +177,33 @@ test("accepts a paste whose header stops at Yhteensä, with no Toiminnot column"
   expect(rows[0]!.values["Laji"]).toBe("OP-ROHKEA A");
   expect(rows[0]!.values["Yhteensä"]).toBe("374,10   EUR");
 });
+
+// OP renders a corporate action with a quantity and no money lines at all.
+// Refusing that shape left a 1:100 reverse split out of the ledger,
+// which would have kept 1 000 shares on the books instead of 18.
+test("parses a corporate-action block that carries no currency lines", () => {
+  const text = [
+    "Laji",
+    "Tapahtuma",
+    "Tapahtuma-",
+    "päivämäärä",
+    "Määrä",
+    "Kurssi",
+    "Kulut / Korot /",
+    "Verot",
+    "Yhteensä",
+    "Toiminnot",
+    "",
+    "ESIMERKKI OYJ",
+    "VAIHTO - JÄTTÖ",
+    "21.03.2020",
+    "18,00   kpl",
+  ].join("\n");
+
+  const { rows, problems } = parseOpPaste(text);
+  expect(problems).toEqual([]);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.values["Määrä"]).toBe("18,00   kpl");
+  expect(rows[0]!.values["Yhteensä"]).toBe("");
+  expect(rows[0]!.values["Kurssi"]).toBe("");
+});

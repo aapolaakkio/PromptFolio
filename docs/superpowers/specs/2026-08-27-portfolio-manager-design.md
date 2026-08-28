@@ -611,6 +611,39 @@ a cash balance.
    marker text makes them identifiable; what to do with them is a returns-definition question
    tied up with C2's cash decision.
 
+
+### C5. OP's paste carries corporate actions, and one of them changes the share count
+
+A second real paste (2026-08-28) showed OP's web view emitting seven transaction types beyond the
+OSTO/MYYNTI/OSINKO that A3 recorded, all of them one issuer's 2023 rights issue and 2024 reverse
+split. Six render with a quantity and **no money lines at all** — a shape `parseOpPaste` treated as
+malformed, so it refused them.
+
+- `MERKINTÄ` subscribes new shares for cash → `BUY`.
+- `VAIHTO - JÄTTÖ` carries the count a reverse split *results in* (1 000 shares became 10) → `SPLIT`,
+  whose quantity is defined as the resulting total: `positionsAt` replaces the position and
+  `buildLots` rescales the cost lots, so basis survives. Its `VAIHTO - OTTO` twin states the
+  pre-split count and is ignored — booking both would apply the split twice.
+- `YHDISTELY - OTTO` / `- JÄTTÖ` move shares between two lines of the same company (interim shares
+  becoming ordinary) → a transfer pair.
+- `IRROTUS - JÄTTÖ` and `MERKINTÄOIK. OTTO` are subscription rights arriving and being used up →
+  ignored; no cash, no lasting position, and no ISIN in the paste to attach them to.
+
+Verified end to end against a real sequence: shares held, more subscribed through a rights issue,
+consolidated onto the ordinary line, reverse split at 1:100, then the remainder sold — the position
+reaches zero with no oversell. Refusing these rows would have left the pre-split count on the books
+and made the final sale an unmatched disposal.
+
+**Known limitation.** OP's paste has no acquisition-value column, so a `YHDISTELY` transfer-in gets
+no cost basis — Nordnet's export carries `Hankinta-arvo` for exactly this case (C4) and OP's does
+not. The 27,00 € stays with the line the shares left and realises there rather than following them
+to the ordinary line. Total realised across both lines is unaffected; the split between them is
+wrong, which matters for phase 4's tax reporting and not for phase 1's holdings.
+
+Also fixed: the header matcher required a tenth line, `Toiminnot`, and a real paste ended at
+`Yhteensä` — whether that column is included depends on how much of the table the selection covered.
+It is now optional.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
