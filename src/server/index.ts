@@ -5,6 +5,7 @@ import { importRoutes } from "./api/imports";
 import { instrumentRoutes } from "./api/instruments";
 import { portfolioRoutes } from "./api/portfolio";
 import { priceRoutes } from "./api/prices";
+import { setupRoutes } from "./api/setup";
 import { getDb, migrate } from "./db";
 import { startScheduler } from "./prices/refresh";
 
@@ -38,6 +39,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
     routes: {
       "/api/health": healthRoute,
       "/api/auth/*": (request) => auth.handler(request),
+      ...setupRoutes,
       ...accountRoutes,
       ...instrumentRoutes,
       ...importRoutes,

@@ -9,6 +9,14 @@ You can run it, log in, import from both brokers, and see holdings, growth and
 allocation. `docker compose up` from a clean volume produces a working instance —
 this was actually run, not just written.
 
+**Creating the first account no longer needs `curl` or `ALLOW_SIGNUP`.** The login
+page detects an instance with no account yet and shows a "create your account"
+form in its place; the server refuses a second use of that form regardless of
+what the UI shows, so it closes itself the moment the first account exists (see
+`src/server/api/setup.ts`, and README's "First run" section for the walkthrough).
+`ALLOW_SIGNUP` still exists, unchanged, purely for adding accounts for other
+family members afterwards.
+
 - **Nordnet**: upload the transaction export (UTF-16, tab-delimited — its real format).
 - **OP**: copy the web transaction table and paste it. OP publishes no CSV.
   Paste one page at a time, newest first; sales whose purchases are on a later

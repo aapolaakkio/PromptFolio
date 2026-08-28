@@ -1,62 +1,57 @@
 import { useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
-import { signIn } from "../lib/auth-client";
+import { useEffect, useState } from "react";
+import { FirstRunForm } from "./first-run-form";
+import { SignInForm } from "./sign-in-form";
 
+type Status = "checking" | "needs-setup" | "ready";
+
+/**
+ * Thin orchestrator for `/login`: asks `GET /api/setup` (safe to call
+ * unauthenticated -- see setup.ts) whether the instance has any user yet,
+ * and renders `FirstRunForm` instead of the normal `SignInForm` while it
+ * does not. Once an account exists, `FirstRunForm` is never rendered
+ * again for anyone -- and `POST /api/setup` refuses a second account
+ * regardless of what any client renders, so this check is a UX decision,
+ * not the security boundary; the boundary is server-side (setup.ts).
+ *
+ * On a failed status check (network hiccup, 500), this falls back to the
+ * normal sign-in form rather than the creation form: showing "create your
+ * account" on an instance that might already have one would just fail
+ * server-side anyway, but it is confusing UX for what is, in the failure
+ * case, very likely an existing instance having a bad moment -- the far
+ * more common situation than a still-uninitialised one.
+ */
 export const LoginPage = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Status>("checking");
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    const { error: failure } = await signIn.email({ email, password });
-    setBusy(false);
-    // Deliberately non-specific: this message must not reveal whether the
-    // email address exists, only that the credentials were not accepted.
-    if (failure) {
-      setError("Kirjautuminen epäonnistui");
-      return;
-    }
-    void navigate({ to: "/" });
-  };
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/setup")
+      .then((response) => response.json())
+      .then((body: { hasUsers: boolean }) => {
+        if (!cancelled) setStatus(body.hasUsers ? "ready" : "needs-setup");
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("ready");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  return (
-    <main className="grid min-h-dvh place-items-center">
-      <form className="card w-80" onSubmit={(event) => void submit(event)}>
-        <h1>PromptFolio</h1>
-        <label>
-          Sähköposti
-          <input
-            type="email"
-            value={email}
-            autoComplete="username"
-            required
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          Salasana
-          <input
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            required
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        {error && (
-          <p role="alert" className="text-loss text-sm">
-            {error}
-          </p>
-        )}
-        <button type="submit" disabled={busy} className="w-full">
-          {busy ? "Kirjaudutaan…" : "Kirjaudu"}
-        </button>
-      </form>
-    </main>
-  );
+  if (status === "checking") {
+    return <main className="grid min-h-dvh place-items-center">Ladataan…</main>;
+  }
+
+  if (status === "needs-setup") {
+    return (
+      <FirstRunForm
+        onCreated={() => void navigate({ to: "/" })}
+        onAlreadySetUp={() => setStatus("ready")}
+      />
+    );
+  }
+
+  return <SignInForm />;
 };

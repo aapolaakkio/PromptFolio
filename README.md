@@ -57,8 +57,17 @@ anything you can't afford to get wrong.
 
    should print `{"ok":true}`.
 
-4. This is a closed, family instance — there is no public sign-up. Create the first account by
-   temporarily allowing sign-up, then turning it back off:
+4. This is a closed, family instance — there is no public sign-up. Open `http://localhost:3000` in
+   a browser: on a fresh instance (no account exists yet) the login page shows a "create your
+   account" form instead of the sign-in form. Fill it in once, as the instance's owner, and you're
+   signed in. That form disappears the moment an account exists — for anyone, not just you: the
+   server refuses a second attempt to use it even if someone finds the URL directly, so there is
+   no window after your first visit where a stranger could still claim it. The only real risk is
+   racing your own first visit: don't expose a fresh instance to the network before opening it
+   yourself.
+
+   To add an account for another family member later, use `ALLOW_SIGNUP` — the same manual gate
+   this project has always used, still here for exactly this:
 
    ```bash
    # in .env: ALLOW_SIGNUP=true, then:
@@ -66,15 +75,14 @@ anything you can't afford to get wrong.
 
    curl -s localhost:3000/api/auth/sign-up/email \
      -H 'content-type: application/json' \
-     -d '{"name":"Your Name","email":"you@example.com","password":"a strong passphrase"}'
+     -d '{"name":"Family Member","email":"them@example.com","password":"a strong passphrase"}'
 
    # then in .env: ALLOW_SIGNUP=false (or delete the line — false is the default), and:
    docker compose up -d
    ```
 
-   Repeat step 4 (toggling `ALLOW_SIGNUP` on, then off again) for each family member who needs an
-   account. Sign in at `http://localhost:3000` — there is no sign-up form in the UI on purpose;
-   accounts are created this way and only this way.
+   Sign in at `http://localhost:3000` — there is no general-purpose sign-up form in the UI on
+   purpose; only the very first account is ever created through the UI itself.
 
 ### Without Docker
 
@@ -83,7 +91,7 @@ bun install
 cp .env.example .env
 echo "BETTER_AUTH_SECRET=$(bun -e 'console.log(crypto.randomUUID()+crypto.randomUUID())')" >> .env
 bun run build
-ALLOW_SIGNUP=true bun start   # then repeat the curl above, then restart without ALLOW_SIGNUP
+bun start   # open http://localhost:3000 and use the "create your account" form
 ```
 
 `bun start` runs migrations itself before serving, exactly like the container does — there is no
