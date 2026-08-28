@@ -520,3 +520,33 @@ test("a malformed fx_rates currency is invisible to a validated lookup rather th
   const { prices: lookup } = loadPortfolio(db, "u1");
   expect(lookup.fxOn(sek, "2025-08-01")).toBeNull();
 });
+
+// The failure this bound exists for, reproduced: ECB's dead historical endpoint
+// once served a placeholder row dated 2010, and it converted a 2026 holding
+// silently. The arithmetic was sound, so the result read as a real number --
+// about five times the truth.
+test("an fx rate years out of date is refused rather than carried forward", () => {
+  const { db, sqlite } = seed();
+  sqlite
+    .query("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
+    .run("2010-02-14", "SEK", 50_000_000);
+
+  const sek = parseCurrency("SEK");
+  const { prices: lookup } = loadPortfolio(db, "u1");
+  expect(lookup.fxOn(sek, "2026-08-28")).toBeNull();
+});
+
+test("a rate carried across a weekend or a holiday is still used", () => {
+  const { db, sqlite } = seed();
+  sqlite
+    .query("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
+    .run("2026-08-21", "SEK", 9_000_000);
+
+  const sek = parseCurrency("SEK");
+  const { prices: lookup } = loadPortfolio(db, "u1");
+  // Four days on: an ordinary long weekend, well inside the bound.
+  expect(lookup.fxOn(sek, "2026-08-25")).not.toBeNull();
+  // Eleven days on: past it, and a valuation that far from a published rate is
+  // reported as unvaluable rather than guessed.
+  expect(lookup.fxOn(sek, "2026-09-01")).toBeNull();
+});

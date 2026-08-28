@@ -148,12 +148,35 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     fxOn: (currency, date) => {
       if (currency === EUR) return asRate(100_000_000, EUR);
       const row = latestOnOrBefore(fxByCurrency.get(currency), date);
-      return row ? asRate(row.rateEur, row.currency) : null;
+      if (!row) return null;
+      // A rate is carried forward from the last day ECB published one, which is
+      // right across a weekend or a holiday and wrong across years. Nothing
+      // used to bound that: a rate dated 2010 converted a 2026 holding without
+      // a murmur, and because the arithmetic was sound the result looked like a
+      // real number. Beyond the bound the holding is reported unvaluable, which
+      // the caller already renders as an explained gap rather than a figure.
+      return daysBetween(row.date, date) > MAX_FX_AGE_DAYS
+        ? null
+        : asRate(row.rateEur, row.currency);
     },
   };
 
   return { txns, instruments: instrumentList, prices: priceLookup };
 };
+
+/**
+ * How stale a foreign-exchange rate may be before a valuation refuses to use it.
+ *
+ * ECB publishes every TARGET business day, so a gap of a few days is ordinary --
+ * a long weekend with a public holiday either side reaches four. Ten leaves room
+ * for that and for a refresh job that missed a run, while still catching the
+ * failure this exists for: a rate years out of date, carried forward silently.
+ */
+const MAX_FX_AGE_DAYS = 10;
+
+/** Whole days from `from` to `to`, both ISO dates. Negative when `to` precedes `from`. */
+const daysBetween = (from: string, to: string): number =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 export type HoldingView = {
   readonly instrumentId: number;
