@@ -14,7 +14,14 @@ import { candidateSymbols } from "./venues";
  * An ISIN it has never seen returns an empty `quotes` array.
  */
 const SearchResponse = z.object({
-  quotes: z.array(z.object({ symbol: z.string().min(1), quoteType: z.string().optional() })),
+  quotes: z.array(
+    z.object({
+      symbol: z.string().min(1),
+      quoteType: z.string().optional(),
+      longname: z.string().optional(),
+      shortname: z.string().optional(),
+    }),
+  ),
 });
 
 const ChartMeta = z.object({
@@ -108,9 +115,16 @@ export const lookupInstrument = async (
   // from Yahoo when Yahoo has it (it does have OP's funds, under 0P... symbols)
   // and only falls back to OP's page when it does not.
   if (isin === null) {
+    // A fund resolves through OP's own page, which is where its ISIN comes
+    // from; with that in hand it takes the ordinary path.
     const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
-    if (discovered === null) return NOTHING;
-    return await lookupInstrument(discovered.isin, name, currency, fetchImpl);
+    if (discovered !== null) {
+      return await lookupInstrument(discovered.isin, name, currency, fetchImpl);
+    }
+    // A share has no such page. Yahoo can still be searched by name, which
+    // fills in everything except the ISIN -- no free source checked maps a
+    // ticker or a name back to one, so that field stays typed by hand.
+    return await byName(name, currency, fetchImpl);
   }
 
   const figi = await settle(figiLookup(isin, fetchImpl));
@@ -191,6 +205,86 @@ const pickListing = async (
     fallback ??= { symbol, currency: quoted };
   }
   return fallback;
+};
+
+/**
+ * Resolves a holding that has no ISIN at all -- OP's paste never carries one --
+ * from its name alone. Deliberately strict about what counts as a match: a
+ * name search will happily return a different company, and registering the
+ * wrong security silently prices a holding from something the user does not
+ * own. The registry name has to actually look like the name that was asked
+ * for, and the listing still has to be the one quoted in the holding's own
+ * currency.
+ */
+const byName = async (
+  name: string,
+  currency: Currency | null,
+  fetchImpl: typeof fetch,
+): Promise<InstrumentLookup> => {
+  const hits = (await settle(yahooSearchByName(name, fetchImpl))) ?? [];
+  const matching = hits.filter((hit) => namesAgree(name, hit.registryName));
+  if (matching.length === 0) return NOTHING;
+
+  const listing = await pickListing(
+    matching.map((hit) => hit.symbol),
+    currency,
+    fetchImpl,
+  );
+  if (listing === null) return NOTHING;
+
+  const chosen = matching.find((hit) => hit.symbol === listing.symbol);
+  return {
+    kind: kindFromQuoteType(chosen?.quoteType),
+    name: chosen?.registryName ?? null,
+    priceSource: "yahoo",
+    sourceKey: listing.symbol,
+    isin: null,
+    listingCurrency: listing.currency,
+  };
+};
+
+/** Lowercased, punctuation-stripped, and without the company-form suffixes a broker prints. */
+const normaliseName = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9åäö]+/g, " ")
+    .replace(/\b(oyj|oy|abp|plc|ab|asa|as|inc|corp|corporation|group|nv|sa)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * True when one name is the other's opening words. "NOKIA OYJ" matches "Nokia
+ * Oyj"; it does not match "Nokian Renkaat", whose first word differs once the
+ * company-form suffixes are gone.
+ */
+const namesAgree = (asked: string, found: string | null): boolean => {
+  if (found === null) return false;
+  const a = normaliseName(asked);
+  const b = normaliseName(found);
+  if (a === "" || b === "") return false;
+  return a === b || a.startsWith(`${b} `) || b.startsWith(`${a} `);
+};
+
+type NamedHit = {
+  readonly symbol: string;
+  readonly quoteType: string | undefined;
+  readonly registryName: string | null;
+};
+
+const yahooSearchByName = async (name: string, fetchImpl: typeof fetch): Promise<NamedHit[]> => {
+  const response = await fetchImpl(
+    `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+      name,
+    )}&quotesCount=10&newsCount=0`,
+  );
+  if (!response.ok) return [];
+  const parsed = SearchResponse.safeParse(await response.json());
+  if (!parsed.success) return [];
+  return parsed.data.quotes.map((quote) => ({
+    symbol: quote.symbol,
+    quoteType: quote.quoteType,
+    registryName: quote.longname ?? quote.shortname ?? null,
+  }));
 };
 
 /** A failed leg is an absent answer, never a failed lookup. */

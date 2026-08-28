@@ -356,3 +356,96 @@ describe("lookupInstrument", () => {
     expect(result.sourceKey).toBeNull();
   });
 });
+
+describe("lookupInstrument by name, for an import that carries no ISIN", () => {
+  const nameSearch = (quotes: Array<Record<string, string>>) => ({
+    body: JSON.stringify({ quotes }),
+  });
+
+  test("resolves a share from its name alone, leaving the ISIN to be typed", async () => {
+    const result = await lookupInstrument(
+      null,
+      "NOKIA OYJ",
+      EUR,
+      stubFetch({
+        "op.fi": { body: "", status: 404 },
+        "finance/search": nameSearch([
+          { symbol: "NOKIA.HE", quoteType: "EQUITY", longname: "Nokia Oyj" },
+        ]),
+        "chart/NOKIA.HE": chart("EUR"),
+      }),
+    );
+    expect(result.priceSource).toBe("yahoo");
+    expect(result.sourceKey).toBe("NOKIA.HE");
+    expect(result.kind).toBe("stock");
+    // No free source checked maps a name or ticker back to an ISIN, so this
+    // stays null rather than being invented.
+    expect(result.isin).toBeNull();
+  });
+
+  test("refuses a match whose name is a different company", async () => {
+    const result = await lookupInstrument(
+      null,
+      "NOKIA OYJ",
+      EUR,
+      stubFetch({
+        "op.fi": { body: "", status: 404 },
+        "finance/search": nameSearch([
+          { symbol: "TYRES.HE", quoteType: "EQUITY", longname: "Nokian Renkaat Oyj" },
+        ]),
+      }),
+    );
+    expect(result.sourceKey).toBeNull();
+    expect(result.priceSource).toBeNull();
+  });
+
+  test("ignores the company-form suffix a broker prints", async () => {
+    const result = await lookupInstrument(
+      null,
+      "ESIMERKKI OYJ",
+      EUR,
+      stubFetch({
+        "op.fi": { body: "", status: 404 },
+        "finance/search": nameSearch([
+          { symbol: "K34.F", quoteType: "EQUITY", longname: "Esimerkki Plc" },
+        ]),
+        "chart/K34.F": chart("EUR"),
+      }),
+    );
+    expect(result.sourceKey).toBe("K34.F");
+  });
+
+  test("picks the listing quoted in the holding's currency, not merely the first named match", async () => {
+    const routes = {
+      "op.fi": { body: "", status: 404 },
+      "finance/search": nameSearch([
+        { symbol: "NOK", quoteType: "EQUITY", longname: "Nokia Oyj" },
+        { symbol: "NOKIA.HE", quoteType: "EQUITY", longname: "Nokia Oyj" },
+      ]),
+      "chart/NOK": chart("USD"),
+      "chart/NOKIA.HE": chart("EUR"),
+    };
+    expect((await lookupInstrument(null, "NOKIA OYJ", EUR, stubFetch(routes))).sourceKey).toBe(
+      "NOKIA.HE",
+    );
+    expect((await lookupInstrument(null, "NOKIA OYJ", USD, stubFetch(routes))).sourceKey).toBe(
+      "NOK",
+    );
+  });
+
+  test("a fund still resolves through OP's page, which is where its ISIN comes from", async () => {
+    const result = await lookupInstrument(
+      null,
+      "OP-MAAILMA INDEKSI A",
+      EUR,
+      stubFetch({
+        "op.fi": { body: await fixture("op-fund-maailma.html") },
+        openfigi: { body: await fixture("figi-op-maailma.json") },
+        "finance/search": { body: JSON.stringify({ quotes: [{ symbol: "0P0001BP5K.F" }] }) },
+        "chart/0P0001BP5K.F": chart("EUR"),
+      }),
+    );
+    expect(result.isin).toBe("FI4000261128");
+    expect(result.sourceKey).toBe("0P0001BP5K.F");
+  });
+});
