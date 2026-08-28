@@ -675,6 +675,50 @@ Also fixed: the header matcher required a tenth line, `Toiminnot`, and a real pa
 `Yhteensä` — whether that column is included depends on how much of the table the selection covered.
 It is now optional.
 
+### C7. Account type is missing from the model, and an osakesäästötili is not an ordinary account
+
+The data model knows a `broker` and nothing else about an account. There is no notion that an
+**arvo-osuustili** (AOT, an ordinary book-entry account) and an **osakesäästötili** (OST, the
+Finnish equity savings account) are different kinds of thing. C4 mentions "OST." only while
+explaining Nordnet's transaction labels; nothing in §4, §7 or §10 carries the distinction.
+
+That is a gap in the model rather than a missing feature, and it lands hardest on phase 4:
+
+- **The tax treatment is not the same, and not a variation on the same.** Inside an OST, trades and
+  dividends are not taxed at all. Tax falls only when money is withdrawn, and only on the gain
+  proportion of the withdrawal. The `PÄÄOMATULOVERO OST` rows C4 maps to `FEE` are exactly that
+  event. A tax report that treated an OST disposal like an AOT disposal would produce a confident,
+  wrong figure — the same failure shape as every other defect this amendment series records.
+- **FIFO cost basis per disposal is the wrong question inside an OST.** What matters is the
+  account's total contributions against its total value at the moment of withdrawal, so
+  `core/costbasis.ts`'s per-lot machinery answers something the tax rules never ask.
+- **An OST has a lifetime deposit cap** (50 000 € at the time of writing). Nothing in the model
+  could represent, track or warn about it.
+- **`hankintameno-olettama` does not apply** to an OST withdrawal, though §11 already defers the
+  question of how it applies at all.
+
+**Blocked on a prerequisite.** These accounts cannot be reasoned about separately until they are
+*stored* separately, and today they are not: C4 records that the importer ignores Nordnet's
+`Salkku` column, so an export covering both accounts files every row under whichever account the
+user picked. A real import merged an AOT and an OST into one portfolio.
+
+**What that merge cost, measured.** The app's figures were compared against both brokers' own
+reported percentages. For the broker whose accounts were *not* merged, the app reproduced its
+figure to the cent — meaningful evidence that its import, cost basis included, is correct. For the
+broker whose two accounts had been merged into one, no definition the app computes could reproduce
+its figure at all, and the merge is the most likely reason: the broker reports per account, the app
+held both in one.
+
+The two brokers also demonstrably do not mean the same thing by "tuotto-%" — one is unrealised
+return on the cost of current holdings, the other is not — so no single combined figure derived
+from both percentages means anything.
+
+**Not decided here.** How account type should be represented (a column on `accounts`, a separate
+table, or inferred from the broker's own account number), whether the importer should create
+accounts per `Salkku` or refuse a multi-account file, and how an OST's withdrawal-time tax is
+computed, all belong to the phase that builds tax reporting — designed against vero.fi at that
+time, per §11, rather than guessed at now.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
