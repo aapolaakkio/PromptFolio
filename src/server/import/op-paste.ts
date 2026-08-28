@@ -69,8 +69,15 @@ const HEADER_LINES = [
   "Kulut / Korot /",
   "Verot",
   "Yhteensä",
-  "Toiminnot",
 ] as const;
+
+/**
+ * A tenth header line present in some pastes and absent in others, depending on
+ * how much of OP's table the selection covered. It is a column of buttons with
+ * no value in any row, so it changes nothing but where the data starts --
+ * requiring it rejected a perfectly good paste outright.
+ */
+const OPTIONAL_HEADER_LINE = "Toiminnot";
 
 /**
  * The eight logical columns the header block above resolves to.
@@ -91,6 +98,12 @@ const CANONICAL_HEADERS = [
 
 const matchesHeaderBlock = (lines: readonly string[]): boolean =>
   HEADER_LINES.every((expected, index) => (lines[index] ?? "").trim() === expected);
+
+/** How many physical lines the header occupies in this particular paste. */
+const headerLineCount = (lines: readonly string[]): number =>
+  (lines[HEADER_LINES.length] ?? "").trim() === OPTIONAL_HEADER_LINE
+    ? HEADER_LINES.length + 1
+    : HEADER_LINES.length;
 
 const isTransactionDate = (line: string): boolean => {
   try {
@@ -249,7 +262,7 @@ export const parseOpPaste = (text: string) => {
     block = [];
   };
 
-  for (let i = HEADER_LINES.length; i < lines.length; i++) {
+  for (let i = headerLineCount(lines); i < lines.length; i++) {
     const raw = lines[i]!;
     const lineNumber = i + 1;
     const trimmed = raw.trim();

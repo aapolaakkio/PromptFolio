@@ -146,3 +146,34 @@ test("does not require a trailing separator after the final row", async () => {
   expect(rows).toHaveLength(1);
   expect(problems).toEqual([]);
 });
+
+// A real paste from 2026-08-28 ended at "Yhteensä": whether the "Toiminnot"
+// column is included depends on how much of OP's table the selection covered,
+// and requiring it rejected an otherwise perfectly good paste outright.
+test("accepts a paste whose header stops at Yhteensä, with no Toiminnot column", () => {
+  const text = [
+    "Laji",
+    "Tapahtuma",
+    "Tapahtuma-",
+    "päivämäärä",
+    "Määrä",
+    "Kurssi",
+    "Kulut / Korot /",
+    "Verot",
+    "Yhteensä",
+    "",
+    "OP-ROHKEA A",
+    "OSTO",
+    "12.12.2005",
+    "5,6387   kpl",
+    "65,69   EUR",
+    "3,69   EUR",
+    "374,10   EUR",
+  ].join("\n");
+
+  const { rows, problems } = parseOpPaste(text);
+  expect(problems).toEqual([]);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.values["Laji"]).toBe("OP-ROHKEA A");
+  expect(rows[0]!.values["Yhteensä"]).toBe("374,10   EUR");
+});
