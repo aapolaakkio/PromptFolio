@@ -549,3 +549,42 @@ test("KNOWN GAP: a whole position transferred out in kind still collapses TWR to
   const flows = investedCashFlows(txns);
   expect(twr(series, flows)).toBe(-1);
 });
+
+// Price history is served split-adjusted: a provider quotes a share at a hundred
+// times its raw price of the day, because the whole series is stated in
+// post-split terms. The ledger keeps the raw counts actually held, so multiplying
+// one by the other valued pre-split shares at post-split prices -- a hundredfold
+// overstatement for a 1:100 reverse split, vanishing on the split date and
+// reading as a large one-day portfolio loss.
+test("a pre-split holding is valued as the post-split shares it became", () => {
+  const txns = [
+    txnFor("BUY", 7, "2024-01-01", { qty: "1740", amount: "-1740,00" }),
+    txnFor("SPLIT", 7, "2024-03-21", { qty: "18" }),
+  ];
+  // One continuous, split-adjusted series -- no discontinuity across the split,
+  // exactly as the real one behaves (2,99 EUR before, 2,93 EUR after).
+  const prices = multiLookup({ 7: { "2024-01-01": "3,00" } });
+  const series = valueSeries(txns, [instrument], prices, "2024-03-20", "2024-03-21");
+
+  // 1 000 raw shares are 10 in the price series' terms: 10 x 3,00 = 30,00, both
+  // before and after. Unadjusted this read 3 000,00 EUR and then collapsed to 30.
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["54.00", "54.00"]);
+});
+
+test("an ordinary forward split is adjusted the same way, and a date after it is untouched", () => {
+  const txns = [
+    txnFor("BUY", 7, "2024-01-01", { qty: "10", amount: "-1000,00" }),
+    txnFor("SPLIT", 7, "2024-06-01", { qty: "40" }),
+  ];
+  const prices = multiLookup({ 7: { "2024-01-01": "25,00" } });
+  const series = valueSeries(txns, [instrument], prices, "2024-05-31", "2024-06-01");
+  // 10 shares before a 1:4 split are 40 in adjusted terms: 40 x 25,00 = 1 000,00.
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["1000.00", "1000.00"]);
+});
+
+test("a holding that never split is valued from its raw quantity", () => {
+  const txns = [txnFor("BUY", 7, "2024-01-01", { qty: "10", amount: "-1000,00" })];
+  const prices = multiLookup({ 7: { "2024-01-01": "110,00" } });
+  const series = valueSeries(txns, [instrument], prices, "2024-01-01", "2024-01-01");
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["1100.00"]);
+});

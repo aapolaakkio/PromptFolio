@@ -7,6 +7,7 @@ import {
   type Currency,
   type FxRate,
   type Money,
+  type Quantity,
 } from "./money";
 import { costBasisAt } from "./costbasis";
 import { positionsAt } from "./ledger";
@@ -98,6 +99,53 @@ export const valueSeries = (
   const byId = new Map(instruments.map((i) => [i.id, i]));
 
   /**
+   * Every split, with the share count immediately before it and the count it
+   * produced. Price history is served split-adjusted -- a provider quotes a share at
+   * a hundred times its raw price of the day, because it states
+   * the whole series in post-split terms -- while the ledger keeps the raw counts
+   * actually held. Multiplying one by the other valued pre-split shares at
+   * post-split prices -- for a 1:100 reverse split, a hundredfold overstatement --
+   * which vanished on the split date and read as a large one-day portfolio loss.
+   */
+  const splitsByInstrument = new Map<
+    number,
+    Array<{ date: IsoDate; after: bigint; before: bigint }>
+  >();
+  for (const t of txns) {
+    if (t.type !== "SPLIT" || t.instrumentId === null) continue;
+    const before = positionsAt(
+      txns.filter((other) => other.tradeDate < t.tradeDate),
+      t.tradeDate,
+    ).get(t.instrumentId);
+    if (before === undefined || before.scaled <= 0n || t.quantity.scaled <= 0n) continue;
+    const list = splitsByInstrument.get(t.instrumentId) ?? [];
+    list.push({ date: t.tradeDate, after: t.quantity.scaled, before: before.scaled });
+    splitsByInstrument.set(t.instrumentId, list);
+  }
+
+  /**
+   * A held quantity restated in the price series' own terms: scaled by every split
+   * still ahead of `date`, so a pre-split holding is valued as the post-split
+   * shares it became. Exact bigint arithmetic, half-up on the remainder, matching
+   * the rounding `core/money.ts` applies everywhere else.
+   */
+  const asPricedQuantity = (instrumentId: number, qty: Quantity, date: IsoDate): Quantity => {
+    const splits = splitsByInstrument.get(instrumentId);
+    if (splits === undefined) return qty;
+    let numerator = qty.scaled;
+    let denominator = 1n;
+    for (const split of splits) {
+      if (split.date <= date) continue;
+      numerator *= split.after;
+      denominator *= split.before;
+    }
+    if (denominator === 1n) return qty;
+    const quotient = numerator / denominator;
+    const remainder = numerator % denominator;
+    return { scaled: remainder * 2n >= denominator ? quotient + 1n : quotient };
+  };
+
+  /**
    * Cost basis per instrument on a date, for holdings that have no price yet.
    * Built only when that happens and memoised per date: a full ledger has
    * thousands of dates and almost all of them price everything they hold.
@@ -166,7 +214,7 @@ export const valueSeries = (
         continue;
       }
       if (prices.priceDateOn(instrumentId, date) !== date) stale = true;
-      const native = mulMoney(price, qty, "half-up");
+      const native = mulMoney(price, asPricedQuantity(instrumentId, qty, date), "half-up");
       if (instrument.currency === EUR) {
         value = addMoney(value, native);
         continue;
