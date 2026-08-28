@@ -157,7 +157,8 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
 
 export type HoldingView = {
   readonly instrumentId: number;
-  readonly isin: string;
+  /** Null for a holding no registry carries -- see instruments.isin. */
+  readonly isin: string | null;
   readonly name: string;
   readonly kind: Instrument["kind"];
   readonly currency: Currency;

@@ -153,7 +153,7 @@ export const UnknownInstrumentForm = ({
       await apiPost(
         "/api/instruments",
         {
-          isin: isinInput.trim().toUpperCase(),
+          isin: isinInput.trim() === "" ? undefined : isinInput.trim().toUpperCase(),
           name,
           kind,
           currency: currency.trim().toUpperCase(),
@@ -203,14 +203,19 @@ export const UnknownInstrumentForm = ({
           ISIN
           <input
             value={isinInput}
-            required
+            // Not required for a manual instrument: a delisted share, or a
+            // temporary line from a corporate action, has no ISIN any registry
+            // will give up, and requiring one made it impossible to register.
+            required={priceSource !== "manual"}
             pattern={ISIN_PATTERN.source}
             placeholder="esim. FI0009000681"
             title="12 merkkiä: 2 kirjainta, 9 kirjainta/numeroa, 1 numero"
             onChange={(e) => setIsinInput(e.target.value)}
           />
           <div className="text-xs text-muted">
-            Tällä arvopaperilla ei ole ISIN-tunnusta OP:n tuonnissa -- syötä se itse.
+            {priceSource === "manual"
+              ? "Voit jättää tyhjäksi, jos arvopaperilla ei ole ISIN-tunnusta. Tunnistus tapahtuu silloin nimen perusteella."
+              : "Tällä arvopaperilla ei ole ISIN-tunnusta OP:n tuonnissa -- syötä se itse."}
           </div>
         </label>
       )}

@@ -84,7 +84,16 @@ export const accounts = sqliteTable(
 
 export const instruments = sqliteTable("instruments", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  isin: text("isin").notNull().unique(),
+  /**
+   * Null only for an instrument no registry carries and nothing can price: a
+   * delisted share, or a temporary line from a corporate action (a rights issue's
+   * 2023 interim shares). Such a holding is matched by name instead, which is
+   * how OP's ISIN-less paste already resolves everything. SQLite treats NULLs
+   * as distinct, so the unique index still ties every real ISIN to one
+   * instrument -- absence is recorded honestly rather than filled with an
+   * invented identifier, which would silently merge or split positions.
+   */
+  isin: text("isin").unique(),
   ticker: text("ticker"),
   name: text("name").notNull(),
   kind: text("kind", { enum: ["stock", "etf", "fund", "cash"] }).notNull(),

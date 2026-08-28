@@ -634,11 +634,42 @@ consolidated onto the ordinary line, reverse split at 1:100, then the remainder 
 reaches zero with no oversell. Refusing these rows would have left the pre-split count on the books
 and made the final sale an unmatched disposal.
 
-**Known limitation.** OP's paste has no acquisition-value column, so a `YHDISTELY` transfer-in gets
-no cost basis — Nordnet's export carries `Hankinta-arvo` for exactly this case (C4) and OP's does
-not. The 27,00 € stays with the line the shares left and realises there rather than following them
-to the ordinary line. Total realised across both lines is unaffected; the split between them is
-wrong, which matters for phase 4's tax reporting and not for phase 1's holdings.
+**Resolved (2026-08-28): cost follows the shares.** OP's paste has no acquisition-value column, so a
+`YHDISTELY` transfer-in states an amount of zero — and cost derived from zero would price the
+arriving holding at nothing and report its whole value as gain. `buildLots` now carries the basis a
+`TRANSFER_OUT` releases to the `TRANSFER_IN` that receives the same shares on the same date, which is
+what a swap means: the shares change form, not value. A transfer-in that states its own cost
+(Nordnet's `Hankinta-arvo`, C4) keeps that figure; one with no matching transfer-out still gets
+nothing invented.
+
+The two legs share a trade date and brokers disagree on which they print first — OP lists the
+arriving leg above the departing one, Nordnet the reverse — so `chronological` now orders
+`TRANSFER_OUT` before `TRANSFER_IN` within a date, and leaves every other pair's order alone.
+
+Verified against a real rights-issue-then-reverse-split sequence: cost basis at the final sale is
+the sum of both purchases rather than only the first, and the position closes at zero.
+
+### C6. An instrument may have no ISIN
+
+Registering a holding required an ISIN, and two real holdings have none to give: a share delisted
+before it was ever imported, and the temporary line a rights issue created and dissolved three weeks
+later. No free source maps a name or ticker back to an ISIN
+(OpenFIGI omits it deliberately — FIGI exists as the unlicensed alternative; Yahoo never exposes it),
+so the form could not be completed at all without inventing one.
+
+`instruments.isin` is now nullable, and optional in the API and the form when the price source is
+`manual` — nothing can price such a holding anyway. An ISIN-less instrument is matched by name, which
+is already how every row of OP's ISIN-less paste resolves, and its name is required to be unique for
+that reason. Every real ISIN still maps to exactly one instrument: SQLite treats NULLs as distinct,
+so the unique index is unaffected.
+
+**Migration note.** Relaxing a column constraint in SQLite means rebuilding the table, and dropping
+the old one fires the children's `ON DELETE CASCADE`. drizzle-kit guards its generated SQL with
+`PRAGMA foreign_keys=OFF`, which SQLite ignores inside a transaction — and the migrator runs every
+migration in one, so the migration failed at COMMIT with the transactions still attached. `migrate()`
+now sets that pragma on the connection before the transaction begins and restores it afterwards.
+Verified on a copy of a real 336-transaction, 16 427-price database: every row survived, with no
+foreign-key violations.
 
 Also fixed: the header matcher required a tenth line, `Toiminnot`, and a real paste ended at
 `Yhteensä` — whether that column is included depends on how much of the table the selection covered.

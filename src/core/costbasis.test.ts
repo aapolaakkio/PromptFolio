@@ -212,3 +212,54 @@ test("a split with an uneven ratio gives the remainder to the last lot", () => {
   expect(total).toBe(10_000_000n);
   expect(open.map((l) => formatMoney(l.costEur))).toEqual(["100.00", "200.00"]);
 });
+
+// A share swap moves a holding between two instruments with no cash: the
+// arriving leg's amount is zero, so without carrying the basis across, the new
+// holding would be priced at nothing and report its whole value as gain.
+test("a share swap carries the departing leg's cost basis to the arriving one", () => {
+  const bought = {
+    ...txn("BUY", "2019-11-03", { qty: "900", amount: "-27.00" }),
+    instrumentId: 1,
+  };
+  // OP prints the arriving leg above the departing one, so the ledger sees it
+  // first by id -- the ordering inside buildLots is what fixes that.
+  const arrived = {
+    ...txn("TRANSFER_IN", "2019-11-24", { qty: "900", amount: "0" }),
+    instrumentId: 2,
+  };
+  const departed = {
+    ...txn("TRANSFER_OUT", "2019-11-24", { qty: "900", amount: "0" }),
+    instrumentId: 1,
+  };
+
+  const { open } = buildLots([bought, arrived, departed]);
+  const received = open.filter((lot) => lot.instrumentId === 2);
+  expect(received).toHaveLength(1);
+  expect(formatMoney(received[0]!.costEur)).toBe("27.00");
+  // The line the shares left keeps nothing.
+  expect(open.filter((lot) => lot.instrumentId === 1)).toEqual([]);
+});
+
+test("a transfer in that states its own cost keeps it, rather than claiming a carried one", () => {
+  const bought = { ...txn("BUY", "2023-01-01", { qty: "10", amount: "-10.00" }), instrumentId: 1 };
+  const departed = {
+    ...txn("TRANSFER_OUT", "2023-06-01", { qty: "10", amount: "0" }),
+    instrumentId: 1,
+  };
+  // Nordnet states Hankinta-arvo on the arriving row; that figure wins.
+  const arrived = {
+    ...txn("TRANSFER_IN", "2023-06-01", { qty: "4", amount: "-32.72" }),
+    instrumentId: 2,
+  };
+
+  const { open } = buildLots([bought, departed, arrived]);
+  expect(formatMoney(open.find((lot) => lot.instrumentId === 2)!.costEur)).toBe("32.72");
+});
+
+test("a transfer in on a date with no matching transfer out gets no invented cost", () => {
+  const arrived = {
+    ...txn("TRANSFER_IN", "2023-06-01", { qty: "5", amount: "0" }),
+    instrumentId: 2,
+  };
+  expect(formatMoney(buildLots([arrived]).open[0]!.costEur)).toBe("0.00");
+});

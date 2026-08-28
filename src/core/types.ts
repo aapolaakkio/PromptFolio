@@ -20,7 +20,7 @@ export type PriceSourceId = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
 
 export type Instrument = {
   readonly id: number;
-  readonly isin: string;
+  readonly isin: string | null;
   readonly ticker: string | null;
   readonly name: string;
   readonly kind: InstrumentKind;

@@ -95,7 +95,11 @@ const knownInstrumentMaps = () => {
     .from(instruments)
     .all();
   return {
-    knownIsins: new Map(rows.map((i) => [i.isin, i.id] as const)),
+    // An instrument may have no ISIN at all -- a delisted share, or a temporary
+    // line from a corporate action. Those are matched by name alone, exactly
+    // like every row from OP's ISIN-less paste, so they are absent here rather
+    // than keyed under a null nobody can look up.
+    knownIsins: new Map(rows.flatMap((i) => (i.isin === null ? [] : [[i.isin, i.id] as const]))),
     knownNames: new Map(rows.map((i) => [i.name, i.id] as const)),
   };
 };

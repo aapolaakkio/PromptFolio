@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import { Database } from "bun:sqlite";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as runMigrations } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
@@ -42,7 +43,24 @@ export const migrate = (
     throw new Error(`Migraatiohakemistosta ei löytynyt yhtään migraatiota: ${migrationsFolder}`);
   }
 
-  const result = runMigrations(db, { migrationsFolder });
+  // Foreign keys are enforced on every ordinary connection (openDb turns them
+  // on), but a migration that rebuilds a table -- SQLite's only way to relax a
+  // column constraint -- must drop the old one, and DROP TABLE fires the
+  // children's ON DELETE CASCADE. drizzle-kit's generated SQL guards against
+  // that with `PRAGMA foreign_keys=OFF`, which SQLite silently ignores inside
+  // a transaction, and the migrator runs every migration in one. Setting it
+  // here, before the transaction begins, is where it actually takes effect.
+  // Restored afterwards whether or not the migration succeeds.
+  db.run(sql`PRAGMA foreign_keys = OFF`);
+  let result: void | { exitCode: number };
+  try {
+    // SAFETY: the migrator is typed as returning `void | MigratorInitFailResponse`,
+    // whose only field this code reads is `exitCode`; narrowing to that shape
+    // keeps the failure check below without importing an internal type.
+    result = runMigrations(db, { migrationsFolder }) as void | { exitCode: number };
+  } finally {
+    db.run(sql`PRAGMA foreign_keys = ON`);
+  }
   if (result !== undefined) {
     throw new Error(
       `Tietokannan migraatio epäonnistui (${result.exitCode}). Migraatiohakemisto: ${migrationsFolder}`,

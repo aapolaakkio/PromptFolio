@@ -67,11 +67,28 @@ export class UnmatchedDisposalError extends Error {
   }
 }
 
+/**
+ * A share swap's two legs share a trade date, and which one a broker lists
+ * first is arbitrary -- OP prints the arriving leg above the departing one,
+ * Nordnet the other way round. The departing leg has to be seen first, because
+ * it is what releases the cost basis the arriving leg inherits (see
+ * `carriedBasis` in `buildLots`). Every other pair keeps its original order,
+ * so this reorders nothing but the two transfer types relative to each other.
+ */
+const transferRank = (type: Txn["type"]): number =>
+  type === "TRANSFER_OUT" ? 0 : type === "TRANSFER_IN" ? 2 : 1;
+
 const chronological = (txns: readonly Txn[]): Txn[] =>
   txns
     .slice()
     .sort((a, b) =>
-      a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1,
+      a.tradeDate !== b.tradeDate
+        ? a.tradeDate < b.tradeDate
+          ? -1
+          : 1
+        : transferRank(a.type) !== transferRank(b.type)
+          ? transferRank(a.type) - transferRank(b.type)
+          : a.id - b.id,
     );
 
 /**
@@ -107,6 +124,20 @@ const rescaleLots = (lots: readonly Lot[], newTotal: Quantity): Lot[] => {
 export const buildLots = (txns: readonly Txn[]) => {
   const openByInstrument = new Map<number, Lot[]>();
   const disposals: Disposal[] = [];
+  /**
+   * Cost basis released by a TRANSFER_OUT, waiting for the TRANSFER_IN that
+   * receives the same shares, keyed by trade date and consumed in order.
+   *
+   * A share swap moves a holding between two instruments with no money
+   * changing hands, so the arriving leg's `amount` is zero -- and cost derived
+   * from a zero amount would price the new holding at nothing and report its
+   * entire value as gain. Nordnet's export states the acquisition value on the
+   * arriving row (`Hankinta-arvo`, read by the importer); OP's paste states
+   * nothing at all. Rather than leaving OP's swaps to lose the cost, the basis
+   * the departing leg gives up is carried to the arriving leg here, which is
+   * what a swap means: the shares change form, not value.
+   */
+  const carriedBasis = new Map<IsoDate, Money[]>();
 
   for (const t of chronological(txns)) {
     if (t.instrumentId === null) continue;
@@ -123,7 +154,12 @@ export const buildLots = (txns: readonly Txn[]) => {
       // already debited as part of the cash that left the account, so the full
       // cost basis is `-amount` alone -- adding `t.fee` again would double-count
       // it (C2).
-      const costEur = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
+      const stated = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
+      const carried =
+        t.type === "TRANSFER_IN" && stated.minor === 0n
+          ? carriedBasis.get(t.tradeDate)?.shift()
+          : undefined;
+      const costEur = carried ?? stated;
       lots.push({
         instrumentId: t.instrumentId,
         acquiredOn: t.tradeDate,
@@ -145,6 +181,7 @@ export const buildLots = (txns: readonly Txn[]) => {
     // already deducted from the cash credited to the account, so `amount` alone
     // is the real net proceeds -- subtracting `t.fee` again would double-count
     // it (C2).
+    const disposalsBefore = disposals.length;
     const proceedsEur = toEur(t.amount, t.fxRateEur, "half-up");
     const held = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
     if (cmpQuantity(held, t.quantity) < 0) {
@@ -194,6 +231,15 @@ export const buildLots = (txns: readonly Txn[]) => {
       remaining = subQuantity(remaining, taken);
     }
     openByInstrument.set(t.instrumentId, remainingLots);
+
+    if (t.type === "TRANSFER_OUT") {
+      const released = disposals
+        .slice(disposalsBefore)
+        .reduce((sum, disposal) => addMoney(sum, disposal.costEur), zeroMoney(EUR));
+      const queue = carriedBasis.get(t.tradeDate) ?? [];
+      queue.push(released);
+      carriedBasis.set(t.tradeDate, queue);
+    }
   }
 
   const open = [...openByInstrument.values()].flat().filter((lot) => lot.quantity.scaled > 0n);
