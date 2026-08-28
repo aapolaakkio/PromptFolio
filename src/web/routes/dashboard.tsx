@@ -23,10 +23,17 @@ const ValuePointSchema = z.object({ date: z.string(), valueEur: z.string(), stal
 const ReturnsSchema = z.object({
   valueEur: z.string(),
   stale: z.boolean(),
-  twr: z.number(),
+  // `null` (like `mwr`) is a real, distinct answer -- C5: at least half the value
+  // series' sub-periods were corrupted by an instrument `/api/value-series` could
+  // not honestly value (see core/returns.ts's `twr` doc for why that beats a
+  // confident wrong percentage). `excludedInstruments` below names which holding.
+  twr: z.number().nullable(),
   mwr: z.number().nullable(),
   from: z.string(),
   to: z.string(),
+  excludedInstruments: z.array(
+    z.object({ instrumentId: z.number(), isin: z.string(), name: z.string() }),
+  ),
 });
 
 const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
@@ -54,7 +61,17 @@ const AllocationResponseSchema = z.object({
   ),
 });
 
-const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "gain" | "loss" }) => (
+const Stat = ({
+  label,
+  value,
+  tone,
+  note,
+}: {
+  label: string;
+  value: string;
+  tone?: "gain" | "loss";
+  note?: string;
+}) => (
   <div className="card">
     <div className="text-sm text-muted">{label}</div>
     <div
@@ -64,6 +81,7 @@ const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "ga
     >
       {value}
     </div>
+    {note && <p className="mt-1 text-xs text-muted">{note}</p>}
   </div>
 );
 
@@ -139,8 +157,26 @@ export const DashboardPage = () => {
         <Stat label="Salkun arvo" value={eur(returns.data.valueEur)} />
         <Stat
           label="Tuotto (aikapainotettu)"
-          value={hasEverInvested ? pct(returns.data.twr) : "—"}
-          tone={hasEverInvested ? (returns.data.twr >= 0 ? "gain" : "loss") : undefined}
+          value={hasEverInvested && returns.data.twr !== null ? pct(returns.data.twr) : "—"}
+          tone={
+            hasEverInvested && returns.data.twr !== null
+              ? returns.data.twr >= 0
+                ? "gain"
+                : "loss"
+              : undefined
+          }
+          // C5: an excluded holding always means the figure above is either missing a
+          // real position's value (from's/to's own valueEur) or was computed from a
+          // minority of the requested window (twr === null, see core/returns.ts's
+          // `twr` doc) -- named here so "—" or a percentage never reads as clean when
+          // it is not, mirroring the allocation section's own "Jakaumasta puuttuu" note.
+          note={
+            returns.data.excludedInstruments.length > 0
+              ? `Ei sisällä täysin: ${returns.data.excludedInstruments
+                  .map((i) => i.name)
+                  .join(", ")} (hinta tai valuuttakurssi puuttuu osalta ajanjaksoa).`
+              : undefined
+          }
         />
         <Stat
           label="Oma tuotto (XIRR)"

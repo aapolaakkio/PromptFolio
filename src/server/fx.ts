@@ -212,6 +212,23 @@ const parseEcbHistDate = (text: string): string => {
  * backfill "from `since` onward" still gets the last known rate for any date between
  * `since` and that row's own date, exactly matching `fxRateOn`'s own "newest row on or
  * before" semantics. Without `opts.since`, every row is parsed and returned.
+ *
+ * **Newest-first is asserted, not assumed.** This early-break only reads the correct window
+ * if the file genuinely counts backwards -- something this project's own sandbox could never
+ * verify against a real fetch (only a truncated, possibly synthetic sample was ever
+ * available). Every consecutive pair of rows is checked to be non-increasing in date; a row
+ * dated *after* the one before it means the file is not newest-first (or is otherwise out of
+ * order), and the early-break above would otherwise silently stop after the very first old row
+ * it meets -- for a genuinely oldest-first file that is the very first data row, so `since`
+ * would return just that one ancient rate and `needsFxBackfill` would then consider the
+ * currency satisfied forever. Crucially, this check keeps scanning dates (cheaply -- just the
+ * date column, not the full per-currency parse `parseEcbValueRow` does) for every remaining
+ * row even after the `since` cutoff has already been reached and collection has stopped: the
+ * bug this guards against is defined by what happens *after* the row that looks like a
+ * plausible stopping point, so verifying order only up to that same row would never catch it.
+ * Failing loudly the moment the assumption is violated, anywhere in the file, is the only way
+ * to avoid twenty years of every later valuation silently carrying forward a 1999 rate with no
+ * signal anything is wrong.
  */
 export const parseEcbHistCsv = (
   text: string,
@@ -227,6 +244,12 @@ export const parseEcbHistCsv = (
   const since = opts.since;
 
   const out: EcbRow[] = [];
+  let previousDate: string | null = null;
+  // Once `since` has been satisfied, remaining rows are still scanned (for the ordering
+  // guard, see this function's own doc) but no longer collected into `out` -- this is the
+  // one flag that keeps "read the whole file to verify its order" and "only keep the rows
+  // this caller actually asked for" as two independent decisions.
+  let collecting = true;
   for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
     if (line === undefined) continue;
@@ -236,9 +259,17 @@ export const parseEcbHistCsv = (
       throw new Error(`ECB-historiatiedoston rivi ${lineIndex + 1}: päivämääräsarake puuttuu`);
     }
     const date = parseEcbHistDate(dateText);
+    if (previousDate !== null && date > previousDate) {
+      throw new Error(
+        `ECB-historiatiedosto ei ole odotetussa uusin-ensin -järjestyksessä: rivi ${lineIndex + 1} ` +
+          `(${date}) tulee myöhemmin kuin edellinen rivi (${previousDate})`,
+      );
+    }
+    previousDate = date;
+    if (!collecting) continue;
 
     out.push(...parseEcbValueRow(headers, values, wanted, date));
-    if (since !== undefined && date < since) break;
+    if (since !== undefined && date < since) collecting = false;
   }
   return out;
 };

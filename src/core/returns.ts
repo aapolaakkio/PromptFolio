@@ -100,6 +100,11 @@ export const valueSeries = (
       // amount. Excluded from the sum, but recorded here rather than silently
       // dropped, so the caller knows this day's value is missing that instrument.
       if (qty.scaled < 0n) {
+        // C5 fix: this day's value is missing a real holding (see the doc above), exactly
+        // like the missing-price and missing-fx branches below -- it must carry the same
+        // `stale` signal they do, not a silent "clean" number with an exclusion nobody
+        // told the caller to distrust.
+        stale = true;
         excludedInstrumentIds.push(instrumentId);
         continue;
       }
@@ -232,8 +237,48 @@ export const xirr = (flows: readonly CashFlow[], finalValue: CashFlow): number =
  * too via the running product. This is not a rare edge case: every ledger's very first
  * deposit necessarily predates its very first purchase by at least the time it takes to place
  * the order.
+ *
+ * C5 fix (2026-08-28) -- the other half of C3 that was missing: a `ValuePoint` can also be
+ * incomplete for a reason that has nothing to do with "no capital yet" -- `values[i]` can
+ * carry a non-empty `excludedInstrumentIds` (an unpriceable holding, an unconvertible
+ * currency, or an unmatched disposal -- see `ValuePoint`'s own doc). Unlike a genuine zero
+ * start, `valueEur` there is not "correctly small", it is *wrong* -- a real position's worth
+ * is simply missing from it. Two ways that corrupts a naive comparison:
+ *
+ *   - If `endPoint` is excluded but `startPoint` was not, `end` is artificially low (the
+ *     missing holding's value vanished from the numerator) -- comparing it to a full `start`
+ *     fabricates a loss, up to and including the -100% this fix was written for (the
+ *     exact repro: a second, never-priced holding collapses a flat two-holding portfolio to
+ *     `end = 0`).
+ *   - If `startPoint` is excluded but `endPoint` is not (the missing price finally arrives),
+ *     the reverse happens: `start` is artificially low, so the holding's entire value
+ *     re-appearing reads as a fabricated gain out of nowhere.
+ *
+ * Either shape is a `0`-or-poisoned factor in the same family C3 already guards against, so
+ * this sub-period is skipped exactly the same way: neither `startPoint` nor `endPoint` may
+ * carry an exclusion for this factor to be trusted.
+ *
+ * **Skip vs. null.** Skipping a handful of sub-periods (a fund unpriced for one bad night, a
+ * paged import mid-commit) is honest: every *other* transition in the series is still a real,
+ * uncorrupted comparison, and the chained product still reflects the portfolio's real
+ * performance minus a few silently-bridged gaps -- the same trade-off C3 already accepts for
+ * a not-yet-invested deposit. But an exclusion that persists for a long run of consecutive
+ * days (the documented case: an S-Pankki/Danske fund left on `manual` for months before its
+ * first price, or a Nordnet fund held for a year before the nightly refresh job existed) skips
+ * *every* sub-period touching it -- which, because each transition compares only to its
+ * immediate neighbour, also silently discards every OTHER holding's real, fully-priced return
+ * across that entire stretch, not just the broken holding's. A chained result built from a
+ * small minority of the requested window is not "the TWR, minus a rounding footnote" -- it is
+ * a different, much shorter measurement wearing the original one's label, which is exactly the
+ * "confident wrong number" this whole fix exists to stop producing. So: once exclusion-driven
+ * skips are the majority of the sub-periods that would otherwise have contributed a factor,
+ * this returns `null` -- the same "honest unknown" `xirr` already returns rather than a
+ * fabricated rate -- instead of a number that looks precise but was computed from a fraction
+ * of the history it claims to describe. The `/api/returns` caller pairs this with
+ * `excludedInstrumentIds` (see that route) so the UI can say *which* holding broke the
+ * calculation, not just show an unexplained dash.
  */
-export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): number => {
+export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): number | null => {
   if (values.length < 2) return 0;
   const flowsByDate = new Map<IsoDate, number>();
   for (const f of flows) {
@@ -241,6 +286,8 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
   }
 
   let chained = 1;
+  let contributed = 0;
+  let excludedSkips = 0;
   for (let i = 1; i < values.length; i++) {
     const startPoint = values[i - 1]!;
     const endPoint = values[i]!;
@@ -250,11 +297,28 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
     // return against, so this sub-period contributes nothing to the chain (C3), rather
     // than a corrupting `0` factor that poisons every later sub-period in the product.
     if (start === 0) continue;
+    // C5: either endpoint missing a real holding's value makes this comparison
+    // fabricated, not merely imprecise (see this function's doc) -- skip it exactly
+    // like the zero-start case above, but count it separately so the majority check
+    // below can tell "a real gap in the data" apart from "the normal pre-investment
+    // zero every ledger starts with".
+    if (startPoint.excludedInstrumentIds.length > 0 || endPoint.excludedInstrumentIds.length > 0) {
+      excludedSkips++;
+      continue;
+    }
     // The end value already includes any trade dated exactly on `endPoint.date` (see this
     // function's doc) -- subtract it back out so freshly-invested capital is not counted
     // as market growth in the very sub-period it arrived.
     const end = toNumber(endPoint.valueEur) - (flowsByDate.get(endPoint.date) ?? 0);
     chained *= end / start;
+    contributed++;
   }
+
+  // C5: exclusion-driven skips outnumbering (or matching) the sub-periods that actually
+  // fed the product means what is left is a minority sample of the requested window --
+  // see this function's doc for why that is reported as unknown rather than as a real,
+  // precise-looking rate.
+  if (excludedSkips > 0 && excludedSkips >= contributed) return null;
+
   return chained - 1;
 };

@@ -241,6 +241,48 @@ test("never returns EUR from the historical file either, even if a caller's want
   expect(parsed.map((row) => row.currency)).toEqual([parseCurrency("USD")]);
 });
 
+// --- newest-first ordering guard (never verified against a real fetch -- see this
+// file's own report) ---------------------------------------------------------------
+
+test("rejects an oldest-first historical file instead of silently keeping only its first (most ancient) row", () => {
+  // Exactly the failure this project was one bad assumption away from: `since`'s
+  // early-break assumes each row is dated before the one above it. Fed a file in the
+  // opposite order, the *un*-guarded implementation would push the 1999 row, see the
+  // very next (newer) row, and -- because that row is NOT before `since` -- just keep
+  // going past `since` without ever breaking, silently returning every row rather than
+  // stopping at the intended boundary. Reversed here relative to that failure mode: an
+  // oldest-first file must be rejected outright, loudly, the moment the second row
+  // proves the file isn't counting backwards -- not silently mis-windowed.
+  const oldestFirst = [
+    "Date,USD",
+    "1999-01-04,1.1789",
+    "2020-01-02,1.1234",
+    "2026-08-27,1.0870",
+  ].join("\n");
+  expect(() => parseEcbHistCsv(oldestFirst, new Set(["USD"]), { since: "2020-01-01" })).toThrow(
+    /järjestyksessä/i,
+  );
+});
+
+test("rejects a historical file with even one out-of-order row in the middle, not just a fully reversed one", () => {
+  const outOfOrder = [
+    "Date,USD",
+    "2026-08-27,1.0870",
+    "2020-01-02,1.1234",
+    "2026-08-26,1.0900",
+  ].join("\n");
+  expect(() => parseEcbHistCsv(outOfOrder, new Set(["USD"]))).toThrow(/järjestyksessä/i);
+});
+
+test("accepts a genuinely newest-first file with a gap, same as the real fixture", async () => {
+  // Sanity check that the ordering guard does not reject legitimate non-consecutive
+  // dates (ECB only publishes on TARGET business days) -- only actual reversals.
+  const parsed = parseEcbHistCsv(await histFixtureText(), new Set(["USD"]), {
+    since: "2020-01-01",
+  });
+  expect(parsed.length).toBeGreaterThan(0);
+});
+
 // --- refreshFxRates ----------------------------------------------------------
 
 test("fetches nothing and touches no network when the ledger holds no foreign currency", async () => {

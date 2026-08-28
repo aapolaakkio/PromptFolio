@@ -234,6 +234,79 @@ describe("POST /api/prices", () => {
     expect(body.written).toBe(1);
   });
 
+  test("rejects a date that is not a real calendar day (2024-02-31) with 400", async () => {
+    const { cookie } = await signUp(`price-bad-calendar-${crypto.randomUUID()}@example.com`);
+    const instrument = await createInstrument(cookie);
+    const response = await recordPrice(cookie, {
+      instrumentId: instrument.id,
+      date: "2024-02-31",
+      price: "10",
+    });
+    expect(response.status).toBe(400);
+    // SAFETY: handle()'s ZodError branch always shapes { error, fields }.
+    const body = (await response.json()) as { fields: Array<{ path: string }> };
+    expect(body.fields.map((f) => f.path)).toContain("date");
+  });
+
+  test("rejects a nonsense month/day pair (2024-99-99) with 400, the same as a malformed date", async () => {
+    const { cookie } = await signUp(`price-bad-month-${crypto.randomUUID()}@example.com`);
+    const instrument = await createInstrument(cookie);
+    const response = await recordPrice(cookie, {
+      instrumentId: instrument.id,
+      date: "2024-99-99",
+      price: "10",
+    });
+    expect(response.status).toBe(400);
+  });
+
+  test("accepts 2024-02-29, a real leap day", async () => {
+    const { cookie } = await signUp(`price-leap-day-${crypto.randomUUID()}@example.com`);
+    const instrument = await createInstrument(cookie);
+    const response = await recordPrice(cookie, {
+      instrumentId: instrument.id,
+      date: "2024-02-29",
+      price: "10",
+    });
+    expect(response.status).toBe(201);
+  });
+
+  test("rejects 2023-02-29, since 2023 is not a leap year, with 400", async () => {
+    const { cookie } = await signUp(`price-not-leap-${crypto.randomUUID()}@example.com`);
+    const instrument = await createInstrument(cookie);
+    const response = await recordPrice(cookie, {
+      instrumentId: instrument.id,
+      date: "2023-02-29",
+      price: "10",
+    });
+    expect(response.status).toBe(400);
+  });
+
+  // requirePositiveMinor (prices/types.ts) has no upper bound of its own, and a manual
+  // entry deliberately bypasses write.ts's >10x plausibility guard (see the test above)
+  // -- so Number.isSafeInteger is the only ceiling standing between a mistyped,
+  // absurdly long price and a value silently corrupted by float imprecision once it
+  // round-trips through the INTEGER `prices.close` column.
+  test("rejects a price so large it cannot be stored as an exact integer, with 400", async () => {
+    const { cookie } = await signUp(`price-too-large-${crypto.randomUUID()}@example.com`);
+    const instrument = await createInstrument(cookie);
+    const response = await recordPrice(cookie, {
+      instrumentId: instrument.id,
+      // 28 digits before the decimal point -- well past Number.MAX_SAFE_INTEGER (2^53 -
+      // 1, 16 digits) once scaled to minor units, but still within the 30-char cap
+      // `RecordPrice`'s own schema already enforces on the raw string.
+      date: "2026-08-27",
+      price: "1".repeat(28),
+    });
+    expect(response.status).toBe(400);
+    const row = db
+      .select({ close: prices.close })
+      .from(prices)
+      .where(eq(prices.instrumentId, instrument.id))
+      .get();
+    // Never written at all -- not stored as a corrupted, wrapped-around integer.
+    expect(row).toBeUndefined();
+  });
+
   test("a re-entered price for the same date overwrites rather than duplicating", async () => {
     const { cookie } = await signUp(`price-overwrite-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);

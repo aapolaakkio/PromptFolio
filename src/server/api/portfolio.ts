@@ -119,6 +119,7 @@ export const portfolioRoutes = {
       const { userId } = await requireUser(request);
       const { from, to } = parseRange(new URL(request.url));
       const { txns, instruments, prices } = loadPortfolio(db, userId);
+      const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
       const series = valueSeries(txns, instruments, prices, from, to);
       // mwrFlows (deposit/withdrawal-shaped) feeds xirr() below, which measures the
       // investor's own money-weighted experience -- it legitimately cares about when
@@ -186,6 +187,19 @@ export const portfolioRoutes = {
         mwr = null;
       }
 
+      // C5: every instrument excluded from `valueEur` on ANY day inside [from, to] --
+      // not just `final`'s day -- because `twr` (spec §7) is a function of the whole
+      // series, not just its last point: a holding unpriceable for a stretch in the
+      // middle of the window can drive `twr` to `null` (see that function's doc) even
+      // when the final day's own value is complete. Deduped and enriched with
+      // isin/name the same way `/api/allocation`'s `excludedInstruments` already is,
+      // so the dashboard can name the holding instead of showing a bare id.
+      const excludedIds = new Set(series.flatMap((point) => point.excludedInstrumentIds));
+      const excludedInstruments = [...excludedIds].flatMap((instrumentId) => {
+        const instrument = byId.get(instrumentId);
+        return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
+      });
+
       return json({
         from,
         to,
@@ -193,6 +207,7 @@ export const portfolioRoutes = {
         stale: final?.stale ?? false,
         twr: twr(series, twrFlows),
         mwr,
+        excludedInstruments,
       });
     }),
   },

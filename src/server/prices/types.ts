@@ -81,10 +81,26 @@ export const inRange = (date: string, from: string, to: string): boolean =>
  * percentage here would be exactly the kind of unverified guess this task
  * exists to avoid; that check belongs at a layer with historical context
  * (Task 15's reconciliation/stale-badge work), not here.
+ *
+ * Does reject a value too large for `Number` to represent exactly, unconditionally --
+ * unlike the "suspiciously large" percentage jump above, this is not a guess about market
+ * behaviour, it is a fact about floating-point: past `Number.MAX_SAFE_INTEGER` an integer
+ * minor-unit amount can silently lose precision, and every caller of this function
+ * eventually stores the result in an INTEGER column and multiplies it into a `Money`. For
+ * every caller with a plausibility guard downstream (`write.ts`'s jump check) this is
+ * unreachable in practice, but the manual-entry API route deliberately bypasses that guard
+ * (a human correction must not be blocked by it -- see `api/prices.ts`), which makes this
+ * the *only* ceiling a mistyped, absurdly long price (e.g. a stray extra digit or a
+ * pasted-in decimal typo) ever meets.
  */
 export const requirePositiveMinor = (closeMinor: number, label: string): number => {
   if (!(closeMinor > 0)) {
     throw new Error(`${label}: epäkelpo hinta ${closeMinor} (nolla tai negatiivinen)`);
+  }
+  if (!Number.isSafeInteger(closeMinor)) {
+    throw new Error(
+      `${label}: epäkelpo hinta ${closeMinor} (liian suuri tallennettavaksi tarkasti)`,
+    );
   }
   return closeMinor;
 };

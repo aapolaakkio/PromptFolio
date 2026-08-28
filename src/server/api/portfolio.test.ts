@@ -766,7 +766,7 @@ describe("GET /api/returns", () => {
       to: string;
       valueEur: string;
       stale: boolean;
-      twr: number;
+      twr: number | null;
       mwr: number | null;
     };
     expect(body.valueEur).toBe("10000.00");
@@ -852,10 +852,71 @@ describe("GET /api/returns", () => {
     expect(response.status).toBe(200);
     // SAFETY: a 200 from GET /api/returns (asserted above) always returns
     // this { valueEur, twr, mwr, ... } shape.
-    const body = (await response.json()) as { mwr: number | null; twr: number; valueEur: string };
+    const body = (await response.json()) as {
+      mwr: number | null;
+      twr: number | null;
+      valueEur: string;
+    };
     expect(body.mwr).toBeNull();
     expect(body.twr).toBe(0);
     expect(body.valueEur).toBe("0.00");
+  });
+
+  // C5: the Critical fix -- an unvaluable holding must never collapse `twr` to a
+  // fabricated rate, and the caller must be able to see *why* (see core/returns.ts's
+  // `twr` doc and this route's own `excludedInstruments` comment).
+  test("reports twr: null and names the holding in excludedInstruments when a second instrument has no price at all", async () => {
+    const { cookie } = await signUp(`returns-excluded-${crypto.randomUUID()}@example.com`);
+    const { accountId } = await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 100_000_000,
+      unitPrice: 8000,
+      principal: 800_000,
+      prices: [{ date: "2024-01-01", close: 8000 }],
+    });
+
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    const unpricedInstrumentId = await createInstrument(cookie, randomIsin());
+    // A second holding bought the same day, in the same account -- but deliberately
+    // never given a `prices` row at all, e.g. an S-Pankki/Danske manual fund set to
+    // `manual` before its first NAV entry (spec §10a A5).
+    db.insert(transactions)
+      .values({
+        accountId,
+        instrumentId: unpricedInstrumentId,
+        type: "BUY",
+        tradeDate: "2024-01-01",
+        quantity: 50_000_000,
+        unitPrice: 5000,
+        amount: -500_000,
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: crypto.randomUUID(),
+        externalId: null,
+        importId: null,
+      })
+      .run();
+
+    const response = await portfolioRoutes["/api/returns"].GET(
+      new Request("http://x/api/returns?from=2024-01-01&to=2024-01-05", { headers: { cookie } }),
+    );
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from GET /api/returns (asserted above) always returns
+    // this { twr, excludedInstruments, ... } shape.
+    const body = (await response.json()) as {
+      twr: number | null;
+      excludedInstruments: Array<{ instrumentId: number; isin: string; name: string }>;
+    };
+    // Never-priced, so excluded from every single day of the window -- every
+    // sub-period is skipped and none contribute a real factor. Before the C5 fix
+    // this reported -1 (-100%) for what is otherwise a perfectly flat, priced
+    // position; now it is an honest "unknown", not a fabricated rate.
+    expect(body.twr).toBeNull();
+    expect(body.excludedInstruments.map((i) => i.instrumentId)).toContain(unpricedInstrumentId);
   });
 
   test("rejects from > to with 400", async () => {
