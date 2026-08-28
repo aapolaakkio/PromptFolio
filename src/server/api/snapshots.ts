@@ -10,8 +10,22 @@ import { getDb } from "../db";
 import { instruments, snapshotRows, snapshots, transactions } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { loadPortfolio } from "../valuation";
+import { parseOpHoldings } from "../import/op-pdf";
 
 const { db } = getDb();
+
+/**
+ * A fund name reduced to what two spellings of the same fund share: brokers
+ * print their own suffixes ("-SIJOITUSRAHASTO A-OSUUDET") that the ledger's own
+ * name does not carry. Only used to *suggest* a match, never to commit one --
+ * the user confirms every row.
+ */
+const normalise = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/-?(sijoitusrahasto|osuudet|rahasto)\b/g, " ")
+    .replace(/[^a-z0-9åäö]+/g, " ")
+    .trim();
 
 const IsoDateSchema = z
   .string()
@@ -186,6 +200,50 @@ export const snapshotRoutes = {
         source: snapshot.source,
         rows,
         differences: rows.filter((row) => !row.withinTolerance).length,
+      });
+    }),
+  },
+
+  "/api/snapshots/pdf": {
+    /**
+     * Reads a broker's PDF statement and proposes the snapshot it describes,
+     * without storing anything. The user confirms it through POST /api/snapshots
+     * like any other statement.
+     *
+     * A preview rather than a direct write because a statement names its funds
+     * the way the broker prints them, which is not how they are named in the
+     * ledger -- one real statement says "OP-MAAILMA INDEKSI -SIJOITUSRAHASTO A"
+     * for a holding registered as "OP-MAAILMA INDEKSI A". A name this parser
+     * cannot match comes back with a null instrumentId for the user to resolve,
+     * never matched to the closest guess.
+     */
+    POST: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const form = await request.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+
+      // A file this parser cannot read is the caller's problem, not a server
+      // fault: it means the wrong PDF, or a scanned one with no text layer,
+      // which the vision path (spec §5.2) exists for.
+      let statement;
+      try {
+        statement = parseOpHoldings(new Uint8Array(await file.arrayBuffer()));
+      } catch (cause) {
+        throw new HttpError(400, cause instanceof Error ? cause.message : "PDF:ää ei voitu lukea");
+      }
+      const { instruments: known } = loadPortfolio(db, userId);
+      const byName = new Map(known.map((i) => [normalise(i.name), i.id]));
+
+      return json({
+        asOf: statement.asOf,
+        rows: statement.holdings.map((holding) => ({
+          name: holding.name,
+          quantity: holding.quantity,
+          costEur: holding.costEur,
+          marketValueEur: holding.marketValueEur,
+          instrumentId: byName.get(normalise(holding.name)) ?? null,
+        })),
       });
     }),
   },

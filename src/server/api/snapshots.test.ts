@@ -399,3 +399,117 @@ describe("POST /api/snapshots/:id/adjust", () => {
     ).toBe(404);
   });
 });
+
+describe("POST /api/snapshots/pdf", () => {
+  const upload = async (cookie: string, bytes: ArrayBuffer): Promise<Response> => {
+    const form = new FormData();
+    form.set("file", new File([bytes], "ote.pdf", { type: "application/pdf" }));
+    return snapshotRoutes["/api/snapshots/pdf"].POST(
+      new Request("http://x/api/snapshots/pdf", {
+        method: "POST",
+        headers: { cookie },
+        body: form,
+      }),
+    );
+  };
+
+  const fixture = (): Promise<ArrayBuffer> =>
+    Bun.file(new URL("../import/fixtures/op-holdings-sample.pdf", import.meta.url)).arrayBuffer();
+
+  test("rejects a request with no session", async () => {
+    expect((await upload("", await fixture())).status).toBe(401);
+  });
+
+  test("proposes the statement's rows without storing anything", async () => {
+    const { cookie } = await signUp(`pdf-${crypto.randomUUID()}@example.com`);
+    const before = db.select().from(transactions).all().length;
+
+    const response = await upload(cookie, await fixture());
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from this route always returns { asOf, rows }.
+    const body = (await response.json()) as {
+      asOf: string;
+      rows: Array<{ name: string; quantity: string; instrumentId: number | null }>;
+    };
+    expect(body.asOf).toBe("2025-12-31");
+    expect(body.rows).toHaveLength(2);
+    expect(body.rows[0]!.quantity).toBe("15.4552");
+    // A preview writes nothing at all.
+    expect(db.select().from(transactions).all().length).toBe(before);
+  });
+
+  test("suggests an instrument whose name differs only by the broker's own suffix", async () => {
+    const { cookie } = await signUp(`pdf-match-${crypto.randomUUID()}@example.com`);
+    // Registered the way the ledger names it, not the way the statement prints it.
+    const response = await instrumentRoutes["/api/instruments"].POST(
+      new Request("http://x/api/instruments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          isin: randomIsin(),
+          ticker: null,
+          name: "ESIMERKKI-MAAILMA INDEKSI A",
+          kind: "fund",
+          currency: "EUR",
+          priceSource: "manual",
+        }),
+      }),
+    );
+    // SAFETY: a 201 returns the inserted instrument.
+    const instrument = (await response.json()) as { id: number };
+
+    const preview = await upload(cookie, await fixture());
+    // SAFETY: as above.
+    const body = (await preview.json()) as {
+      rows: Array<{ name: string; instrumentId: number | null }>;
+    };
+    const matched = body.rows.find((row) => row.name.includes("MAAILMA"));
+    expect(matched?.instrumentId).toBe(instrument.id);
+  });
+
+  // Instruments are shared reference data across the whole process (see
+  // instruments.ts), so this cannot assert "nothing matched" -- another test's
+  // registration would make it flaky. It asserts the property that actually
+  // matters instead: a suggestion is only ever an exact match once the broker's
+  // own suffixes are removed, never the closest-looking name.
+  test("only ever suggests an exact match, never the closest guess", async () => {
+    const { cookie } = await signUp(`pdf-nomatch-${crypto.randomUUID()}@example.com`);
+    const response = await instrumentRoutes["/api/instruments"].POST(
+      new Request("http://x/api/instruments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          isin: randomIsin(),
+          ticker: null,
+          // Shares three words with the statement's AASIA fund and is a
+          // different holding; it must not be suggested for it.
+          name: "ESIMERKKI-AASIA OSAKE B",
+          kind: "fund",
+          currency: "EUR",
+          priceSource: "manual",
+        }),
+      }),
+    );
+    // SAFETY: a 201 returns the inserted instrument.
+    const decoy = (await response.json()) as { id: number };
+
+    const preview = await upload(cookie, await fixture());
+    // SAFETY: as above.
+    const body = (await preview.json()) as {
+      rows: Array<{ name: string; instrumentId: number | null }>;
+    };
+    const aasia = body.rows.find((row) => row.name.includes("AASIA"));
+    expect(aasia?.instrumentId).not.toBe(decoy.id);
+  });
+
+  test("refuses a file with no readable statement in it", async () => {
+    const { cookie } = await signUp(`pdf-bad-${crypto.randomUUID()}@example.com`);
+    const bad = new TextEncoder().encode("%PDF-1.4\nnothing\n%%EOF\n");
+    // SAFETY: TextEncoder always allocates a plain ArrayBuffer, never a shared
+    // one, so this narrowing holds for every value this line can produce.
+    const response = await upload(cookie, bad.buffer as ArrayBuffer);
+    // The wrong file, or a scanned one with no text layer, is the caller's
+    // problem -- and the vision path exists for the latter.
+    expect(response.status).toBe(400);
+  });
+});
