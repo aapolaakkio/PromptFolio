@@ -911,12 +911,13 @@ describe("GET /api/returns", () => {
       twr: number | null;
       excludedInstruments: Array<{ instrumentId: number; isin: string; name: string }>;
     };
-    // Never-priced, so excluded from every single day of the window -- every
-    // sub-period is skipped and none contribute a real factor. Before the C5 fix
-    // this reported -1 (-100%) for what is otherwise a perfectly flat, priced
-    // position; now it is an honest "unknown", not a fabricated rate.
-    expect(body.twr).toBeNull();
-    expect(body.excludedInstruments.map((i) => i.instrumentId)).toContain(unpricedInstrumentId);
+    // Superseded twice over. It first reported -1 (-100%) for an otherwise flat,
+    // priced position; then null, because a never-priced holding excluded every
+    // sub-period. A holding with no price yet is now carried at its cost basis, so
+    // nothing is missing, nothing jumps, and a flat window is honestly 0%. The
+    // property that has to hold throughout is that no fabricated rate appears.
+    expect(body.twr).toBe(0);
+    expect(body.excludedInstruments.map((i) => i.instrumentId)).not.toContain(unpricedInstrumentId);
   });
 
   test("rejects from > to with 400", async () => {

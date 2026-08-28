@@ -8,6 +8,7 @@ import {
   type FxRate,
   type Money,
 } from "./money";
+import { costBasisAt } from "./costbasis";
 import { positionsAt } from "./ledger";
 import type { CashFlow, Instrument, IsoDate, Txn } from "./types";
 
@@ -28,6 +29,13 @@ export type ValuePoint = {
    * 0,00 €). Normally empty.
    */
   readonly excludedInstrumentIds: readonly number[];
+  /**
+   * Instruments valued at their cost basis on this day, because no price exists
+   * for them yet. Reported so `twr` can skip the sub-period in which one starts
+   * or stops being measured that way -- the jump then is a change of measuring
+   * stick, not a return.
+   */
+  readonly costValuedInstrumentIds: readonly number[];
 };
 
 /**
@@ -88,10 +96,33 @@ export const valueSeries = (
   to: IsoDate,
 ): ValuePoint[] => {
   const byId = new Map(instruments.map((i) => [i.id, i]));
+
+  /**
+   * Cost basis per instrument on a date, for holdings that have no price yet.
+   * Built only when that happens and memoised per date: a full ledger has
+   * thousands of dates and almost all of them price everything they hold.
+   */
+  const costCache = new Map<IsoDate, Map<number, Money>>();
+  const costOn = (instrumentId: number, date: IsoDate): Money | null => {
+    let byInstrument = costCache.get(date);
+    if (byInstrument === undefined) {
+      try {
+        byInstrument = costBasisAt(txns, date);
+      } catch {
+        // An unmatched disposal somewhere in the ledger: the holding stays
+        // excluded rather than valued from a basis that could not be built.
+        byInstrument = new Map<number, Money>();
+      }
+      costCache.set(date, byInstrument);
+    }
+    return byInstrument.get(instrumentId) ?? null;
+  };
+
   return datesBetween(from, to).map((date) => {
     let value = zeroMoney(EUR);
     let stale = false;
     const excludedInstrumentIds: number[] = [];
+    const costValuedInstrumentIds: number[] = [];
     for (const [instrumentId, qty] of positionsAt(txns, date)) {
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
@@ -110,11 +141,28 @@ export const valueSeries = (
       }
       const price = prices.priceOn(instrumentId, date);
       if (price === null) {
-        // No price at all for this date (not even an older, carried-forward one) --
-        // there is nothing to value this holding at, so it is excluded from `value`
-        // exactly like a negative position, not silently treated as worth 0,00 €.
+        // No price at all for this date -- not even an older, carried-forward one --
+        // so this is necessarily *before* the instrument's first known price. Three
+        // real cases produce it, and cost is the honest value for all three: a
+        // subscription bought before its share listed (an IPO, where the price paid
+        // IS the value), a delisted or merged-away holding no source will ever carry,
+        // and a fund whose provider serves only a few years of history. Holding it at
+        // cost understates movement but never invents any; excluding it instead
+        // dropped a real position out of the portfolio's value entirely and made
+        // `twr` skip every day it was held. On a real ledger the unpriceable
+        // sub-periods just outnumbered the usable ones, which drove the whole
+        // figure to null.
+        const cost = costOn(instrumentId, date);
+        if (cost === null) {
+          stale = true;
+          excludedInstrumentIds.push(instrumentId);
+          continue;
+        }
+        // Cost basis is already EUR, so no rate is needed. `stale` still marks the
+        // day as not built from live prices.
         stale = true;
-        excludedInstrumentIds.push(instrumentId);
+        costValuedInstrumentIds.push(instrumentId);
+        value = addMoney(value, cost);
         continue;
       }
       if (prices.priceDateOn(instrumentId, date) !== date) stale = true;
@@ -135,7 +183,7 @@ export const valueSeries = (
       }
       value = addMoney(value, toEur(native, rate, "half-up"));
     }
-    return { date, valueEur: value, stale, excludedInstrumentIds };
+    return { date, valueEur: value, stale, excludedInstrumentIds, costValuedInstrumentIds };
   });
 };
 
@@ -144,6 +192,13 @@ export const valueSeries = (
  * are the only `number`s in `core`; this conversion must never be used to build an amount.
  */
 const toNumber = (m: Money): number => Number(m.minor) / 100;
+
+/** True when both lists name the same instruments, order aside. */
+const sameInstrumentSet = (a: readonly number[], b: readonly number[]): boolean => {
+  if (a.length !== b.length) return false;
+  const seen = new Set(a);
+  return b.every((id) => seen.has(id));
+};
 
 /** Money-weighted return. `flows` are contributions (negative) and withdrawals (positive). */
 export const xirr = (flows: readonly CashFlow[], finalValue: CashFlow): number => {
@@ -303,6 +358,17 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
     // below can tell "a real gap in the data" apart from "the normal pre-investment
     // zero every ledger starts with".
     if (startPoint.excludedInstrumentIds.length > 0 || endPoint.excludedInstrumentIds.length > 0) {
+      excludedSkips++;
+      continue;
+    }
+    // The day a holding stops being valued at cost and starts being valued at a
+    // market price, its contribution to the total jumps by however much it moved
+    // while unpriced -- months or years of it, landing in one sub-period. That is
+    // a change of measuring stick, not a day's return, so the sub-period spanning
+    // it is skipped exactly like one missing a holding outright. The same applies
+    // in reverse, and to a holding transferred from a cost-valued instrument into
+    // a priced one (a share swap out of a temporary corporate-action line).
+    if (!sameInstrumentSet(startPoint.costValuedInstrumentIds, endPoint.costValuedInstrumentIds)) {
       excludedSkips++;
       continue;
     }

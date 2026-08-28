@@ -151,12 +151,18 @@ test("an instrument with no known price contributes nothing and marks the day st
     fxOn: () => parseFxRate("1", EUR),
   };
   const series = valueSeries(txns, [instrument], neverPriced, "2025-01-01", "2025-01-01");
-  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
+  // Superseded: this used to report 0,00 EUR and exclude the holding. A holding with
+  // no price *yet* is now carried at its cost basis -- what was paid is the honest
+  // value of an IPO subscription, a delisted line, or a fund whose provider serves
+  // only recent history -- and reported as cost-valued rather than as a hole.
+  expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["1000.00"]);
   expect(series.map((p) => p.stale)).toEqual([true]);
-  // C1: an unvalued holding is reported, not just implied by a 0,00 € total that
-  // happens to also be stale -- the caller must be able to tell "this holding could
-  // not be valued" apart from "the whole portfolio happens to be worth nothing".
-  expect(series[0]!.excludedInstrumentIds).toEqual([7]);
+  expect(series.map((p) => p.costValuedInstrumentIds)).toEqual([[7]]);
+  // C1's requirement still holds, now met by costValuedInstrumentIds above: the
+  // caller can still tell how this day's number was arrived at. Nothing is
+  // *excluded* any more, because nothing is missing -- the holding is valued, just
+  // at cost rather than at a market price.
+  expect(series[0]!.excludedInstrumentIds).toEqual([]);
 });
 
 test("a priced USD instrument with no known fx rate contributes nothing and marks the day stale", () => {
@@ -322,12 +328,14 @@ test("twr of a flat portfolio is zero", () => {
       valueEur: parseMoney("1000,00", EUR),
       stale: false,
       excludedInstrumentIds: [],
+      costValuedInstrumentIds: [],
     },
     {
       date: "2024-12-31",
       valueEur: parseMoney("1000,00", EUR),
       stale: false,
       excludedInstrumentIds: [],
+      costValuedInstrumentIds: [],
     },
   ];
   expect(twr(values, [])).toBeCloseTo(0, 6);
@@ -340,6 +348,7 @@ const point = (date: string, valueEur: string) => ({
   valueEur: parseMoney(valueEur, EUR),
   stale: false,
   excludedInstrumentIds: [],
+  costValuedInstrumentIds: [],
 });
 
 test("twr does not collapse to -100% when a deposit precedes the first purchase (the normal shape of every ledger)", () => {
@@ -441,11 +450,14 @@ test("C5 repro 1: a second holding that is never priced does not collapse a flat
   // Before the C5 fix this chained to exactly -1 (-100%): instrument 8's BUY still
   // counted as an inbound flow while its value dropped out of `valueEur`, so
   // `end = value - flow` went to zero on day one and poisoned the running product
-  // for the rest of the series. Since instrument 8 is excluded on every day here
-  // (not a transient one-day gap), skipping every corrupted sub-period would leave
-  // nothing real to chain at all -- an honest "unknown" beats a confident 0% or
-  // -100%.
-  expect(twr(series, flows)).toBeNull();
+  // for the rest of the series.
+  //
+  // It then reported null, because every sub-period was skipped. Now instrument 8
+  // is carried at cost throughout, so nothing is missing and nothing jumps: the
+  // portfolio really is flat across the window and 0% is the true answer. The
+  // property that matters is unchanged -- a holding no source prices must never
+  // manufacture a -100% return.
+  expect(twr(series, flows)).toBe(0);
 });
 
 test("C5 repro 2: an unmatched disposal (SELL with no prior BUY in this ledger) does not report a fabricated +100% -- the corrupted sub-period is skipped", () => {
