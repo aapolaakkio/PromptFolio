@@ -91,7 +91,7 @@ export const instruments = sqliteTable("instruments", {
   // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
   currency: text("currency").$type<Currency>().notNull(),
   priceSource: text("price_source", {
-    enum: ["yahoo", "nordnet_fund", "op_fund", "spankki_fund", "danske_fund", "manual"],
+    enum: ["yahoo", "nordnet_fund", "op_fund", "manual"],
   }).notNull(),
   sourceKey: text("source_key").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })

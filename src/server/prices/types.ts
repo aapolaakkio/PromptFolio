@@ -104,21 +104,3 @@ export const requirePositiveMinor = (closeMinor: number, label: string): number 
   }
   return closeMinor;
 };
-
-/**
- * Thrown by a `PriceSource` whose `id` is real (part of `PriceSourceId`
- * and the registry) but whose `fetch` has deliberately not been built --
- * currently `spankki_fund` and `danske_fund`, see `funds.ts`'s
- * `notYetImplemented`. Distinct from any other thrown `Error` so a caller
- * (Task 15's refresh job) can tell "this source is not built" apart from
- * "this source's fetch genuinely failed" or "this source is fine, nothing
- * new today" (`MANUAL`/a real source both resolve normally) purely by
- * `instanceof`, without hardcoding a specific `PriceSourceId` at the call
- * site.
- */
-export class SourceNotImplementedError extends Error {
-  constructor(readonly id: PriceSourceId) {
-    super(`${id}: hintalähdettä ei ole vielä toteutettu`);
-    this.name = "SourceNotImplementedError";
-  }
-}

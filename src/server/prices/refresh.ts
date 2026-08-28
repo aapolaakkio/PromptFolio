@@ -5,7 +5,7 @@ import type { getDb } from "../db";
 import { instruments, priceFetchLog, prices, transactions } from "../db/schema";
 import { backfillFxRates, refreshFxRates } from "../fx";
 import { sourceFor } from "./registry";
-import { SourceNotImplementedError, type FetchImpl, type FetchedPrice } from "./types";
+import type { FetchImpl, FetchedPrice } from "./types";
 import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write";
 
 type Db = ReturnType<typeof getDb>["db"];
@@ -33,17 +33,8 @@ const logAttempt = (
 };
 
 /** Renders a cause caught from a `PriceSource.fetch()` call as a log message. */
-const describeFailure = (cause: unknown): string => {
-  if (cause instanceof SourceNotImplementedError) {
-    // Point 4: kept distinct from a generic fetch failure via `instanceof`
-    // -- not by string-matching `cause.message` -- so a caller can always
-    // tell "not built" apart from "genuinely failed" even if the error's
-    // own wording ever changes. See types.ts's SourceNotImplementedError
-    // doc comment for why this class exists at all.
-    return `Hintalähdettä ei ole vielä toteutettu: ${cause.message}`;
-  }
-  return cause instanceof Error ? cause.message : "Tuntematon virhe";
-};
+const describeFailure = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : "Tuntematon virhe";
 
 /**
  * Fetches today's price for every non-manual instrument and writes it,

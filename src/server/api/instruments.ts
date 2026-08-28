@@ -15,14 +15,7 @@ const UpsertInstrument = z.object({
   name: z.string().min(1).max(200),
   kind: z.enum(["stock", "etf", "fund", "cash"]),
   currency: currencyField,
-  priceSource: z.enum([
-    "yahoo",
-    "nordnet_fund",
-    "op_fund",
-    "spankki_fund",
-    "danske_fund",
-    "manual",
-  ]),
+  priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
   sourceKey: z.string().min(1).max(200),
 });
 

@@ -3,16 +3,11 @@ import { z } from "zod";
 import { apiGet, apiPost, ApiError } from "../lib/api";
 
 /**
- * `spankki_fund` and `danske_fund` are deliberately absent: neither was ever
- * implemented (funds.ts's `notYetImplemented`), so choosing one could only
- * ever produce a price refresh that fails. Yahoo covers the Finnish funds this
- * portfolio holds, which is why no scraper was written for them and none is
- * planned -- see the spec's 10c/C1. They remain in the `priceSource` enum, so
- * an instrument already stored with one keeps working.
- *
- * `op_fund` stays because it is still reached: OP's paste import carries no
- * ISIN to look a fund up by, so its own page is the only route there, and the
- * resolver selects this source itself.
+ * `op_fund` is here, rather than only auto-selected, because OP's paste import
+ * carries no ISIN to look a fund up by -- the fund's own page is the only route
+ * there. S-Pankki and Danske sources were removed entirely (spec 10c/C1): Yahoo
+ * prices the Finnish funds this portfolio holds, so neither scraper was ever
+ * written and none is planned.
  */
 const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },

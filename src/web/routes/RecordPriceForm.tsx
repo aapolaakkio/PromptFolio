@@ -6,9 +6,8 @@ import { apiPost, ApiError } from "../lib/api";
  * Closing the "manual price source has no way to enter a price" gap
  * (Phase 1 review): `manual` has been selectable as a price source since
  * Task 14, and `MANUAL.fetch()` has always correctly returned nothing, but
- * no route or screen ever wrote a price -- so a `manual` instrument (in
- * particular the documented `spankki_fund`/`danske_fund` workaround, see
- * the README) could never actually be valued. `POST /api/prices`
+ * no route or screen ever wrote a price -- so a `manual` instrument, or any
+ * holding no price source covers, could never actually be valued. `POST /api/prices`
  * (src/server/api/prices.ts) is the route; this form is how the holdings
  * screen reaches it, mirroring `UnknownInstrumentForm.tsx`/
  * `CreateAccountForm.tsx`'s own shape (local state, one `apiPost`, a

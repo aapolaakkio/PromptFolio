@@ -250,10 +250,11 @@ This section is deliberately unflattering. Read it before trusting a number on t
   silently wrong cost-basis/tax data, so both surface for manual review on the Import page instead
   of being guessed at.
 
-- **S-Pankki and Danske have no price source implemented.** No holding at either bank appears in
-  any real export this was built and verified against, so `spankki_fund`/`danske_fund` were never
-  written. Any instrument at either bank must be configured with `price_source: manual` — you
-  enter its NAV/price by hand; nothing tries and fails to fetch it automatically.
+- **There are no bank-specific price sources beyond OP and Nordnet.** Yahoo turns out to price the
+  Finnish funds this portfolio holds — including OP's, under synthetic `0P…` symbols — so the
+  S-Pankki and Danske sources were removed rather than written (spec 10c/C1). A holding nothing can
+  price is configured with `price_source: manual`: you enter its NAV by hand on the Holdings page,
+  and nothing tries and fails to fetch it automatically.
 
 - **Uninvested cash is not counted in portfolio value.** This is by design, not an oversight —
   cash sitting in a brokerage account, undeployed, is deliberately excluded from the value and

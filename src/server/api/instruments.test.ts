@@ -51,7 +51,7 @@ interface InstrumentPayload {
   // wire shape sent to the route, before `currencyField`'s zod validation
   // ever runs, so it stays a plain `string` here deliberately.
   currency: string;
-  priceSource: "yahoo" | "nordnet_fund" | "op_fund" | "spankki_fund" | "danske_fund" | "manual";
+  priceSource: "yahoo" | "nordnet_fund" | "op_fund" | "manual";
   sourceKey: string;
 }
 

@@ -143,23 +143,6 @@ test("re-running the same day overwrites rather than duplicating", async () => {
   expect(rows[0]!.close).toBe(440);
 });
 
-test("reports spankki_fund/danske_fund as a distinct not-implemented failure, not a generic one", async () => {
-  const { db } = testDb();
-  seedInstrument(db, {
-    isin: crypto.randomUUID(),
-    name: "S-Pankki Kori",
-    kind: "fund",
-    priceSource: "spankki_fund",
-    sourceKey: "x",
-    ticker: null,
-  });
-  const result = await refreshPrices(db, { fetchImpl: mustNotBeCalled, today: "2026-08-27" });
-  expect(result).toEqual({ ok: 0, failed: 1 });
-  const log = db.select().from(priceFetchLog).all();
-  expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("ei ole vielä toteutettu");
-});
-
 test("reports a large-jump rejection as a failure with a message distinct from a fetch error", async () => {
   const { db } = testDb();
   const instrument = seedInstrument(db);
@@ -295,22 +278,19 @@ test("nordnet_fund's two-NAV-point limitation is reported as an incomplete backf
   expect(log[0]!.message).toContain("nordnet_fund");
 });
 
-test("a source throwing SourceNotImplementedError during backfill is reported as incomplete, not inserted", async () => {
+test("a source that throws during backfill is reported as incomplete, not partially inserted", async () => {
   const { db } = testDb();
-  const instrument = seedInstrument(db, {
-    isin: crypto.randomUUID(),
-    name: "S-Pankki Kori",
-    kind: "fund",
-    priceSource: "spankki_fund",
-    sourceKey: "x",
-    ticker: null,
-  });
+  const instrument = seedInstrument(db);
   seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
-  const result = await backfillInstrument(db, instrument.id, { fetchImpl: mustNotBeCalled });
+  const throwingFetch = (): Promise<Response> => {
+    throw new Error("verkkovirhe");
+  };
+  const result = await backfillInstrument(db, instrument.id, { fetchImpl: throwingFetch });
   expect(result).toEqual({ inserted: 0, incomplete: true });
   const log = db.select().from(priceFetchLog).all();
-  expect(log[0]!.message).toContain("ei ole vielä toteutettu");
+  expect(log[0]!.ok).toBe(false);
+  expect(log[0]!.message).toContain("verkkovirhe");
 });
 
 test("a backfill batch that fully covers the range but contains one implausible point reports both", async () => {

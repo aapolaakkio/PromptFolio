@@ -5,7 +5,6 @@ import {
   requireOk,
   requirePositiveMinor,
   inRange,
-  SourceNotImplementedError,
   type FetchArgs,
   type FetchedPrice,
   type PriceSource,
@@ -199,47 +198,6 @@ export const OP_FUND: PriceSource = {
     return inRange(point.date, from, to) ? [point] : [];
   },
 };
-
-/**
- * `spankki_fund` and `danske_fund` are kept in the registry so the design
- * (every `PriceSourceId` has a real source, however trivial) stands, but
- * are deliberately **not implemented**. No S-Pankki or Danske holding
- * appears in any real export or paste the user has provided -- both banks
- * were mentioned during planning as *possibly* held, but nothing confirms
- * it, and this task's brief itself only ever guessed URLs/regexes for
- * them (a `/rahastot/{key}` path and a `class="nav-value"` selector,
- * neither checked against a real response). Writing scrapers against
- * guessed selectors for an unconfirmed holding is exactly the kind of
- * speculative work this project has already been burned by once (the OP
- * CSV importer for a file OP never published, and the first Nordnet
- * config's wrong encoding/delimiter) -- so this stays an explicit,
- * loud non-implementation instead.
- *
- * **Not the same as `MANUAL`, on purpose.** An earlier draft of this made
- * `fetch()` resolve `[]` -- identical to `MANUAL`'s "the instrument's price
- * stays whatever a human enters" contract. Review caught that this makes
- * the two indistinguishable to a caller: Task 15's refresh job iterates
- * every configured source and would log "not built" and "fine, nothing new
- * today" as the exact same outcome, and the only way to tell them apart
- * would be hardcoding `id === 'spankki_fund'` at the call site, defeating
- * the whole point of the `PriceSource` abstraction. `fetch()` now *throws*
- * `SourceNotImplementedError` instead -- a distinct, exported class a
- * caller can `instanceof`-check, without needing to know which specific
- * `PriceSourceId`s are unimplemented. This fits the design doc's own
- * refresh-job shape ("Sources run isolated -- one throwing scraper must
- * not stop the others. Every attempt writes to price_fetch_log"): an
- * attempt is made, it fails in a specific, recognisable way, and gets
- * logged as such.
- */
-const notYetImplemented = (id: "spankki_fund" | "danske_fund"): PriceSource => ({
-  id,
-  async fetch(): Promise<FetchedPrice[]> {
-    throw new SourceNotImplementedError(id);
-  },
-});
-
-export const SPANKKI_FUND: PriceSource = notYetImplemented("spankki_fund");
-export const DANSKE_FUND: PriceSource = notYetImplemented("danske_fund");
 
 export const MANUAL: PriceSource = {
   id: "manual",

@@ -14,9 +14,9 @@ const { db } = getDb();
  * The one route that lets a human record a price by hand. Two Phase 1
  * deliverables depend on it and, until this task, neither had it: `manual`
  * (spec §6/§10a A5) is selectable as a price source but had no way to ever
- * write a price, and the README's documented `spankki_fund`/`danske_fund`
- * workaround ("add the instrument manually and set its price source to
- * `manual` -- you enter its NAV/price by hand") did not actually work.
+ * write a price, and the README's documented workaround for a holding no
+ * source covers ("set its price source to `manual` -- you enter its
+ * NAV/price by hand") did not actually work.
  *
  * Works for ANY instrument, not only one whose own `priceSource` is
  * `manual` -- a human correcting a stale/wrong stored price for an

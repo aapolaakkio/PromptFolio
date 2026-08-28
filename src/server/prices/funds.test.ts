@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { parseCurrency } from "../../core/money";
-import { DANSKE_FUND, MANUAL, NORDNET_FUND, OP_FUND, SPANKKI_FUND } from "./funds";
-import { SourceNotImplementedError } from "./types";
+import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds";
 
 const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
 
@@ -208,51 +207,6 @@ test("op_fund infers the previous year for a 31 December NAV requested just afte
     fetchImpl: stubOk(html),
   });
   expect(prices).toEqual([{ date: "2025-12-31", closeMinor: 10000, currency: EUR }]);
-});
-
-// --- SPANKKI_FUND / DANSKE_FUND -----------------------------------------
-//
-// Deliberately not implemented -- see funds.ts's comment above
-// `notYetImplemented`. Never touches the network, but -- unlike an earlier
-// draft, and unlike MANUAL -- does not silently resolve `[]` either: review
-// found that indistinguishable from "fetched fine, nothing new today" to a
-// caller iterating every configured source. `fetch()` now throws a
-// distinct, exported `SourceNotImplementedError` instead, so a caller can
-// tell the two apart by `instanceof` alone.
-
-test("spankki_fund and danske_fund throw SourceNotImplementedError without ever calling the network", async () => {
-  const fetchImpl = (): Promise<Response> => {
-    throw new Error("must not be called");
-  };
-  const spankki = SPANKKI_FUND.fetch({
-    sourceKey: "x",
-    from: "2026-08-01",
-    to: "2026-08-27",
-    fetchImpl,
-  });
-  await expect(spankki).rejects.toBeInstanceOf(SourceNotImplementedError);
-  await expect(spankki).rejects.toMatchObject({ id: "spankki_fund" });
-
-  const danske = DANSKE_FUND.fetch({
-    sourceKey: "x",
-    from: "2026-08-01",
-    to: "2026-08-27",
-    fetchImpl,
-  });
-  await expect(danske).rejects.toBeInstanceOf(SourceNotImplementedError);
-  await expect(danske).rejects.toMatchObject({ id: "danske_fund" });
-
-  expect(SPANKKI_FUND.id).toBe("spankki_fund");
-  expect(DANSKE_FUND.id).toBe("danske_fund");
-});
-
-test("spankki_fund and danske_fund are distinguishable from manual's clean empty result", async () => {
-  await expect(
-    MANUAL.fetch({ sourceKey: "x", from: "2026-08-01", to: "2026-08-27" }),
-  ).resolves.toEqual([]);
-  await expect(
-    SPANKKI_FUND.fetch({ sourceKey: "x", from: "2026-08-01", to: "2026-08-27" }),
-  ).rejects.toBeInstanceOf(SourceNotImplementedError);
 });
 
 // --- MANUAL --------------------------------------------------------------

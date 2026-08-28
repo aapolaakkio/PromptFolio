@@ -253,11 +253,11 @@ const upsertPrice = (tx: TxDb, instrumentId: number, source: string, point: Fetc
  *    times, on two more separate days, before it's trusted" is not a
  *    reasonable thing to ask of someone who is, right now, correcting a
  *    number they can already see is wrong. The very scenario this task
- *    exists to fix -- `spankki_fund`/`danske_fund` instruments set to
- *    `manual` per the README, whose very first real price has no prior
- *    stored baseline to compare against anyway (see the "first-ever
- *    price" branch above) -- would only ever HIT this guard on a
- *    *correction*, i.e. exactly the case where blocking it is worst.
+ *    exists to fix -- an instrument set to `manual` because no source
+ *    covers it, whose very first real price has no prior stored baseline
+ *    to compare against anyway (see the "first-ever price" branch above)
+ *    -- would only ever HIT this guard on a *correction*, i.e. exactly
+ *    the case where blocking it is worst.
  *
  * The alternative -- leaving the guard on and telling the user to submit
  * the same correction three separate times -- was rejected because a

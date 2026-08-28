@@ -512,10 +512,17 @@ slugifying its name and accepted only when the page's own ISIN or title proves i
 fund — so the ISIN is discovered rather than typed. A wrong guess yields the manual form, never an
 instrument pointed at another fund's NAV.
 
-**Consequence for the Finnish bank scrapers (§6).** Since Yahoo covers OP's funds, `op_fund` is now
-a fallback rather than the primary path, and `spankki_fund` / `danske_fund` — never implemented —
-are unlikely to be needed at all. They stay in the `priceSource` enum and the manual dropdown; no
-further scraper work is planned unless a holding turns up that Yahoo genuinely cannot price.
+**Consequence for the Finnish bank scrapers (§6, A5).** Since Yahoo covers OP's funds, `op_fund` is
+now a fallback rather than the primary path — still the only route for OP's paste import, which has
+no ISIN to search with.
+
+`spankki_fund` and `danske_fund` are **removed outright**, superseding their rows in §6's source
+table, §10's deliverable 7 and A5: gone from `PriceSourceId`, from the `instruments.price_source`
+enum, from the registry, and from the source picker, along with `SourceNotImplementedError`, which
+existed only to represent them. No migration was needed — the enum was TypeScript-only, with no
+CHECK constraint in SQLite — and no stored instrument used either. A holding nothing can price is
+configured as `manual` and valued by hand. No further scraper work is planned unless a holding
+turns up that Yahoo genuinely cannot price.
 
 ### C2. Cash holdings — planned, not yet built
 
