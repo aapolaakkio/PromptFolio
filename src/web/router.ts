@@ -4,6 +4,7 @@ import { DashboardPage } from "./routes/dashboard";
 import { HoldingsPage } from "./routes/holdings";
 import { ImportsPage } from "./routes/imports";
 import { LoginPage } from "./routes/login";
+import { ReconcilePage } from "./routes/reconcile";
 import { AuthenticatedLayout } from "./routes/root";
 
 // Wires the real page components into the tree structure built by
@@ -17,6 +18,7 @@ const { routeTree } = buildRouteTree({
   dashboard: DashboardPage,
   holdings: HoldingsPage,
   imports: ImportsPage,
+  reconcile: ReconcilePage,
   login: LoginPage,
 });
 

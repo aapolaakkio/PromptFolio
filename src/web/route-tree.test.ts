@@ -10,12 +10,14 @@ const {
   dashboardRoute,
   holdingsRoute,
   importsRoute,
+  reconcileRoute,
   loginRoute,
 } = buildRouteTree({
   authenticated: Stub,
   dashboard: Stub,
   holdings: Stub,
   imports: Stub,
+  reconcile: Stub,
   login: Stub,
 });
 
@@ -60,4 +62,13 @@ test("the pathless layout route resolves to the URLs the app actually serves", (
   expect(holdingsRoute.fullPath).toBe("/holdings");
   expect(importsRoute.fullPath).toBe("/imports");
   expect(loginRoute.fullPath).toBe("/login");
+});
+
+// The reconciliation screen is authenticated like every other page: a statement
+// says what someone owns, so a signed-out visitor must never reach it. Asserted
+// structurally, the same way the login page's placement is -- see this file's
+// own note on the blank-login bug that convention exists to prevent.
+test("the reconcile route sits inside the session gate", () => {
+  expect(reconcileRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
+  expect(reconcileRoute.fullPath).toBe("/reconcile");
 });

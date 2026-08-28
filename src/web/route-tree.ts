@@ -23,6 +23,7 @@ export type RouteComponents = {
   readonly dashboard: RouteComponent;
   readonly holdings: RouteComponent;
   readonly imports: RouteComponent;
+  readonly reconcile: RouteComponent;
   readonly login: RouteComponent;
 };
 
@@ -70,6 +71,11 @@ export const buildRouteTree = (components: RouteComponents) => {
     path: "/imports",
     component: components.imports,
   });
+  const reconcileRoute = createRoute({
+    getParentRoute: () => authenticatedRoute,
+    path: "/reconcile",
+    component: components.reconcile,
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/login",
@@ -77,7 +83,7 @@ export const buildRouteTree = (components: RouteComponents) => {
   });
 
   const routeTree = rootRoute.addChildren([
-    authenticatedRoute.addChildren([dashboardRoute, holdingsRoute, importsRoute]),
+    authenticatedRoute.addChildren([dashboardRoute, holdingsRoute, importsRoute, reconcileRoute]),
     loginRoute,
   ]);
 
@@ -88,6 +94,7 @@ export const buildRouteTree = (components: RouteComponents) => {
     dashboardRoute,
     holdingsRoute,
     importsRoute,
+    reconcileRoute,
     loginRoute,
   };
 };
