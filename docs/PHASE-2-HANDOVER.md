@@ -49,11 +49,6 @@ demands an exact hit; anything else waits for you.
 
 ## Also fixed in this phase
 
-- **An import files its rows into the accounts they belong to.** A Nordnet export
-  routinely covers several accounts, and the importer used to merge them. This
-  was the top-ranked gap from phase 1, and reconciliation would have inherited
-  it: a statement covers one account, so a merged ledger reports every holding of
-  the other as a phantom difference.
 - **A foreign-exchange rate more than ten days stale is refused.** The last of the
   four ways this project produced a confident, plausible, wrong number with
   nothing flagged. Checked against a real ledger: no day gains an exclusion and
@@ -61,8 +56,13 @@ demands an exact hit; anything else waits for you.
 
 ## Known gaps
 
-1. **Re-import your Nordnet data.** The account split applies at import time, so
-   an already-merged ledger stays merged until the import is redone.
+1. **A broker export covering several accounts is still merged into one.** An
+   attempt to split it automatically was built and reverted: filing rows into
+   accounts the importer invents is the wrong answer. The intended workflow is
+   that each account is exported and imported separately. Nothing currently
+   detects a file that spans two, so it merges silently -- and reconciliation
+   inherits that, since a statement covers one account and a merged ledger
+   reports every holding of the other as a phantom difference.
 2. **`unit_price` is stored in the row's cash currency, not the instrument's.**
    Cost basis is derived from `amount` and is unaffected; this is a display
    defect, and nothing currently displays it.
