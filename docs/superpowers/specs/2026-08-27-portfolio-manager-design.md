@@ -719,6 +719,25 @@ accounts per `Salkku` or refuse a multi-account file, and how an OST's withdrawa
 computed, all belong to the phase that builds tax reporting — designed against vero.fi at that
 time, per §11, rather than guessed at now.
 
+### C8. Vision import is dropped from phase 2
+
+§5.2 specified two ways into a snapshot: a PDF's text layer, and a vision model for anything
+without one. Only the first is built, and the second is not planned.
+
+The owner's statements have a real text layer, so `pdf-text.ts` reads them with `node:zlib` and no
+dependency. Vision existed for the scanned-document case, which has not appeared; building it would
+add a Claude API key, a per-image cost and a model's transcription as a source of holdings data,
+for a case nobody has.
+
+The snapshot path is unaffected by the decision — that design was always the point. A statement
+produces a snapshot, never transactions, so any future source (a photo, a bank's CSV, a
+hand-typed table) plugs into the same reconciliation and the same "the user resolves every row"
+rule. `snapshots.source` keeps its `vision` member; it costs nothing and re-opening the door needs
+no migration.
+
+Phase 2 is therefore: reconciliation (§5.4), PDF import (§5.2's first half), manual entry. That
+leaves phase 3's AI chat as the first feature needing an API key at all.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
