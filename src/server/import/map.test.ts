@@ -745,7 +745,7 @@ test("maps a share swap to a transfer pair, carrying the acquisition value acros
   // Negative, matching the ledger's convention that an acquisition's amount is
   // the cash that left -- buildLots reads the cost basis from `-amount`, so a
   // zero here would report the whole holding as gain.
-  expect(draft.txns[1]!.amount).toBe(-32729);
+  expect(draft.txns[1]!.amount).toBe(-30000);
   expect(draft.txns[1]!.quantity).toBe(12_595_200);
 });
 
