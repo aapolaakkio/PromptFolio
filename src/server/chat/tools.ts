@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { allocateBy, type Dimension } from "../../core/allocation";
+import { cashBalancesAt, valueCash } from "../../core/cash";
 import { fundingCashFlows, investedCashFlows } from "../../core/ledger";
 import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
@@ -152,12 +153,14 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     run: (input) => {
       const { on = today(), dimension = "kind" } = Allocation.parse(input);
       const { txns, instruments, prices } = loadPortfolio(db, userId);
+      const cash = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
       const { slices, excludedInstrumentIds } = allocateBy(
         txns,
         instruments,
         prices,
         on,
         dimension,
+        cash,
       );
       const byId = new Map(instruments.map((i) => [i.id, i.name]));
       return {
@@ -180,14 +183,18 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     schema: Range,
     run: (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
-      const series = valueSeries(txns, instruments, prices, from, to);
+      // Invested rows only: a bank account's spending is not portfolio
+      // performance (see valuation.ts's `Portfolio.investedTxns`).
+      const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      const series = valueSeries(investedTxns, instruments, prices, from, to);
       const final = series.at(-1);
-      const twrFlows = investedCashFlows(txns).filter((f) => f.date >= from && f.date <= to);
+      const twrFlows = investedCashFlows(investedTxns).filter(
+        (f) => f.date >= from && f.date <= to,
+      );
 
       let mwr: number | null = null;
       try {
-        const flows = fundingCashFlows(txns)
+        const flows = fundingCashFlows(investedTxns)
           .filter((f) => f.date >= from && f.date <= to)
           .map((f) => ({ date: f.date, amountEur: negateMoney(f.amountEur) }));
         mwr = final ? xirr(flows, { date: final.date, amountEur: final.valueEur }) : null;
@@ -218,8 +225,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     schema: Range,
     run: (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
-      const series = valueSeries(txns, instruments, prices, from, to);
+      const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      const series = valueSeries(investedTxns, instruments, prices, from, to);
       // Thinned rather than truncated: a truncated series would answer "how did
       // it develop" with only its beginning. 60 points is what a sentence about
       // the shape of a curve needs -- a daily series over several years costs

@@ -71,10 +71,34 @@ const groupBy = <T, K>(rows: readonly T[], keyOf: (row: T) => K): Map<K, T[]> =>
   return groups;
 };
 
+/**
+ * The account kinds that hold cash rather than investments. Their transactions
+ * are excluded from every return figure -- see `Portfolio.investedTxns`.
+ */
+export const BANK_ACCOUNT_TYPES: ReadonlySet<string> = new Set([
+  "current",
+  "savings",
+  "fixed_term",
+]);
+
 export type Portfolio = {
+  /** Every transaction the user owns, bank accounts included. Cash reads this. */
   readonly txns: readonly Txn[];
+  /**
+   * The same, minus every bank account (current, savings, fixed-term deposit).
+   *
+   * This is what the return figures must be computed from. A bank account's
+   * rows are spending and salary, not portfolio events: `DEPOSIT` and
+   * `WITHDRAWAL` feed XIRR as external cash flows, so a grocery payment left in
+   * this list would read as capital pulled out of the portfolio. Money actually
+   * moving from a bank account to a broker still counts, because the broker's
+   * own export records that arrival as a deposit of its own.
+   */
+  readonly investedTxns: readonly Txn[];
   readonly instruments: readonly Instrument[];
   readonly prices: PriceLookup;
+  /** Account ids whose kind is a bank one, for callers that group by account. */
+  readonly bankAccountIds: readonly number[];
 };
 
 /**
@@ -184,7 +208,22 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     },
   };
 
-  return { txns, instruments: instrumentList, prices: priceLookup };
+  const bankAccountIds = db
+    .select({ id: accounts.id, accountType: accounts.accountType })
+    .from(accounts)
+    .where(eq(accounts.userId, userId))
+    .all()
+    .filter((row) => row.accountType !== null && BANK_ACCOUNT_TYPES.has(row.accountType))
+    .map((row) => row.id);
+  const isBank = new Set(bankAccountIds);
+
+  return {
+    txns,
+    investedTxns: txns.filter((txn) => !isBank.has(txn.accountId)),
+    instruments: instrumentList,
+    prices: priceLookup,
+    bankAccountIds,
+  };
 };
 
 /**

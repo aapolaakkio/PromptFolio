@@ -71,15 +71,41 @@ export const accounts = sqliteTable(
     name: text("name").notNull(),
     broker: text("broker", { enum: ["nordnet", "op", "spankki", "danske", "other"] }).notNull(),
     /**
-     * Arvo-osuustili, osakesäästötili, or something else (a fund account, a
-     * savings account). Nullable because it is genuinely unknown for an account
+     * What kind of account this is: a brokerage one (arvo-osuustili,
+     * osakesäästötili) or a bank one (current, savings, fixed-term deposit).
+     *
+     * The distinction is the owner's to make, not the importer's: a bank
+     * statement looks identical whether the account behind it is a current
+     * account or a savings account, so nothing in the file could tell them
+     * apart. It matters because the three bank kinds hold cash that counts
+     * toward what the portfolio is worth but is not invested capital -- their
+     * movements must never reach the return figures, or a grocery payment would
+     * read as money pulled out of the portfolio.
+     *
+     * Nullable because it is genuinely unknown for an account
      * created before this column existed, and a wrong answer here is worse than
      * no answer: inside an OST, trades and dividends are untaxed and tax falls
      * only on withdrawal, so phase 4 must refuse to report on an account whose
      * type nobody has confirmed rather than assume the ordinary case. Set by the
      * owner, never inferred from the broker's numbering (spec §10c/C7).
      */
-    accountType: text("account_type", { enum: ["aot", "ost", "other"] }),
+    accountType: text("account_type", {
+      enum: ["aot", "ost", "current", "savings", "fixed_term", "other"],
+    }),
+    /**
+     * When a fixed-term deposit (määräaikaistili) comes free. Null on every
+     * other kind of account, including an ordinary savings account, whose money
+     * is available at any time -- that is the whole difference between them.
+     */
+    maturityDate: text("maturity_date"),
+    /**
+     * The account's interest rate in basis points -- 3,25 % is 325 -- for the
+     * same reason money is stored in minor units: a rate that round-trips
+     * through a float eventually prints wrong. Optional on both savings kinds
+     * (an ordinary account's rate is variable, so a stored one is a note about
+     * today, not a promise), null everywhere else.
+     */
+    interestRateBp: integer("interest_rate_bp"),
     // Any ISO 4217 code, not a closed enum -- see core/money.ts's `Currency`.
     // This column has no runtime CHECK constraint; the guarantee comes from
     // every write going through `parseCurrency` first (import/map.ts,

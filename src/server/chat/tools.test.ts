@@ -255,7 +255,9 @@ describe("get_allocation", () => {
     }) as { dimension: string; slices: Array<{ label: string; valueEur: string; weight: number }> };
 
     expect(result.dimension).toBe("currency");
-    expect(result.slices).toEqual([{ label: "EUR", valueEur: "120.00", weight: 1 }]);
+    // 120,00 of holding plus the 900,00 the deposit left uninvested: cash is
+    // part of the allocation (spec 10e/E1), so the chat and the dashboard agree.
+    expect(result.slices).toEqual([{ label: "EUR", valueEur: "1020.00", weight: 1 }]);
   });
 });
 

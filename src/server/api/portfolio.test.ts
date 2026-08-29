@@ -118,6 +118,16 @@ const CashSchema = z.object({
   totalEur: z.string(),
 });
 
+const AccountIdSchema = z.object({ id: z.number() });
+
+const ReturnsBankSchema = z.object({
+  valueEur: z.string(),
+  cashEur: z.string(),
+  valueWithCashEur: z.string(),
+  twr: z.number().nullable(),
+  mwr: z.number().nullable(),
+});
+
 const ReturnsCashSchema = z.object({
   valueEur: z.string(),
   cashEur: z.string(),
@@ -1105,5 +1115,87 @@ describe("GET /api/cash", () => {
     // export that lists securities only -- not a debt.
     expect(body.rows).toEqual([]);
     expect(body.totalEur).toBe("0.00");
+  });
+});
+
+describe("bank accounts", () => {
+  test("their movements never reach the return figures, but their cash reaches the value", async () => {
+    const { cookie } = await signUp(`bank-${crypto.randomUUID()}@example.com`);
+    const { accountId } = await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [
+        { date: "2024-01-01", close: 1000 },
+        { date: "2024-06-01", close: 1200 },
+      ],
+    });
+
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    const cashRow = (
+      target: number,
+      type: "DEPOSIT" | "WITHDRAWAL",
+      tradeDate: string,
+      amount: number,
+    ) => ({
+      accountId: target,
+      instrumentId: null,
+      type,
+      tradeDate,
+      quantity: 0,
+      unitPrice: null,
+      amount,
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: crypto.randomUUID(),
+    });
+
+    // The brokerage account funds its own purchase, so there is a real flow.
+    db.insert(transactions)
+      .values([cashRow(accountId, "DEPOSIT", "2023-12-31", 10_000)])
+      .run();
+
+    const askReturns = async () =>
+      ReturnsBankSchema.parse(
+        await (
+          await portfolioRoutes["/api/returns"].GET(
+            new Request("http://x/api/returns?from=2024-01-01&to=2024-06-01", {
+              headers: { cookie },
+            }),
+          )
+        ).json(),
+      );
+    const before = await askReturns();
+
+    // A bank account with a salary in and a grocery run out.
+    const bankResponse = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name: "OP käyttötili", broker: "op", accountType: "current" }),
+      }),
+    );
+    const bankId = AccountIdSchema.parse(await bankResponse.json()).id;
+    db.insert(transactions)
+      .values([
+        cashRow(bankId, "DEPOSIT", "2024-02-01", 320_000),
+        cashRow(bankId, "WITHDRAWAL", "2024-02-02", -4_215),
+      ])
+      .run();
+
+    const after = await askReturns();
+
+    // The whole point: spending is not performance.
+    expect(after.twr).toBe(before.twr);
+    expect(after.mwr).toBe(before.mwr);
+    expect(after.valueEur).toBe(before.valueEur);
+    // ...but the money is real and shows up in what the portfolio is worth.
+    expect(after.cashEur).toBe("3157.85");
+    expect(after.valueWithCashEur).toBe("3277.85");
   });
 });

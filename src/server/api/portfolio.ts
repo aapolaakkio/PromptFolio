@@ -70,9 +70,9 @@ export const portfolioRoutes = {
     GET: handle(async (request) => {
       const { userId } = await requireUser(request);
       const { from, to } = parseRange(new URL(request.url));
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
+      const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
       return json(
-        valueSeries(txns, instruments, prices, from, to).map((point) => ({
+        valueSeries(investedTxns, instruments, prices, from, to).map((point) => ({
           date: point.date,
           valueEur: formatMoney(point.valueEur),
           stale: point.stale,
@@ -139,9 +139,12 @@ export const portfolioRoutes = {
     GET: handle(async (request) => {
       const { userId } = await requireUser(request);
       const { from, to } = parseRange(new URL(request.url));
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
+      const { txns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
-      const series = valueSeries(txns, instruments, prices, from, to);
+      // Invested transactions only: a bank account's rows are spending and
+      // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving
+      // them in would report every grocery payment as capital withdrawn.
+      const series = valueSeries(investedTxns, instruments, prices, from, to);
       // mwrFlows (deposit/withdrawal-shaped) feeds xirr() below, which measures the
       // investor's own money-weighted experience -- it legitimately cares about when
       // *they* moved cash. twrFlows (BUY/SELL-shaped) feeds twr() -- see that
@@ -152,10 +155,10 @@ export const portfolioRoutes = {
       // where a broker reports cash, purchases where it reports none. See
       // fundingCashFlows -- measuring OP's holdings against Nordnet's deposits
       // alone reported roughly three times the true annual rate.
-      const mwrFlows = fundingCashFlows(txns).filter(
+      const mwrFlows = fundingCashFlows(investedTxns).filter(
         (flow) => flow.date >= from && flow.date <= to,
       );
-      const twrFlows = investedCashFlows(txns).filter(
+      const twrFlows = investedCashFlows(investedTxns).filter(
         (flow) => flow.date >= from && flow.date <= to,
       );
       const final = series.at(-1);
@@ -179,7 +182,13 @@ export const portfolioRoutes = {
       // types `[0]` as possibly undefined even though a same-day range
       // always yields exactly one point; the `opening ? ... : []` below
       // handles that without an assertion.
-      const opening = valueSeries(txns, instruments, prices, dayBefore(from), dayBefore(from))[0];
+      const opening = valueSeries(
+        investedTxns,
+        instruments,
+        prices,
+        dayBefore(from),
+        dayBefore(from),
+      )[0];
 
       // core/returns.ts's xirr() takes contributions as NEGATIVE and
       // withdrawals as POSITIVE. externalCashFlows() carries the ledger's
@@ -264,7 +273,7 @@ export const portfolioRoutes = {
          * different for them, and silently picking a definition is what
          * produced a confidently wrong number before.
          */
-        accountsMissingCashRecord: accountsMissingCashRecord(txns).flatMap((accountId) => {
+        accountsMissingCashRecord: accountsMissingCashRecord(investedTxns).flatMap((accountId) => {
           const account = ownedAccounts.get(accountId);
           return account ? [{ accountId, name: account }] : [];
         }),
