@@ -18,6 +18,7 @@ import {
 import type { IsoDate, Txn } from "./types";
 
 export type Lot = {
+  readonly accountId: number;
   readonly instrumentId: number;
   readonly acquiredOn: IsoDate;
   readonly quantity: Quantity;
@@ -25,11 +26,22 @@ export type Lot = {
 };
 
 export type Disposal = {
+  readonly accountId: number;
   readonly instrumentId: number;
   readonly acquiredOn: IsoDate;
   readonly soldOn: IsoDate;
   readonly quantity: Quantity;
+  /** Net of the sale's fee, which `Txn.amount` has already deducted. */
   readonly proceedsEur: Money;
+  /**
+   * This lot's share of the sale's fee, pro-rated exactly as `proceedsEur` is.
+   * Carried because Finnish tax needs the *gross* sale price (`proceedsEur +
+   * feeEur`): the hankintameno-olettama is a percentage of what the shares sold
+   * for, with selling costs not separately deductible on top, while the
+   * actual-cost method does deduct them. The two methods therefore do not share
+   * a base -- see `core/tax/disposals.ts`.
+   */
+  readonly feeEur: Money;
   readonly costEur: Money;
   readonly gainEur: Money;
 };
@@ -121,8 +133,16 @@ const rescaleLots = (lots: readonly Lot[], newTotal: Quantity): Lot[] => {
   });
 };
 
+/**
+ * Lots belong to an account, not merely to an instrument. vero.fi states the
+ * matching rule as FIFO *within one account*, so the same share held in two
+ * accounts has two independent queues -- pooling them is a different rule that
+ * only happens to agree while an instrument is held in one account alone.
+ */
+const lotKey = (accountId: number, instrumentId: number): string => `${accountId}:${instrumentId}`;
+
 export const buildLots = (txns: readonly Txn[]) => {
-  const openByInstrument = new Map<number, Lot[]>();
+  const openByAccountInstrument = new Map<string, Lot[]>();
   const disposals: Disposal[] = [];
   /**
    * Cost basis released by a TRANSFER_OUT, waiting for the TRANSFER_IN that
@@ -141,7 +161,8 @@ export const buildLots = (txns: readonly Txn[]) => {
 
   for (const t of chronological(txns)) {
     if (t.instrumentId === null) continue;
-    const lots = openByInstrument.get(t.instrumentId) ?? [];
+    const key = lotKey(t.accountId, t.instrumentId);
+    const lots = openByAccountInstrument.get(key) ?? [];
 
     if (t.type === "BUY" || t.type === "TRANSFER_IN") {
       if (t.amount.minor > 0n) {
@@ -161,17 +182,18 @@ export const buildLots = (txns: readonly Txn[]) => {
           : undefined;
       const costEur = carried ?? stated;
       lots.push({
+        accountId: t.accountId,
         instrumentId: t.instrumentId,
         acquiredOn: t.tradeDate,
         quantity: t.quantity,
         costEur,
       });
-      openByInstrument.set(t.instrumentId, lots);
+      openByAccountInstrument.set(key, lots);
       continue;
     }
 
     if (t.type === "SPLIT") {
-      openByInstrument.set(t.instrumentId, rescaleLots(lots, t.quantity));
+      openByAccountInstrument.set(key, rescaleLots(lots, t.quantity));
       continue;
     }
 
@@ -183,6 +205,7 @@ export const buildLots = (txns: readonly Txn[]) => {
     // it (C2).
     const disposalsBefore = disposals.length;
     const proceedsEur = toEur(t.amount, t.fxRateEur, "half-up");
+    const feeEur = toEur(t.fee, t.fxRateEur, "half-up");
     const held = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
     if (cmpQuantity(held, t.quantity) < 0) {
       throw new UnmatchedDisposalError(t.instrumentId, t.tradeDate, held, t.quantity);
@@ -191,6 +214,7 @@ export const buildLots = (txns: readonly Txn[]) => {
     let remainingLots = lots;
     let remaining = t.quantity;
     let remainingProceeds = proceedsEur;
+    let remainingFee = feeEur;
     while (remaining.scaled > 0n) {
       const lot = remainingLots[0]!;
       const takenScaled =
@@ -206,13 +230,21 @@ export const buildLots = (txns: readonly Txn[]) => {
         ? remainingProceeds
         : proRata(proceedsEur, takenScaled, t.quantity.scaled);
       remainingProceeds = subMoney(remainingProceeds, shareOfProceeds);
+      // Split the same way as the proceeds, last lot absorbing the remainder,
+      // so the parts sum to the fee actually charged rather than losing a cent.
+      const shareOfFee = isFinalShare
+        ? remainingFee
+        : proRata(feeEur, takenScaled, t.quantity.scaled);
+      remainingFee = subMoney(remainingFee, shareOfFee);
 
       disposals.push({
+        accountId: t.accountId,
         instrumentId: t.instrumentId,
         acquiredOn: lot.acquiredOn,
         soldOn: t.tradeDate,
         quantity: taken,
         proceedsEur: shareOfProceeds,
+        feeEur: shareOfFee,
         costEur,
         gainEur: subMoney(shareOfProceeds, costEur),
       });
@@ -230,7 +262,7 @@ export const buildLots = (txns: readonly Txn[]) => {
           ];
       remaining = subQuantity(remaining, taken);
     }
-    openByInstrument.set(t.instrumentId, remainingLots);
+    openByAccountInstrument.set(key, remainingLots);
 
     if (t.type === "TRANSFER_OUT") {
       const released = disposals
@@ -242,7 +274,9 @@ export const buildLots = (txns: readonly Txn[]) => {
     }
   }
 
-  const open = [...openByInstrument.values()].flat().filter((lot) => lot.quantity.scaled > 0n);
+  const open = [...openByAccountInstrument.values()]
+    .flat()
+    .filter((lot) => lot.quantity.scaled > 0n);
   return { open, disposals };
 };
 

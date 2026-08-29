@@ -25,11 +25,19 @@ let nextId = 1;
 const txn = (
   type: TransactionType,
   tradeDate: string,
-  o: { qty?: string; amount?: string; fee?: string; currency?: Currency; rate?: string } = {},
+  o: {
+    qty?: string;
+    amount?: string;
+    fee?: string;
+    currency?: Currency;
+    rate?: string;
+    accountId?: number;
+    instrumentId?: number;
+  } = {},
 ): Txn => ({
   id: nextId++,
-  accountId: 1,
-  instrumentId: 7,
+  accountId: o.accountId ?? 1,
+  instrumentId: o.instrumentId ?? 7,
   type,
   tradeDate,
   quantity: parseQuantity(o.qty ?? "0"),
@@ -262,4 +270,66 @@ test("a transfer in on a date with no matching transfer out gets no invented cos
     instrumentId: 2,
   };
   expect(formatMoney(buildLots([arrived]).open[0]!.costEur)).toBe("0.00");
+});
+
+// vero.fi states the matching rule as "The FIFO principle must always be
+// applied to the sale of shares from securities accounts: First In - First
+// Out" *within one account*. Lots were previously pooled by instrument alone,
+// which is a different rule that happens to agree whenever an instrument is
+// held in only one account.
+test("FIFO is per account: disposing from one account does not consume another account's lots", () => {
+  const { disposals } = buildLots([
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-100,00", accountId: 1 }),
+    txn("BUY", "2025-02-10", { qty: "10", amount: "-500,00", accountId: 2 }),
+    txn("SELL", "2025-06-01", { qty: "10", amount: "600,00", accountId: 2 }),
+  ]);
+
+  expect(disposals).toHaveLength(1);
+  // Pooling would take account 1's cheaper lot first and report a 500,00 gain
+  // against an account that never held it.
+  expect(formatMoney(disposals[0]!.costEur)).toBe("500.00");
+  expect(formatMoney(disposals[0]!.gainEur)).toBe("100.00");
+  expect(disposals[0]!.accountId).toBe(2);
+});
+
+test("each account keeps its own open lots, while the instrument's total still spans both", () => {
+  const txns = [
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-100,00", accountId: 1 }),
+    txn("BUY", "2025-02-10", { qty: "10", amount: "-500,00", accountId: 2 }),
+  ];
+
+  expect(
+    buildLots(txns)
+      .open.map((lot) => lot.accountId)
+      .sort(),
+  ).toEqual([1, 2]);
+  // A position spans accounts even though tax does not, so the holdings view's
+  // per-instrument total must not change with this split.
+  expect(formatMoney(costBasisAt(txns, "2025-12-31").get(7) ?? zeroMoney(EUR))).toBe("600.00");
+});
+
+test("a disposal carries its share of the sale fee, which the deemed-cost base needs", () => {
+  const { disposals } = buildLots([
+    txn("BUY", "2025-01-10", { qty: "10", amount: "-100,00" }),
+    txn("SELL", "2025-06-01", { qty: "10", amount: "590,00", fee: "10,00" }),
+  ]);
+
+  // `amount` is already net of the fee, so the gross sale price -- the base the
+  // hankintameno-olettama is a percentage of -- is `amount + fee`.
+  expect(formatMoney(disposals[0]!.proceedsEur)).toBe("590.00");
+  expect(formatMoney(disposals[0]!.feeEur)).toBe("10.00");
+});
+
+test("a fee is split across the lots a sale consumes, and the parts sum to the whole", () => {
+  const { disposals } = buildLots([
+    txn("BUY", "2025-01-10", { qty: "5", amount: "-50,00" }),
+    txn("BUY", "2025-02-10", { qty: "5", amount: "-50,00" }),
+    txn("SELL", "2025-06-01", { qty: "10", amount: "990,00", fee: "10,01" }),
+  ]);
+
+  expect(disposals).toHaveLength(2);
+  const total = disposals.reduce((sum, d) => addMoney(sum, d.feeEur), zeroMoney(EUR));
+  // 10,01 does not halve evenly: the last lot absorbs the remainder rather
+  // than the split quietly losing a cent.
+  expect(formatMoney(total)).toBe("10.01");
 });
