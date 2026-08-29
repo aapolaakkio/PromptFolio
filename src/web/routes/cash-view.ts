@@ -89,7 +89,15 @@ export const UncategorisedSchema = z.object({
   from: z.string(),
   to: z.string(),
   totalEur: z.string(),
-  merchants: z.array(z.object({ name: z.string(), totalEur: z.string(), count: z.number() })),
+  merchants: z.array(
+    z.object({
+      name: z.string(),
+      totalEur: z.string(),
+      count: z.number(),
+      /** False when the statement carried no payee, so the name is only a label. */
+      payeeKnown: z.boolean(),
+    }),
+  ),
   categories: z.array(z.object({ id: z.string(), label: z.string() })),
 });
 

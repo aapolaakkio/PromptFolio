@@ -1342,7 +1342,14 @@ describe("a fixed-term deposit's cash", () => {
 describe("GET /api/spending/uncategorised", () => {
   const UncategorisedSchema = z.object({
     totalEur: z.string(),
-    merchants: z.array(z.object({ name: z.string(), totalEur: z.string(), count: z.number() })),
+    merchants: z.array(
+      z.object({
+        name: z.string(),
+        totalEur: z.string(),
+        count: z.number(),
+        payeeKnown: z.boolean(),
+      }),
+    ),
     categories: z.array(z.object({ id: z.string(), label: z.string() })),
   });
 
@@ -1415,7 +1422,9 @@ describe("GET /api/spending/uncategorised", () => {
     const body = await ask(cookie);
 
     // The grocery shop has a seed rule; the unknown one is here, added up.
-    expect(body.merchants).toEqual([{ name: "PIENI PUOTI OY", totalEur: "-15.00", count: 2 }]);
+    expect(body.merchants).toEqual([
+      { name: "PIENI PUOTI OY", totalEur: "-15.00", count: 2, payeeKnown: true },
+    ]);
     expect(body.totalEur).toBe("-15.00");
     expect(body.categories.length).toBeGreaterThan(10);
   });
@@ -1436,6 +1445,20 @@ describe("GET /api/spending/uncategorised", () => {
 
     // Which is the whole loop this screen exists for: see it, file it, gone.
     expect((await ask(cookie)).merchants).toEqual([]);
+  });
+
+  test("marks a bare payment label as having no payee, so no rule is offered for it", async () => {
+    const { cookie } = await signUp(`uncat-label-${crypto.randomUUID()}@example.com`);
+    const accountId = await bankAccount(cookie);
+    // A statement that carried no payee leaves the note as the label alone.
+    await spend(accountId, "MAKSUPALVELU", -45_297, "2026-03-01");
+
+    const body = await ask(cookie);
+
+    // A rule on "MAKSUPALVELU" would file every bill payment as whatever this
+    // one turned out to be -- rent, in the case that produced this test.
+    expect(body.merchants[0]?.name).toBe("MAKSUPALVELU");
+    expect(body.merchants[0]?.payeeKnown).toBe(false);
   });
 
   test("leaves out a payment that funded an investment", async () => {

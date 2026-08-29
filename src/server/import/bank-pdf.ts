@@ -99,6 +99,14 @@ const FURNITURE =
  */
 const PERIOD_LINE = new RegExp(`^${DATE}\\s*-\\s*${DATE}$`);
 
+/**
+ * Card-terminal noise printed under "Viesti:" on a card payment: the masked
+ * card number, the terminal's own reference, the authorisation code. None of it
+ * says anything about what was bought, and putting it in the note would bury
+ * the payee it sits next to.
+ */
+const TERMINAL_NOISE = /^(\d{6}\*+\d{4}|MF NRO|VARMENTAJA|OSTOPVM)/;
+
 /** `Eräpäivä 1.2.2027`, on the statement of a fixed-term deposit. */
 const MATURITY = new RegExp(`^Eräpäivä$`);
 
@@ -209,14 +217,23 @@ export const parseOpStatementText = (text: string): PdfStatement => {
         if (HEADER.test(candidate) || BALANCE.test(candidate)) break;
         following.push(candidate);
       }
-      const counterparty =
-        following.find(
-          (candidate) =>
-            candidate !== "" &&
-            !FURNITURE.test(candidate) &&
-            !PERIOD_LINE.test(candidate) &&
-            !candidate.startsWith("Viesti:"),
-        ) ?? "";
+      const usable = following.filter(
+        (candidate) =>
+          candidate !== "" &&
+          !FURNITURE.test(candidate) &&
+          !PERIOD_LINE.test(candidate) &&
+          !TERMINAL_NOISE.test(candidate),
+      );
+      const counterparty = usable.find((candidate) => !candidate.startsWith("Viesti:")) ?? "";
+
+      // What the payer wrote, when they wrote anything: a rent payment says so
+      // there, and it is often the only thing that identifies the payment at
+      // all when the payee is a person or a housing company's account number.
+      const messageAt = usable.findIndex((candidate) => candidate.startsWith("Viesti:"));
+      const message =
+        messageAt === -1
+          ? ""
+          : (usable.slice(messageAt + 1).find((candidate) => candidate !== counterparty) ?? "");
 
       rows.push({
         line: index + 1,
@@ -224,7 +241,7 @@ export const parseOpStatementText = (text: string): PdfStatement => {
         type: rowType(label, amount),
         amount,
         counterparty,
-        note: [label, counterparty].filter((part) => part !== "").join(" — "),
+        note: [label, counterparty, message].filter((part) => part !== "").join(" — "),
         externalId: archiveIdOf(tail, following),
       });
     } catch (cause) {

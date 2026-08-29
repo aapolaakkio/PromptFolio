@@ -212,3 +212,38 @@ describe("a label of more than one word", () => {
     expect(parseOpStatementText(text).rows[0]?.note).toBe("PKORTTIMAKSU — KAUPPA");
   });
 });
+
+describe("the message a payer wrote", () => {
+  test("is kept, since it is often what identifies a bill", () => {
+    // A rent payment's payee can be a housing company's account number; the
+    // message is where it says what the money was for.
+    const text = [
+      "+1 000,00 Saldo 1.1.2026",
+      "2.1.2026 −300,00 MAKSUPALVELU 20260102000000000001 A",
+      "ASUNTO OY ESIMERKKI",
+      "Viesti:",
+      "VUOKRA 1/2026",
+      "+700,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    const { rows } = parseOpStatementText(text);
+    expect(rows[0]?.note).toBe("MAKSUPALVELU — ASUNTO OY ESIMERKKI — VUOKRA 1/2026");
+  });
+
+  test("leaves the card terminal's own noise out of the note", () => {
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "2.1.2026 −12,00 PKORTTIMAKSU 782367 202601025EQEO0000001 J",
+      "K-MARKET ESIMERKKI",
+      "Viesti:",
+      "400000******0000 OSTOPVM 260101",
+      "MF NRO 00000000000000000000000",
+      "VARMENTAJA 400",
+      "+88,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    // The masked card number and terminal codes say nothing about the purchase
+    // and would bury the shop's name beside them.
+    expect(parseOpStatementText(text).rows[0]?.note).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
+  });
+});

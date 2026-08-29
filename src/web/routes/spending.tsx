@@ -203,12 +203,20 @@ export const SpendingPage = () => {
                       <td className="text-right">{merchant.count}</td>
                       <td className="text-right">{eur(merchant.totalEur)}</td>
                       <td>
-                        <ClassifyOne
-                          merchant={merchant.name}
-                          categories={unknown.data?.categories ?? []}
-                          onSaved={refresh}
-                          onError={setError}
-                        />
+                        {merchant.payeeKnown ? (
+                          <ClassifyOne
+                            merchant={merchant.name}
+                            categories={unknown.data?.categories ?? []}
+                            onSaved={refresh}
+                            onError={setError}
+                          />
+                        ) : (
+                          // A rule on a bare label would file every payment of
+                          // that kind, not the one in front of the reader.
+                          <span className="text-muted text-sm">
+                            ei saajatietoa — tuo tiliote PDF-muodossa
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -32,6 +32,25 @@ import { summariseSpending } from "../spending/summary";
 const { db } = getDb();
 
 /**
+ * Payment labels, as opposed to payees. When the statement carried no payee the
+ * grouping falls back to one of these, and a rule written on it would catch
+ * every payment of that kind rather than the one shop in front of the reader.
+ */
+const LABEL_ONLY: ReadonlySet<string> = new Set([
+  "PKORTTIMAKSU",
+  "MAKSUPALVELU",
+  "TILISIIRTO",
+  "PANO",
+  "OTTO",
+  "PALKKA",
+  "LUOTON MAKSU",
+  "TALLETUSKORKO",
+  "PERUUTUS",
+  "ETUUS",
+  "NIMETÖN",
+]);
+
+/**
  * Invested accounts whose own export never records cash arriving -- OP's
  * securities view is one. Their purchases stand in for the deposits that fund
  * them, which is how a regular fund saving is recognised as investing rather
@@ -161,6 +180,10 @@ export const portfolioRoutes = {
           name: group.label,
           totalEur: group.totalEur,
           count: group.count,
+          // A row whose payee the statement never carried is grouped under its
+          // own label ("MAKSUPALVELU"). A rule on that would file every bill
+          // payment the same way, so the screen must not offer it as one.
+          payeeKnown: !LABEL_ONLY.has(group.label.toUpperCase()),
         })),
         categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
       });
