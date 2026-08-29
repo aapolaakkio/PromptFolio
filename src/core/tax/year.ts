@@ -88,7 +88,7 @@ export const taxYear = (args: {
   readonly txns: readonly Txn[];
   readonly disposals: readonly Disposal[];
   readonly ostAccountIds: ReadonlySet<number>;
-  readonly ostValueAt: (accountId: number, on: IsoDate) => OstValuation;
+  readonly ostValueAt: (accountId: number, on: IsoDate, beforeTxnId: number) => OstValuation;
   readonly year: number;
 }): TaxYear => {
   const { year, txns, disposals, ostAccountIds } = args;
@@ -135,7 +135,7 @@ export const taxYear = (args: {
     accountId,
     report: ostReport({
       txns: txns.filter((t) => t.accountId === accountId),
-      valueAt: (on) => args.ostValueAt(accountId, on),
+      valueAt: (on, beforeTxnId) => args.ostValueAt(accountId, on, beforeTxnId),
       from: `${year}-01-01`,
       to: `${year}-12-31`,
     }),

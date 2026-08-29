@@ -132,3 +132,21 @@ describe("ostReport", () => {
     expect(formatMoney(report.capRemainingEur)).toBe("0.00");
   });
 });
+
+test("values the account before the withdrawal, not after it", () => {
+  // The withdrawal's own cash must not be missing from the total it is
+  // measured against: valuing after it leaves shrinks the denominator, which
+  // inflates the profit share of every euro taken out.
+  const withdrawn = withdrawal("2025-06-01", "1500,00");
+  const seen: number[] = [];
+  ostReport({
+    txns: [deposit("2020-01-02", "10000,00"), withdrawn],
+    valueAt: (_on, beforeTxnId) => {
+      seen.push(beforeTxnId);
+      return { ok: true, valueEur: parseMoney("15000,00", EUR) };
+    },
+    ...YEAR,
+  });
+
+  expect(seen).toEqual([withdrawn.id]);
+});

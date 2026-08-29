@@ -55,7 +55,15 @@ export type OstReport = {
 export const ostReport = (args: {
   /** This account's transactions, every year -- earlier ones set up the state. */
   readonly txns: readonly Txn[];
-  readonly valueAt: (on: IsoDate) => OstValuation;
+  /**
+   * The account's value immediately before the transaction `beforeTxnId`.
+   *
+   * Before, not on: a withdrawal reduces the account's cash, and valuing the
+   * account after it has left would divide the profit by a total the
+   * withdrawal itself shrank -- understating the value, and so overstating the
+   * profit share of every euro taken out.
+   */
+  readonly valueAt: (on: IsoDate, beforeTxnId: number) => OstValuation;
   readonly from: IsoDate;
   readonly to: IsoDate;
 }): OstReport => {
@@ -81,7 +89,7 @@ export const ostReport = (args: {
       t.fxRateEur,
       "half-up",
     );
-    const valuation = args.valueAt(t.tradeDate);
+    const valuation = args.valueAt(t.tradeDate, t.id);
     const inWindow = t.tradeDate >= args.from && t.tradeDate <= args.to;
 
     if (!valuation.ok) {
