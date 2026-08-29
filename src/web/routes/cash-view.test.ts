@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { availabilityLabel, describeBalance, describeImport } from "./cash-view";
+import {
+  availabilityLabel,
+  describeBalance,
+  describeImport,
+  describeReconciliation,
+} from "./cash-view";
 
 describe("describeImport", () => {
   test("names both counts, so a re-import reads as intended rather than doubled", () => {
@@ -55,5 +60,29 @@ describe("availabilityLabel", () => {
 
   test("ordinary cash is simply available", () => {
     expect(availabilityLabel({ locked: false, availableFrom: null })).toBe("Käytettävissä");
+  });
+});
+
+describe("describeReconciliation", () => {
+  test("says when an older statement's opening balance was left alone", () => {
+    expect(
+      describeReconciliation({
+        differenceEur: "0.00",
+        openingBalanceWritten: false,
+        openingBalanceDate: "2024-12-31",
+      }),
+    ).toContain("säilytettiin ennallaan (2024-12-31)");
+  });
+
+  test("warns when the ledger no longer matches the statement", () => {
+    const text = describeReconciliation({
+      differenceEur: "-655.66",
+      openingBalanceWritten: true,
+      openingBalanceDate: "2025-08-28",
+    });
+    // The likely cause is the same period imported twice in two formats, which
+    // nothing else would catch.
+    expect(text).toContain("HUOM");
+    expect(text).toContain("-655.66");
   });
 });

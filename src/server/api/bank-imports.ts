@@ -152,6 +152,14 @@ type Reconciliation = {
   readonly statedClosingEur: string;
   readonly ledgerClosingEur: string;
   readonly differenceEur: string;
+  /**
+   * False when an earlier statement had already established the opening
+   * balance, so this import left it alone. Reported because "your opening
+   * balance was not changed" is something the owner should be told rather than
+   * left to infer from a figure that did not move.
+   */
+  readonly openingBalanceWritten: boolean;
+  readonly openingBalanceDate: string;
 };
 
 const reconcileToStatement = (
@@ -160,7 +168,7 @@ const reconcileToStatement = (
   statement: PdfStatement,
 ): Reconciliation => {
   const existing = db
-    .select({ id: transactions.id })
+    .select({ id: transactions.id, tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(
       and(
@@ -171,27 +179,41 @@ const reconcileToStatement = (
     )
     .get();
 
-  db.transaction((tx) => {
-    if (existing) tx.delete(transactions).where(eq(transactions.id, existing.id)).run();
-    if (statement.openingBalance.minor === 0n) return;
-    tx.insert(transactions)
-      .values({
-        accountId,
-        instrumentId: null,
-        type: "OPENING_BALANCE",
-        tradeDate: statement.from,
-        quantity: 0,
-        unitPrice: null,
-        amount: Number(statement.openingBalance.minor),
-        fee: 0,
-        tax: 0,
-        currency: EUR,
-        fxRateEur: 100_000_000,
-        contentHash: `opening:${accountId}:EUR`,
-        note: `Alkusaldo tiliotteelta ${statement.from}`,
-      })
-      .run();
-  });
+  // An opening balance belongs to the earliest period anyone has imported, and
+  // only a statement reaching further back may replace it.
+  //
+  // Overwriting on every import was a real defect: importing this year's
+  // statement after an older one replaced "the account held nothing in 2024"
+  // with a later balance, while the earlier rows
+  // stayed in the ledger -- counting that period's money twice.
+  const reachesFurtherBack = existing === undefined || statement.from < existing.tradeDate;
+
+  if (reachesFurtherBack) {
+    db.transaction((tx) => {
+      if (existing) tx.delete(transactions).where(eq(transactions.id, existing.id)).run();
+      // Written even when it is zero. "The account held nothing on 31.12.2024"
+      // is a fact, and the row is what carries its date -- without it, the next
+      // statement imported finds no opening balance and writes its own later
+      // one over a history that already reaches further back.
+      tx.insert(transactions)
+        .values({
+          accountId,
+          instrumentId: null,
+          type: "OPENING_BALANCE",
+          tradeDate: statement.from,
+          quantity: 0,
+          unitPrice: null,
+          amount: Number(statement.openingBalance.minor),
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: `opening:${accountId}:EUR`,
+          note: `Alkusaldo tiliotteelta ${statement.from}`,
+        })
+        .run();
+    });
+  }
 
   const rows = db
     .select({ amount: transactions.amount, tradeDate: transactions.tradeDate })
@@ -209,6 +231,10 @@ const reconcileToStatement = (
       minor: statement.closingBalance.minor - ledger,
       currency: EUR,
     }),
+    openingBalanceWritten: reachesFurtherBack,
+    openingBalanceDate: reachesFurtherBack
+      ? statement.from
+      : (existing?.tradeDate ?? statement.from),
   };
 };
 
@@ -366,7 +392,8 @@ export const bankImportRoutes = {
         if (existingOpening) {
           tx.delete(transactions).where(eq(transactions.id, existingOpening.id)).run();
         }
-        if (opening.minor === 0n) return;
+        // Recorded even at zero, for the same reason the statement import does:
+        // the row carries the date the account's known history starts from.
         tx.insert(transactions)
           .values({
             accountId,

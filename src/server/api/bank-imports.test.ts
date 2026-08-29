@@ -70,6 +70,8 @@ const PdfCommitSchema = CommitSchema.extend({
       statedClosingEur: z.string(),
       ledgerClosingEur: z.string(),
       differenceEur: z.string(),
+      openingBalanceWritten: z.boolean(),
+      openingBalanceDate: z.string(),
     })
     .nullable(),
 });
@@ -387,5 +389,57 @@ describe("a PDF this app cannot read", () => {
     expect(() =>
       parseOpStatementText("29.8.2025 −13,61 PKORTTIMAKSU 1 202508 J\nKAUPPA\n"),
     ).toThrow(/alku- ja loppusaldoa/);
+  });
+});
+
+describe("importing several statements for one account", () => {
+  const statementPdf = (name: string): Promise<ArrayBuffer> =>
+    Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).arrayBuffer();
+
+  // op-statement-earlier.pdf covers 31.12.2024 - 28.8.2025, opening 0,00 and
+  // closing 1 500,00; op-statement-sample.pdf picks up exactly there and ends
+  // at 1 574,10. Together they are one continuous history.
+  const later = () => statementPdf("op-statement-sample.pdf");
+  const earlier = () => statementPdf("op-statement-earlier.pdf");
+
+  test("a later statement does not overwrite an opening balance that reaches further back", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    await upload("/api/imports/bank/commit", cookie, accountId, await earlier());
+    const second = PdfCommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId, await later())).json(),
+    );
+
+    // The 2024 opening still stands: replacing it with the later statement's
+    // own opening while the earlier rows remain would count that period twice.
+    expect(second.reconciliation?.openingBalanceWritten).toBe(false);
+    expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
+    expect(await cashTotal(cookie, "2026-12-31")).toBe("1574.10");
+  });
+
+  test("a statement reaching further back does replace it", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    await upload("/api/imports/bank/commit", cookie, accountId, await later());
+    const second = PdfCommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId, await earlier())).json(),
+    );
+
+    expect(second.reconciliation?.openingBalanceWritten).toBe(true);
+    expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
+    // Same total whichever order they arrive in, which is the point.
+    expect(await cashTotal(cookie, "2026-12-31")).toBe("1574.10");
+  });
+
+  test("re-importing the same statement leaves the balance untouched", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    await upload("/api/imports/bank/commit", cookie, accountId, await earlier());
+    await upload("/api/imports/bank/commit", cookie, accountId, await earlier());
+
+    expect(await cashTotal(cookie, "2026-12-31")).toBe("1500.00");
   });
 });

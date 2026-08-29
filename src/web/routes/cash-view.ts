@@ -78,7 +78,37 @@ export const BankCommitSchema = z.object({
   inserted: z.number(),
   skipped: z.number(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
+  reconciliation: z
+    .object({
+      statedClosingEur: z.string(),
+      ledgerClosingEur: z.string(),
+      differenceEur: z.string(),
+      openingBalanceWritten: z.boolean(),
+      openingBalanceDate: z.string(),
+    })
+    .nullable(),
 });
+
+/**
+ * What the import did to the account's opening balance, and whether the ledger
+ * now agrees with the statement.
+ *
+ * A difference that is not zero is worth saying loudly: it means this account
+ * already held rows for the period, which is what happens when the same month
+ * arrives twice in two formats.
+ */
+export const describeReconciliation = (result: {
+  differenceEur: string;
+  openingBalanceWritten: boolean;
+  openingBalanceDate: string;
+}): string => {
+  const opening = result.openingBalanceWritten
+    ? `Alkusaldo kirjattiin ${result.openingBalanceDate}.`
+    : `Alkusaldo säilytettiin ennallaan (${result.openingBalanceDate}), koska aiempi tiliote ulottuu kauemmas.`;
+  return result.differenceEur === "0.00"
+    ? `${opening} Saldo täsmää tiliotteen kanssa.`
+    : `${opening} HUOM: saldo eroaa tiliotteesta ${result.differenceEur} € — tilillä on todennäköisesti jo samat tapahtumat toisesta tiedostosta.`;
+};
 
 export const BalanceSchema = z.object({
   on: z.string(),

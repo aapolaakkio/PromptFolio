@@ -13,6 +13,7 @@ import {
   CashSchema,
   describeBalance,
   describeImport,
+  describeReconciliation,
   ENTRY_LABELS,
   SpendingSchema,
 } from "./cash-view";
@@ -296,7 +297,20 @@ export const CashPage = () => {
               </div>
             )}
 
-            {commit.data && <p>{describeImport(commit.data)}</p>}
+            {commit.data && (
+              <>
+                <p>{describeImport(commit.data)}</p>
+                {commit.data.reconciliation && (
+                  <p
+                    className={
+                      commit.data.reconciliation.differenceEur === "0.00" ? "" : "text-loss"
+                    }
+                  >
+                    {describeReconciliation(commit.data.reconciliation)}
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           <div className="card grid gap-3">
