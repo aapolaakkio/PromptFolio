@@ -3,6 +3,7 @@ import { defineChart, link, rect, text } from "@tanstack/charts";
 import { sankeyDiagram } from "@tanstack/charts/network/sankey";
 import { Chart } from "@tanstack/react-charts";
 
+import { bumpX } from "./curve";
 import { colourFor } from "./palette";
 
 export type FlowNode = { id: string; label: string; totalEur: string };
@@ -47,8 +48,11 @@ export const CashFlowChart = ({
           target: "to",
           value: "value",
           align: "justify",
-          nodeWidth: ({ width }) => Math.max(10, width * 0.012),
-          nodePadding: ({ height }) => Math.max(8, height * 0.03),
+          nodeWidth: ({ width }) => Math.max(8, width * 0.008),
+          // Generous gaps: with two dozen categories the thin ribbons at the
+          // bottom are unreadable when they touch.
+          nodePadding: ({ height }) => Math.max(10, height * 0.022),
+          iterations: 24,
           inset: { top: 12, bottom: 12, left: 150, right: 190 },
           marks: ({ nodes: laidOut, links: ribbons }) =>
             [
@@ -58,9 +62,13 @@ export const CashFlowChart = ({
                 x2: "x2",
                 y2: "y2",
                 key: "key",
+                // The S-bend a flow diagram is read by: a straight diagonal
+                // between two stacked columns crosses its neighbours at angles
+                // the eye has to untangle.
+                curve: bumpX,
                 strokeWidth: (flow) => Math.max(1, flow.width),
                 stroke: (flow) => colourOf.get(flow.targetNode.data.id) ?? colourFor(0),
-                strokeOpacity: 0.45,
+                strokeOpacity: 0.4,
                 lineCap: "butt",
               }),
               // One rect mark per node, since `fill` is a mark-level colour

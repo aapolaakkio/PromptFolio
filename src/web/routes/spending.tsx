@@ -122,7 +122,7 @@ export const SpendingPage = () => {
         <h2 className="mt-2 text-sm text-muted">
           {groupBy === "category" ? "Luokittain" : "Saajittain"}
         </h2>
-        <div className="max-h-[32rem] overflow-auto rounded border border-line">
+        <div className="max-h-128 overflow-auto rounded border border-line">
           <table>
             <thead className="sticky top-0 bg-surface">
               <tr>
