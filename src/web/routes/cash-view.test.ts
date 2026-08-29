@@ -4,6 +4,7 @@ import {
   availabilityLabel,
   describeBalance,
   describeImport,
+  describeMaturity,
   describeReconciliation,
 } from "./cash-view";
 
@@ -84,5 +85,24 @@ describe("describeReconciliation", () => {
     // nothing else would catch.
     expect(text).toContain("HUOM");
     expect(text).toContain("-655.66");
+  });
+});
+
+describe("describeMaturity", () => {
+  test("names the date the statement supplied", () => {
+    expect(describeMaturity({ maturityDate: "2027-02-01", maturityConflict: null })).toBe(
+      "Eräpäivä 2027-02-01.",
+    );
+  });
+
+  test("asks the owner to settle a disagreement rather than picking one", () => {
+    const text = describeMaturity({ maturityDate: "2027-12-31", maturityConflict: "2027-02-01" });
+    expect(text).toContain("2027-02-01");
+    expect(text).toContain("2027-12-31");
+    expect(text).toContain("Tarkista");
+  });
+
+  test("says nothing when there is no maturity date in play", () => {
+    expect(describeMaturity({ maturityDate: null, maturityConflict: null })).toBeNull();
   });
 });

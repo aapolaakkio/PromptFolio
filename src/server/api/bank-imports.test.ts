@@ -65,6 +65,8 @@ const PreviewSchema = z.object({
 });
 
 const PdfCommitSchema = CommitSchema.extend({
+  maturityDate: z.string().nullable(),
+  maturityConflict: z.string().nullable(),
   reconciliation: z
     .object({
       statedClosingEur: z.string(),
@@ -441,5 +443,86 @@ describe("importing several statements for one account", () => {
     await upload("/api/imports/bank/commit", cookie, accountId, await earlier());
 
     expect(await cashTotal(cookie, "2026-12-31")).toBe("1500.00");
+  });
+});
+
+describe("a fixed-term deposit's maturity date", () => {
+  const depositPdf = (): Promise<ArrayBuffer> =>
+    Bun.file(`${import.meta.dir}/../import/fixtures/op-fixed-term-sample.pdf`).arrayBuffer();
+
+  const accountRow = async (accountId: number) => {
+    const { getDb } = await import("../db");
+    const { accounts } = await import("../db/schema");
+    const { eq } = await import("drizzle-orm");
+    return getDb().db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+  };
+
+  test("is taken from the statement onto an account that has none", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "fixed_term");
+
+    const body = PdfCommitSchema.parse(
+      await (
+        await upload("/api/imports/bank/commit", cookie, accountId, await depositPdf())
+      ).json(),
+    );
+
+    // The statement states it, so the owner does not have to type it again.
+    expect(body.maturityDate).toBe("2027-02-01");
+    expect((await accountRow(accountId))?.maturityDate).toBe("2027-02-01");
+  });
+
+  test("never overwrites one the owner already recorded, and reports the disagreement", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "fixed_term");
+    await accountRoutes["/api/accounts/:id"].PATCH(
+      new Request(`http://x/api/accounts/${accountId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ maturityDate: "2027-12-31" }),
+      }),
+    );
+
+    const body = PdfCommitSchema.parse(
+      await (
+        await upload("/api/imports/bank/commit", cookie, accountId, await depositPdf())
+      ).json(),
+    );
+
+    expect(body.maturityDate).toBe("2027-12-31");
+    // A deposit whose stated term differs from the recorded one is worth
+    // looking at, not silently adopting.
+    expect(body.maturityConflict).toBe("2027-02-01");
+    expect((await accountRow(accountId))?.maturityDate).toBe("2027-12-31");
+  });
+
+  test("is not written onto a current account, where it would mean nothing", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    const body = PdfCommitSchema.parse(
+      await (
+        await upload("/api/imports/bank/commit", cookie, accountId, await depositPdf())
+      ).json(),
+    );
+
+    expect(body.maturityDate).toBeNull();
+    expect((await accountRow(accountId))?.maturityDate).toBeNull();
+  });
+
+  test("makes the deposit's cash read as locked without any further input", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "fixed_term");
+    await upload("/api/imports/bank/commit", cookie, accountId, await depositPdf());
+
+    const cash = await portfolioRoutes["/api/cash"].GET(
+      new Request("http://x/api/cash?on=2026-06-01", { headers: { cookie } }),
+    );
+    const body = z
+      .object({ availableEur: z.string(), lockedEur: z.string() })
+      .parse(await cash.json());
+
+    expect(body.lockedEur).toBe("5000.00");
+    expect(body.availableEur).toBe("0.00");
   });
 });

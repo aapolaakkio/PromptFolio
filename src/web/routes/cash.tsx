@@ -13,6 +13,7 @@ import {
   CashSchema,
   describeBalance,
   describeImport,
+  describeMaturity,
   describeReconciliation,
   ENTRY_LABELS,
   SpendingSchema,
@@ -300,6 +301,11 @@ export const CashPage = () => {
             {commit.data && (
               <>
                 <p>{describeImport(commit.data)}</p>
+                {describeMaturity(commit.data) !== null && (
+                  <p className={commit.data.maturityConflict === null ? "" : "text-loss"}>
+                    {describeMaturity(commit.data)}
+                  </p>
+                )}
                 {commit.data.reconciliation && (
                   <p
                     className={

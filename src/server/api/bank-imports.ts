@@ -148,6 +148,42 @@ const assertBankAccount = (accountId: number): void => {
  * nothing else would catch it, and the balance would quietly come out twice
  * what the bank says.
  */
+/**
+ * Puts the statement's maturity date on the account when the account has none.
+ *
+ * Filling a blank from the document that states it is not the same as
+ * overwriting something the owner chose: a date already recorded is left alone
+ * and the disagreement reported, since a deposit whose terms changed is worth
+ * looking at rather than silently adopting.
+ */
+type MaturityOutcome = {
+  /** What the account carries after this import. */
+  readonly maturityDate: string | null;
+  /** The statement's date when it disagrees with the account's own; null otherwise. */
+  readonly maturityConflict: string | null;
+};
+
+const recordMaturity = (db: Db, accountId: number, statement: PdfStatement): MaturityOutcome => {
+  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+  const stated = statement.maturityDate;
+  if (stated === null || account === undefined) {
+    return { maturityDate: account?.maturityDate ?? null, maturityConflict: null };
+  }
+  if (account.accountType !== "fixed_term") {
+    // A maturity date means nothing on a current account, and the account's kind
+    // is the owner's to set, not a statement's.
+    return { maturityDate: null, maturityConflict: null };
+  }
+  if (account.maturityDate === null) {
+    db.update(accounts).set({ maturityDate: stated }).where(eq(accounts.id, accountId)).run();
+    return { maturityDate: stated, maturityConflict: null };
+  }
+  return {
+    maturityDate: account.maturityDate,
+    maturityConflict: account.maturityDate === stated ? null : stated,
+  };
+};
+
 type Reconciliation = {
   readonly statedClosingEur: string;
   readonly ledgerClosingEur: string;
@@ -314,11 +350,23 @@ export const bankImportRoutes = {
       // exactly the case a person cannot spot by eye.
       const reconciliation =
         statement === null ? null : reconcileToStatement(db, accountId, statement);
+      // A fixed-term deposit's statement states when it comes free, so the
+      // account no longer has to be told separately. Only a blank is filled.
+      const maturity = statement === null ? null : recordMaturity(db, accountId, statement);
 
       // Problems travel with the result rather than blocking it: a statement
       // whose 700th row is malformed should still import the other 699, and the
       // owner needs to know which one was left out.
-      return json({ ...result, problems, reconciliation }, 201);
+      return json(
+        {
+          ...result,
+          problems,
+          reconciliation,
+          maturityDate: maturity?.maturityDate ?? null,
+          maturityConflict: maturity?.maturityConflict ?? null,
+        },
+        201,
+      );
     }),
   },
 

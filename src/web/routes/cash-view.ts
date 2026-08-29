@@ -77,6 +77,8 @@ export const BankCommitSchema = z.object({
   importId: z.number(),
   inserted: z.number(),
   skipped: z.number(),
+  maturityDate: z.string().nullable(),
+  maturityConflict: z.string().nullable(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
   reconciliation: z
     .object({
@@ -97,6 +99,21 @@ export const BankCommitSchema = z.object({
  * already held rows for the period, which is what happens when the same month
  * arrives twice in two formats.
  */
+/**
+ * What the import did with the deposit's maturity date, when there was one.
+ * Silent when nothing happened -- an account that already agreed with its
+ * statement needs no sentence about it.
+ */
+export const describeMaturity = (result: {
+  maturityDate: string | null;
+  maturityConflict: string | null;
+}): string | null => {
+  if (result.maturityConflict !== null) {
+    return `Tiliote ilmoittaa eräpäiväksi ${result.maturityConflict}, tilille on kirjattu ${result.maturityDate}. Tarkista kumpi on oikea.`;
+  }
+  return result.maturityDate === null ? null : `Eräpäivä ${result.maturityDate}.`;
+};
+
 export const describeReconciliation = (result: {
   differenceEur: string;
   openingBalanceWritten: boolean;
