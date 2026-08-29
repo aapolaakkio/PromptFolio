@@ -298,6 +298,18 @@ test("resetDbHandleForTests() forces the next getDb() call to open a new handle"
   expect(parsed.hasMarker).toBe(false);
 });
 
+test("declares one target per slice per dimension per user", () => {
+  // Asserted on the declaration, not only through an insert: the constraint is
+  // what stops a half-applied write leaving two targets for one slice, and a
+  // migration that quietly dropped it would still pass the insert test on a
+  // database created before the drop.
+  const config = getTableConfig(allocationTargets);
+
+  expect(config.uniqueConstraints.map((uq) => uq.columns.map((c) => c.name).join(","))).toEqual([
+    "user_id,dimension,key",
+  ]);
+});
+
 test("a user cannot hold two targets for the same slice", () => {
   const { db } = testDb();
   seedUser(db, "targets-user");
