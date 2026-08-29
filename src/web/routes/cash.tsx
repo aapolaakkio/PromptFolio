@@ -9,6 +9,7 @@ import {
   BankCommitSchema,
   BankPreviewSchema,
   CashEntriesSchema,
+  availabilityLabel,
   CashSchema,
   describeBalance,
   describeImport,
@@ -138,6 +139,12 @@ export const CashPage = () => {
           <h2 className="text-sm text-muted">Käteinen yhteensä</h2>
           <span className="text-2xl">{eur(cash.data?.totalEur ?? "0.00")}</span>
         </div>
+        {cash.data && cash.data.lockedEur !== "0.00" && (
+          <p className="text-muted text-sm">
+            Käytettävissä {eur(cash.data.availableEur)} · sidottuna määräaikaistalletuksissa{" "}
+            {eur(cash.data.lockedEur)}
+          </p>
+        )}
         <div className="mt-3 max-h-80 overflow-auto rounded border border-line">
           <table>
             <thead className="sticky top-0 bg-surface">
@@ -146,6 +153,7 @@ export const CashPage = () => {
                 <th>Valuutta</th>
                 <th className="text-right">Saldo</th>
                 <th className="text-right">EUR</th>
+                <th>Saatavuus</th>
               </tr>
             </thead>
             <tbody>
@@ -157,11 +165,12 @@ export const CashPage = () => {
                   <td className="text-right">
                     {row.valueEur === null ? "kurssi puuttuu" : eur(row.valueEur)}
                   </td>
+                  <td className={row.locked ? "text-muted" : ""}>{availabilityLabel(row)}</td>
                 </tr>
               ))}
               {(cash.data?.rows ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="text-muted">
+                  <td colSpan={5} className="text-muted">
                     Ei käteistä. Luo pankkitili ja tuo tiliote tai kirjaa saldo käsin.
                   </td>
                 </tr>

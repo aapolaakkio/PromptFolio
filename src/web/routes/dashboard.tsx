@@ -25,6 +25,8 @@ const ReturnsSchema = z.object({
   valueEur: z.string(),
   /** Uninvested cash, and the two added together (spec 10c/C2). */
   cashEur: z.string(),
+  availableCashEur: z.string(),
+  lockedCashEur: z.string(),
   valueWithCashEur: z.string(),
   stale: z.boolean(),
   // `null` (like `mwr`) is a real, distinct answer -- C5: at least half the value
@@ -176,7 +178,13 @@ export const DashboardPage = () => {
           note={
             returns.data.cashEur === "0.00"
               ? undefined
-              : `sijoitukset ${eur(returns.data.valueEur)} + käteinen ${eur(returns.data.cashEur)}`
+              : returns.data.lockedCashEur === "0.00"
+                ? `sijoitukset ${eur(returns.data.valueEur)} + käteinen ${eur(returns.data.cashEur)}`
+                : // A deposit locked until its maturity is not spendable money,
+                  // so the split is named rather than folded into one figure.
+                  `sijoitukset ${eur(returns.data.valueEur)} + käteinen ${eur(
+                    returns.data.availableCashEur,
+                  )} + sidottu ${eur(returns.data.lockedCashEur)}`
           }
         />
         <Stat

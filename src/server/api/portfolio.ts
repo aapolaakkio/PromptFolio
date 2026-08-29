@@ -14,8 +14,14 @@ import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
 import { accounts } from "../db/schema";
 import { HttpError, handle, json } from "../http";
-import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
-import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash";
+import { cashFor, holdingsFor, loadPortfolio, withAvailability } from "../valuation";
+import {
+  availableCashEur,
+  cashBalancesAt,
+  lockedCashEur,
+  totalCashEur,
+  valueCash,
+} from "../../core/cash";
 import { summariseSpending } from "../spending/summary";
 
 const { db } = getDb();
@@ -128,7 +134,12 @@ export const portfolioRoutes = {
       // Cash is part of the allocation (spec 10c/C2): a portfolio holding a
       // fifth of its value in an unspent deposit is not 100 % invested, and a
       // pie chart that says so is wrong.
-      const cash = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
+      const cash = withAvailability(
+        db,
+        userId,
+        valueCash(cashBalancesAt(txns, on), prices.fxOn, on),
+        on,
+      );
       const { slices, excludedInstrumentIds } = allocateBy(
         txns,
         instruments,
@@ -282,7 +293,12 @@ export const portfolioRoutes = {
       // 10c/C2): an account holding an unspent deposit has a lower total value
       // but has not performed worse, and folding cash into the return would say
       // it had.
-      const cashAtEnd = valueCash(cashBalancesAt(txns, to), prices.fxOn, to);
+      const cashAtEnd = withAvailability(
+        db,
+        userId,
+        valueCash(cashBalancesAt(txns, to), prices.fxOn, to),
+        to,
+      );
       const cashEur = totalCashEur(cashAtEnd);
       const positionsEur = final ? final.valueEur : zeroMoney(EUR);
 
@@ -291,6 +307,10 @@ export const portfolioRoutes = {
         to,
         valueEur: formatMoney(positionsEur),
         cashEur: formatMoney(cashEur),
+        // What of that cash could actually be spent on the day, and what is tied
+        // up in a deposit until it matures.
+        availableCashEur: formatMoney(availableCashEur(cashAtEnd)),
+        lockedCashEur: formatMoney(lockedCashEur(cashAtEnd)),
         valueWithCashEur: formatMoney(addMoney(positionsEur, cashEur)),
         stale: final?.stale ?? false,
         twr: twr(series, twrFlows),

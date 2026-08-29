@@ -1,6 +1,13 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis";
-import { cashBalancesAt, totalCashEur, valueCash } from "../core/cash";
+import {
+  availableCashEur,
+  cashBalancesAt,
+  lockedCashEur,
+  totalCashEur,
+  valueCash,
+  type ValuedCash,
+} from "../core/cash";
 import { positionsAt } from "../core/ledger";
 import {
   addMoney,
@@ -472,8 +479,19 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
     .sort((a, b) => Number(b.valueEur ?? "0") - Number(a.valueEur ?? "0"));
 };
 
-/** One account's cash, and the household total, as the API reports them. */
-export type CashReport = { readonly rows: CashView[]; readonly totalEur: string };
+/**
+ * One account's cash, and the household totals, as the API reports them.
+ *
+ * Three figures rather than one: everything, what can be spent today, and what
+ * is tied up in a fixed-term deposit until it matures. A single total would
+ * claim a deposit locked until 2027 is money available now.
+ */
+export type CashReport = {
+  readonly rows: CashView[];
+  readonly totalEur: string;
+  readonly availableEur: string;
+  readonly lockedEur: string;
+};
 
 /** One account's cash, as the API and the chat tools report it. */
 export type CashView = {
@@ -483,6 +501,10 @@ export type CashView = {
   readonly amount: string;
   /** Null when no fx rate is known for `on` -- the balance is real, its euro value is not. */
   readonly valueEur: string | null;
+  /** True while a fixed-term deposit has not yet matured. */
+  readonly locked: boolean;
+  /** The day a locked balance comes free, or null when the account records none. */
+  readonly availableFrom: string | null;
 };
 
 /**
@@ -494,6 +516,45 @@ export type CashView = {
  * not read as a portfolio that underperformed. The two numbers answer two
  * different questions and each says which.
  */
+/**
+ * Marks each balance according to whether its account can be drawn on `on`.
+ *
+ * A fixed-term deposit is locked until its maturity date, and locked with an
+ * unknown release date when the account records none -- "we do not know when
+ * this frees up" is the honest reading of a deposit whose terms nobody entered,
+ * and it is safer than treating it as spendable.
+ */
+export const withAvailability = (
+  db: Db,
+  userId: string,
+  balances: readonly ValuedCash[],
+  on: IsoDate,
+): ValuedCash[] => {
+  const terms = new Map(
+    db
+      .select({
+        id: accounts.id,
+        accountType: accounts.accountType,
+        maturityDate: accounts.maturityDate,
+      })
+      .from(accounts)
+      .where(eq(accounts.userId, userId))
+      .all()
+      .map((row) => [row.id, row]),
+  );
+
+  return balances.map((balance) => {
+    const account = terms.get(balance.accountId);
+    if (account?.accountType !== "fixed_term") return { ...balance, locked: false };
+    const maturity = account.maturityDate;
+    return {
+      ...balance,
+      locked: maturity === null || maturity > on,
+      availableFrom: maturity,
+    };
+  });
+};
+
 export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
   const { txns, prices } = loadPortfolio(db, userId);
   const names = new Map(
@@ -505,7 +566,12 @@ export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
       .map((row) => [row.id, row.name]),
   );
 
-  const valued = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
+  const valued = withAvailability(
+    db,
+    userId,
+    valueCash(cashBalancesAt(txns, on), prices.fxOn, on),
+    on,
+  );
   return {
     rows: valued.map((balance) => ({
       accountId: balance.accountId,
@@ -513,7 +579,11 @@ export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
       currency: balance.currency,
       amount: formatMoney(balance.amount),
       valueEur: balance.valueEur === null ? null : formatMoney(balance.valueEur),
+      locked: balance.locked === true,
+      availableFrom: balance.availableFrom ?? null,
     })),
     totalEur: formatMoney(totalCashEur(valued)),
+    availableEur: formatMoney(availableCashEur(valued)),
+    lockedEur: formatMoney(lockedCashEur(valued)),
   };
 };

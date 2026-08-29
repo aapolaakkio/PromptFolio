@@ -10,10 +10,31 @@ export const CashSchema = z.object({
       currency: z.string(),
       amount: z.string(),
       valueEur: z.string().nullable(),
+      locked: z.boolean(),
+      availableFrom: z.string().nullable(),
     }),
   ),
   totalEur: z.string(),
+  availableEur: z.string(),
+  lockedEur: z.string(),
 });
+
+/**
+ * How a balance's reachability reads on screen.
+ *
+ * A deposit locked until a date says so with the date; one whose terms nobody
+ * entered says that instead of implying it is spendable, because "we do not
+ * know when this frees up" and "you can use it now" are different answers.
+ */
+export const availabilityLabel = (row: {
+  locked: boolean;
+  availableFrom: string | null;
+}): string => {
+  if (!row.locked) return "Käytettävissä";
+  return row.availableFrom === null
+    ? "Sidottu, eräpäivä ei tiedossa"
+    : `Sidottu ${row.availableFrom} asti`;
+};
 
 export const SpendingSchema = z.object({
   from: z.string(),

@@ -17,7 +17,39 @@ export type CashBalance = {
 };
 
 /** A balance converted to euros, or `null` when no fx rate is known for the day. */
-export type ValuedCash = CashBalance & { readonly valueEur: Money | null };
+export type ValuedCash = CashBalance & {
+  readonly valueEur: Money | null;
+  /**
+   * Whether the money can be reached on the day being valued.
+   *
+   * A fixed-term deposit is money the owner has but cannot spend until it
+   * matures, and reporting it in the same figure as a current account's balance
+   * says something untrue about what is available. Both count toward what the
+   * portfolio is worth; only one of them answers "what could I use today".
+   *
+   * Decided by the caller, which knows the accounts -- `core` sees transactions
+   * only. Defaults to available, since every account but a deposit is.
+   */
+  readonly locked?: boolean;
+  /** When a locked balance comes free, if the account records it. */
+  readonly availableFrom?: IsoDate | null;
+};
+
+/** The euro total of the balances that can actually be reached on the day. */
+export const availableCashEur = (valued: readonly ValuedCash[]): Money =>
+  valued.reduce(
+    (sum, balance) =>
+      balance.valueEur === null || balance.locked === true ? sum : addMoney(sum, balance.valueEur),
+    zeroMoney(EUR),
+  );
+
+/** The euro total of the balances that are tied up on the day. */
+export const lockedCashEur = (valued: readonly ValuedCash[]): Money =>
+  valued.reduce(
+    (sum, balance) =>
+      balance.valueEur === null || balance.locked !== true ? sum : addMoney(sum, balance.valueEur),
+    zeroMoney(EUR),
+  );
 
 const key = (accountId: number, currency: Currency): string => `${accountId} ${currency}`;
 

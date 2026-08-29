@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { describeBalance, describeImport } from "./cash-view";
+import { availabilityLabel, describeBalance, describeImport } from "./cash-view";
 
 describe("describeImport", () => {
   test("names both counts, so a re-import reads as intended rather than doubled", () => {
@@ -37,5 +37,23 @@ describe("describeBalance", () => {
         openingBalanceDate: "2025-08-31",
       }),
     ).toBe("Alkusaldoksi kirjattiin 7889.71 € (2025-08-31); tapahtumat selittävät 2110.29 €.");
+  });
+});
+
+describe("availabilityLabel", () => {
+  test("names the day a deposit frees up", () => {
+    expect(availabilityLabel({ locked: true, availableFrom: "2027-06-22" })).toBe(
+      "Sidottu 2027-06-22 asti",
+    );
+  });
+
+  test("says the term is unknown rather than implying the money is spendable", () => {
+    expect(availabilityLabel({ locked: true, availableFrom: null })).toBe(
+      "Sidottu, eräpäivä ei tiedossa",
+    );
+  });
+
+  test("ordinary cash is simply available", () => {
+    expect(availabilityLabel({ locked: false, availableFrom: null })).toBe("Käytettävissä");
   });
 });

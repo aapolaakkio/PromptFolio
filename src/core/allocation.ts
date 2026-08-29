@@ -65,7 +65,12 @@ const keyAndLabel = (
 const cashKeyAndLabel = (dimension: Dimension, balance: ValuedCash): readonly [string, string] => {
   switch (dimension) {
     case "kind":
-      return ["cash", KIND_LABELS.cash];
+      // A fixed-term deposit is its own slice rather than more "cash": it
+      // behaves like a short bond, and folding the two together reports a
+      // portfolio as more liquid than it is.
+      return balance.locked === true
+        ? ["fixed_term", "Määräaikaistalletukset"]
+        : ["cash", KIND_LABELS.cash];
     case "currency":
       return [balance.currency, balance.currency];
     case "account":
@@ -73,7 +78,9 @@ const cashKeyAndLabel = (dimension: Dimension, balance: ValuedCash): readonly [s
     case "instrument":
       // Cash is one line rather than one per account: an instrument breakdown
       // that listed "Käteinen" three times would read as three holdings.
-      return ["cash", KIND_LABELS.cash];
+      return balance.locked === true
+        ? ["fixed_term", "Määräaikaistalletukset"]
+        : ["cash", KIND_LABELS.cash];
   }
 };
 

@@ -113,9 +113,13 @@ const CashSchema = z.object({
       currency: z.string(),
       amount: z.string(),
       valueEur: z.string().nullable(),
+      locked: z.boolean(),
+      availableFrom: z.string().nullable(),
     }),
   ),
   totalEur: z.string(),
+  availableEur: z.string(),
+  lockedEur: z.string(),
 });
 
 const AccountIdSchema = z.object({ id: z.number() });
@@ -1202,5 +1206,135 @@ describe("bank accounts", () => {
     // ...but the money is real and shows up in what the portfolio is worth.
     expect(after.cashEur).toBe("3157.85");
     expect(after.valueWithCashEur).toBe("3277.85");
+  });
+});
+
+describe("a fixed-term deposit's cash", () => {
+  const openDeposit = async (cookie: string, maturityDate: string | null): Promise<number> => {
+    const account = {
+      name: "OP määräaikaistili",
+      broker: "op",
+      kind: "bank",
+      accountType: "fixed_term",
+    };
+    const created = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(maturityDate === null ? account : { ...account, maturityDate }),
+      }),
+    );
+    expect(created.status).toBe(201);
+    return AccountIdSchema.parse(await created.json()).id;
+  };
+
+  const deposit = async (accountId: number, amount: number, tradeDate: string) => {
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    db.insert(transactions)
+      .values([
+        {
+          accountId,
+          instrumentId: null,
+          type: "DEPOSIT" as const,
+          tradeDate,
+          quantity: 0,
+          unitPrice: null,
+          amount,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: crypto.randomUUID(),
+        },
+      ])
+      .run();
+  };
+
+  test("counts toward the total but not toward what can be spent today", async () => {
+    const { cookie } = await signUp(`locked-${crypto.randomUUID()}@example.com`);
+    const depositId = await openDeposit(cookie, "2027-06-22");
+    await deposit(depositId, 1_000_000, "2026-06-22");
+
+    const body = CashSchema.parse(
+      await (
+        await portfolioRoutes["/api/cash"].GET(
+          new Request("http://x/api/cash?on=2026-08-28", { headers: { cookie } }),
+        )
+      ).json(),
+    );
+
+    expect(body.totalEur).toBe("10000.00");
+    // The money is the owner's, and none of it is available before maturity.
+    expect(body.availableEur).toBe("0.00");
+    expect(body.lockedEur).toBe("10000.00");
+    expect(body.rows[0]?.locked).toBe(true);
+    expect(body.rows[0]?.availableFrom).toBe("2027-06-22");
+  });
+
+  test("becomes spendable once the term has run", async () => {
+    const { cookie } = await signUp(`matured-${crypto.randomUUID()}@example.com`);
+    const depositId = await openDeposit(cookie, "2027-06-22");
+    await deposit(depositId, 1_000_000, "2026-06-22");
+
+    const body = CashSchema.parse(
+      await (
+        await portfolioRoutes["/api/cash"].GET(
+          new Request("http://x/api/cash?on=2027-07-01", { headers: { cookie } }),
+        )
+      ).json(),
+    );
+
+    expect(body.availableEur).toBe("10000.00");
+    expect(body.lockedEur).toBe("0.00");
+  });
+
+  test("a deposit with no maturity recorded stays locked rather than counted as spendable", async () => {
+    const { cookie } = await signUp(`unknown-term-${crypto.randomUUID()}@example.com`);
+    const depositId = await openDeposit(cookie, null);
+    await deposit(depositId, 500_000, "2026-06-22");
+
+    const body = CashSchema.parse(
+      await (
+        await portfolioRoutes["/api/cash"].GET(
+          new Request("http://x/api/cash?on=2026-08-28", { headers: { cookie } }),
+        )
+      ).json(),
+    );
+
+    // "Nobody entered when this frees up" is not the same as "it is free".
+    expect(body.lockedEur).toBe("5000.00");
+    expect(body.rows[0]?.availableFrom).toBeNull();
+  });
+
+  test("gets its own allocation slice, separate from spendable cash", async () => {
+    const { cookie } = await signUp(`slice-${crypto.randomUUID()}@example.com`);
+    const current = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          name: "OP käyttötili",
+          broker: "op",
+          kind: "bank",
+          accountType: "current",
+        }),
+      }),
+    );
+    const currentId = AccountIdSchema.parse(await current.json()).id;
+    const depositId = await openDeposit(cookie, "2027-06-22");
+    await deposit(currentId, 100_000, "2026-06-22");
+    await deposit(depositId, 1_000_000, "2026-06-22");
+
+    const response = await portfolioRoutes["/api/allocation"].GET(
+      new Request("http://x/api/allocation?by=kind&on=2026-08-28", { headers: { cookie } }),
+    );
+    const body = z
+      .object({ slices: z.array(z.object({ key: z.string(), valueEur: z.string() })) })
+      .parse(await response.json());
+
+    expect(body.slices.find((slice) => slice.key === "cash")?.valueEur).toBe("1000.00");
+    expect(body.slices.find((slice) => slice.key === "fixed_term")?.valueEur).toBe("10000.00");
   });
 });

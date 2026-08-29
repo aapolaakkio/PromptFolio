@@ -381,8 +381,6 @@ describe("a PDF this app cannot read", () => {
   });
 
   test("a PDF with text but no balances says which is missing", async () => {
-    const cookie = await signUp();
-    const accountId = await openAccount(cookie, "current");
     const { parseOpStatementText } = await import("../import/bank-pdf");
 
     // The same path the route takes, on text that has rows but no balance line.

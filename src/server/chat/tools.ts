@@ -132,24 +132,34 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_cash",
     description:
-      "Sijoittamaton käteinen tileittäin ja valuutoittain. Käteinen lasketaan mukaan salkun " +
-      "arvoon ja jakaumaan, mutta ei tuottolukuihin.",
+      "Sijoittamaton käteinen tileittäin ja valuutoittain. Erottelee heti käytettävissä " +
+      "olevan rahan ja määräaikaistalletukset, joita ei voi nostaa ennen eräpäivää. " +
+      "Käteinen on mukana salkun arvossa ja jakaumassa, mutta ei tuottoluvuissa.",
     schema: OnDate,
     run: (input) => {
       const { on = today() } = OnDate.parse(input);
-      const { rows, totalEur } = cashFor(db, userId, on);
+      const { rows, totalEur, availableEur, lockedEur } = cashFor(db, userId, on);
       return {
         asOf: on,
         totalEur,
+        // Money in a fixed-term deposit is the owner's but cannot be spent until
+        // it matures; one figure covering both would answer "what do I have
+        // available" wrongly.
+        availableEur,
+        lockedEur,
         balances: rows.map((row) => ({
           account: row.accountName,
           currency: row.currency,
           amount: row.amount,
           valueEur: row.valueEur,
+          locked: row.locked,
+          availableFrom: row.availableFrom,
         })),
         note:
           "Tilit, joiden aineistossa ei ole lainkaan käteistapahtumia (esim. OP:n " +
-          "arvopaperinäkymä), eivät näy tässä lainkaan -- niiden saldoa ei voi johtaa.",
+          "arvopaperinäkymä), eivät näy tässä lainkaan -- niiden saldoa ei voi johtaa. " +
+          "locked: true tarkoittaa määräaikaistalletusta, jota ei voi nostaa ennen " +
+          "availableFrom-päivää.",
       };
     },
   },

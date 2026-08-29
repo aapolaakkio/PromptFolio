@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { cashBalancesAt, totalCashEur, valueCash } from "./cash";
+import { availableCashEur, cashBalancesAt, lockedCashEur, totalCashEur, valueCash } from "./cash";
 import { EUR, formatMoney, parseCurrency, parseMoney, type Currency } from "./money";
 import type { IsoDate, TransactionType, Txn } from "./types";
 
@@ -188,5 +188,54 @@ describe("totalCashEur", () => {
 
   test("is zero euros when there is no cash at all", () => {
     expect(formatMoney(totalCashEur([]))).toBe("0.00");
+  });
+});
+
+describe("available and locked cash", () => {
+  const valued = () => [
+    {
+      accountId: 1,
+      currency: EUR,
+      amount: parseMoney("500.00", EUR),
+      valueEur: parseMoney("500.00", EUR),
+      locked: false,
+    },
+    {
+      accountId: 2,
+      currency: EUR,
+      amount: parseMoney("10000.00", EUR),
+      valueEur: parseMoney("10000.00", EUR),
+      locked: true,
+      availableFrom: "2027-06-22",
+    },
+  ];
+
+  test("counts a fixed-term deposit toward the total but not toward what is spendable", () => {
+    expect(formatMoney(totalCashEur(valued()))).toBe("10500.00");
+    expect(formatMoney(availableCashEur(valued()))).toBe("500.00");
+    expect(formatMoney(lockedCashEur(valued()))).toBe("10000.00");
+  });
+
+  test("treats a balance with no availability stated as spendable", () => {
+    // Every account but a deposit is reachable, so the flag is optional and its
+    // absence must not quietly lock money away.
+    const plain = [
+      {
+        accountId: 1,
+        currency: EUR,
+        amount: parseMoney("500.00", EUR),
+        valueEur: parseMoney("500.00", EUR),
+      },
+    ];
+    expect(formatMoney(availableCashEur(plain))).toBe("500.00");
+    expect(formatMoney(lockedCashEur(plain))).toBe("0.00");
+  });
+
+  test("leaves an unvaluable balance out of both, rather than guessing", () => {
+    const unpriced = [
+      { accountId: 1, currency: EUR, amount: parseMoney("500.00", EUR), valueEur: null },
+    ];
+    expect(formatMoney(availableCashEur(unpriced))).toBe("0.00");
+    expect(formatMoney(lockedCashEur(unpriced))).toBe("0.00");
   });
 });
