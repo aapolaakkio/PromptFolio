@@ -406,3 +406,38 @@ export const pendingPriceRejections = sqliteTable("pending_price_rejections", {
   // baseline again, i.e. the anomaly was transient after all).
   streak: integer("streak").notNull(),
 });
+
+/**
+ * A target allocation: what share of the portfolio the owner wants one slice of
+ * one dimension to hold.
+ *
+ * The weight is basis points as an integer (6 000 = 60 %), not a percentage as
+ * a float. §4.1's rule that nothing quantitative is a float applies here too,
+ * and it makes "this set sums to exactly 100 %" a check on integers rather than
+ * an epsilon comparison that is wrong twice a year.
+ *
+ * A set is bound to one `dimension`. Targets across two dimensions can
+ * contradict each other -- 60 % equities and 50 % at one broker are each
+ * reasonable and jointly unsatisfiable -- and no useful drift figure comes out
+ * of a contradiction, so the unique index is on the dimension too rather than
+ * on the key alone.
+ */
+export const allocationTargets = sqliteTable(
+  "allocation_targets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    dimension: text("dimension", {
+      enum: ["kind", "currency", "account", "instrument"],
+    }).notNull(),
+    /** The slice this targets: `core/allocation.ts`'s `Slice.key` for that dimension. */
+    key: text("key").notNull(),
+    weightBp: integer("weight_bp").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [unique().on(t.userId, t.dimension, t.key)],
+);

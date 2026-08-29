@@ -6,6 +6,7 @@ import { getDb, testDb } from "./index";
 import {
   account,
   accounts,
+  allocationTargets,
   fxRates,
   imports,
   instruments,
@@ -295,4 +296,38 @@ test("resetDbHandleForTests() forces the next getDb() call to open a new handle"
   };
   expect(parsed.sameHandle).toBe(false);
   expect(parsed.hasMarker).toBe(false);
+});
+
+test("a user cannot hold two targets for the same slice", () => {
+  const { db } = testDb();
+  seedUser(db, "targets-user");
+  const row = {
+    userId: "targets-user",
+    dimension: "kind" as const,
+    key: "stock",
+    weightBp: 6000,
+  };
+  db.insert(allocationTargets).values(row).run();
+
+  // A second target for the same slice is a contradiction, not an update: a
+  // set is replaced wholesale, never accumulated into, so two rows for one
+  // slice can only mean a half-applied write.
+  expect(() => db.insert(allocationTargets).values(row).run()).toThrow();
+});
+
+test("the same slice can be targeted on two different dimensions", () => {
+  const { db } = testDb();
+  seedUser(db, "two-dimensions");
+  db.insert(allocationTargets)
+    .values({ userId: "two-dimensions", dimension: "kind", key: "stock", weightBp: 10000 })
+    .run();
+
+  // "stock" as a kind and "stock" as an account name are different slices that
+  // happen to share a key, so the index has to include the dimension.
+  expect(() =>
+    db
+      .insert(allocationTargets)
+      .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })
+      .run(),
+  ).not.toThrow();
 });
