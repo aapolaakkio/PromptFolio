@@ -144,12 +144,24 @@ export const chatRoutes = {
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const encoder = new TextEncoder();
-          const send = (event: ChatEvent) => controller.enqueue(encoder.encode(sse(event)));
+          // A browser that navigates away closes the stream under us, and
+          // enqueueing into a closed controller throws. Dropping the event is
+          // the right answer -- there is no longer anyone to send it to -- so
+          // this must not become an error the turn reports.
+          let open = true;
+          const send = (event: ChatEvent) => {
+            if (!open) return;
+            try {
+              controller.enqueue(encoder.encode(sse(event)));
+            } catch {
+              open = false;
+            }
+          };
           // First event names the thread, so a browser that started a new
           // conversation learns its id without a second request.
           send({ type: "conversation", id: conversation.id });
           try {
-            for await (const event of runTurn(client, tools, history)) {
+            for await (const event of runTurn(client, tools, history, request.signal)) {
               if (event.type === "tool") used.push(event.name);
               if (event.type === "answer") {
                 db.insert(chatMessages)
@@ -164,12 +176,16 @@ export const chatRoutes = {
               send(event);
             }
           } catch (cause) {
-            // The full error is for the server log only: an SDK error can carry
-            // request detail the browser has no business seeing.
-            console.error("Chat turn failed", cause);
-            send({ type: "error", message: "Vastauksen haku epäonnistui" });
+            // An aborted request is the user leaving, not a failure: nothing to
+            // report and nothing to log.
+            if (!request.signal.aborted) {
+              // The full error is for the server log only: an SDK error can
+              // carry request detail the browser has no business seeing.
+              console.error("Chat turn failed", cause);
+              send({ type: "error", message: "Vastauksen haku epäonnistui" });
+            }
           } finally {
-            controller.close();
+            if (open) controller.close();
           }
         },
       });

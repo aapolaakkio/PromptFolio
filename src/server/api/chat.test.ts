@@ -213,6 +213,72 @@ describe("POST /api/chat", () => {
   });
 });
 
+describe("a client that goes away mid-turn", () => {
+  test("stops the model loop and reports nothing, instead of throwing into the log", async () => {
+    // Counts how far the loop got: an aborted turn must stop pulling messages
+    // from the model, not run to the end and discard the result.
+    let pulled = 0;
+    setChatClient({
+      beta: {
+        messages: {
+          toolRunner: (_params, options) => ({
+            async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
+              expect(options?.signal).toBeDefined();
+              pulled += 1;
+              yield assistantSaying("Ensimmäinen osa.");
+              pulled += 1;
+              yield assistantSaying("Toinen osa.");
+            },
+          }),
+        },
+      },
+    });
+    const cookie = await signUp();
+
+    const abort = new AbortController();
+    abort.abort();
+    const response = await chatRoutes["/api/chat"].POST(
+      new Request("http://x/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ message: "Pitkä kysymys" }),
+        signal: abort.signal,
+      }),
+    );
+
+    const events = await eventsOf(response);
+    expect(pulled).toBe(1);
+    // No error event: the user leaving is not a failure to report.
+    expect(events.some((event) => event.type === "error")).toBe(false);
+    // ...and no answer stored, because none was received.
+    const stored = await messagesOf(cookie, conversationIdOf(events));
+    expect(stored.map((m) => m.role)).toEqual(["user"]);
+  });
+});
+
+describe("a client that closes the stream", () => {
+  test("keeps serving the turn to the end, storing the answer it can no longer send", async () => {
+    setChatClient(scriptedClient("Vastaus jota kukaan ei lue."));
+    const cookie = await signUp();
+
+    const response = await ask(cookie, { message: "Suljetaan kesken" });
+    // What a browser navigating away does: stop reading and cancel the body.
+    // Enqueueing into that closed stream must not surface as a failed turn.
+    await response.body?.cancel();
+
+    const conversations = await chatRoutes["/api/chat/conversations"].GET(
+      new Request("http://x/api/chat/conversations", { headers: { cookie } }),
+    );
+    const listed = z
+      .object({ conversations: z.array(z.object({ id: z.number() })) })
+      .parse(await conversations.json());
+    const id = listed.conversations[0]?.id;
+    expect(id).toBeDefined();
+    if (id === undefined) return;
+    expect((await messagesOf(cookie, id)).map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});
+
 describe("configuration", () => {
   test("answers 503 when the instance has no API key, instead of failing mid-stream", async () => {
     setChatClient(null);

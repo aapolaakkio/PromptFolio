@@ -47,10 +47,15 @@ export type TurnParams = {
   thinking: { type: "adaptive" };
 };
 
+export type TurnOptions = { signal?: AbortSignal };
+
 export type ToolRunnerClient = {
   readonly beta: {
     readonly messages: {
-      readonly toolRunner: (params: TurnParams) => AsyncIterable<BetaMessage>;
+      readonly toolRunner: (
+        params: TurnParams,
+        options?: TurnOptions,
+      ) => AsyncIterable<BetaMessage>;
     };
   };
 };
@@ -78,6 +83,7 @@ export async function* runTurn(
   client: ToolRunnerClient,
   tools: readonly ChatTool[],
   messages: readonly { role: "user" | "assistant"; content: string }[],
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const runnable = tools.map((tool) =>
     betaZodTool({
@@ -101,14 +107,24 @@ export async function* runTurn(
   );
 
   let last = "";
-  for await (const message of client.beta.messages.toolRunner({
-    model: CHAT_MODEL,
-    max_tokens: MAX_TOKENS,
-    system: SYSTEM_PROMPT,
-    messages: messages.map((message) => ({ role: message.role, content: message.content })),
-    tools: runnable,
-    thinking: { type: "adaptive" },
-  })) {
+  // The signal is the client's: when the browser drops the connection, the
+  // in-flight request is cancelled rather than run to completion. A tool loop
+  // that nobody is reading still costs tokens, and a long answer is exactly the
+  // kind a user gives up on.
+  const runner = client.beta.messages.toolRunner(
+    {
+      model: CHAT_MODEL,
+      max_tokens: MAX_TOKENS,
+      system: SYSTEM_PROMPT,
+      messages: messages.map((message) => ({ role: message.role, content: message.content })),
+      tools: runnable,
+      thinking: { type: "adaptive" },
+    },
+    signal ? { signal } : undefined,
+  );
+
+  for await (const message of runner) {
+    if (signal?.aborted === true) return;
     for (const block of message.content) {
       if (block.type === "tool_use") yield { type: "tool", name: block.name };
     }

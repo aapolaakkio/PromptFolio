@@ -17,6 +17,17 @@ const IsoDateSchema = z
 const today = (): IsoDate => new Date().toISOString().slice(0, 10);
 
 /**
+ * How much of the ledger one tool call may hand the model.
+ *
+ * Both are token budgets, not display limits: a tool result stays in the
+ * conversation and is re-sent with every later turn, so an over-generous
+ * default is paid for again and again. Each tool says when it truncated, and
+ * `limit` lets the model ask for more when a question needs it.
+ */
+const MAX_SERIES_POINTS = 60;
+const DEFAULT_TXN_LIMIT = 25;
+
+/**
  * The read-only tools the chat model may call (spec §8).
  *
  * Every one is a thin wrapper over the same `core` function the dashboard calls,
@@ -174,16 +185,20 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_value_series",
     description:
-      "Salkun arvo päivittäin jaksolla. Palauttaa enintään 400 pistettä tasavälein, " +
-      "jotta pitkäkin jakso mahtuu vastaukseen.",
+      "Salkun arvon kehitys jaksolla. Palauttaa enintään 60 pistettä tasavälein, " +
+      "eli pitkältä jaksolta noin kuukausittain.",
     schema: Range,
     run: (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
       const { txns, instruments, prices } = loadPortfolio(db, userId);
       const series = valueSeries(txns, instruments, prices, from, to);
       // Thinned rather than truncated: a truncated series would answer "how did
-      // it develop" with only its beginning.
-      const step = Math.max(1, Math.ceil(series.length / 400));
+      // it develop" with only its beginning. 60 points is what a sentence about
+      // the shape of a curve needs -- a daily series over several years costs
+      // thousands of tokens per turn, and every one of them is re-sent on each
+      // later round trip of the same conversation. The chart on the dashboard is
+      // where the full resolution belongs.
+      const step = Math.max(1, Math.ceil(series.length / MAX_SERIES_POINTS));
       return {
         from,
         to,
@@ -197,10 +212,14 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     name: "get_transactions",
     description:
       "Tapahtumat aikajärjestyksessä, uusimmat ensin. Rajaa 'from'/'to' päivillä ja " +
-      "'limit' määrällä (oletus 50).",
+      "'limit' määrällä (oletus 25, enintään 200).",
     schema: Transactions,
     run: (input) => {
-      const { from = "1900-01-01", to = today(), limit = 50 } = Transactions.parse(input);
+      const {
+        from = "1900-01-01",
+        to = today(),
+        limit = DEFAULT_TXN_LIMIT,
+      } = Transactions.parse(input);
       const { txns, instruments } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((i) => [i.id, i.name]));
       const rows = txns

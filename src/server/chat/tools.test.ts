@@ -144,7 +144,7 @@ const toolNamed = (tools: Tools, name: string): Tools[number] => {
 };
 
 /** One user, one account, one instrument bought at 10,00 and last priced at 12,00. */
-const seed = async (): Promise<{ tools: Tools; instrumentId: number }> => {
+const seed = async (): Promise<{ tools: Tools; instrumentId: number; accountId: number }> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
   const accountId = await createAccount(cookie);
   const instrumentId = await createInstrument(cookie, "Testirahasto");
@@ -152,7 +152,7 @@ const seed = async (): Promise<{ tools: Tools; instrumentId: number }> => {
   buy(accountId, instrumentId, "2026-01-02");
   price(instrumentId, "2026-01-02", 1000);
   price(instrumentId, "2026-06-01", 1200);
-  return { tools: buildChatTools(db, userId), instrumentId };
+  return { tools: buildChatTools(db, userId), instrumentId, accountId };
 };
 
 describe("get_holdings", () => {
@@ -259,7 +259,7 @@ describe("get_value_series", () => {
       to: "2026-06-01",
     }) as { points: Array<{ date: string; valueEur: string }> };
 
-    expect(result.points.length).toBeLessThanOrEqual(400);
+    expect(result.points.length).toBeLessThanOrEqual(60);
     expect(result.points[0]?.date).toBe("2026-01-01");
     expect(result.points.at(-1)?.date).toBe("2026-06-01");
     expect(result.points.at(-1)?.valueEur).toBe("120.00");
@@ -281,6 +281,36 @@ describe("get_transactions", () => {
     expect(result.truncated).toBe(true);
     expect(result.transactions[0]?.type).toBe("BUY");
     expect(result.transactions[0]?.instrument).toBe("Testirahasto");
+  });
+});
+
+describe("payload limits", () => {
+  test("caps a multi-year series at 60 points, keeping the last day", async () => {
+    const { tools } = await seed();
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
+    // lines above in tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_value_series").run({
+      from: "2020-01-01",
+      to: "2026-06-01",
+    }) as { points: Array<{ date: string }> };
+
+    expect(result.points.length).toBeLessThanOrEqual(60);
+    expect(result.points.at(-1)?.date).toBe("2026-06-01");
+  });
+
+  test("returns 25 transactions by default and says the answer was cut short", async () => {
+    const { tools, accountId, instrumentId } = await seed();
+    for (let day = 1; day <= 28; day += 1) {
+      buy(accountId, instrumentId, `2026-03-${String(day).padStart(2, "0")}`);
+    }
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_transactions").run({}) as {
+      returned: number;
+      truncated: boolean;
+    };
+
+    expect(result.returned).toBe(25);
+    expect(result.truncated).toBe(true);
   });
 });
 
