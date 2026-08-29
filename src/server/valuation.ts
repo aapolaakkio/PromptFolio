@@ -71,16 +71,6 @@ const groupBy = <T, K>(rows: readonly T[], keyOf: (row: T) => K): Map<K, T[]> =>
   return groups;
 };
 
-/**
- * The account kinds that hold cash rather than investments. Their transactions
- * are excluded from every return figure -- see `Portfolio.investedTxns`.
- */
-export const BANK_ACCOUNT_TYPES: ReadonlySet<string> = new Set([
-  "current",
-  "savings",
-  "fixed_term",
-]);
-
 export type Portfolio = {
   /** Every transaction the user owns, bank accounts included. Cash reads this. */
   readonly txns: readonly Txn[];
@@ -210,11 +200,11 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   };
 
   const bankAccountIds = db
-    .select({ id: accounts.id, accountType: accounts.accountType })
+    .select({ id: accounts.id, kind: accounts.kind })
     .from(accounts)
     .where(eq(accounts.userId, userId))
     .all()
-    .filter((row) => row.accountType !== null && BANK_ACCOUNT_TYPES.has(row.accountType))
+    .filter((row) => row.kind === "bank")
     .map((row) => row.id);
   const isBank = new Set(bankAccountIds);
 

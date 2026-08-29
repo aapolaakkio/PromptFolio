@@ -18,8 +18,6 @@ import {
 import { AccountsSchema } from "./imports-draft";
 import { CreateAccountForm } from "./CreateAccountForm";
 
-const BANK_TYPES = new Set(["current", "savings", "fixed_term"]);
-
 const today = (): string => new Date().toISOString().slice(0, 10);
 const yearAgo = (): string => {
   const date = new Date();
@@ -57,9 +55,7 @@ export const CashPage = () => {
     queryFn: () => apiGet(`/api/spending?from=${from}&to=${to}&by=${groupBy}`, SpendingSchema),
   });
 
-  const bankAccounts = (accounts.data ?? []).filter((account) =>
-    BANK_TYPES.has(account.accountType ?? ""),
-  );
+  const bankAccounts = (accounts.data ?? []).filter((account) => account.kind === "bank");
   const chosen = accountId ?? bankAccounts[0]?.id ?? null;
 
   const entries = useQuery({
@@ -142,35 +138,37 @@ export const CashPage = () => {
           <h2 className="text-sm text-muted">Käteinen yhteensä</h2>
           <span className="text-2xl">{eur(cash.data?.totalEur ?? "0.00")}</span>
         </div>
-        <table className="mt-3">
-          <thead>
-            <tr>
-              <th>Tili</th>
-              <th>Valuutta</th>
-              <th className="text-right">Saldo</th>
-              <th className="text-right">EUR</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(cash.data?.rows ?? []).map((row) => (
-              <tr key={`${row.accountId}-${row.currency}`}>
-                <td>{row.accountName}</td>
-                <td>{row.currency}</td>
-                <td className="text-right">{row.amount}</td>
-                <td className="text-right">
-                  {row.valueEur === null ? "kurssi puuttuu" : eur(row.valueEur)}
-                </td>
-              </tr>
-            ))}
-            {(cash.data?.rows ?? []).length === 0 && (
+        <div className="mt-3 max-h-80 overflow-auto rounded border border-line">
+          <table>
+            <thead className="sticky top-0 bg-surface">
               <tr>
-                <td colSpan={4} className="text-muted">
-                  Ei käteistä. Luo pankkitili ja tuo tiliote tai kirjaa saldo käsin.
-                </td>
+                <th>Tili</th>
+                <th>Valuutta</th>
+                <th className="text-right">Saldo</th>
+                <th className="text-right">EUR</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(cash.data?.rows ?? []).map((row) => (
+                <tr key={`${row.accountId}-${row.currency}`}>
+                  <td>{row.accountName}</td>
+                  <td>{row.currency}</td>
+                  <td className="text-right">{row.amount}</td>
+                  <td className="text-right">
+                    {row.valueEur === null ? "kurssi puuttuu" : eur(row.valueEur)}
+                  </td>
+                </tr>
+              ))}
+              {(cash.data?.rows ?? []).length === 0 && (
+                <tr>
+                  <td colSpan={4} className="text-muted">
+                    Ei käteistä. Luo pankkitili ja tuo tiliote tai kirjaa saldo käsin.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="card grid gap-3">
@@ -205,7 +203,7 @@ export const CashPage = () => {
 
         {bankAccounts.length === 0 && (
           <p className="text-muted text-sm">
-            Ei vielä pankkitilejä. Luo tili ja valitse lajiksi käyttö-, säästö- tai määräaikaistili.
+            Ei vielä pankkitilejä. Luo tili ja valitse tyypiksi pankkitili.
           </p>
         )}
       </div>
@@ -261,17 +259,22 @@ export const CashPage = () => {
                     {preview.data.problems.length} riviä ei voitu lukea; muut tuodaan.
                   </p>
                 )}
-                <table>
-                  <tbody>
-                    {preview.data.sample.map((row, index) => (
-                      <tr key={`${row.date}-${index}`}>
-                        <td>{fiDate(row.date)}</td>
-                        <td className="text-right">{eur(row.amountEur)}</td>
-                        <td className="text-muted">{row.note}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {/* A statement runs to hundreds of rows; the preview scrolls
+                    inside its own box rather than pushing the import button off
+                    the screen. */}
+                <div className="max-h-80 overflow-auto rounded border border-line">
+                  <table>
+                    <tbody>
+                      {preview.data.sample.map((row, index) => (
+                        <tr key={`${row.date}-${index}`}>
+                          <td>{fiDate(row.date)}</td>
+                          <td className="text-right">{eur(row.amountEur)}</td>
+                          <td className="text-muted">{row.note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -314,29 +317,31 @@ export const CashPage = () => {
               Tilille, jolta ei saa tiliotetta (esim. Ferratum), tapahtumat voi kirjata käsin.
             </p>
             <ManualEntryForm accountId={chosen} onSaved={refresh} onError={setError} />
-            <table>
-              <tbody>
-                {(entries.data?.entries ?? []).map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{fiDate(entry.tradeDate)}</td>
-                    <td>{ENTRY_LABELS.get(entry.type) ?? entry.type}</td>
-                    <td className="text-right">{entry.amount}</td>
-                    <td>{entry.currency}</td>
-                    <td className="text-muted">{entry.note}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="text-sm"
-                        aria-label={`Poista tapahtuma ${entry.tradeDate}`}
-                        onClick={() => removeEntry.mutate(entry.id)}
-                      >
-                        Poista
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="max-h-96 overflow-auto rounded border border-line">
+              <table>
+                <tbody>
+                  {(entries.data?.entries ?? []).map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{fiDate(entry.tradeDate)}</td>
+                      <td>{ENTRY_LABELS.get(entry.type) ?? entry.type}</td>
+                      <td className="text-right">{entry.amount}</td>
+                      <td>{entry.currency}</td>
+                      <td className="text-muted">{entry.note}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="text-sm"
+                          aria-label={`Poista tapahtuma ${entry.tradeDate}`}
+                          onClick={() => removeEntry.mutate(entry.id)}
+                        >
+                          Poista
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -366,24 +371,26 @@ export const CashPage = () => {
           </label>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>{groupBy === "category" ? "Luokka" : "Saaja"}</th>
-              <th className="text-right">Tapahtumia</th>
-              <th className="text-right">Yhteensä</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(spending.data?.groups ?? []).map((group) => (
-              <tr key={group.key}>
-                <td>{group.label}</td>
-                <td className="text-right">{group.count}</td>
-                <td className="text-right">{eur(group.totalEur)}</td>
+        <div className="max-h-96 overflow-auto rounded border border-line">
+          <table>
+            <thead className="sticky top-0 bg-surface">
+              <tr>
+                <th>{groupBy === "category" ? "Luokka" : "Saaja"}</th>
+                <th className="text-right">Tapahtumia</th>
+                <th className="text-right">Yhteensä</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(spending.data?.groups ?? []).map((group) => (
+                <tr key={group.key}>
+                  <td>{group.label}</td>
+                  <td className="text-right">{group.count}</td>
+                  <td className="text-right">{eur(group.totalEur)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         {spending.data && (
           <p className="text-muted text-sm">

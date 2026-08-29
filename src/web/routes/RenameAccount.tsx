@@ -4,10 +4,11 @@ import { z } from "zod";
 
 import { ApiError, apiPatch } from "../lib/api";
 import {
-  ACCOUNT_TYPES,
   isAccountType,
   toSelection,
+  typesFor,
   UNSET_LABEL,
+  type AccountKind,
   type AccountType,
 } from "./account-type";
 
@@ -28,10 +29,13 @@ export const RenameAccount = ({
   accountId,
   currentName,
   currentType,
+  kind,
 }: {
   readonly accountId: number;
   readonly currentName: string;
   readonly currentType: string | null;
+  /** Fixed at creation: only this kind's own types are offered. */
+  readonly kind: AccountKind;
 }) => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -93,7 +97,7 @@ export const RenameAccount = ({
           }}
         >
           <option value="">{UNSET_LABEL}</option>
-          {ACCOUNT_TYPES.map((type) => (
+          {typesFor(kind).map((type) => (
             <option key={type.id} value={type.id}>
               {type.label}
             </option>

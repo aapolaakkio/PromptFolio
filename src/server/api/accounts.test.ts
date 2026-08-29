@@ -389,7 +389,8 @@ const AccountSchema = z.object({
   id: z.number(),
   name: z.string(),
   broker: z.string(),
-  accountType: z.enum(["aot", "ost", "other"]).nullable(),
+  kind: z.enum(["brokerage", "bank"]),
+  accountType: z.enum(["aot", "ost", "current", "savings", "fixed_term", "other"]).nullable(),
 });
 
 test("stores an account type at creation, and leaves it null when unstated", async () => {
@@ -448,4 +449,63 @@ test("changes the account type without touching the name, and can clear it", asy
   expect(cleared.accountType).toBeNull();
 
   expect((await patch({})).status).toBe(400);
+});
+
+test("refuses a bank account type on a brokerage account, and the reverse", async () => {
+  const { cookie } = await signUp(`kind-mismatch-${crypto.randomUUID()}@example.com`);
+
+  const brokerageWithBankType = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Sekava", broker: "op", accountType: "savings" }),
+    }),
+  );
+  // "A brokerage account that is a savings account" is not a typo with an
+  // obvious fix, so it is refused rather than corrected.
+  expect(brokerageWithBankType.status).toBe(400);
+
+  const bankWithBrokerageType = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Sekava", broker: "op", kind: "bank", accountType: "ost" }),
+    }),
+  );
+  expect(bankWithBrokerageType.status).toBe(400);
+});
+
+test("defaults an account to brokerage, which is what every earlier one was", async () => {
+  const { cookie } = await signUp(`kind-default-${crypto.randomUUID()}@example.com`);
+
+  const response = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Nordnet", broker: "nordnet" }),
+    }),
+  );
+
+  expect(AccountSchema.parse(await response.json()).kind).toBe("brokerage");
+});
+
+test("refuses to move an account's type to the other kind's set after creation", async () => {
+  const { cookie } = await signUp(`kind-patch-${crypto.randomUUID()}@example.com`);
+  const created = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "OP käyttötili", broker: "op", kind: "bank" }),
+    }),
+  );
+  const id = AccountSchema.parse(await created.json()).id;
+
+  const response = await accountRoutes["/api/accounts/:id"].PATCH(
+    new Request(`http://x/api/accounts/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ accountType: "aot" }),
+    }),
+  );
+  expect(response.status).toBe(400);
 });

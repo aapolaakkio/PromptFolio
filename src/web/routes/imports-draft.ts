@@ -89,15 +89,18 @@ export type Account = {
   id: number;
   name: string;
   broker: string;
+  /** Whether the account holds investments or money -- fixed at creation. */
+  kind: "brokerage" | "bank";
   /** null until the owner classifies it -- see routes/account-type.ts. */
-  accountType: "aot" | "ost" | "other" | null;
+  accountType: "aot" | "ost" | "current" | "savings" | "fixed_term" | "other" | null;
 };
 
 export const AccountSchema: z.ZodType<Account> = z.object({
   id: z.number(),
   name: z.string(),
   broker: z.string(),
-  accountType: z.enum(["aot", "ost", "other"]).nullable(),
+  kind: z.enum(["brokerage", "bank"]),
+  accountType: z.enum(["aot", "ost", "current", "savings", "fixed_term", "other"]).nullable(),
 });
 
 export const AccountsSchema = z.array(AccountSchema);

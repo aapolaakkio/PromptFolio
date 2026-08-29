@@ -89,6 +89,17 @@ export const accounts = sqliteTable(
      * type nobody has confirmed rather than assume the ordinary case. Set by the
      * owner, never inferred from the broker's numbering (spec §10c/C7).
      */
+    /**
+     * Whether this account holds investments or money. The two are different
+     * kinds of thing, not two flavours of one: a brokerage account has an
+     * arvo-osuustili or osakesäästötili nature that decides its tax treatment,
+     * a bank account has a current/savings/fixed-term nature that decides
+     * nothing about tax and everything about whether the money is reachable.
+     * Neither one's types mean anything applied to the other.
+     */
+    kind: text("kind", { enum: ["brokerage", "bank"] })
+      .notNull()
+      .default("brokerage"),
     accountType: text("account_type", {
       enum: ["aot", "ost", "current", "savings", "fixed_term", "other"],
     }),

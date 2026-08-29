@@ -39,6 +39,7 @@
     "react": "^19",
     "react-dom": "^19",
     "tailwindcss": "^4.3",
+    "unpdf": "^1.8.1",
     "zod": "^4"
   }
 }

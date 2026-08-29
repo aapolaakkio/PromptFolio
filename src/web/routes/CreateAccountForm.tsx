@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { z } from "zod";
 
-import { ACCOUNT_TYPES, isAccountType, UNSET_LABEL, type AccountType } from "./account-type";
+import {
+  ACCOUNT_KINDS,
+  isAccountKind,
+  isAccountType,
+  typesFor,
+  UNSET_LABEL,
+  type AccountKind,
+  type AccountType,
+} from "./account-type";
 import { apiPost, ApiError } from "../lib/api";
 
 /**
@@ -48,6 +56,7 @@ export type CreateAccountFormProps = {
 export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
   const [name, setName] = useState("");
   const [broker, setBroker] = useState<Broker>("nordnet");
+  const [kind, setKind] = useState<AccountKind>("brokerage");
   // Starts unset on purpose: an owner importing an export may not yet know
   // which of their accounts it covers, and a guessed OST is worse than a blank
   // one (see account-type.ts).
@@ -71,10 +80,11 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         // The type is omitted rather than sent as "": an unclassified account is
         // stored as null, and the server's enum would refuse an empty string.
         chosenType === null
-          ? { name: name.trim(), broker, baseCurrency: baseCurrency.trim().toUpperCase() }
+          ? { name: name.trim(), broker, kind, baseCurrency: baseCurrency.trim().toUpperCase() }
           : {
               name: name.trim(),
               broker,
+              kind,
               baseCurrency: baseCurrency.trim().toUpperCase(),
               accountType: chosenType,
             },
@@ -119,6 +129,25 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         </select>
       </label>
       <label>
+        Tilin tyyppi
+        <select
+          value={kind}
+          onChange={(e) => {
+            if (!isAccountKind(e.target.value)) return;
+            setKind(e.target.value);
+            // The other kind's types mean nothing here, so the choice is
+            // cleared rather than carried across and refused by the server.
+            setAccountType("");
+          }}
+        >
+          {ACCOUNT_KINDS.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
         Tilin laji
         <select
           value={accountType}
@@ -127,7 +156,7 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
           }}
         >
           <option value="">{UNSET_LABEL}</option>
-          {ACCOUNT_TYPES.map((type) => (
+          {typesFor(kind).map((type) => (
             <option key={type.id} value={type.id}>
               {type.label}
             </option>

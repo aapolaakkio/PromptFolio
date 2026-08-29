@@ -9,10 +9,22 @@ import { HttpError, handle, json } from "../http";
 
 const { db } = getDb();
 
-const accountType = z.enum(["aot", "ost", "current", "savings", "fixed_term", "other"]);
+const accountKind = z.enum(["brokerage", "bank"]);
 
-/** Every bank account kind holds cash; only a fixed-term deposit locks it away. */
-const CASH_TYPES = new Set(["current", "savings", "fixed_term"]);
+/**
+ * Each kind's own types. A brokerage account is an arvo-osuustili or an
+ * osakesäästötili, which decides how it is taxed; a bank account is a current,
+ * savings or fixed-term one, which decides whether the money can be reached.
+ * Neither set means anything applied to the other kind, so they are kept apart
+ * rather than offered as one list nobody can pick wrongly from by accident.
+ */
+const BROKERAGE_TYPES = ["aot", "ost", "other"] as const;
+const BANK_TYPES = ["current", "savings", "fixed_term"] as const;
+
+const accountType = z.enum([...BROKERAGE_TYPES, ...BANK_TYPES]);
+
+const typesFor = (kind: "brokerage" | "bank"): readonly string[] =>
+  kind === "bank" ? BANK_TYPES : BROKERAGE_TYPES;
 
 const IsoDateSchema = z
   .string()
@@ -50,8 +62,24 @@ const assertTermsMatchType = (
   if ((body.maturityDate ?? null) !== null && type !== "fixed_term") {
     throw new HttpError(400, "Eräpäivä koskee vain määräaikaistiliä");
   }
-  if ((body.interestRate ?? null) !== null && !CASH_TYPES.has(type ?? "")) {
+  if ((body.interestRate ?? null) !== null && !BANK_TYPES.some((known) => known === type)) {
     throw new HttpError(400, "Korko koskee vain pankkitilejä");
+  }
+};
+
+/**
+ * An account's type has to belong to its own kind. Refused rather than
+ * corrected: "a savings account that is an osakesäästötili" is not a typo with
+ * an obvious fix, it is a request nobody can act on.
+ */
+const assertTypeMatchesKind = (
+  kind: "brokerage" | "bank",
+  type: z.infer<typeof accountType> | null | undefined,
+): void => {
+  if (type === null || type === undefined) return;
+  if (!typesFor(kind).includes(type)) {
+    const allowed = typesFor(kind).join(", ");
+    throw new HttpError(400, `Tilin laji ${type} ei sovi tyypille ${kind} (sallitut: ${allowed})`);
   }
 };
 
@@ -86,6 +114,7 @@ const CreateAccount = z.object({
   name: z.string().min(1).max(100),
   broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
   baseCurrency: currencyField.default(EUR),
+  kind: accountKind.default("brokerage"),
   // Optional at creation: an owner importing a broker export may not know yet
   // which of their accounts it covers. Left null until they say.
   accountType: accountType.optional(),
@@ -119,6 +148,7 @@ export const accountRoutes = {
     POST: handle(async (request) => {
       const { userId } = await requireUser(request);
       const body = CreateAccount.parse(await request.json());
+      assertTypeMatchesKind(body.kind, body.accountType);
       assertTermsMatchType(body.accountType, body);
       const created = db
         .insert(accounts)
@@ -126,6 +156,7 @@ export const accountRoutes = {
           name: body.name,
           broker: body.broker,
           baseCurrency: body.baseCurrency,
+          kind: body.kind,
           accountType: body.accountType ?? null,
           maturityDate: body.maturityDate ?? null,
           interestRateBp: body.interestRate ?? null,
@@ -155,6 +186,15 @@ export const accountRoutes = {
       // request, not the one it had before: setting type and maturity together
       // in one PATCH is the normal way to record a new deposit.
       const current = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+      // The kind is fixed at creation: an account's transactions were imported
+      // and interpreted under it, and a brokerage account turned into a bank one
+      // would take its holdings out of the return figures with no trace.
+      if (current) {
+        assertTypeMatchesKind(
+          current.kind,
+          body.accountType === undefined ? (current.accountType ?? null) : body.accountType,
+        );
+      }
       assertTermsMatchType(
         body.accountType === undefined ? (current?.accountType ?? null) : body.accountType,
         body,

@@ -7,11 +7,20 @@ import { assertAccountOwned } from "./accounts";
 import { requireUser } from "../auth-guard";
 import { commitBankStatement } from "../import/bank-commit";
 import { matchesBank, OP_BANK, parseBankStatement } from "../import/bank-statement";
-import type { BankStatementConfig } from "../import/bank-statement";
+import type { BankRow, BankStatementConfig } from "../import/bank-statement";
+import {
+  extractStatementText,
+  parseOpStatementText,
+  verifyStatement,
+  type PdfStatement,
+} from "../import/bank-pdf";
+import { isSweepStatement, parseSweepStatementText } from "../import/bank-pdf-sweep";
 import { getDb } from "../db";
 import { accounts, transactions } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { loadPortfolio } from "../valuation";
+
+type Db = ReturnType<typeof getDb>["db"];
 
 const { db } = getDb();
 
@@ -38,6 +47,56 @@ const readUpload = async (request: Request): Promise<{ file: File; accountId: nu
   return { file, accountId };
 };
 
+/** A PDF announces itself in its first bytes; everything else is tried as CSV. */
+const isPdf = (bytes: ArrayBuffer): boolean =>
+  new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+
+/**
+ * Reads whichever format arrived.
+ *
+ * A PDF carries the balances the CSV export leaves out, so it is checked
+ * against them: the parsed rows must account for the difference between the
+ * printed opening and closing balance, or the file is refused. Reading a PDF's
+ * layout is the more fragile of the two, and this is what makes it the safer
+ * import anyway -- a mis-parse cannot pass quietly.
+ */
+const readStatement = async (
+  bytes: ArrayBuffer,
+): Promise<{
+  bank: string;
+  rows: BankRow[];
+  problems: Array<{ line: number; message: string }>;
+  statement: PdfStatement | null;
+}> => {
+  if (!isPdf(bytes)) {
+    const config = detect(bytes);
+    const { rows, problems } = parseBankStatement(bytes, config);
+    return { bank: config.bank, rows, problems, statement: null };
+  }
+
+  const text = await extractStatementText(bytes);
+  // Which bank's PDF this is, decided from the document's own words rather than
+  // from the file name: a statement saved as "tiliote.pdf" is still whatever the
+  // bank wrote inside it.
+  const sweep = isSweepStatement(text);
+  const statement = sweep ? parseSweepStatementText(text) : parseOpStatementText(text);
+  const check = verifyStatement(statement);
+  if (!check.ok) {
+    const difference = formatMoney({ minor: check.differenceEur, currency: EUR });
+    throw new HttpError(
+      400,
+      `Tiliotteen rivit eivät täsmää sen omaan loppusaldoon (ero ${difference} €). ` +
+        "Tiedostoa ei tuotu, koska osa riveistä on ilmeisesti luettu väärin.",
+    );
+  }
+  return {
+    bank: sweep ? "sweepbank" : "op",
+    rows: statement.rows,
+    problems: statement.problems,
+    statement,
+  };
+};
+
 const detect = (bytes: ArrayBuffer): BankStatementConfig => {
   const config = BANK_CONFIGS.find((candidate) => matchesBank(bytes, candidate));
   if (!config) throw new HttpError(400, "Tiedostoa ei tunnistettu tiliotteeksi");
@@ -54,13 +113,84 @@ const detect = (bytes: ArrayBuffer): BankStatementConfig => {
  */
 const assertBankAccount = (accountId: number): void => {
   const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
-  const type = account?.accountType;
-  if (type !== "current" && type !== "savings" && type !== "fixed_term") {
-    throw new HttpError(
-      400,
-      "Tiliote voidaan tuoda vain pankkitilille (käyttö-, säästö- tai määräaikaistili)",
-    );
+  if (account?.kind !== "bank") {
+    throw new HttpError(400, "Tiliote voidaan tuoda vain pankkitilille");
   }
+};
+
+/**
+ * Writes the opening balance a PDF statement states, then reports whether the
+ * account's own ledger now matches the closing balance it prints.
+ *
+ * The second half is the part worth having. After importing a statement the two
+ * figures agree by construction -- unless the account already held rows for the
+ * same period, which is what happens when the same month is imported once as a
+ * CSV and once as a PDF. Their archive ids differ between OP's two formats, so
+ * nothing else would catch it, and the balance would quietly come out twice
+ * what the bank says.
+ */
+type Reconciliation = {
+  readonly statedClosingEur: string;
+  readonly ledgerClosingEur: string;
+  readonly differenceEur: string;
+};
+
+const reconcileToStatement = (
+  db: Db,
+  accountId: number,
+  statement: PdfStatement,
+): Reconciliation => {
+  const existing = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        eq(transactions.type, "OPENING_BALANCE"),
+        eq(transactions.currency, EUR),
+      ),
+    )
+    .get();
+
+  db.transaction((tx) => {
+    if (existing) tx.delete(transactions).where(eq(transactions.id, existing.id)).run();
+    if (statement.openingBalance.minor === 0n) return;
+    tx.insert(transactions)
+      .values({
+        accountId,
+        instrumentId: null,
+        type: "OPENING_BALANCE",
+        tradeDate: statement.from,
+        quantity: 0,
+        unitPrice: null,
+        amount: Number(statement.openingBalance.minor),
+        fee: 0,
+        tax: 0,
+        currency: EUR,
+        fxRateEur: 100_000_000,
+        contentHash: `opening:${accountId}:EUR`,
+        note: `Alkusaldo tiliotteelta ${statement.from}`,
+      })
+      .run();
+  });
+
+  const rows = db
+    .select({ amount: transactions.amount, tradeDate: transactions.tradeDate })
+    .from(transactions)
+    .where(eq(transactions.accountId, accountId))
+    .all();
+  const ledger = rows
+    .filter((row) => row.tradeDate <= statement.to)
+    .reduce((sum, row) => sum + BigInt(row.amount), 0n);
+
+  return {
+    statedClosingEur: formatMoney(statement.closingBalance),
+    ledgerClosingEur: formatMoney({ minor: ledger, currency: EUR }),
+    differenceEur: formatMoney({
+      minor: statement.closingBalance.minor - ledger,
+      currency: EUR,
+    }),
+  };
 };
 
 export const bankImportRoutes = {
@@ -72,8 +202,7 @@ export const bankImportRoutes = {
       assertBankAccount(accountId);
 
       const bytes = await file.arrayBuffer();
-      const config = detect(bytes);
-      const { rows, problems } = parseBankStatement(bytes, config);
+      const { bank, rows, problems, statement } = await readStatement(bytes);
 
       const totalIn = rows
         .filter((row) => row.amount > 0n)
@@ -83,12 +212,17 @@ export const bankImportRoutes = {
         .reduce((sum, row) => sum + row.amount, 0n);
 
       return json({
-        bank: config.bank,
+        bank,
         rows: rows.length,
         from: rows[0]?.date ?? null,
         to: rows.at(-1)?.date ?? null,
         totalInEur: formatMoney({ minor: totalIn, currency: EUR }),
         totalOutEur: formatMoney({ minor: totalOut, currency: EUR }),
+        // Present only for a PDF: the balances the statement itself prints, and
+        // the fact that the rows were checked against them.
+        openingBalanceEur: statement === null ? null : formatMoney(statement.openingBalance),
+        closingBalanceEur: statement === null ? null : formatMoney(statement.closingBalance),
+        verified: statement !== null,
         problems,
         // A preview of what will be written, not the whole file: the browser
         // shows the first rows so the owner can see the parse is right before
@@ -111,8 +245,7 @@ export const bankImportRoutes = {
       assertBankAccount(accountId);
 
       const bytes = await file.arrayBuffer();
-      const config = detect(bytes);
-      const { rows, problems } = parseBankStatement(bytes, config);
+      const { rows, problems, statement } = await readStatement(bytes);
       if (rows.length === 0) throw new HttpError(400, "Tiedostosta ei löytynyt yhtään tapahtumaa");
 
       const sha256 = new Bun.CryptoHasher("sha256").update(new Uint8Array(bytes)).digest("hex");
@@ -124,10 +257,19 @@ export const bankImportRoutes = {
         rows,
       });
 
+      // A PDF states what the account held before its first row, so the opening
+      // balance is written from the statement instead of being asked for. The
+      // ledger's own balance is then compared against the printed closing one:
+      // they agree unless this account already held rows for the same period --
+      // the same statement imported twice in two formats, say -- which is
+      // exactly the case a person cannot spot by eye.
+      const reconciliation =
+        statement === null ? null : reconcileToStatement(db, accountId, statement);
+
       // Problems travel with the result rather than blocking it: a statement
       // whose 700th row is malformed should still import the other 699, and the
       // owner needs to know which one was left out.
-      return json({ ...result, problems }, 201);
+      return json({ ...result, problems, reconciliation }, 201);
     }),
   },
 

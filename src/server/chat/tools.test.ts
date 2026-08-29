@@ -70,7 +70,12 @@ const createBankAccount = async (cookie: string): Promise<number> => {
     new Request("http://x/api/accounts", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ name: "OP käyttötili", broker: "op", accountType: "current" }),
+      body: JSON.stringify({
+        name: "OP käyttötili",
+        broker: "op",
+        kind: "bank",
+        accountType: "current",
+      }),
     }),
   );
   expect(response.status).toBe(201);

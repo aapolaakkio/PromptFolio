@@ -217,6 +217,7 @@ export const ImportsPage = () => {
                 accountId={selectedAccount.id}
                 currentName={selectedAccount.name}
                 currentType={selectedAccount.accountType}
+                kind={selectedAccount.kind}
               />
             )}
           </div>

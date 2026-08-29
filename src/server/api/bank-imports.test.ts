@@ -58,7 +58,20 @@ const PreviewSchema = z.object({
   to: z.string().nullable(),
   totalInEur: z.string(),
   totalOutEur: z.string(),
+  openingBalanceEur: z.string().nullable(),
+  closingBalanceEur: z.string().nullable(),
+  verified: z.boolean(),
   sample: z.array(z.object({ date: z.string(), type: z.string(), amountEur: z.string() })),
+});
+
+const PdfCommitSchema = CommitSchema.extend({
+  reconciliation: z
+    .object({
+      statedClosingEur: z.string(),
+      ledgerClosingEur: z.string(),
+      differenceEur: z.string(),
+    })
+    .nullable(),
 });
 const BalanceSchema = z.object({
   statedEur: z.string(),
@@ -68,11 +81,18 @@ const BalanceSchema = z.object({
 });
 const CashSchema = z.object({ totalEur: z.string() });
 
+const BANK_TYPES = new Set(["current", "savings", "fixed_term"]);
+
 const openAccount = async (cookie: string, accountType: string | null): Promise<number> => {
   const body =
     accountType === null
       ? { name: "Nordnet", broker: "nordnet" }
-      : { name: "OP käyttötili", broker: "op", accountType };
+      : {
+          name: "OP käyttötili",
+          broker: "op",
+          kind: BANK_TYPES.has(accountType) ? "bank" : "brokerage",
+          accountType,
+        };
   const response = await accountRoutes["/api/accounts"].POST(
     new Request("http://x/api/accounts", {
       method: "POST",
@@ -277,5 +297,69 @@ describe("POST /api/accounts/:id/balance", () => {
 
     const response = await setBalance(stranger, accountId, "2026-06-01", "100.00");
     expect(response.status).toBe(404);
+  });
+});
+
+describe("a PDF statement", () => {
+  const pdf = (): Promise<ArrayBuffer> =>
+    Bun.file(`${import.meta.dir}/../import/fixtures/op-statement-sample.pdf`).arrayBuffer();
+
+  test("is read, and says it was checked against its own printed balances", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    const body = PreviewSchema.parse(
+      await (await upload("/api/imports/bank/preview", cookie, accountId, await pdf())).json(),
+    );
+
+    expect(body.rows).toBe(2);
+    expect(body.verified).toBe(true);
+    expect(body.openingBalanceEur).toBe("1500.00");
+    expect(body.closingBalanceEur).toBe("1574.10");
+  });
+
+  test("brings its own opening balance, so nothing has to be typed in", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    const body = PdfCommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId, await pdf())).json(),
+    );
+
+    expect(body.inserted).toBe(2);
+    // 1 500,00 opening - 25,90 + 100,00 = 1 574,10, the printed closing balance.
+    expect(body.reconciliation?.differenceEur).toBe("0.00");
+    expect(await cashTotal(cookie, "2026-12-31")).toBe("1574.10");
+  });
+
+  test("re-importing it leaves the balance where it was", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+    await upload("/api/imports/bank/commit", cookie, accountId, await pdf());
+
+    const second = PdfCommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId, await pdf())).json(),
+    );
+
+    expect(second.inserted).toBe(0);
+    expect(second.skipped).toBe(2);
+    expect(second.reconciliation?.differenceEur).toBe("0.00");
+    expect(await cashTotal(cookie, "2026-12-31")).toBe("1574.10");
+  });
+
+  test("refuses one whose rows do not add up to its own closing balance", async () => {
+    // A statement claiming a closing balance its rows cannot reach: exactly what
+    // a mis-read layout produces, and the reason the check exists.
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "2.1.2026 −10,00 PKORTTIMAKSU 1 202601025UTZ00000001 J",
+      "KAUPPA",
+      "+500,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    const { parseOpStatementText, verifyStatement } = await import("../import/bank-pdf");
+    const check = verifyStatement(parseOpStatementText(text));
+    expect(check.ok).toBe(false);
+    expect(check.differenceEur).toBe(41_000n);
   });
 });

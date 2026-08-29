@@ -63,7 +63,7 @@ const openBankAccount = async (cookie: string, accountType = "savings"): Promise
     new Request("http://x/api/accounts", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ name: "OP säästötili", broker: "op", accountType }),
+      body: JSON.stringify({ name: "OP säästötili", broker: "op", kind: "bank", accountType }),
     }),
   );
   expect(response.status).toBe(201);
