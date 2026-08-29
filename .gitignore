@@ -12,9 +12,3 @@ data
 
 
 .DS_Store
-
-# Real broker statements: never commit. The synthetic fixture under
-# src/server/import/fixtures/ is deliberately exempt -- it is generated, contains
-# no real holding, and the parser tests need it.
-*.pdf
-!src/server/import/fixtures/*.pdf

@@ -400,120 +400,6 @@ describe("POST /api/snapshots/:id/adjust", () => {
   });
 });
 
-describe("POST /api/snapshots/pdf", () => {
-  const upload = async (cookie: string, bytes: ArrayBuffer): Promise<Response> => {
-    const form = new FormData();
-    form.set("file", new File([bytes], "ote.pdf", { type: "application/pdf" }));
-    return snapshotRoutes["/api/snapshots/pdf"].POST(
-      new Request("http://x/api/snapshots/pdf", {
-        method: "POST",
-        headers: { cookie },
-        body: form,
-      }),
-    );
-  };
-
-  const fixture = (): Promise<ArrayBuffer> =>
-    Bun.file(new URL("../import/fixtures/op-holdings-sample.pdf", import.meta.url)).arrayBuffer();
-
-  test("rejects a request with no session", async () => {
-    expect((await upload("", await fixture())).status).toBe(401);
-  });
-
-  test("proposes the statement's rows without storing anything", async () => {
-    const { cookie } = await signUp(`pdf-${crypto.randomUUID()}@example.com`);
-    const before = db.select().from(transactions).all().length;
-
-    const response = await upload(cookie, await fixture());
-    expect(response.status).toBe(200);
-    // SAFETY: a 200 from this route always returns { asOf, rows }.
-    const body = (await response.json()) as {
-      asOf: string;
-      rows: Array<{ name: string; quantity: string; instrumentId: number | null }>;
-    };
-    expect(body.asOf).toBe("2025-12-31");
-    expect(body.rows).toHaveLength(2);
-    expect(body.rows[0]!.quantity).toBe("15.4552");
-    // A preview writes nothing at all.
-    expect(db.select().from(transactions).all().length).toBe(before);
-  });
-
-  test("suggests an instrument whose name differs only by the broker's own suffix", async () => {
-    const { cookie } = await signUp(`pdf-match-${crypto.randomUUID()}@example.com`);
-    // Registered the way the ledger names it, not the way the statement prints it.
-    const response = await instrumentRoutes["/api/instruments"].POST(
-      new Request("http://x/api/instruments", {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({
-          isin: randomIsin(),
-          ticker: null,
-          name: "ESIMERKKI-MAAILMA INDEKSI A",
-          kind: "fund",
-          currency: "EUR",
-          priceSource: "manual",
-        }),
-      }),
-    );
-    // SAFETY: a 201 returns the inserted instrument.
-    const instrument = (await response.json()) as { id: number };
-
-    const preview = await upload(cookie, await fixture());
-    // SAFETY: as above.
-    const body = (await preview.json()) as {
-      rows: Array<{ name: string; instrumentId: number | null }>;
-    };
-    const matched = body.rows.find((row) => row.name.includes("MAAILMA"));
-    expect(matched?.instrumentId).toBe(instrument.id);
-  });
-
-  // Instruments are shared reference data across the whole process (see
-  // instruments.ts), so this cannot assert "nothing matched" -- another test's
-  // registration would make it flaky. It asserts the property that actually
-  // matters instead: a suggestion is only ever an exact match once the broker's
-  // own suffixes are removed, never the closest-looking name.
-  test("only ever suggests an exact match, never the closest guess", async () => {
-    const { cookie } = await signUp(`pdf-nomatch-${crypto.randomUUID()}@example.com`);
-    const response = await instrumentRoutes["/api/instruments"].POST(
-      new Request("http://x/api/instruments", {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({
-          isin: randomIsin(),
-          ticker: null,
-          // Shares three words with the statement's AASIA fund and is a
-          // different holding; it must not be suggested for it.
-          name: "ESIMERKKI-AASIA OSAKE B",
-          kind: "fund",
-          currency: "EUR",
-          priceSource: "manual",
-        }),
-      }),
-    );
-    // SAFETY: a 201 returns the inserted instrument.
-    const decoy = (await response.json()) as { id: number };
-
-    const preview = await upload(cookie, await fixture());
-    // SAFETY: as above.
-    const body = (await preview.json()) as {
-      rows: Array<{ name: string; instrumentId: number | null }>;
-    };
-    const aasia = body.rows.find((row) => row.name.includes("AASIA"));
-    expect(aasia?.instrumentId).not.toBe(decoy.id);
-  });
-
-  test("refuses a file with no readable statement in it", async () => {
-    const { cookie } = await signUp(`pdf-bad-${crypto.randomUUID()}@example.com`);
-    const bad = new TextEncoder().encode("%PDF-1.4\nnothing\n%%EOF\n");
-    // SAFETY: TextEncoder always allocates a plain ArrayBuffer, never a shared
-    // one, so this narrowing holds for every value this line can produce.
-    const response = await upload(cookie, bad.buffer as ArrayBuffer);
-    // The wrong file, or a scanned one with no text layer, is the caller's
-    // problem -- and the vision path exists for the latter.
-    expect(response.status).toBe(400);
-  });
-});
-
 describe("DELETE /api/snapshots/:id", () => {
   const remove = async (cookie: string, id: number): Promise<Response> =>
     snapshotRoutes["/api/snapshots/:id"].DELETE(
@@ -582,5 +468,165 @@ describe("DELETE /api/snapshots/:id", () => {
     expect((await remove(stranger.cookie, snapshot.id)).status).toBe(404);
     // And it is still there afterwards.
     expect((await reconcileOf(owner.cookie, snapshot.id)).status).toBe(200);
+  });
+});
+
+describe("POST /api/snapshots/paste", () => {
+  const HEADER = "Nimi\tValuutta\tMäärä\tArvo EUR";
+  const paste = async (cookie: string, body: { asOf: string; text: string }): Promise<Response> =>
+    snapshotRoutes["/api/snapshots/paste"].POST(
+      new Request("http://x/api/snapshots/paste", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test("rejects a request with no session", async () => {
+    expect((await paste("", { asOf: "2026-06-30", text: HEADER })).status).toBe(401);
+  });
+
+  test("proposes the pasted rows without storing anything", async () => {
+    const { cookie } = await signUp(`paste-${crypto.randomUUID()}@example.com`);
+    const before = db.select().from(transactions).all().length;
+
+    const response = await paste(cookie, {
+      asOf: "2026-06-30",
+      text: [HEADER, "Esimerkki Indeksi\tEUR\t27,4431\t10072,715424"].join("\n"),
+    });
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from this route always returns { asOf, rows, problems }.
+    const body = (await response.json()) as {
+      rows: Array<{ name: string; quantity: string; marketValueEur: string }>;
+    };
+    expect(body.rows[0]!.quantity).toBe("27.4431");
+    expect(body.rows[0]!.marketValueEur).toBe("10072.72");
+    expect(db.select().from(transactions).all().length).toBe(before);
+  });
+
+  test("suggests an instrument matching by name", async () => {
+    const { cookie } = await signUp(`paste-match-${crypto.randomUUID()}@example.com`);
+    const created = await instrumentRoutes["/api/instruments"].POST(
+      new Request("http://x/api/instruments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          isin: randomIsin(),
+          ticker: null,
+          name: "Paste Match Fund",
+          kind: "fund",
+          currency: "EUR",
+          priceSource: "manual",
+        }),
+      }),
+    );
+    // SAFETY: a 201 returns the inserted instrument.
+    const instrument = (await created.json()) as { id: number };
+
+    const response = await paste(cookie, {
+      asOf: "2026-06-30",
+      text: [HEADER, "Paste Match Fund\tEUR\t10\t100,00"].join("\n"),
+    });
+    // SAFETY: as above.
+    const body = (await response.json()) as { rows: Array<{ instrumentId: number | null }> };
+    expect(body.rows[0]!.instrumentId).toBe(instrument.id);
+  });
+
+  test("reports an unreadable row without losing the readable ones", async () => {
+    const { cookie } = await signUp(`paste-bad-${crypto.randomUUID()}@example.com`);
+    const response = await paste(cookie, {
+      asOf: "2026-06-30",
+      text: [HEADER, "Hyvä\tEUR\t10\t100,00", "Huono\tEUR\tei-luku\t50,00"].join("\n"),
+    });
+    // SAFETY: as above.
+    const body = (await response.json()) as {
+      rows: Array<{ name: string }>;
+      problems: Array<{ line: number }>;
+    };
+    expect(body.rows.map((r) => r.name)).toEqual(["Hyvä"]);
+    expect(body.problems).toHaveLength(1);
+  });
+
+  test("refuses a paste whose header is missing a needed column", async () => {
+    const { cookie } = await signUp(`paste-hdr-${crypto.randomUUID()}@example.com`);
+    const response = await paste(cookie, {
+      asOf: "2026-06-30",
+      text: ["Nimi\tArvo EUR", "Esimerkki\t10,00"].join("\n"),
+    });
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("POST /api/snapshots/csv", () => {
+  /** UTF-16LE with a byte-order mark, the way Nordnet writes its exports. */
+  const utf16le = (text: string): ArrayBuffer => {
+    const withBom = `﻿${text}`;
+    const bytes = new Uint8Array(withBom.length * 2);
+    for (let i = 0; i < withBom.length; i++) {
+      const code = withBom.charCodeAt(i);
+      bytes[i * 2] = code & 0xff;
+      bytes[i * 2 + 1] = code >> 8;
+    }
+    // SAFETY: a freshly allocated Uint8Array always owns a plain ArrayBuffer.
+    return bytes.buffer as ArrayBuffer;
+  };
+
+  const upload = async (
+    cookie: string,
+    body: ArrayBuffer,
+    asOf = "2026-06-30",
+  ): Promise<Response> => {
+    const form = new FormData();
+    form.set("file", new File([body], "omistukset.csv", { type: "text/csv" }));
+    form.set("asOf", asOf);
+    return snapshotRoutes["/api/snapshots/csv"].POST(
+      new Request("http://x/api/snapshots/csv", {
+        method: "POST",
+        headers: { cookie },
+        body: form,
+      }),
+    );
+  };
+
+  const CSV = [
+    "Nimi\tValuutta\tMäärä\tArvo EUR",
+    "Esimerkki Indeksi\tEUR\t27,4431\t10072,715424",
+  ].join("\n");
+
+  test("rejects a request with no session", async () => {
+    expect((await upload("", utf16le(CSV))).status).toBe(401);
+  });
+
+  // Nordnet writes UTF-16LE; read as UTF-8 the file is a run of null bytes.
+  test("reads a UTF-16 export and proposes its rows", async () => {
+    const { cookie } = await signUp(`csv-${crypto.randomUUID()}@example.com`);
+    const before = db.select().from(transactions).all().length;
+
+    const response = await upload(cookie, utf16le(CSV));
+    expect(response.status).toBe(200);
+    // SAFETY: a 200 from this route always returns { asOf, rows, problems }.
+    const body = (await response.json()) as {
+      asOf: string;
+      rows: Array<{ name: string; quantity: string; marketValueEur: string }>;
+    };
+    expect(body.asOf).toBe("2026-06-30");
+    expect(body.rows[0]!.quantity).toBe("27.4431");
+    expect(body.rows[0]!.marketValueEur).toBe("10072.72");
+    // A preview stores nothing.
+    expect(db.select().from(transactions).all().length).toBe(before);
+  });
+
+  test("reads a plain UTF-8 export too, since not every broker writes UTF-16", async () => {
+    const { cookie } = await signUp(`csv-utf8-${crypto.randomUUID()}@example.com`);
+    const bytes = new TextEncoder().encode(CSV);
+    // SAFETY: TextEncoder always allocates a plain ArrayBuffer, never a shared one.
+    const response = await upload(cookie, bytes.buffer as ArrayBuffer);
+    expect(response.status).toBe(200);
+  });
+
+  test("refuses a file whose header lacks a needed column", async () => {
+    const { cookie } = await signUp(`csv-bad-${crypto.randomUUID()}@example.com`);
+    const response = await upload(cookie, utf16le("Nimi\tArvo EUR\nEsimerkki\t10,00"));
+    expect(response.status).toBe(400);
   });
 });

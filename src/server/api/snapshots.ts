@@ -10,7 +10,8 @@ import { getDb } from "../db";
 import { instruments, snapshotRows, snapshots, transactions } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { loadPortfolio } from "../valuation";
-import { parseOpHoldings } from "../import/op-pdf";
+import { decodeHoldingsFile, parseHoldingsPaste } from "../import/holdings-paste";
+import { parseOpWebHoldings } from "../import/op-holdings-paste";
 
 const { db } = getDb();
 
@@ -52,6 +53,11 @@ const Adjust = z.object({
  * format rule the whole project follows, so a fractional fund unit cannot lose
  * precision on the way in.
  */
+const PasteSnapshot = z.object({
+  asOf: IsoDateSchema,
+  text: z.string().min(1, "Liitä taulukko ensin"),
+});
+
 const CreateSnapshot = z.object({
   accountId: z.number().int().positive(),
   asOf: IsoDateSchema,
@@ -204,46 +210,98 @@ export const snapshotRoutes = {
     }),
   },
 
-  "/api/snapshots/pdf": {
+  "/api/snapshots/csv": {
     /**
-     * Reads a broker's PDF statement and proposes the snapshot it describes,
-     * without storing anything. The user confirms it through POST /api/snapshots
-     * like any other statement.
+     * Proposes a snapshot from a broker's holdings export.
      *
-     * A preview rather than a direct write because a statement names its funds
-     * the way the broker prints them, which is not how they are named in the
-     * ledger -- one real statement says "OP-MAAILMA INDEKSI -SIJOITUSRAHASTO A"
-     * for a holding registered as "OP-MAAILMA INDEKSI A". A name this parser
-     * cannot match comes back with a null instrumentId for the user to resolve,
-     * never matched to the closest guess.
+     * Nordnet publishes one; OP does not, which is why the paste route beside
+     * this exists. Stores nothing either way -- the user confirms through
+     * POST /api/snapshots.
      */
     POST: handle(async (request) => {
       const { userId } = await requireUser(request);
       const form = await request.formData();
       const file = form.get("file");
+      const asOf = IsoDateSchema.parse(form.get("asOf"));
       if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
 
-      // A file this parser cannot read is the caller's problem, not a server
-      // fault: it means the wrong PDF, or a scanned one with no text layer,
-      // which the vision path (spec §5.2) exists for.
-      let statement;
+      let parsed;
       try {
-        statement = parseOpHoldings(new Uint8Array(await file.arrayBuffer()));
+        parsed = parseHoldingsPaste(decodeHoldingsFile(new Uint8Array(await file.arrayBuffer())));
       } catch (cause) {
-        throw new HttpError(400, cause instanceof Error ? cause.message : "PDF:ää ei voitu lukea");
+        throw new HttpError(
+          400,
+          cause instanceof Error ? cause.message : "Tiedostoa ei voitu lukea",
+        );
       }
+
       const { instruments: known } = loadPortfolio(db, userId);
       const byName = new Map(known.map((i) => [normalise(i.name), i.id]));
 
       return json({
-        asOf: statement.asOf,
-        rows: statement.holdings.map((holding) => ({
+        asOf,
+        rows: parsed.holdings.map((holding) => ({
           name: holding.name,
           quantity: holding.quantity,
-          costEur: holding.costEur,
+          costEur: "",
           marketValueEur: holding.marketValueEur,
           instrumentId: byName.get(normalise(holding.name)) ?? null,
         })),
+        problems: parsed.problems,
+      });
+    }),
+  },
+
+  "/api/snapshots/paste": {
+    /**
+     * Proposes a snapshot from a broker's on-screen holdings table, pasted in.
+     *
+     * Nordnet publishes no holdings export and its year-end PDF is drawn in
+     * embedded subset fonts, but its portfolio table copies as tab-separated
+     * text -- a better source than the PDF either way: nothing to decode, and
+     * the figures are whatever the broker is showing now rather than at a
+     * year end.
+     *
+     * Stores nothing, exactly like the PDF preview: the user confirms it
+     * through POST /api/snapshots.
+     */
+    POST: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const body = PasteSnapshot.parse(await request.json());
+
+      // Two shapes reach this route, told apart by whether the paste has
+      // columns at all. A broker's CSV or spreadsheet copy is tab-separated
+      // with a header row; a table copied out of a PDF viewer is one value per
+      // line with no delimiter, which is the shape OP's own statement takes.
+      // Sniffed rather than configured: the user should not have to know which
+      // kind of paste they are holding.
+      const columnar = body.text.includes("\t");
+      let parsed: {
+        holdings: Array<{ name: string; quantity: string; marketValueEur: string }>;
+        problems: Array<{ line: number; message: string; raw: string }>;
+      };
+      try {
+        parsed = columnar ? parseHoldingsPaste(body.text) : parseOpWebHoldings(body.text);
+      } catch (cause) {
+        throw new HttpError(
+          400,
+          cause instanceof Error ? cause.message : "Liitettyä taulukkoa ei voitu lukea",
+        );
+      }
+
+      const { instruments: known } = loadPortfolio(db, userId);
+      const byName = new Map(known.map((i) => [normalise(i.name), i.id]));
+
+      return json({
+        asOf: body.asOf,
+        rows: parsed.holdings.map((holding) => ({
+          name: holding.name,
+          quantity: holding.quantity,
+          costEur: "",
+          marketValueEur: holding.marketValueEur,
+          instrumentId: byName.get(normalise(holding.name)) ?? null,
+        })),
+        problems: parsed.problems,
       });
     }),
   },

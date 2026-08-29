@@ -7,7 +7,7 @@ import { fiDate, qty } from "../lib/format";
 import { AccountsSchema } from "./imports-draft";
 import { AdjustRow } from "./AdjustRow";
 import { SnapshotForm } from "./SnapshotForm";
-import { SnapshotPdfUpload } from "./SnapshotPdfUpload";
+import { SnapshotPaste } from "./SnapshotPaste";
 import {
   explain,
   needsAttention,
@@ -148,7 +148,7 @@ export const ReconcilePage = () => {
 
       {chosenAccount !== null && (
         <>
-          <SnapshotPdfUpload accountId={chosenAccount} onCreated={(id) => setSnapshotId(id)} />
+          <SnapshotPaste accountId={chosenAccount} onCreated={(id) => setSnapshotId(id)} />
           <SnapshotForm accountId={chosenAccount} onCreated={(id) => setSnapshotId(id)} />
         </>
       )}

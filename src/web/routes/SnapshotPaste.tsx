@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
-import { eur, fiDate, qty } from "../lib/format";
+import { eur, qty } from "../lib/format";
 
 const InstrumentSchema = z.object({ id: z.number(), name: z.string() });
 const CreatedSnapshotSchema = z.object({ id: z.number() });
@@ -19,20 +19,25 @@ const PreviewSchema = z.object({
       instrumentId: z.number().nullable(),
     }),
   ),
+  problems: z.array(z.object({ line: z.number(), message: z.string(), raw: z.string() })),
 });
 
 /**
- * Uploads a broker's PDF statement, shows what it says, and stores it only once
- * every row is pointed at an instrument.
+ * Takes a broker's holdings table as pasted text and proposes the snapshot it
+ * describes.
  *
- * The mapping step is not ceremony: a statement names its funds the way the
- * broker prints them, not the way they are registered here, so an unmatched row
- * is the normal case on a first upload rather than an error. Nothing is stored
- * until the user has resolved them, and a row left unmatched blocks the save
- * instead of being quietly dropped -- a statement missing a holding reads as
- * "you did not own it", which is the one thing it can never mean.
+ * Two shapes arrive here and the server tells them apart: a CSV or spreadsheet
+ * copy, which is tab-separated with a header row, and a table copied from a web
+ * page, which is one value per line. The user should not have to know which
+ * kind they are holding.
+ *
+ * Nothing is stored until every row is pointed at an instrument. A statement
+ * names its holdings the way the broker prints them, so an unmatched row is
+ * ordinary on a first paste rather than an error -- and a row left unmatched
+ * blocks the save instead of being dropped, since a statement missing a holding
+ * reads as one the owner does not have.
  */
-export const SnapshotPdfUpload = ({
+export const SnapshotPaste = ({
   accountId,
   onCreated,
 }: {
@@ -40,7 +45,9 @@ export const SnapshotPdfUpload = ({
   readonly onCreated: (snapshotId: number) => void;
 }) => {
   const queryClient = useQueryClient();
+  const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [asOf, setAsOf] = useState("");
   const [mapping, setMapping] = useState<Record<string, number | null>>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -49,18 +56,24 @@ export const SnapshotPdfUpload = ({
     queryFn: () => apiGet("/api/instruments", z.array(InstrumentSchema)),
   });
 
+  // Two sources, one preview: a broker that exports a holdings file (Nordnet)
+  // and one that does not (OP), where the table is copied off the page instead.
   const preview = useMutation({
-    mutationFn: (chosen: File) => {
-      const form = new FormData();
-      form.set("file", chosen);
-      return apiUpload("/api/snapshots/pdf", form, PreviewSchema);
+    mutationFn: () => {
+      if (file !== null) {
+        const form = new FormData();
+        form.set("file", file);
+        form.set("asOf", asOf);
+        return apiUpload("/api/snapshots/csv", form, PreviewSchema);
+      }
+      return apiPost("/api/snapshots/paste", { asOf, text }, PreviewSchema);
     },
     onSuccess: (result) => {
       setError(null);
       setMapping(Object.fromEntries(result.rows.map((row) => [row.name, row.instrumentId])));
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "PDF:n luku epäonnistui");
+      setError(cause instanceof ApiError ? cause.message : "Taulukon luku epäonnistui");
     },
   });
 
@@ -73,8 +86,8 @@ export const SnapshotPdfUpload = ({
         "/api/snapshots",
         {
           accountId,
-          asOf: preview.data?.asOf ?? "",
-          source: "pdf" as const,
+          asOf,
+          source: "manual" as const,
           rows: rows.map((row) => ({
             instrumentId: mapping[row.name] ?? 0,
             quantity: row.quantity,
@@ -86,6 +99,7 @@ export const SnapshotPdfUpload = ({
     onSuccess: (snapshot) => {
       setError(null);
       preview.reset();
+      setText("");
       setFile(null);
       void queryClient.invalidateQueries({ queryKey: ["snapshots", accountId] });
       onCreated(snapshot.id);
@@ -97,26 +111,44 @@ export const SnapshotPdfUpload = ({
 
   return (
     <section className="card mt-6">
-      <h2>Lue ote PDF:stä</h2>
+      <h2>Liitä omistukset</h2>
       <p className="text-muted">
-        Vuosiraportti luetaan sellaisenaan. Rahastot nimetään otteella eri tavalla kuin täällä,
-        joten yhdistä rivit ennen tallennusta — mitään ei tallenneta ennen sitä.
+        Lataa välittäjän omistustiedosto tai liitä taulukko suoraan verkkosivulta. Yhdistä rivit
+        omiin arvopapereihisi ennen tallennusta; mitään ei tallenneta ennen sitä.
       </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      <label className="mt-3 block">
+        Otteen päivä
+        <input type="date" value={asOf} required onChange={(e) => setAsOf(e.target.value)} />
+      </label>
+
+      <label className="mt-3 block">
+        Välittäjän tiedosto (esim. Nordnetin CSV)
         <input
           type="file"
-          accept="application/pdf"
+          accept=".csv,text/csv,text/plain"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
-        <button
-          type="button"
-          disabled={file === null || preview.isPending}
-          onClick={() => file && preview.mutate(file)}
-        >
-          {preview.isPending ? "Luetaan…" : "Lue ote"}
-        </button>
-      </div>
+      </label>
+
+      <label className="mt-3 block">
+        …tai liitä taulukko (esim. OP:n omistusnäkymä)
+        <textarea
+          value={text}
+          rows={8}
+          placeholder="Liitä tähän"
+          onChange={(e) => setText(e.target.value)}
+        />
+      </label>
+
+      <button
+        type="button"
+        className="mt-3"
+        disabled={(file === null && text.trim() === "") || asOf === "" || preview.isPending}
+        onClick={() => preview.mutate()}
+      >
+        {preview.isPending ? "Luetaan…" : file !== null ? "Lue tiedosto" : "Lue taulukko"}
+      </button>
 
       {error && (
         <p role="alert" className="text-loss mt-3 text-sm">
@@ -126,15 +158,18 @@ export const SnapshotPdfUpload = ({
 
       {preview.data && (
         <>
-          <p className="mt-4">
-            Ote {fiDate(preview.data.asOf)} — {rows.length} riviä.
-          </p>
-          <table className="mt-2">
+          {preview.data.problems.length > 0 && (
+            <p className="text-loss mt-3 text-sm">
+              {preview.data.problems.length} riviä ei voitu lukea; loput alla.
+            </p>
+          )}
+
+          <table className="mt-3">
             <thead>
               <tr>
                 <th>Otteella</th>
                 <th className="num">Määrä</th>
-                <th className="num">Markkina-arvo</th>
+                <th className="num">Arvo</th>
                 <th>Arvopaperi täällä</th>
               </tr>
             </thead>
@@ -170,7 +205,7 @@ export const SnapshotPdfUpload = ({
           <button
             type="button"
             className="mt-4"
-            disabled={unmapped > 0 || save.isPending}
+            disabled={unmapped > 0 || rows.length === 0 || save.isPending}
             onClick={() => save.mutate()}
           >
             {save.isPending
