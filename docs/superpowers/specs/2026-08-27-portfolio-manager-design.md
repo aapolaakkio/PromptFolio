@@ -956,12 +956,42 @@ model chooses what to compute without doing the computing. Derived figures must 
 - **Income beyond the bank.** Only bank rows are read as income; a salary paid to an account this
   app does not know is invisible to the flow diagram.
 
+## 10g. Amendment -- 2026-08-29, corrections found while designing phase 4
+
+Phase 4 is specified in its own document,
+[2026-08-29-tax-module-design.md](2026-08-29-tax-module-design.md). Designing it against vero.fi,
+as §11 required, turned up two errors here.
+
+### G1. The OST deposit cap is 100 000 €, not 50 000 €
+
+C7 records "a lifetime deposit cap (50 000 € at the time of writing)". It is 100 000 €. C7's
+substantive point -- that an OST is not a variation on an ordinary account and cannot be taxed like
+one -- stands unchanged. The lesson is the one C7 itself is about: a figure with no citation cannot
+be re-checked, so every tax constant now carries the page it came from and the date it was read.
+
+### G2. FIFO is per account, and `buildLots` pooled across accounts
+
+vero.fi states the matching rule as FIFO "within one account". `buildLots` keyed its open lots by
+`instrumentId` alone -- `accountId` appeared nowhere in the file -- so lots pooled across accounts.
+That is a different rule, and it agrees with the real one only while an instrument is held in a
+single account, which is true of the current ledger and is why nothing ever looked wrong.
+
+This is the defect C7 predicted, arriving from the direction it did not: C7 worried about two
+accounts *merged by the importer*, and the accounts here were stored correctly all along. The
+pooling was in the cost-basis engine.
+
+Fixed in phase 4: lots and disposals carry their account. `costBasisAt` and
+`costBasisPerInstrument` still aggregate per instrument, so the holdings view is unchanged -- a
+position spans accounts even though tax does not.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.
   Resolved either way by the opening-position flow (§4.3), so it does not block phase 1.
 - ~~Whether `nordnet_fund` NAV access needs an authenticated session.~~ **Resolved by A5:** the
   historical-prices endpoint does; the fund detail page (what `nordnet_fund` actually uses) does not.
-- Exact Finnish tax rules (FIFO vs. hankintameno-olettama, the 30%/34% bracket boundary,
+- ~~Exact Finnish tax rules (FIFO vs. hankintameno-olettama, the 30%/34% bracket boundary,
   85%-taxable listed dividends) are deliberately deferred to the phase 4 spec and must be
-  verified against vero.fi at that time rather than assumed.
+  verified against vero.fi at that time rather than assumed.~~ **Resolved by the phase 4 spec §3**,
+  where every rule is cited to vero.fi -- except the bracket boundary, which is now out of scope
+  rather than unresolved: the tax module reports taxable income, never tax owed.

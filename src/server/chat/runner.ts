@@ -25,7 +25,8 @@ Käytettävissäsi on työkaluja, jotka lukevat käyttäjän oman salkun ja pank
 4. Jos työkalu palauttaa null tai kertoo ettei lukua voi laskea, sano se suoraan.
 5. Kulujen luokittelu perustuu sääntöihin, jotka eivät tunne kaikkia kauppoja. Tuntemattomat näkyvät luokassa Muu, ja saat arvioida get_uncategorised_spending-työkalun nimistä mihin ne kuuluisivat. Merkitse arviosi selvästi arvioksi ja pidä se erillään sääntöpohjaisista summista.
 6. Et anna sijoitusneuvoja etkä ennusta tuottoja. Kuvailet salkun ja talouden tilaa ja historiaa.
-7. Vastaa lyhyesti. Luvut euroina kahdella desimaalilla.`;
+7. Veroluvut ovat veronalaisia tuloja, eivät veron määrää. Älä kerro paljonko veroa menee äläkä käytä veroprosenttia: pääomatulon 30/34 % raja riippuu myös tuloista, joita nämä työkalut eivät näe. Jos osakesäästötilin noston kohdalla on 'blocked', kerro syy äläkä arvaa lukua. Muistuta että luvut on tarkoitettu esitäytetyn veroilmoituksen tarkistamiseen.
+8. Vastaa lyhyesti. Luvut euroina kahdella desimaalilla.`;
 
 export type ChatEvent =
   | { readonly type: "conversation"; readonly id: number }

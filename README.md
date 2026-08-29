@@ -19,6 +19,7 @@ holds everything. No external database, no message queue, nothing else to run.
 | **Täsmäytys**  | A broker's holdings statement compared against what the ledger derives for the same day      |
 | **Käteinen**   | Bank accounts, balances per currency, statement import, manual entries                       |
 | **Kulutus**    | Spending by category or payee, a Sankey of the year's money, monthly income against spending |
+| **Verot**      | Per tax year: realised gains both permitted ways, dividends, OST withdrawals                  |
 | **Avustaja**   | A chat assistant that answers from the same figures the screens show                         |
 | **Tuonnit**    | Import history, with undo                                                                    |
 
@@ -171,7 +172,7 @@ Ask questions in Finnish on **Avustaja**. It reads through the same functions th
 chat and dashboard cannot disagree. It is read-only: no tool writes to the ledger.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
-uncategorised spending, and an exact decimal calculator. Every result carries the date it was
+uncategorised spending, the tax year, and an exact decimal calculator. Every result carries the date it was
 computed for and whether any price behind it is stale.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
@@ -186,6 +187,38 @@ delete any of them on **Kulutus**.
 
 Both features cost money (cents per question or import) and send the relevant figures to
 Anthropic's API. Leave `ANTHROPIC_API_KEY` unset and neither runs.
+
+## Tax figures
+
+**Verot** reports one tax year at a time, computed from the ledger rather than taken from anyone's
+statement. Finnish brokers already report to Verohallinto, so the return arrives pre-filled: the
+point of a second, independent derivation is disagreement, and every figure shows its workings so a
+difference can be traced rather than argued about.
+
+Every rule is cited to vero.fi in `src/core/tax/rates.ts` and was verified on 2026-08-29. What the
+report knows:
+
+- **Realised gains, both permitted ways.** Actual cost against the *hankintameno-olettama* (20 % of
+  the sale price under ten years' ownership, 40 % from ten), with the better one marked and the
+  other shown beside it — the choice is the taxpayer's, so it is displayed rather than assumed. The
+  two methods use different bases: the actual method deducts the selling fee, the deemed one does
+  not, so the deemed cost is a share of the **gross** sale price.
+- **FIFO within one account**, which is the rule vero.fi states. A share held in two accounts has
+  two independent queues.
+- **The small-sales exemption**, both ways: at most 1 000 € of sales in a year makes the gains
+  exempt *and* the losses non-deductible.
+- **Losses**, netted within the year and carried five years, oldest first.
+- **Dividends**: 85 % taxable, 15 % exempt.
+- **Equity savings accounts.** Nothing inside an OST is taxed when it happens — not a sale, not a
+  dividend. Tax falls on withdrawal, on the profit share: profit ÷ account value × amount withdrawn,
+  with the account valued *immediately before* the withdrawal. The capital part of a withdrawal
+  reduces the deposits, which is both the base for the next withdrawal and what the 100 000 €
+  lifetime cap is measured against.
+
+A withdrawal whose account holds something unpriceable — an unlisted share, or a delisted one with
+no surviving feed — reports *ei laskettavissa* naming the instrument and date, never an
+apportionment resting on a guessed value. Recording a price for that date on **Omistukset** makes
+the row compute.
 
 ## Prices and the nightly refresh
 
@@ -249,8 +282,13 @@ translates between stored integers and the domain's `Money`/`Quantity`/`FxRate`.
 
 ## Limits
 
-- **No tax reporting yet.** Account types are recorded (AOT/OST), but the Finnish capital-gains
-  and OST-withdrawal rules are not implemented. See spec §10c/C7.
+- **The tax report checks, it does not file.** No euro figure for tax owed (the 30 %/34 % bracket
+  depends on capital income this app cannot see), no foreign dividend tax credit, no OmaVero
+  export. See the [phase 4 spec](docs/superpowers/specs/2026-08-29-tax-module-design.md) §2.
+- **Dividend withholding is not in the ledger.** Both broker exports publish one combined
+  "Kulut / Korot / Verot" column, so a dividend's stored amount is what arrived, and the taxable
+  85 % is computed on that. Where the payer withheld tax, the real gross is higher — the report
+  badges every such row rather than implying certainty.
 - **Fund NAV history starts at your deployment** for Nordnet- and OP-priced funds (above).
 - **OP's securities export records no cash**, so those accounts show no balance and their
   money-weighted return is measured from purchases instead of deposits.

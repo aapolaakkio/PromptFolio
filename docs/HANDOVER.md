@@ -1,10 +1,10 @@
 # PromptFolio — handover
 
-Current as of 2026-08-29. Replaces the per-phase handovers for phases 1 and 2, which had gone out
+Current as of 2026-08-29 (phase 4 shipped). Replaces the per-phase handovers for phases 1 and 2, which had gone out
 of date in ways that mattered: phase 2's said the PDF import path was dropped, and it has since
 been built.
 
-`bun run check`: 848 tests, 0 failures, 80 % per-file coverage floor held.
+`bun run check`: 909 tests, 0 failures, 80 % per-file coverage floor held.
 
 ## What exists
 
@@ -41,6 +41,10 @@ allocation, never toward returns.
 hand. Sankey of the period's money, monthly income against spending, per-payee breakdown, and a
 list of everything no rule matched.
 
+**Tax figures.** One tax year at a time, computed from the ledger to check the pre-filled return:
+realised gains both permitted ways, dividends at 85 %, OST withdrawals apportioned, losses carried
+five years. Every rule cited to vero.fi in `core/tax/rates.ts`. No tax owed is stated.
+
 **The assistant.** Read-only tool calling over the same functions the screens use, with an exact
 decimal calculator. Conversations persist per user.
 
@@ -62,11 +66,23 @@ Each of these was arrived at by getting it wrong first.
   so the same period can be imported twice, and the PDF fills in payees the CSV left blank.
 - **The model may derive figures but not compute them.** Base numbers come from tools; anything
   derived goes through the calculator, in integer hundredths.
+- **FIFO is per account**, which is the rule vero.fi states. `buildLots` keyed lots by instrument
+  alone until phase 4; that pooled them across accounts, and only agreed with the real rule while
+  an instrument was held in one account. Cost basis still aggregates per instrument for the
+  holdings view: a position spans accounts, tax does not.
+- **The tax module reports taxable income, never tax owed.** The 30 %/34 % bracket depends on
+  capital income the app cannot see, so those rates appear nowhere in the code.
+- **Nothing inside an OST is taxed when it happens.** Sales and dividends there are excluded from
+  the taxable sets; tax falls on withdrawal, and the account is valued immediately *before* the
+  withdrawal being apportioned — valuing it after understates the total the profit is divided by.
 - **Every AI-proposed classification is validated** before it is stored: the category must exist,
   the pattern must occur in a payee the import contained, and an existing rule is never replaced.
 
 ## Where the numbers can still be wrong
 
+- **Dividend withholding is absent from the ledger.** Both broker exports publish one combined
+  "Kulut / Korot / Verot" column, so a dividend's amount is what arrived and the taxable 85 % is
+  computed on it. Where the payer withheld, the true gross is higher; every such row is badged.
 - **Fund NAV history** for Nordnet- and OP-priced funds starts at your deployment. Cost basis and
   current value are right from day one; the historical curve is short.
 - **OP's securities export records no cash**, so those accounts show no balance and their
@@ -80,9 +96,10 @@ Each of these was arrived at by getting it wrong first.
 
 ## Not built
 
-- **Tax reporting.** Account types are recorded (`aot`, `ost`), but Finnish capital-gains rules,
-  OST withdrawal treatment and the vero.fi export are not implemented. This is the next phase; see
-  spec §10c/C7 for why the account type had to exist first.
+- **Filing.** The tax module verifies; it does not file. No tax owed, no foreign dividend tax
+  credit, no OmaVero export, no unlisted-dividend regime. See the phase 4 spec §2.
+- **Freezing a filed tax year.** Figures are derived, so a late import changes a past year. The
+  report says what it was computed from; a `tax_reports` table is the alternative, not built.
 - **Rebalancing, drift and fee analysis.**
 - **Debt as an account.** A loan repayment is currently one spending category; principal and
   interest are not separated. See spec §10f.
@@ -90,7 +107,7 @@ Each of these was arrived at by getting it wrong first.
 ## Layout
 
 ```
-src/core/      money, ledger, cost basis, returns, allocation, cash — no I/O
+src/core/      money, ledger, cost basis, returns, allocation, cash, tax — no I/O
 src/server/    routes, SQLite, importers, price sources, chat, spending
 src/web/       React frontend (TanStack Router, Query, Charts)
 docs/superpowers/specs/2026-08-27-portfolio-manager-design.md
