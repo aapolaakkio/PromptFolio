@@ -70,6 +70,18 @@ export type OstWithdrawalView = {
   readonly taxableEur: string | null;
   /** Finnish, user-facing, naming the instrument and date. Null when computed. */
   readonly blockedBy: string | null;
+  /**
+   * The instrument whose missing price blocks this row, when that is the
+   * reason. Carried so the screen can offer to record a price for it: the
+   * holding has usually been sold by now, so it appears on no other screen, and
+   * an instruction to record a price would otherwise name a form the user
+   * cannot reach.
+   */
+  readonly blockedInstrument: {
+    readonly id: number;
+    readonly name: string;
+    readonly currency: string;
+  } | null;
 };
 
 export type OstView = {
@@ -255,6 +267,15 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
           profitEur: outcome.ok ? money(outcome.profitEur) : null,
           taxableEur: outcome.ok ? money(outcome.taxableEur) : null,
           withheldEur: money(withdrawal.withheldEur),
+          blockedInstrument:
+            outcome.ok || outcome.reason !== "no-price"
+              ? null
+              : ((blocked) =>
+                  blocked === undefined
+                    ? null
+                    : { id: blocked.id, name: blocked.name, currency: blocked.currency })(
+                  instrumentById.get(outcome.instrumentId),
+                ),
           blockedBy: outcome.ok
             ? null
             : outcome.reason === "no-price"

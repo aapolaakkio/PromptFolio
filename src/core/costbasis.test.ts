@@ -333,3 +333,60 @@ test("a fee is split across the lots a sale consumes, and the parts sum to the w
   // than the split quietly losing a cent.
   expect(formatMoney(total)).toBe("10.01");
 });
+
+// A swap does not restart ownership. Merging the arriving position into one lot
+// lost each lot's acquisition date -- which sets the deemed-acquisition-cost
+// percentage -- and the per-lot cost that FIFO consumes on a later partial
+// sale. A real fractional cash-out days after a swap took its cost pro-rata
+// across the whole position instead of from the oldest lot, leaving every
+// remaining share's basis short of what the broker reported.
+test("a share swap carries the departing lots, keeping their acquisition dates", () => {
+  const { open } = buildLots([
+    txn("BUY", "2020-12-07", { qty: "6", amount: "-60,00", instrumentId: 1 }),
+    txn("BUY", "2021-05-05", { qty: "6", amount: "-120,00", instrumentId: 1 }),
+    txn("TRANSFER_OUT", "2023-10-04", { qty: "12", amount: "0", instrumentId: 1 }),
+    txn("TRANSFER_IN", "2023-10-04", { qty: "6", amount: "0", instrumentId: 2 }),
+  ]);
+
+  expect(open).toHaveLength(2);
+  expect(open.map((lot) => lot.acquiredOn)).toEqual(["2020-12-07", "2021-05-05"]);
+  // Halved units, unchanged cost: the shares changed form, not value.
+  expect(open.map((lot) => formatQuantity(lot.quantity))).toEqual(["3.000000", "3.000000"]);
+  expect(open.map((lot) => formatMoney(lot.costEur))).toEqual(["60.00", "120.00"]);
+});
+
+test("a sale after a swap consumes the oldest carried lot first, not the position pro rata", () => {
+  const { disposals } = buildLots([
+    txn("BUY", "2020-12-07", { qty: "6", amount: "-60,00", instrumentId: 1 }),
+    txn("BUY", "2021-05-05", { qty: "6", amount: "-120,00", instrumentId: 1 }),
+    txn("TRANSFER_OUT", "2023-10-04", { qty: "12", amount: "0", instrumentId: 1 }),
+    txn("TRANSFER_IN", "2023-10-04", { qty: "6", amount: "0", instrumentId: 2 }),
+    txn("SELL", "2023-10-10", { qty: "3", amount: "50,00", instrumentId: 2 }),
+  ]);
+
+  // The swap's own legs are disposals too (that is how cost basis follows the
+  // shares), so only the sale's own row is read here.
+  const sold = disposals.filter((disposal) => disposal.soldOn === "2023-10-10");
+
+  // FIFO takes the whole 2020 lot at 60,00. Pro rata across a merged position
+  // would have taken 90,00 -- half of the 180,00 total -- and left the
+  // remaining shares 30,00 short.
+  expect(sold).toHaveLength(1);
+  expect(formatMoney(sold[0]!.costEur)).toBe("60.00");
+  expect(sold[0]!.acquiredOn).toBe("2020-12-07");
+});
+
+test("an arriving leg that states a value the departing leg did not give up is taken at its word", () => {
+  // Same total means the same swap, described twice; a different total
+  // describes something else, and the stated figure is the only evidence for
+  // what.
+  const { open } = buildLots([
+    txn("BUY", "2020-12-07", { qty: "6", amount: "-60,00", instrumentId: 1 }),
+    txn("TRANSFER_OUT", "2023-10-04", { qty: "6", amount: "0", instrumentId: 1 }),
+    txn("TRANSFER_IN", "2023-10-04", { qty: "6", amount: "-90,00", instrumentId: 2 }),
+  ]);
+
+  expect(open).toHaveLength(1);
+  expect(formatMoney(open[0]!.costEur)).toBe("90.00");
+  expect(open[0]!.acquiredOn).toBe("2023-10-04");
+});

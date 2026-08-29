@@ -28,11 +28,22 @@ export type RecordPriceFormProps = {
   readonly instrumentId: number;
   /** The instrument's own quotation currency, for the field's label only -- never used in arithmetic here. */
   readonly currency: string;
+  /**
+   * The date to open on. Today, unless a caller knows the date it needs a price
+   * for -- the tax screen does, and typing it again from the row above is work
+   * the screen can do for the reader.
+   */
+  readonly defaultDate?: string;
   readonly onRecorded: () => void;
 };
 
-export const RecordPriceForm = ({ instrumentId, currency, onRecorded }: RecordPriceFormProps) => {
-  const [date, setDate] = useState(today());
+export const RecordPriceForm = ({
+  instrumentId,
+  currency,
+  defaultDate,
+  onRecorded,
+}: RecordPriceFormProps) => {
+  const [date, setDate] = useState(defaultDate ?? today());
   const [price, setPrice] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiGet } from "../lib/api";
+import { RecordPriceForm } from "./RecordPriceForm";
 import { eur, fiDate, qty } from "../lib/format";
 import { methodLabel, TaxYearSchema, TaxYearsSchema, type TaxYearView } from "./tax-view";
 
@@ -85,6 +86,43 @@ const Disposals = ({ report }: { report: TaxYearView }) => {
   );
 };
 
+/**
+ * The blocked row's own way out.
+ *
+ * The holding that blocks an old withdrawal has usually been sold since, so it
+ * appears on no other screen -- telling the reader to record a price without
+ * showing them where would name a form they cannot reach.
+ */
+const FixBlocked = ({
+  instrument,
+  on,
+}: {
+  instrument: { id: number; name: string; currency: string };
+  on: string;
+}) => {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <button type="button" className="text-xs underline" onClick={() => setOpen(true)}>
+        Kirjaa {instrument.name} hinta {fiDate(on)}
+      </button>
+    );
+  }
+  return (
+    <RecordPriceForm
+      instrumentId={instrument.id}
+      currency={instrument.currency}
+      defaultDate={on}
+      onRecorded={() => {
+        setOpen(false);
+        void queryClient.invalidateQueries({ queryKey: ["tax"] });
+      }}
+    />
+  );
+};
+
 const Ost = ({ report }: { report: TaxYearView }) => {
   if (report.ost.length === 0) return <Empty>Ei osakesäästötilejä.</Empty>;
 
@@ -132,7 +170,14 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                     </td>
                     <td className="text-right">
                       {row.taxableEur === null ? (
-                        <Badge title={row.blockedBy ?? undefined}>ei laskettavissa</Badge>
+                        <>
+                          <Badge title={row.blockedBy ?? undefined}>ei laskettavissa</Badge>
+                          {row.blockedInstrument !== null && (
+                            <span className="mt-1 block">
+                              <FixBlocked instrument={row.blockedInstrument} on={row.withdrawnOn} />
+                            </span>
+                          )}
+                        </>
                       ) : (
                         eur(row.taxableEur)
                       )}

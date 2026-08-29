@@ -145,23 +145,32 @@ export const buildLots = (txns: readonly Txn[]) => {
   const openByAccountInstrument = new Map<string, Lot[]>();
   const disposals: Disposal[] = [];
   /**
-   * Cost basis released by a TRANSFER_OUT, waiting for the TRANSFER_IN that
-   * receives the same shares, keyed by trade date and consumed in order.
+   * The lots a TRANSFER_OUT gave up, waiting for the TRANSFER_IN that receives
+   * the same shares, keyed by trade date and consumed in order.
    *
-   * A share swap moves a holding between two instruments with no money
-   * changing hands, so the arriving leg's `amount` is zero -- and cost derived
-   * from a zero amount would price the new holding at nothing and report its
-   * entire value as gain. Nordnet's export states the acquisition value on the
+   * A share swap moves a holding between two instruments with no money changing
+   * hands, so the arriving leg's `amount` is zero -- and cost derived from a
+   * zero amount would price the new holding at nothing and report its entire
+   * value as gain. Nordnet's export states the acquisition value on the
    * arriving row (`Hankinta-arvo`, read by the importer); OP's paste states
    * nothing at all. Rather than leaving OP's swaps to lose the cost, the basis
    * the departing leg gives up is carried to the arriving leg here, which is
    * what a swap means: the shares change form, not value.
+   *
+   * The whole lots are carried, not one merged total, because a swap does not
+   * restart ownership. Merging them lost two things that decide tax: each lot's
+   * acquisition date, which sets the deemed-acquisition-cost percentage, and
+   * the per-lot cost that FIFO consumes on a later partial sale. A real
+   * fractional cash-out days after a swap took its cost pro-rata across the
+   * whole position instead of from the oldest lot, leaving every remaining
+   * share's basis short of what the broker reported until they were sold.
    */
-  const carriedBasis = new Map<IsoDate, Money[]>();
+  const carriedLots = new Map<IsoDate, Lot[][]>();
 
   for (const t of chronological(txns)) {
     if (t.instrumentId === null) continue;
-    const key = lotKey(t.accountId, t.instrumentId);
+    const instrumentId = t.instrumentId;
+    const key = lotKey(t.accountId, instrumentId);
     const lots = openByAccountInstrument.get(key) ?? [];
 
     if (t.type === "BUY" || t.type === "TRANSFER_IN") {
@@ -176,18 +185,43 @@ export const buildLots = (txns: readonly Txn[]) => {
       // cost basis is `-amount` alone -- adding `t.fee` again would double-count
       // it (C2).
       const stated = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
-      const carried =
-        t.type === "TRANSFER_IN" && stated.minor === 0n
-          ? carriedBasis.get(t.tradeDate)?.shift()
-          : undefined;
-      const costEur = carried ?? stated;
-      lots.push({
-        accountId: t.accountId,
-        instrumentId: t.instrumentId,
-        acquiredOn: t.tradeDate,
-        quantity: t.quantity,
-        costEur,
-      });
+      const waiting = t.type === "TRANSFER_IN" ? carriedLots.get(t.tradeDate) : undefined;
+      const carried = waiting?.[0];
+      const carriedCost = (carried ?? []).reduce(
+        (sum, lot) => addMoney(sum, lot.costEur),
+        zeroMoney(EUR),
+      );
+      // The carried lots are used when the arriving row states no value of its
+      // own (OP), and also when it states exactly what the departing leg gave
+      // up (Nordnet) -- same total, but split by acquisition date rather than
+      // merged. A stated value that disagrees with the carried total describes
+      // something other than a plain swap, so it is taken at its word and the
+      // lots are left alone.
+      const useCarried =
+        carried !== undefined &&
+        carried.length > 0 &&
+        (stated.minor === 0n || stated.minor === carriedCost.minor);
+
+      if (useCarried) {
+        waiting?.shift();
+        for (const lot of rescaleLots(carried, t.quantity)) {
+          lots.push({
+            accountId: t.accountId,
+            instrumentId: t.instrumentId,
+            acquiredOn: lot.acquiredOn,
+            quantity: lot.quantity,
+            costEur: lot.costEur,
+          });
+        }
+      } else {
+        lots.push({
+          accountId: t.accountId,
+          instrumentId: t.instrumentId,
+          acquiredOn: t.tradeDate,
+          quantity: t.quantity,
+          costEur: stated,
+        });
+      }
       openByAccountInstrument.set(key, lots);
       continue;
     }
@@ -265,12 +299,19 @@ export const buildLots = (txns: readonly Txn[]) => {
     openByAccountInstrument.set(key, remainingLots);
 
     if (t.type === "TRANSFER_OUT") {
-      const released = disposals
-        .slice(disposalsBefore)
-        .reduce((sum, disposal) => addMoney(sum, disposal.costEur), zeroMoney(EUR));
-      const queue = carriedBasis.get(t.tradeDate) ?? [];
+      // Narrowed at the top of the loop; named here because the closure below
+      // does not carry the narrowing.
+      const departingId = instrumentId;
+      const released = disposals.slice(disposalsBefore).map((disposal): Lot => ({
+        accountId: t.accountId,
+        instrumentId: departingId,
+        acquiredOn: disposal.acquiredOn,
+        quantity: disposal.quantity,
+        costEur: disposal.costEur,
+      }));
+      const queue = carriedLots.get(t.tradeDate) ?? [];
       queue.push(released);
-      carriedBasis.set(t.tradeDate, queue);
+      carriedLots.set(t.tradeDate, queue);
     }
   }
 
