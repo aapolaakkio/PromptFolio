@@ -33,16 +33,28 @@ import {
  *    artificially narrowed -- but no non-EUR-non-USD response was ever
  *    observed.
  */
+/**
+ * A window with no trading in it comes back as `meta` alone -- no `timestamp`,
+ * no `close`. That is Yahoo's ordinary answer for a Saturday, a holiday, or a
+ * fund whose NAV has not published yet, and it is not a failure: there is
+ * simply no price for that day. Requiring those two fields turned every
+ * weekend refresh into two dozen logged failures and hid any real one among
+ * them.
+ */
 const ChartResponse = z.object({
   chart: z.object({
     result: z
       .array(
         z.object({
           meta: z.object({ currency: z.string() }),
-          timestamp: z.array(z.number()),
-          indicators: z.object({
-            quote: z.array(z.object({ close: z.array(z.number().nullable()) })).min(1),
-          }),
+          timestamp: z.array(z.number()).optional(),
+          // `quote` is present but empty (`[{}]`) for a window with no bars, so
+          // `close` is optional rather than the object being absent.
+          indicators: z
+            .object({
+              quote: z.array(z.object({ close: z.array(z.number().nullable()).optional() })).min(1),
+            })
+            .optional(),
         }),
       )
       .min(1),
@@ -62,7 +74,9 @@ export const YAHOO: PriceSource = {
     const payload = ChartResponse.parse(await response.json());
     const result = payload.chart.result[0]!;
     const currency = parseCurrency(result.meta.currency.toUpperCase());
-    const closes = result.indicators.quote[0]!.close;
+    const closes = result.indicators?.quote[0]?.close;
+    // No bars in the requested window: no prices to report, and nothing wrong.
+    if (result.timestamp === undefined || closes === undefined) return [];
 
     return result.timestamp.flatMap((seconds, index) => {
       const close = closes[index];

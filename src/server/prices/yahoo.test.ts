@@ -151,3 +151,49 @@ test("surfaces a non-200 response as an error", async () => {
     YAHOO.fetch({ sourceKey: "X", from: "2025-01-01", to: "2025-01-02", fetchImpl: failing }),
   ).rejects.toThrow(/429/);
 });
+
+test("a window with no trading in it yields no prices, not a failure", async () => {
+  // Yahoo answers a Saturday, a holiday, or a fund that has not published yet
+  // with meta alone. Requiring timestamp and close turned every weekend
+  // refresh into two dozen logged failures, with any real one lost among them.
+  // Yahoo's real shape for an empty window: `quote` present but with no
+  // `close` inside it, which is not the same as `indicators` being absent.
+  const empty = {
+    chart: {
+      result: [{ meta: { currency: "EUR" }, indicators: { quote: [{}], adjclose: [{}] } }],
+    },
+  };
+
+  const points = await YAHOO.fetch({
+    sourceKey: "0P00015EIP.F",
+    from: "2026-08-29",
+    to: "2026-08-29",
+    fetchImpl: async () => new Response(JSON.stringify(empty), { status: 200 }),
+  });
+
+  expect(points).toEqual([]);
+});
+
+test("a window with bars still yields them", async () => {
+  const payload = {
+    chart: {
+      result: [
+        {
+          meta: { currency: "EUR" },
+          timestamp: [1787551200],
+          indicators: { quote: [{ close: [24.04] }] },
+        },
+      ],
+    },
+  };
+
+  const points = await YAHOO.fetch({
+    sourceKey: "TEST.HE",
+    from: "2026-05-22",
+    to: "2026-05-22",
+    fetchImpl: async () => new Response(JSON.stringify(payload), { status: 200 }),
+  });
+
+  expect(points).toHaveLength(1);
+  expect(points[0]?.closeMinor).toBe(2404);
+});
