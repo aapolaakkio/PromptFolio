@@ -17,10 +17,10 @@ const KIND_LABELS = {
 /**
  * The price/staleness column has to read correctly for two distinct real
  * cases (a plain "stale" boolean would blur them together):
- *  - priced, but not today: `priceDate` is a real past date and `stale` is
- *    true. Normal for Nordnet funds, whose price history only starts
- *    accumulating once the refresh job first runs (spec §10a A5) -- so a
- *    long stale prefix is expected, not an error.
+ *  - priced, but later than it should be: `priceDate` is a real past date and
+ *    `stale` is true. "Later than it should be" is not "not today" -- see
+ *    `core/staleness.ts`: at the weekend nothing traded, and a fund's NAV
+ *    publishes a weekday behind, so neither earns the badge.
  *  - never priced at all, or priced but not convertible to EUR (no fx rate
  *    for today): `priceDate` may be a real date or `null`, `stale` is
  *    always true, and the market-value/gain cells render "tuntematon"

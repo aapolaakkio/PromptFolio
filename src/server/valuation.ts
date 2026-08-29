@@ -24,6 +24,7 @@ import {
   type Money,
 } from "../core/money";
 import type { PriceLookup } from "../core/returns";
+import { isPriceStale } from "../core/staleness";
 import type { Instrument, IsoDate, Txn } from "../core/types";
 import type { getDb } from "./db";
 import { accounts, fxRates, instruments, prices, transactions } from "./db/schema";
@@ -312,9 +313,10 @@ export type HoldingView = {
   readonly priceDate: IsoDate | null;
   /**
    * `true` whenever the number shown must carry a staleness badge rather than read as
-   * current: the price actually used was not dated `on` itself (carried forward from an
-   * earlier date), was missing entirely, or (C1) `valuationError` is set for any other
-   * reason (e.g. price present but fx rate missing) -- `priceDate !== on` alone is not a
+   * current: the price is later than this instrument could freshly be (see
+   * `core/staleness.ts` -- a weekend has no closes, and a fund's NAV publishes a day
+   * behind), was missing entirely, or (C1) `valuationError` is set for any other reason
+   * (e.g. price present but fx rate missing) -- the date comparison alone is not a
    * sufficient check, since a same-day price row can still leave the holding unvaluable.
    */
   readonly stale: boolean;
@@ -354,11 +356,10 @@ const explainValuationFailure = (
 
 /**
  * Current holdings, valued as of `on`. `stale` is `true` whenever the price
- * actually used was not dated `on` itself (carried forward from an earlier
- * date, per `PriceLookup.priceDateOn`'s contract), was missing entirely, or
- * (C1) `valuationError` is set for any other reason -- either way the UI must
- * show the staleness badge rather than a number that looks as current, or as
- * complete, as it is not.
+ * actually used is older than this instrument could freshly be (`isPriceStale`),
+ * was missing entirely, or (C1) `valuationError` is set for any other reason --
+ * either way the UI must show the staleness badge rather than a number that
+ * looks as current, or as complete, as it is not.
  *
  * Cost basis is resolved per instrument (`costBasisPerInstrument`), so one
  * instrument's `UnmatchedDisposalError` marks only that row's money fields
@@ -472,7 +473,9 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
           ? null
           : Number(row.valuedEur.minor) / Number(totalValuedEur.minor),
       priceDate: row.priceDate,
-      stale: row.valuationError !== null || row.priceDate !== on,
+      stale:
+        row.valuationError !== null ||
+        isPriceStale({ kind: row.instrument.kind, priceDate: row.priceDate, on }),
       costBasisError: row.costBasisError,
       valuationError: row.valuationError,
     }))
