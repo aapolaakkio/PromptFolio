@@ -37,7 +37,14 @@ const healthRoute = { GET: () => Response.json({ ok: true }) };
 export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bun.serve> =>
   Bun.serve({
     port: opts.port ?? Number(Bun.env.PORT ?? 3000),
-    development: Bun.env.NODE_ENV !== "production",
+    // HMR is off deliberately. Bun's dev server hot-swaps route modules, and
+    // TanStack Router's own hot-update handler reads a router that is null
+    // during that swap -- "Cannot read properties of null (reading
+    // 'replaceRouteChunk')" -- which takes the whole page down until a hard
+    // reload. A full reload on change is the cheaper trade: this app's pages
+    // hold no state a reload loses. `console` keeps browser errors visible in
+    // the server's own log, which is how that crash was found.
+    development: Bun.env.NODE_ENV === "production" ? false : { hmr: false, console: true },
     routes: {
       "/api/health": healthRoute,
       "/api/auth/*": (request) => auth.handler(request),
