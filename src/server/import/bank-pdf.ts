@@ -20,6 +20,13 @@ export type PdfStatement = {
   readonly closingBalance: Money;
   readonly rows: BankRow[];
   readonly problems: Array<{ line: number; message: string }>;
+  /**
+   * When a fixed-term deposit comes free, as the statement prints it
+   * (`Eräpäivä 1.2.2027`). Null on every other kind of statement. Reported to
+   * the caller rather than written to the account: changing an account's terms
+   * as a side effect of reading a file is not something an owner asked for.
+   */
+  readonly maturityDate: IsoDate | null;
 };
 
 /**
@@ -59,7 +66,13 @@ const toIsoDate = (text: string): IsoDate => {
 };
 
 const DATE = String.raw`\d{1,2}\.\d{1,2}\.\d{4}`;
-const AMOUNT = String.raw`[+−-]\d{1,3}(?:[  ]\d{3})*,\d{2}`;
+/**
+ * The sign is optional: a current account's statement prints a signed balance, while a
+ * fixed-term deposit opens with a bare `0,00`. Requiring it meant neither
+ * balance line on a deposit statement matched, and a real OP statement was
+ * refused as "not an OP statement".
+ */
+const AMOUNT = String.raw`[+−-]?\d{1,3}(?:[  ]\d{3})*,\d{2}`;
 
 /** A transaction's first line: date, amount, then the label and its trailing ids. */
 const HEADER = new RegExp(`^(${DATE})\\s+(${AMOUNT})\\s+(.*)$`);
@@ -75,8 +88,11 @@ const BALANCE = new RegExp(`^(${AMOUNT})\\s+Saldo\\s+(${DATE})$`);
 const FURNITURE =
   /^(Tilinumero|BIC|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja\/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Ajalta|\d+ \(\d+\)$)/;
 
+/** `Eräpäivä 1.2.2027`, on the statement of a fixed-term deposit. */
+const MATURITY = new RegExp(`^Eräpäivä$`);
+
 /**
- * The bank's archive id for a row, from the tokens after the label.
+ * The bank's archive id for a row.
  *
  * The line ends with a single-letter flag, before which sits the archive id --
  * twenty characters, digits with an occasional letter run (`...EQEO...`,
@@ -85,12 +101,19 @@ const FURNITURE =
  * the same reference, and treating it as an identity would make the second one
  * vanish as a duplicate.
  */
-const archiveIdOf = (tail: string): string | null => {
+const ARCHIVE_ID = /^[0-9A-Z]{16,}$/;
+
+const archiveIdOf = (tail: string, following: readonly string[]): string | null => {
   const tokens = tail.trim().split(/\s+/);
   const withoutFlag =
     tokens.length > 1 && /^[A-Z]$/.test(tokens.at(-1) ?? "") ? tokens.slice(0, -1) : tokens;
-  const candidate = withoutFlag.at(-1) ?? "";
-  return /^[0-9A-Z]{16,}$/.test(candidate) ? candidate : null;
+  const onHeader = withoutFlag.at(-1) ?? "";
+  if (ARCHIVE_ID.test(onHeader)) return onHeader;
+
+  // A fixed-term deposit's statement puts the id below the row instead, after
+  // the message. Searched rather than taken from a fixed position, since the
+  // lines between vary with how much the payer wrote.
+  return following.find((line) => ARCHIVE_ID.test(line)) ?? null;
 };
 
 /** The label is the first token of the tail; the rest is references and ids. */
@@ -166,7 +189,7 @@ export const parseOpStatementText = (text: string): PdfStatement => {
         amount,
         counterparty,
         note: [label, counterparty].filter((part) => part !== "").join(" — "),
-        externalId: archiveIdOf(tail),
+        externalId: archiveIdOf(tail, following),
       });
     } catch (cause) {
       problems.push({
@@ -176,6 +199,16 @@ export const parseOpStatementText = (text: string): PdfStatement => {
     }
   }
 
+  const maturityIndex = lines.findIndex((line) => MATURITY.test(line));
+  const maturityDate =
+    maturityIndex === -1
+      ? null
+      : (lines
+          .slice(maturityIndex + 1, maturityIndex + 6)
+          .filter((line) => new RegExp(`^${DATE}$`).test(line))
+          .map((line) => toIsoDate(line))
+          .at(-1) ?? null);
+
   return {
     from: opening.date,
     to: closing.date,
@@ -183,6 +216,7 @@ export const parseOpStatementText = (text: string): PdfStatement => {
     closingBalance: closing.amount,
     rows,
     problems,
+    maturityDate,
   };
 };
 

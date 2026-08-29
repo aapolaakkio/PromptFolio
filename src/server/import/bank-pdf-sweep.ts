@@ -128,7 +128,9 @@ export const parseSweepStatementText = (text: string): PdfStatement => {
     blockDescription = [];
   }
 
-  return { from, to, openingBalance, closingBalance, rows, problems };
+  // SweepBank's savings statement carries no maturity date; only OP's
+  // fixed-term one prints an Eräpäivä.
+  return { from, to, openingBalance, closingBalance, rows, problems, maturityDate: null };
 };
 
 /** True when this text is a SweepBank statement rather than another bank's. */

@@ -37,6 +37,10 @@ export const BankPreviewSchema = z.object({
   to: z.string().nullable(),
   totalInEur: z.string(),
   totalOutEur: z.string(),
+  openingBalanceEur: z.string().nullable(),
+  closingBalanceEur: z.string().nullable(),
+  maturityDate: z.string().nullable(),
+  verified: z.boolean(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
   sample: z.array(
     z.object({

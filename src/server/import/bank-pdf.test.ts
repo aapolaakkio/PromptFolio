@@ -126,3 +126,41 @@ describe("a row the parser cannot read", () => {
     expect(statement.problems[0]?.message).toContain("ei ole olemassa");
   });
 });
+
+describe("a fixed-term deposit's statement", () => {
+  const fixedTerm = (): Promise<string> =>
+    Bun.file(`${import.meta.dir}/fixtures/op-fixed-term-sample.txt`).text();
+
+  test("reads balances that carry no sign", async () => {
+    const statement = parseOpStatementText(await fixedTerm());
+
+    // An account opened during the period starts at a bare "0,00", with no "+".
+    // Requiring the sign refused a real statement as "not an OP statement".
+    expect(statement.openingBalance.minor).toBe(0n);
+    expect(statement.closingBalance.minor).toBe(500_000n);
+  });
+
+  test("finds the archive id below the row, where this layout puts it", async () => {
+    const { rows } = parseOpStatementText(await fixedTerm());
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.externalId).toBe("20260201ESIM00000004");
+    expect(rows[0]?.amount).toBe(500_000n);
+  });
+
+  test("reads the maturity date the deposit prints", async () => {
+    expect(parseOpStatementText(await fixedTerm()).maturityDate).toBe("2027-02-01");
+  });
+
+  test("is not confused by the deposit and withdrawal totals into extra rows", async () => {
+    // "5 000,00 Panot yhteensä 1 kpl" is a summary, not a transaction: it
+    // carries an amount but no date, so it must not be read as one.
+    const { rows } = parseOpStatementText(await fixedTerm());
+    expect(rows).toHaveLength(1);
+    expect(verifyStatement(parseOpStatementText(await fixedTerm())).ok).toBe(true);
+  });
+
+  test("a current account's statement still has no maturity date", async () => {
+    expect(parseOpStatementText(await fixture()).maturityDate).toBeNull();
+  });
+});

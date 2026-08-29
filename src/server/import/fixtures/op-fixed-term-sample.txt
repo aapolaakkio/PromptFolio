@@ -1,0 +1,34 @@
+Tiliote
+Määräaikainen säästötili
+Ajalta
+1.2.2026 - 28.2.2026
+1 (1)
+ESIMERKKI ASIAKAS
+Tilinumero
+BIC
+Eräpäivä
+FI00 0000 0000 0000 00
+OKOYFIHH
+1.2.2027
+Kirjauspäivä
+Arvopäivä
+Määrä,
+euroa
+Selitys
+Maksunsaaja/maksaja
+Viesti
+Viite Arkistointitunnus
+Saajan tilinumero
+Saajan pankin BIC
+0,00 Saldo 31.1.2026
+1.2.2026 +5 000,00 Tilinavaus
+ESIMERKKI ASIAKAS
+Viesti:
+Avaustalletus
+20260201ESIM00000004
+FI00 0000 0000 0000 00
+OKOYFIHH
+5 000,00 Panot yhteensä 1 kpl
+0,00 Otot yhteensä 0 kpl
++5 000,00 Saldo 28.2.2026
+Asiakkaan tulostama 1.3.2026

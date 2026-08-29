@@ -254,6 +254,15 @@ export const CashPage = () => {
                   {fiDate(preview.data.to ?? "")}. Sisään {eur(preview.data.totalInEur)}, ulos{" "}
                   {eur(preview.data.totalOutEur)}.
                 </p>
+                {preview.data.verified && (
+                  <p className="text-muted text-sm">
+                    Tiliote ilmoittaa saldoksi {eur(preview.data.openingBalanceEur ?? "0.00")} →{" "}
+                    {eur(preview.data.closingBalanceEur ?? "0.00")}, ja rivit täsmäävät siihen.
+                    Alkusaldo kirjataan automaattisesti.
+                    {preview.data.maturityDate !== null &&
+                      ` Erääntyy ${fiDate(preview.data.maturityDate)}.`}
+                  </p>
+                )}
                 {preview.data.problems.length > 0 && (
                   <p className="text-loss text-sm">
                     {preview.data.problems.length} riviä ei voitu lukea; muut tuodaan.

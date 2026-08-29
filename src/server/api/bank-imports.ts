@@ -241,6 +241,10 @@ export const bankImportRoutes = {
         // the fact that the rows were checked against them.
         openingBalanceEur: statement === null ? null : formatMoney(statement.openingBalance),
         closingBalanceEur: statement === null ? null : formatMoney(statement.closingBalance),
+        // A fixed-term deposit's statement prints when it comes free. Shown so
+        // the owner can put it on the account; not written here, since changing
+        // an account's terms is not something reading a file should do.
+        maturityDate: statement?.maturityDate ?? null,
         verified: statement !== null,
         problems,
         // A preview of what will be written, not the whole file: the browser
