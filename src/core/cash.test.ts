@@ -82,6 +82,46 @@ describe("cashBalancesAt", () => {
     expect(formatMoney(overdrawn[0]!.amount)).toBe("-150.00");
   });
 
+  test("ignores a transfer's amount, which is carried cost basis rather than cash", () => {
+    // A real tender offer: the shares arrive with the acquisition value the
+    // broker stated, so the original cost rides across to the new instrument.
+    // No money moved, and counting it charged a real account 42,60 EUR.
+    const balances = cashBalancesAt(
+      [
+        txn("DEPOSIT", 1, "1000.00"),
+        txn("TRANSFER_IN", 1, "-42.60"),
+        txn("TRANSFER_OUT", 1, "0.00"),
+      ],
+      "2026-06-01",
+    );
+
+    expect(formatMoney(balances[0]!.amount)).toBe("1000.00");
+  });
+
+  test("ignores a split, which moves units and no money", () => {
+    const balances = cashBalancesAt(
+      [txn("DEPOSIT", 1, "1000.00"), txn("SPLIT", 1, "0.00")],
+      "2026-06-01",
+    );
+    expect(formatMoney(balances[0]!.amount)).toBe("1000.00");
+  });
+
+  test("counts every type that does move money", () => {
+    const balances = cashBalancesAt(
+      [
+        txn("DEPOSIT", 1, "1000.00"),
+        txn("BUY", 1, "-400.00"),
+        txn("SELL", 1, "150.00"),
+        txn("DIVIDEND", 1, "12.00"),
+        txn("INTEREST", 1, "1.50"),
+        txn("FEE", 1, "-3.50"),
+        txn("WITHDRAWAL", 1, "-100.00"),
+      ],
+      "2026-06-01",
+    );
+    expect(formatMoney(balances[0]!.amount)).toBe("660.00");
+  });
+
   test("ignores an account whose export records no cash at all", () => {
     // OP's transaction view: purchases with no deposit behind them. Summing its
     // rows would report the negative of everything ever bought as a balance.

@@ -1,6 +1,6 @@
 import { addMoney, EUR, toEur, zeroMoney, type Currency, type FxRate, type Money } from "./money";
 import { accountsMissingCashRecord, upTo } from "./ledger";
-import type { IsoDate, Txn } from "./types";
+import type { IsoDate, TransactionType, Txn } from "./types";
 
 /**
  * Uninvested cash sitting in one account, in one currency.
@@ -20,6 +20,26 @@ export type CashBalance = {
 export type ValuedCash = CashBalance & { readonly valueEur: Money | null };
 
 const key = (accountId: number, currency: Currency): string => `${accountId} ${currency}`;
+
+/**
+ * The types whose `amount` is money that actually entered or left the account.
+ *
+ * TRANSFER_IN and TRANSFER_OUT are excluded because their `amount` is not cash:
+ * on a share swap or a tender offer the incoming leg carries the acquisition
+ * value the broker states, so the original cost rides across to the new
+ * instrument (see import/map.ts's `acquisitionAmount` and costbasis.ts's
+ * `carriedBasis`). Counting it as cash charged a real portfolio 42,60 EUR that
+ * never left the account. SPLIT moves units only and carries no amount at all.
+ */
+const CASH_MOVING: ReadonlySet<TransactionType> = new Set([
+  "BUY",
+  "SELL",
+  "DEPOSIT",
+  "WITHDRAWAL",
+  "DIVIDEND",
+  "INTEREST",
+  "FEE",
+]);
 
 /**
  * Cash held per account and currency on `on`.
@@ -43,6 +63,7 @@ export const cashBalancesAt = (txns: readonly Txn[], on: IsoDate): CashBalance[]
   const totals = new Map<string, CashBalance>();
   for (const txn of upTo(txns, on)) {
     if (unrecorded.has(txn.accountId)) continue;
+    if (!CASH_MOVING.has(txn.type)) continue;
     const id = key(txn.accountId, txn.currency);
     const existing = totals.get(id);
     totals.set(id, {
