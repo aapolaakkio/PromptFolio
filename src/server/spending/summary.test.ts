@@ -169,6 +169,14 @@ describe("the widened category rules", () => {
     expect(categorise("PKORTTIMAKSU — K-RAUTA")).toBe("koti");
   });
 
+  test("keep a loan repayment apart from a bank's service fee", () => {
+    // Most of a repayment is the owner's own money reducing a debt; only its
+    // interest is a cost. Filing it under "Pankkikulut" said it was all fee.
+    expect(categorise("LUOTON MAKSU — PANKKI OYJ")).toBe("lainat");
+    expect(categorise("LAINANHOITO")).toBe("lainat");
+    expect(categorise("PALVELUMAKSU")).toBe("pankki");
+  });
+
   test("still leave a shop nobody wrote a rule for in Muu", () => {
     // The point of the "muu" bucket is that it is honest, not that it is empty.
     expect(categorise("PKORTTIMAKSU — PIENI PUOTI 12345")).toBe("muu");

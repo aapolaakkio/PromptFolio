@@ -127,8 +127,24 @@ const archiveIdOf = (tail: string, following: readonly string[]): string | null 
   return following.find((line) => ARCHIVE_ID.test(line)) ?? null;
 };
 
-/** The label is the first token of the tail; the rest is references and ids. */
-const labelOf = (tail: string): string => tail.trim().split(/\s+/)[0] ?? "";
+/**
+ * The label, which is the leading run of words before the references and ids.
+ *
+ * Taking only the first token truncated every label a bank writes as more than
+ * one word: "LUOTON MAKSU" became "LUOTON", and no rule written against the
+ * real label matched it -- so credit repayments sat unclassified while a rule
+ * for them existed.
+ */
+const labelOf = (tail: string): string => {
+  const words: string[] = [];
+  for (const token of tail.trim().split(/\s+/)) {
+    // A word is letters, with the dots and hyphens OP puts in "TALLETUSAUTOM."
+    // and "PÄÄOMIT YLIT.KORKO". Anything with a digit is a reference.
+    if (!/^[A-ZÄÖÅ][A-ZÄÖÅ.\-]*$/.test(token)) break;
+    words.push(token);
+  }
+  return words.join(" ");
+};
 
 const INTEREST_LABELS = ["TALLETUSKORKO", "KORKO"];
 

@@ -30,6 +30,7 @@ export type Category =
   | "lahjat"
   | "tilaukset"
   | "pankki"
+  | "lainat"
   | "vakuutukset"
   | "verot"
   | "siirrot"
@@ -54,6 +55,7 @@ export const CATEGORY_LABELS = {
   lahjat: "Lahjat ja hyväntekeväisyys",
   tilaukset: "Tilaukset ja jäsenmaksut",
   pankki: "Pankkikulut",
+  lainat: "Lainat ja luotot",
   vakuutukset: "Vakuutukset",
   verot: "Verot",
   siirrot: "Tilisiirrot",
@@ -76,12 +78,42 @@ const SEED: readonly Rule[] = [
   { category: "korko", patterns: ["TALLETUSKORKO", "KORKO", "INTEREST"] },
   {
     category: "palkka",
-    patterns: ["PALKKA", "ETUUS", "KELA", "ELÄKE", "OP-BONUS", "PALKKIO", "TYÖTTÖMYYSKASSA"],
+    // "OPINTOTUKI" is longer than the "OPINTO" that would otherwise claim it
+    // for education, and it is money in rather than a course paid for.
+    patterns: [
+      "PALKKA",
+      "ETUUS",
+      "KELA",
+      "ELÄKE",
+      "OP-BONUS",
+      "PALKKIO",
+      "TYÖTTÖMYYSKASSA",
+      "OPINTOTUKI",
+      "ASUMISTUKI",
+    ],
   },
   { category: "verot", patterns: ["VEROHALLINTO", "VEROTILI", "JÄÄNNÖSVERO", "ENNAKKOVERO"] },
   {
+    // A repayment is not a bank charge: most of it is the owner's own money
+    // reducing a debt, and only its interest is a cost. Its own line rather
+    // than mixed in with service fees.
+    category: "lainat",
+    patterns: [
+      "LAINANHOITO",
+      "LUOTON MAKSU",
+      "LUOTON",
+      "LUOTTO",
+      "LAINA",
+      "OPINTOLAINA",
+      "LYHENNYS",
+      "OSAMAKSU",
+      "RAHOITUS",
+      "PERINTÄ",
+    ],
+  },
+  {
     category: "pankki",
-    patterns: ["PALVELUMAKSU", "TILINHOITO", "KORTTIMAKSU KK", "LAINANHOITO", "LUOTON MAKSU"],
+    patterns: ["PALVELUMAKSU", "TILINHOITO", "KORTTIMAKSU KK"],
   },
   {
     category: "vakuutukset",

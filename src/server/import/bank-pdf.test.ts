@@ -186,3 +186,29 @@ describe("a row continued across a page break", () => {
     expect(rows[0]?.counterparty).toBe("OIKEA KAUPPA");
   });
 });
+
+describe("a label of more than one word", () => {
+  test("is kept whole, so a rule written against it matches", () => {
+    // "LUOTON MAKSU" was truncated to "LUOTON", and credit repayments then sat
+    // unclassified while a seed rule for them existed.
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "2.1.2026 −10,00 LUOTON MAKSU 202601025UTZ00000001 J",
+      "PANKKI OYJ",
+      "+90,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    expect(parseOpStatementText(text).rows[0]?.note).toBe("LUOTON MAKSU — PANKKI OYJ");
+  });
+
+  test("stops before the references that follow it", () => {
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "2.1.2026 −10,00 PKORTTIMAKSU 782367 202601025EQEO0000001 J",
+      "KAUPPA",
+      "+90,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    expect(parseOpStatementText(text).rows[0]?.note).toBe("PKORTTIMAKSU — KAUPPA");
+  });
+});
