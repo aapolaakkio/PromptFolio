@@ -25,6 +25,7 @@ export type RouteComponents = {
   readonly imports: RouteComponent;
   readonly reconcile: RouteComponent;
   readonly chat: RouteComponent;
+  readonly cash: RouteComponent;
   readonly login: RouteComponent;
 };
 
@@ -82,6 +83,11 @@ export const buildRouteTree = (components: RouteComponents) => {
     path: "/chat",
     component: components.chat,
   });
+  const cashRoute = createRoute({
+    getParentRoute: () => authenticatedRoute,
+    path: "/cash",
+    component: components.cash,
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/login",
@@ -95,6 +101,7 @@ export const buildRouteTree = (components: RouteComponents) => {
       importsRoute,
       reconcileRoute,
       chatRoute,
+      cashRoute,
     ]),
     loginRoute,
   ]);
@@ -108,6 +115,7 @@ export const buildRouteTree = (components: RouteComponents) => {
     importsRoute,
     reconcileRoute,
     chatRoute,
+    cashRoute,
     loginRoute,
   };
 };

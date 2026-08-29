@@ -1,5 +1,6 @@
 import { createRouter } from "@tanstack/react-router";
 import { buildRouteTree } from "./route-tree";
+import { CashPage } from "./routes/cash";
 import { ChatPage } from "./routes/chat";
 import { DashboardPage } from "./routes/dashboard";
 import { HoldingsPage } from "./routes/holdings";
@@ -21,6 +22,7 @@ const { routeTree } = buildRouteTree({
   imports: ImportsPage,
   reconcile: ReconcilePage,
   chat: ChatPage,
+  cash: CashPage,
   login: LoginPage,
 });
 
