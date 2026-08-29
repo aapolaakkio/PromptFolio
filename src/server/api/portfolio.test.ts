@@ -1338,3 +1338,136 @@ describe("a fixed-term deposit's cash", () => {
     expect(body.slices.find((slice) => slice.key === "fixed_term")?.valueEur).toBe("10000.00");
   });
 });
+
+describe("GET /api/spending/uncategorised", () => {
+  const UncategorisedSchema = z.object({
+    totalEur: z.string(),
+    merchants: z.array(z.object({ name: z.string(), totalEur: z.string(), count: z.number() })),
+    categories: z.array(z.object({ id: z.string(), label: z.string() })),
+  });
+
+  const bankAccount = async (cookie: string): Promise<number> => {
+    const created = await accountRoutes["/api/accounts"].POST(
+      new Request("http://x/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          name: "OP käyttötili",
+          broker: "op",
+          kind: "bank",
+          accountType: "current",
+        }),
+      }),
+    );
+    return AccountIdSchema.parse(await created.json()).id;
+  };
+
+  const spend = async (accountId: number, note: string, minor: number, tradeDate: string) => {
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    getDb()
+      .db.insert(transactions)
+      .values([
+        {
+          accountId,
+          instrumentId: null,
+          type: "WITHDRAWAL" as const,
+          tradeDate,
+          quantity: 0,
+          unitPrice: null,
+          amount: minor,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: crypto.randomUUID(),
+          note,
+        },
+      ])
+      .run();
+  };
+
+  const ask = async (cookie: string) =>
+    UncategorisedSchema.parse(
+      await (
+        await portfolioRoutes["/api/spending/uncategorised"].GET(
+          new Request("http://x/api/spending/uncategorised?from=2026-01-01&to=2026-12-31", {
+            headers: { cookie },
+          }),
+        )
+      ).json(),
+    );
+
+  test("rejects a request with no session", async () => {
+    const response = await portfolioRoutes["/api/spending/uncategorised"].GET(
+      new Request("http://x/api/spending/uncategorised"),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  test("lists what no rule matched, summed per payee, and nothing else", async () => {
+    const { cookie } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
+    const accountId = await bankAccount(cookie);
+    await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
+    await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -500, "2026-03-03");
+
+    const body = await ask(cookie);
+
+    // The grocery shop has a seed rule; the unknown one is here, added up.
+    expect(body.merchants).toEqual([{ name: "PIENI PUOTI OY", totalEur: "-15.00", count: 2 }]);
+    expect(body.totalEur).toBe("-15.00");
+    expect(body.categories.length).toBeGreaterThan(10);
+  });
+
+  test("a payee disappears from the list once it has a rule", async () => {
+    const { cookie } = await signUp(`uncat-rule-${crypto.randomUUID()}@example.com`);
+    const accountId = await bankAccount(cookie);
+    await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
+    expect((await ask(cookie)).merchants).toHaveLength(1);
+
+    await portfolioRoutes["/api/spending/rules"].POST(
+      new Request("http://x/api/spending/rules", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ rules: [{ pattern: "PIENI PUOTI OY", category: "ruoka" }] }),
+      }),
+    );
+
+    // Which is the whole loop this screen exists for: see it, file it, gone.
+    expect((await ask(cookie)).merchants).toEqual([]);
+  });
+
+  test("leaves out a payment that funded an investment", async () => {
+    const { cookie } = await signUp(`uncat-inv-${crypto.randomUUID()}@example.com`);
+    const accountId = await bankAccount(cookie);
+    const brokerage = await createAccount(cookie);
+    const instrumentId = await createInstrument(cookie, randomIsin());
+    await spend(accountId, "SÄÄNN.SÄÄST. — RAHASTO", -25_000, "2026-03-01");
+
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    getDb()
+      .db.insert(transactions)
+      .values([
+        {
+          accountId: brokerage,
+          instrumentId,
+          type: "BUY" as const,
+          tradeDate: "2026-03-02",
+          quantity: 1_000_000,
+          unitPrice: 25_000,
+          amount: -25_000,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: crypto.randomUUID(),
+        },
+      ])
+      .run();
+
+    // Money put into a fund is not an unclassified expense waiting for a label.
+    expect((await ask(cookie)).merchants).toEqual([]);
+  });
+});

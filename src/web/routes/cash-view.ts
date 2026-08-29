@@ -84,6 +84,15 @@ export const MonthlySchema = z.object({
   ),
 });
 
+/** GET /api/spending/uncategorised: what no rule matched, and the buckets on offer. */
+export const UncategorisedSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  totalEur: z.string(),
+  merchants: z.array(z.object({ name: z.string(), totalEur: z.string(), count: z.number() })),
+  categories: z.array(z.object({ id: z.string(), label: z.string() })),
+});
+
 export const BankPreviewSchema = z.object({
   bank: z.string(),
   rows: z.number(),

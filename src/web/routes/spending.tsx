@@ -5,7 +5,13 @@ import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { eur } from "../lib/format";
 import { CashFlowChart } from "../charts/CashFlowChart";
 import { MonthlyFlowChart } from "../charts/MonthlyFlowChart";
-import { CashFlowSchema, MonthlySchema, RulesSchema, SpendingSchema } from "./cash-view";
+import {
+  CashFlowSchema,
+  MonthlySchema,
+  RulesSchema,
+  SpendingSchema,
+  UncategorisedSchema,
+} from "./cash-view";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const yearAgo = (): string => {
@@ -46,6 +52,11 @@ export const SpendingPage = () => {
     queryFn: () => apiGet(`/api/spending/monthly?from=${from}&to=${to}`, MonthlySchema),
   });
 
+  const unknown = useQuery({
+    queryKey: ["uncategorised", from, to],
+    queryFn: () => apiGet(`/api/spending/uncategorised?from=${from}&to=${to}`, UncategorisedSchema),
+  });
+
   const rules = useQuery({
     queryKey: ["spending-rules"],
     enabled: showRules,
@@ -55,6 +66,8 @@ export const SpendingPage = () => {
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["spending"] });
     void queryClient.invalidateQueries({ queryKey: ["spending-rules"] });
+    void queryClient.invalidateQueries({ queryKey: ["uncategorised"] });
+    void queryClient.invalidateQueries({ queryKey: ["cashflow"] });
   };
 
   const removeRule = useMutation({
@@ -156,6 +169,53 @@ export const SpendingPage = () => {
             {spending.data.uncategorisedShare > 0.05 &&
               `Luokittelematta ${Math.round(spending.data.uncategorisedShare * 100)} % — nämä näkyvät luokassa Muu.`}
           </p>
+        )}
+      </div>
+
+      <div className="card grid gap-3">
+        <h2>Luokittelemattomat</h2>
+        <p className="max-w-prose text-muted text-sm">
+          Maksut joihin mikään sääntö ei osu. Ne näkyvät luokassa Muu. Valitse luokka, niin sääntö
+          tallentuu ja koskee jatkossa myös uusia tapahtumia.
+        </p>
+        {unknown.data && unknown.data.merchants.length === 0 ? (
+          <p className="text-muted">Kaikki jakson maksut on luokiteltu.</p>
+        ) : (
+          <>
+            <p className="text-muted text-sm">
+              Yhteensä {eur(unknown.data?.totalEur ?? "0.00")} (
+              {unknown.data?.merchants.length ?? 0} saajaa)
+            </p>
+            <div className="max-h-96 overflow-auto rounded border border-line">
+              <table>
+                <thead className="sticky top-0 bg-surface">
+                  <tr>
+                    <th>Saaja</th>
+                    <th className="text-right">Lkm</th>
+                    <th className="text-right">Yhteensä</th>
+                    <th>Luokittele</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(unknown.data?.merchants ?? []).map((merchant) => (
+                    <tr key={merchant.name}>
+                      <td>{merchant.name}</td>
+                      <td className="text-right">{merchant.count}</td>
+                      <td className="text-right">{eur(merchant.totalEur)}</td>
+                      <td>
+                        <ClassifyOne
+                          merchant={merchant.name}
+                          categories={unknown.data?.categories ?? []}
+                          onSaved={refresh}
+                          onError={setError}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
@@ -274,5 +334,53 @@ const AddRuleForm = ({
         {save.isPending ? "Tallennetaan…" : "Lisää sääntö"}
       </button>
     </form>
+  );
+};
+
+/**
+ * Files one unmatched merchant under a category, as a rule.
+ *
+ * The whole name becomes the pattern rather than a guessed stem: it is what the
+ * statement actually prints, and a shorter pattern the owner did not choose
+ * could quietly catch payments they never looked at. Shortening it is then a
+ * deliberate edit in the rules table.
+ */
+const ClassifyOne = ({
+  merchant,
+  categories,
+  onSaved,
+  onError,
+}: {
+  readonly merchant: string;
+  readonly categories: readonly { id: string; label: string }[];
+  readonly onSaved: () => void;
+  readonly onError: (message: string) => void;
+}) => {
+  const save = useMutation({
+    mutationFn: (category: string) =>
+      apiPost("/api/spending/rules", { rules: [{ pattern: merchant, category }] }),
+    onSuccess: onSaved,
+    onError: (cause) =>
+      onError(cause instanceof ApiError ? cause.message : "Säännön tallennus epäonnistui"),
+  });
+
+  return (
+    <select
+      value=""
+      disabled={save.isPending}
+      aria-label={`Luokittele ${merchant}`}
+      onChange={(event) => {
+        if (event.target.value !== "") save.mutate(event.target.value);
+      }}
+    >
+      <option value="">Valitse…</option>
+      {categories
+        .filter((category) => category.id !== "muu")
+        .map((category) => (
+          <option key={category.id} value={category.id}>
+            {category.label}
+          </option>
+        ))}
+    </select>
   );
 };

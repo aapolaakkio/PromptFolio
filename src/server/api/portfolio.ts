@@ -26,7 +26,7 @@ import { CATEGORY_LABELS } from "../spending/categories";
 import { cashFlowFor } from "../spending/cashflow";
 import { investmentPaymentIds } from "../spending/internal";
 import { monthlyFlows } from "../spending/monthly";
-import { addRules, removeRule, rulesFor } from "../spending/rules";
+import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
 const { db } = getDb();
@@ -127,6 +127,42 @@ export const portfolioRoutes = {
           from,
           to,
         }),
+      });
+    }),
+  },
+
+  "/api/spending/uncategorised": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const url = new URL(request.url);
+      const from = IsoDateSchema.parse(url.searchParams.get("from") ?? "1900-01-01");
+      const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
+
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      const invested = investmentPaymentIds(txns, cashlessAccountIds(txns, bank), bank);
+      const rules = rulesFor(db, userId);
+
+      // Only what no rule matched: this is the list a person works through to
+      // teach the app, so anything already classified is noise in it.
+      const unmatched = txns.filter(
+        (txn) =>
+          bank.has(txn.accountId) &&
+          !invested.has(txn.id) &&
+          categoriseWith(txn.note ?? "", rules) === "muu",
+      );
+
+      const summary = summariseSpending(unmatched, { from, to, by: "counterparty", rules });
+      return json({
+        from,
+        to,
+        totalEur: summary.totalEur,
+        merchants: summary.groups.map((group) => ({
+          name: group.label,
+          totalEur: group.totalEur,
+          count: group.count,
+        })),
+        categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
       });
     }),
   },
