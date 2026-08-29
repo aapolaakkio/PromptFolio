@@ -47,6 +47,9 @@ export const SessionGate = ({ isPending, hasSession, onSignOut }: SessionGatePro
           <Link to="/reconcile" className="text-muted no-underline hover:text-ink">
             Täsmäytys
           </Link>
+          <Link to="/chat" className="text-muted no-underline hover:text-ink">
+            Avustaja
+          </Link>
           <Link to="/imports" className="text-muted no-underline hover:text-ink">
             Tuonnit
           </Link>

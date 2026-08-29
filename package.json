@@ -28,6 +28,7 @@
     "typescript": "^7"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@better-auth/drizzle-adapter": "1.7.2",
     "@tanstack/charts": "^0.16",
     "@tanstack/react-charts": "^0.16",

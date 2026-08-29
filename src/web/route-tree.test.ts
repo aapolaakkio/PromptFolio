@@ -11,6 +11,7 @@ const {
   holdingsRoute,
   importsRoute,
   reconcileRoute,
+  chatRoute,
   loginRoute,
 } = buildRouteTree({
   authenticated: Stub,
@@ -18,6 +19,7 @@ const {
   holdings: Stub,
   imports: Stub,
   reconcile: Stub,
+  chat: Stub,
   login: Stub,
 });
 
@@ -68,6 +70,11 @@ test("the pathless layout route resolves to the URLs the app actually serves", (
 // says what someone owns, so a signed-out visitor must never reach it. Asserted
 // structurally, the same way the login page's placement is -- see this file's
 // own note on the blank-login bug that convention exists to prevent.
+test("the chat route sits inside the session gate", () => {
+  expect(chatRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
+  expect(chatRoute.fullPath).toBe("/chat");
+});
+
 test("the reconcile route sits inside the session gate", () => {
   expect(reconcileRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
   expect(reconcileRoute.fullPath).toBe("/reconcile");

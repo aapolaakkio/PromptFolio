@@ -768,6 +768,49 @@ that work is worth remembering even though its code is gone: `TextDecoder("latin
 for windows-1252 in the WHATWG standard, so bytes 0x80-0x9F are rewritten into typographic
 characters. Harmless for prose, silently destructive for binary data read as text.
 
+## 10d. Amendment — 2026-08-29, chat as built (phase 3)
+
+Section 8 is implemented. Four things differ from what it describes, each for a reason worth
+recording.
+
+### D1. Sonnet, not Opus
+
+`CHAT_MODEL` is `claude-sonnet-5`. The questions this assistant answers are a few tool calls and a
+short summary of what came back — the model does no reasoning about money, because it is forbidden
+from doing any arithmetic at all. Opus buys nothing here and costs several times as much per turn
+on a feature meant to cost cents. Adaptive thinking is on, as designed.
+
+### D2. Tool set
+
+Built: `get_holdings`, `get_allocation`, `get_returns`, `get_value_series`, `get_transactions`,
+`get_instruments`. Not built: `get_dividends` (dividends are already visible in
+`get_transactions`, and a second view of the same rows is another chance for the two to disagree)
+and `get_instrument` singular, replaced by the plural — the registry is small enough to return
+whole, and a lookup-by-id tool would have the model guessing ids.
+
+`get_instruments` returns only instruments the caller's own transactions reference. The registry
+table is shared across the household by design (one ISIN, one row), so listing it whole would name
+funds only another member owns.
+
+### D3. Streaming is per event, not per token
+
+The turn is not token-streamed to the browser. `toolRunner` runs non-streaming and the route emits
+Server-Sent Events at turn granularity: which conversation this is, each tool as it is dispatched,
+then the answer. The user sees "Haettu: omistukset, tuotto" while the loop runs rather than a
+blank screen, which is what the progress feedback was for; token streaming would add an SSE
+translation layer over `BetaMessageStream` for the remaining few seconds of a short answer.
+`max_tokens` is 4096, well inside the non-streaming request budget.
+
+The question is written to the database before the model runs, so a turn that fails leaves the
+thread showing what was asked. A failed turn sends one generic error event; the cause is logged
+server-side only, since an SDK error can carry request detail.
+
+### D4. Tool call records, not transcripts of results
+
+`chat_messages` stores each turn's text and the *names* of the tools that ran, never their
+results. A stored result would outlive the ledger it came from and could be shown next to figures
+that have since changed. Rerunning the tools is cheap; being wrong is not.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

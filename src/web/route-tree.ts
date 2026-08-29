@@ -2,7 +2,7 @@ import { createRootRoute, createRoute } from "@tanstack/react-router";
 import type { RouteComponent } from "@tanstack/react-router";
 
 /**
- * The five page components the route tree wires up, injected rather than
+ * The page components the route tree wires up, injected rather than
  * imported directly by this module. Kept deliberately generic
  * (TanStack Router's own `RouteComponent` type) -- this module's only job is the NESTING
  * structure, not which concrete component ends up on which route.
@@ -24,6 +24,7 @@ export type RouteComponents = {
   readonly holdings: RouteComponent;
   readonly imports: RouteComponent;
   readonly reconcile: RouteComponent;
+  readonly chat: RouteComponent;
   readonly login: RouteComponent;
 };
 
@@ -76,6 +77,11 @@ export const buildRouteTree = (components: RouteComponents) => {
     path: "/reconcile",
     component: components.reconcile,
   });
+  const chatRoute = createRoute({
+    getParentRoute: () => authenticatedRoute,
+    path: "/chat",
+    component: components.chat,
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/login",
@@ -83,7 +89,13 @@ export const buildRouteTree = (components: RouteComponents) => {
   });
 
   const routeTree = rootRoute.addChildren([
-    authenticatedRoute.addChildren([dashboardRoute, holdingsRoute, importsRoute, reconcileRoute]),
+    authenticatedRoute.addChildren([
+      dashboardRoute,
+      holdingsRoute,
+      importsRoute,
+      reconcileRoute,
+      chatRoute,
+    ]),
     loginRoute,
   ]);
 
@@ -95,6 +107,7 @@ export const buildRouteTree = (components: RouteComponents) => {
     holdingsRoute,
     importsRoute,
     reconcileRoute,
+    chatRoute,
     loginRoute,
   };
 };

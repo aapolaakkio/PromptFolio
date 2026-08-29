@@ -207,6 +207,42 @@ export const snapshotRows = sqliteTable("snapshot_rows", {
   marketValue: integer("market_value").notNull(),
 });
 
+/**
+ * A chat thread. Conversations persist per user (spec §8) so a question can
+ * follow on from the last one; they are scoped to their owner like every other
+ * ledger row, never shared across a family instance.
+ */
+export const conversations = sqliteTable("conversations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  title: text("title"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+/**
+ * One turn in a thread. `content` holds the message's text; tool calls and their
+ * results are deliberately not stored -- they are derived from the ledger on
+ * demand, and keeping a copy would let a stale answer outlive the data it came
+ * from. `toolCalls` records only which tools ran, so an answer can be audited
+ * for where its figures came from.
+ */
+export const chatMessages = sqliteTable("chat_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: integer("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["user", "assistant"] }).notNull(),
+  content: text("content").notNull(),
+  toolCalls: text("tool_calls"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
 export const prices = sqliteTable(
   "prices",
   {
