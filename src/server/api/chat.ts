@@ -141,6 +141,9 @@ export const chatRoutes = {
       const tools = buildChatTools(db, userId);
       const used: string[] = [];
 
+      // Declared outside the stream so `cancel` below can see the same flag
+      // `start` writes through.
+      let open = true;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const encoder = new TextEncoder();
@@ -148,7 +151,6 @@ export const chatRoutes = {
           // enqueueing into a closed controller throws. Dropping the event is
           // the right answer -- there is no longer anyone to send it to -- so
           // this must not become an error the turn reports.
-          let open = true;
           const send = (event: ChatEvent) => {
             if (!open) return;
             try {
@@ -187,6 +189,17 @@ export const chatRoutes = {
           } finally {
             if (open) controller.close();
           }
+        },
+
+        /**
+         * The browser dropped the connection. Marking the stream closed here
+         * stops any event still in flight from being enqueued into a controller
+         * that no longer has a reader -- which surfaced as an unhandled
+         * "Invalid state: Reader released" rejection rather than as anything
+         * the turn could act on.
+         */
+        cancel() {
+          open = false;
         },
       });
 

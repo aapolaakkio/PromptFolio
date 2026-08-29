@@ -39,6 +39,14 @@ const healthRoute = { GET: () => Response.json({ ok: true }) };
 export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bun.serve> =>
   Bun.serve({
     port: opts.port ?? Number(Bun.env.PORT ?? 3000),
+    /**
+     * Bun closes a connection that has been idle for 10 seconds by default. A
+     * chat turn is several model round trips and routinely quiet for longer
+     * than that between events, so the answer was being cut off mid-stream --
+     * "Bun.serve() timed out a request after 10 seconds" in the log, and a
+     * failed turn in the browser. 255 is the maximum Bun accepts.
+     */
+    idleTimeout: 255,
     // HMR is off deliberately. Bun's dev server hot-swaps route modules, and
     // TanStack Router's own hot-update handler reads a router that is null
     // during that swap -- "Cannot read properties of null (reading

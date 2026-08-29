@@ -29,7 +29,7 @@ import { z } from "zod";
  */
 export type ImportRecord = {
   id: number;
-  kind: "csv_nordnet" | "csv_op" | "pdf" | "vision" | "manual";
+  kind: "csv_nordnet" | "csv_op" | "csv_bank" | "pdf" | "vision" | "manual";
   filename: string;
   createdAt: string;
   inserted: number;
@@ -39,7 +39,7 @@ export type ImportRecord = {
 
 export const ImportRecordSchema: z.ZodType<ImportRecord> = z.object({
   id: z.number(),
-  kind: z.enum(["csv_nordnet", "csv_op", "pdf", "vision", "manual"]),
+  kind: z.enum(["csv_nordnet", "csv_op", "csv_bank", "pdf", "vision", "manual"]),
   filename: z.string(),
   createdAt: z.string(),
   inserted: z.number(),
@@ -58,6 +58,7 @@ export const UndoResultSchema: z.ZodType<UndoResult> = z.object({ deleted: z.num
 export const IMPORT_KIND_LABELS = {
   csv_nordnet: "Nordnet (CSV)",
   csv_op: "OP (CSV)",
+  csv_bank: "Tiliote",
   pdf: "PDF",
   vision: "Kuva",
   manual: "Käsin syötetty",
