@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { allocateBy } from "./allocation";
 import type { PriceLookup } from "./returns";
+import type { ValuedCash } from "./cash";
 import type { Instrument, Txn } from "./types";
 import { parseMoney, parseQuantity, parseFxRate, parseCurrency, formatMoney, EUR } from "./money";
 
@@ -248,4 +249,57 @@ test("the same instrument held across two accounts still produces two account sl
   );
   expect(slices.map((s) => s.key)).toEqual(["1", "2"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["600.00", "400.00"]);
+});
+
+test("counts cash as its own slice, so a part-invested portfolio is not shown as fully invested", () => {
+  const cash: ValuedCash[] = [
+    {
+      accountId: 1,
+      currency: EUR,
+      amount: parseMoney("50.00", EUR),
+      valueEur: parseMoney("50.00", EUR),
+    },
+  ];
+
+  const { slices } = allocateBy(
+    [buy(1, 1, "100")],
+    instruments,
+    prices,
+    "2025-06-01",
+    "kind",
+    cash,
+  );
+  const cashSlice = slices.find((slice) => slice.key === "cash");
+
+  expect(cashSlice?.label).toBe("Käteinen");
+  expect(formatMoney(cashSlice!.valueEur)).toBe("50.00");
+  // Every weight is a share of a total that now includes the cash.
+  expect(slices.reduce((sum, slice) => sum + slice.weight, 0)).toBeCloseTo(1, 10);
+});
+
+test("leaves an unconvertible or negative balance out of the slices", () => {
+  const cash: ValuedCash[] = [
+    {
+      accountId: 1,
+      currency: EUR,
+      amount: parseMoney("-50.00", EUR),
+      valueEur: parseMoney("-50.00", EUR),
+    },
+    {
+      accountId: 2,
+      currency: parseCurrency("NOK"),
+      amount: parseMoney("700.00", parseCurrency("NOK")),
+      valueEur: null,
+    },
+  ];
+
+  const { slices } = allocateBy(
+    [buy(1, 1, "100")],
+    instruments,
+    prices,
+    "2025-06-01",
+    "kind",
+    cash,
+  );
+  expect(slices.some((slice) => slice.key === "cash")).toBe(false);
 });

@@ -811,6 +811,61 @@ server-side only, since an SDK error can carry request detail.
 results. A stored result would outlive the ledger it came from and could be shown next to figures
 that have since changed. Rerunning the tools is cheap; being wrong is not.
 
+## 10e. Amendment -- 2026-08-29, cash and account type as built
+
+C2 and C7 are implemented. The decisions each left open were made by the owner on 2026-08-29 and
+are recorded here as settled.
+
+### E1. Cash counts toward value and allocation, never toward returns
+
+Portfolio value is now positions plus uninvested cash, and cash takes its own slice in every
+allocation dimension. TWR and XIRR stay exactly as §7 defines them: positions only.
+
+The reasoning is that the two numbers answer different questions. "What is my portfolio worth"
+must include a deposit that has not been spent yet, or it understates what the owner has. "How did
+my investments perform" must not, or an account sitting on cash reads as one whose holdings did
+badly. `/api/returns` therefore returns `valueEur` (positions), `cashEur`, and
+`valueWithCashEur` separately, and the dashboard shows the split rather than a single figure whose
+composition has to be guessed. Every one of those is computed server-side: the browser does no
+money arithmetic.
+
+Interest already exists as a transaction type (`INTEREST`) and flows through cash like any other
+row; the phase 4 tax treatment of it is still open.
+
+### E2. Cash is derived, not stored
+
+`core/cash.ts` sums the ledger per account and currency. There is no `cash_balances` table: every
+transaction already moves cash by its own `amount`, so a table would be a second copy of the same
+fact, free to drift from the rows it summarises.
+
+Three rules the implementation makes explicit:
+
+- **An account that records no cash at all is skipped entirely.** OP's export lists securities
+  transactions and never the money that funded them, so summing its rows yields the negative of
+  everything ever bought. `accountsMissingCashRecord` already identifies those accounts for the
+  money-weighted return, and the same judgement applies here. The filter lives inside
+  `cashBalancesAt`, not at each call site, because a caller who forgot would present a five-figure
+  negative balance as fact.
+- **A balance with no fx rate for the day is `null`, not zero** -- the same rule §7 applies to an
+  unpriceable holding.
+- **A negative balance is reported but never allocated.** An overdraft is not an asset; letting it
+  subtract from a bucket would make every other weight a share of a total that does not exist.
+
+### E3. Account type is a column the owner sets
+
+`accounts.account_type` is `'aot' | 'ost' | 'other'`, nullable. Null means nobody has classified
+the account, is displayed as "Ei valittu", and is never defaulted to the ordinary case: inside an
+OST nothing is taxed until withdrawal, so phase 4 must refuse to report on an unclassified account
+rather than assume. Not inferred from the broker's own numbering, which would be wrong silently
+the moment a broker changed it. Editable after the fact, unlike broker and base currency, because
+no stored transaction has been interpreted under it yet.
+
+### E4. A multi-account export is refused, not split
+
+The importer reads Nordnet's `Salkku` column and refuses a file naming more than one account,
+listing them. The owner exports per account instead. This replaces the old behaviour of ignoring
+the column, which filed every row under whichever account was selected -- the merge C7 measured.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

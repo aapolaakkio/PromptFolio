@@ -1,5 +1,6 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis";
+import { cashBalancesAt, totalCashEur, valueCash } from "../core/cash";
 import { positionsAt } from "../core/ledger";
 import {
   addMoney,
@@ -439,4 +440,50 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
       valuationError: row.valuationError,
     }))
     .sort((a, b) => Number(b.valueEur ?? "0") - Number(a.valueEur ?? "0"));
+};
+
+/** One account's cash, and the household total, as the API reports them. */
+export type CashReport = { readonly rows: CashView[]; readonly totalEur: string };
+
+/** One account's cash, as the API and the chat tools report it. */
+export type CashView = {
+  readonly accountId: number;
+  readonly accountName: string;
+  readonly currency: Currency;
+  readonly amount: string;
+  /** Null when no fx rate is known for `on` -- the balance is real, its euro value is not. */
+  readonly valueEur: string | null;
+};
+
+/**
+ * Uninvested cash per account and currency on `on`, valued in euros.
+ *
+ * Cash counts toward portfolio value and allocation but never toward the
+ * returns in spec 7 (decided 2026-08-29, recorded in 10c/C2): TWR and XIRR keep
+ * measuring invested capital, so an account sitting on an unspent deposit does
+ * not read as a portfolio that underperformed. The two numbers answer two
+ * different questions and each says which.
+ */
+export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
+  const { txns, prices } = loadPortfolio(db, userId);
+  const names = new Map(
+    db
+      .select({ id: accounts.id, name: accounts.name })
+      .from(accounts)
+      .where(eq(accounts.userId, userId))
+      .all()
+      .map((row) => [row.id, row.name]),
+  );
+
+  const valued = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
+  return {
+    rows: valued.map((balance) => ({
+      accountId: balance.accountId,
+      accountName: names.get(balance.accountId) ?? `Tili ${balance.accountId}`,
+      currency: balance.currency,
+      amount: formatMoney(balance.amount),
+      valueEur: balance.valueEur === null ? null : formatMoney(balance.valueEur),
+    })),
+    totalEur: formatMoney(totalCashEur(valued)),
+  };
 };

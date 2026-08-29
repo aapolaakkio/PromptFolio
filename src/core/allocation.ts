@@ -1,6 +1,7 @@
 import { addMoney, EUR, mulMoney, toEur, zeroMoney, type Money, type Quantity } from "./money";
 import { positionsAt } from "./ledger";
 import type { PriceLookup } from "./returns";
+import type { ValuedCash } from "./cash";
 import type { Instrument, IsoDate, Txn } from "./types";
 
 export type Dimension = "kind" | "currency" | "account" | "instrument";
@@ -55,12 +56,34 @@ const keyAndLabel = (
   }
 };
 
+/**
+ * Where a cash balance lands in each dimension. Cash is part of the portfolio's
+ * value (spec 10c/C2, decided 2026-08-29) but it is not an instrument, so it
+ * cannot go through `keyAndLabel` -- it has no kind, no id, and its currency is
+ * its own rather than a security's.
+ */
+const cashKeyAndLabel = (dimension: Dimension, balance: ValuedCash): readonly [string, string] => {
+  switch (dimension) {
+    case "kind":
+      return ["cash", KIND_LABELS.cash];
+    case "currency":
+      return [balance.currency, balance.currency];
+    case "account":
+      return [String(balance.accountId), `Tili ${balance.accountId}`];
+    case "instrument":
+      // Cash is one line rather than one per account: an instrument breakdown
+      // that listed "Käteinen" three times would read as three holdings.
+      return ["cash", KIND_LABELS.cash];
+  }
+};
+
 export const allocateBy = (
   txns: readonly Txn[],
   instruments: readonly Instrument[],
   prices: PriceLookup,
   on: IsoDate,
   dimension: Dimension,
+  cash: readonly ValuedCash[] = [],
 ): AllocationResult => {
   const byId = new Map(instruments.map((i) => [i.id, i]));
   const totals = new Map<string, { label: string; value: Money }>();
@@ -117,6 +140,23 @@ export const allocateBy = (
         value: existing ? addMoney(existing.value, valueEur) : valueEur,
       });
     }
+  }
+
+  // Cash joins the same buckets as the positions, so weights are shares of a
+  // total that includes it. A balance with no fx rate for the day carries a null
+  // value and is skipped here, the same as an unpriceable holding above.
+  for (const balance of cash) {
+    if (balance.valueEur === null) continue;
+    // A negative balance is an overdraft, not an asset: letting it subtract from
+    // a bucket would make every other slice's weight a share of a total that
+    // does not exist. It is still reported as a balance by /api/cash.
+    if (balance.valueEur.minor <= 0n) continue;
+    const [key, label] = cashKeyAndLabel(dimension, balance);
+    const existing = totals.get(key);
+    totals.set(key, {
+      label,
+      value: existing ? addMoney(existing.value, balance.valueEur) : balance.valueEur,
+    });
   }
 
   const total = [...totals.values()].reduce((sum, t) => addMoney(sum, t.value), zeroMoney(EUR));

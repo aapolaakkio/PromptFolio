@@ -29,7 +29,8 @@ const unitDirection = (type: Txn["type"]): 1 | -1 | null => {
 const byTradeDateThenId = (a: Txn, b: Txn): number =>
   a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1;
 
-const upTo = (txns: readonly Txn[], on: IsoDate): Txn[] =>
+/** Every transaction dated on or before `on`, oldest first. Exported for core/cash.ts. */
+export const upTo = (txns: readonly Txn[], on: IsoDate): Txn[] =>
   txns
     .filter((t) => t.tradeDate <= on)
     .slice()

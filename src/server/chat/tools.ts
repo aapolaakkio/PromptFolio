@@ -6,7 +6,7 @@ import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
 import type { getDb } from "../db";
-import { holdingsFor, loadPortfolio } from "../valuation";
+import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
 
 type Db = ReturnType<typeof getDb>["db"];
 
@@ -98,6 +98,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       return {
         asOf: on,
         stale: rows.some((row) => row.stale),
+        // Named here so an answer about total worth does not have to add cash in
+        // prose -- which the system prompt forbids. get_cash breaks it down.
+        cashEur: cashFor(db, userId, on).totalEur,
         holdings: rows.map((row) => ({
           name: row.name,
           isin: row.isin,
@@ -115,6 +118,31 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       };
     },
   },
+  {
+    name: "get_cash",
+    description:
+      "Sijoittamaton käteinen tileittäin ja valuutoittain. Käteinen lasketaan mukaan salkun " +
+      "arvoon ja jakaumaan, mutta ei tuottolukuihin.",
+    schema: OnDate,
+    run: (input) => {
+      const { on = today() } = OnDate.parse(input);
+      const { rows, totalEur } = cashFor(db, userId, on);
+      return {
+        asOf: on,
+        totalEur,
+        balances: rows.map((row) => ({
+          account: row.accountName,
+          currency: row.currency,
+          amount: row.amount,
+          valueEur: row.valueEur,
+        })),
+        note:
+          "Tilit, joiden aineistossa ei ole lainkaan käteistapahtumia (esim. OP:n " +
+          "arvopaperinäkymä), eivät näy tässä lainkaan -- niiden saldoa ei voi johtaa.",
+      };
+    },
+  },
+
   {
     name: "get_allocation",
     description:

@@ -7,14 +7,15 @@ import {
   investedCashFlows,
   negativePositionIds,
 } from "../../core/ledger";
-import { formatMoney, negateMoney } from "../../core/money";
+import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
 import { accounts } from "../db/schema";
 import { HttpError, handle, json } from "../http";
-import { holdingsFor, loadPortfolio } from "../valuation";
+import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
+import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash";
 
 const { db } = getDb();
 
@@ -57,6 +58,14 @@ export const portfolioRoutes = {
     }),
   },
 
+  "/api/cash": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const on = IsoDateSchema.parse(new URL(request.url).searchParams.get("on") ?? today());
+      return json(cashFor(db, userId, on));
+    }),
+  },
+
   "/api/value-series": {
     GET: handle(async (request) => {
       const { userId } = await requireUser(request);
@@ -86,12 +95,17 @@ export const portfolioRoutes = {
       const { txns, instruments, prices } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
 
+      // Cash is part of the allocation (spec 10c/C2): a portfolio holding a
+      // fifth of its value in an unspent deposit is not 100 % invested, and a
+      // pie chart that says so is wrong.
+      const cash = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
       const { slices, excludedInstrumentIds } = allocateBy(
         txns,
         instruments,
         prices,
         on,
         dimension,
+        cash,
       );
 
       // Two distinct reasons a holding can be left out of every slice, both of which
@@ -220,10 +234,25 @@ export const portfolioRoutes = {
         return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
       });
 
+      // Cash on the window's last day, and the total that includes it. Both are
+      // computed here rather than added up in the browser: the client never does
+      // money arithmetic, and there must be exactly one definition of "what the
+      // portfolio is worth" for the dashboard and the chat to agree on.
+      //
+      // `twr`/`mwr` below deliberately stay position-only (spec 7, confirmed
+      // 10c/C2): an account holding an unspent deposit has a lower total value
+      // but has not performed worse, and folding cash into the return would say
+      // it had.
+      const cashAtEnd = valueCash(cashBalancesAt(txns, to), prices.fxOn, to);
+      const cashEur = totalCashEur(cashAtEnd);
+      const positionsEur = final ? final.valueEur : zeroMoney(EUR);
+
       return json({
         from,
         to,
-        valueEur: final ? formatMoney(final.valueEur) : "0.00",
+        valueEur: formatMoney(positionsEur),
+        cashEur: formatMoney(cashEur),
+        valueWithCashEur: formatMoney(addMoney(positionsEur, cashEur)),
         stale: final?.stale ?? false,
         twr: twr(series, twrFlows),
         mwr,

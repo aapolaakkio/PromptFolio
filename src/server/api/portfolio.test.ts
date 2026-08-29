@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { EUR, parseMoney } from "../../core/money";
 import { xirr } from "../../core/returns";
 
@@ -103,6 +104,26 @@ const createInstrument = async (cookie: string, isin: string): Promise<number> =
 // pipeline (Tasks 10-12), prices via the refresh job (Task 15). Seeding
 // them for these route-level tests therefore goes straight through the
 // shared getDb() handle, exactly like valuation.test.ts's lower-level seed.
+/** The two response shapes the cash tests read, parsed rather than cast. */
+const CashSchema = z.object({
+  rows: z.array(
+    z.object({
+      accountId: z.number(),
+      accountName: z.string(),
+      currency: z.string(),
+      amount: z.string(),
+      valueEur: z.string().nullable(),
+    }),
+  ),
+  totalEur: z.string(),
+});
+
+const ReturnsCashSchema = z.object({
+  valueEur: z.string(),
+  cashEur: z.string(),
+  valueWithCashEur: z.string(),
+});
+
 const seedHolding = async (
   cookie: string,
   opts: {
@@ -1006,5 +1027,83 @@ describe("GET /api/returns", () => {
     // pinning a plausible range guards against a fix that silently changed
     // the wrong thing).
     expect(body.mwr ?? Number.NaN).toBeGreaterThan(0.3);
+  });
+});
+
+describe("GET /api/cash", () => {
+  test("rejects a request with no session", async () => {
+    const response = await portfolioRoutes["/api/cash"].GET(new Request("http://x/api/cash"));
+    expect(response.status).toBe(401);
+  });
+
+  test("reports what a deposit left uninvested, and adds it to the portfolio value", async () => {
+    const { cookie } = await signUp(`cash-${crypto.randomUUID()}@example.com`);
+    const { accountId } = await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { db } = getDb();
+    // 500,00 in, 100,00 spent on the holding above: 400,00 left as cash.
+    db.insert(transactions)
+      .values([
+        {
+          accountId,
+          instrumentId: null,
+          type: "DEPOSIT" as const,
+          tradeDate: "2023-12-31",
+          quantity: 0,
+          unitPrice: null,
+          amount: 50_000,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: crypto.randomUUID(),
+        },
+      ])
+      .run();
+
+    const cash = await portfolioRoutes["/api/cash"].GET(
+      new Request("http://x/api/cash?on=2024-01-01", { headers: { cookie } }),
+    );
+    const cashBody = CashSchema.parse(await cash.json());
+    expect(cashBody.totalEur).toBe("400.00");
+    expect(cashBody.rows[0]?.currency).toBe("EUR");
+
+    const returns = await portfolioRoutes["/api/returns"].GET(
+      new Request("http://x/api/returns?from=2024-01-01&to=2024-01-01", { headers: { cookie } }),
+    );
+    const returnsBody = ReturnsCashSchema.parse(await returns.json());
+    // Positions and cash stay separate and are also given added up, so the
+    // dashboard never has to do money arithmetic of its own.
+    expect(returnsBody.valueEur).toBe("100.00");
+    expect(returnsBody.cashEur).toBe("400.00");
+    expect(returnsBody.valueWithCashEur).toBe("500.00");
+  });
+
+  test("reports no cash for an account whose export never recorded any", async () => {
+    const { cookie } = await signUp(`cash-none-${crypto.randomUUID()}@example.com`);
+    await seedHolding(cookie, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const response = await portfolioRoutes["/api/cash"].GET(
+      new Request("http://x/api/cash?on=2024-01-01", { headers: { cookie } }),
+    );
+    const body = CashSchema.parse(await response.json());
+    // The purchase alone would sum to -100,00, which is an artefact of an
+    // export that lists securities only -- not a debt.
+    expect(body.rows).toEqual([]);
+    expect(body.totalEur).toBe("0.00");
   });
 });

@@ -21,7 +21,11 @@ import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart
 const ValuePointSchema = z.object({ date: z.string(), valueEur: z.string(), stale: z.boolean() });
 
 const ReturnsSchema = z.object({
+  /** Positions only -- what twr and mwr below are computed from. */
   valueEur: z.string(),
+  /** Uninvested cash, and the two added together (spec 10c/C2). */
+  cashEur: z.string(),
+  valueWithCashEur: z.string(),
   stale: z.boolean(),
   // `null` (like `mwr`) is a real, distinct answer -- C5: at least half the value
   // series' sub-periods were corrupted by an instrument `/api/value-series` could
@@ -164,7 +168,17 @@ export const DashboardPage = () => {
       )}
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Stat label="Salkun arvo" value={eur(returns.data.valueEur)} />
+        <Stat
+          label="Salkun arvo"
+          value={eur(returns.data.valueWithCashEur)}
+          // Cash counts toward value but never toward the returns beside it
+          // (spec 10c/C2), so the split is named rather than left to be guessed.
+          note={
+            returns.data.cashEur === "0.00"
+              ? undefined
+              : `sijoitukset ${eur(returns.data.valueEur)} + käteinen ${eur(returns.data.cashEur)}`
+          }
+        />
         <Stat
           label="Tuotto (aikapainotettu)"
           value={hasEverInvested && returns.data.twr !== null ? pct(returns.data.twr) : "—"}

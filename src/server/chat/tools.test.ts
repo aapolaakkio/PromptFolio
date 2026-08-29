@@ -215,6 +215,35 @@ describe("scoping", () => {
   });
 });
 
+describe("get_cash", () => {
+  test("reports the deposit that has not been invested, per account", async () => {
+    const { tools } = await seed();
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
+    // lines above in tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_cash").run({ on: "2026-06-01" }) as {
+      asOf: string;
+      totalEur: string;
+      balances: Array<{ account: string; currency: string; amount: string }>;
+    };
+
+    // The seed deposits 1000,00 and spends 100,00 on the holding.
+    expect(result.asOf).toBe("2026-06-01");
+    expect(result.totalEur).toBe("900.00");
+    expect(result.balances).toEqual([
+      expect.objectContaining({ account: "Nordnet", currency: "EUR", amount: "900.00" }),
+    ]);
+  });
+
+  test("get_holdings names the same cash total, so worth needs no arithmetic in prose", async () => {
+    const { tools } = await seed();
+    // SAFETY: as above.
+    const holdings = toolNamed(tools, "get_holdings").run({ on: "2026-06-01" }) as {
+      cashEur: string;
+    };
+    expect(holdings.cashEur).toBe("900.00");
+  });
+});
+
 describe("get_allocation", () => {
   test("splits by the requested dimension and totals to one", async () => {
     const { tools } = await seed();
