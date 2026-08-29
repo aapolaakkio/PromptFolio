@@ -88,7 +88,7 @@ describe("ostReport", () => {
 
     const outcome = report.withdrawals[0]!.outcome;
     expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
+    if (outcome.ok || outcome.reason !== "no-price") throw new Error("expected a no-price block");
     expect(outcome.instrumentId).toBe(42);
     // The split between profit and capital is unknown, so the deposits cannot
     // be advanced -- and the report says the figures are behind rather than
@@ -227,5 +227,107 @@ describe("a share subscription's reservation", () => {
     });
 
     expect(report.withdrawals).toHaveLength(1);
+  });
+});
+
+describe("tax the broker withheld", () => {
+  // The broker takes the capital income tax out of the withdrawal and books it
+  // as its own row ("PÄÄOMATULOVERO OST"), which the importer maps to FEE. The
+  // amount withdrawn is therefore what reached the owner plus what was withheld
+  // from it.
+  const tax = (on: IsoDate, amount: string) => row("FEE", on, `-${amount}`);
+
+  test("counts toward the amount withdrawn", () => {
+    const report = ostReport({
+      txns: [
+        deposit("2020-01-02", "10000,00"),
+        withdrawal("2025-06-01", "1490,00"),
+        tax("2025-06-01", "10,00"),
+      ],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    const line = report.withdrawals[0]!;
+    // 1 490,00 reached the owner and 10,00 was withheld: 1 500,00 left.
+    expect(formatMoney(line.amountEur)).toBe("1500.00");
+    expect(formatMoney(line.withheldEur)).toBe("10.00");
+    const outcome = line.outcome;
+    if (!outcome.ok) throw new Error("expected a valued withdrawal");
+    expect(formatMoney(outcome.taxableEur)).toBe("500.00");
+  });
+
+  test("is split across a day's withdrawals in proportion, so the parts sum to what left", () => {
+    // A single withdrawal reaches the ledger as several rows -- the broker
+    // splits it -- with one withholding row covering the day.
+    const report = ostReport({
+      txns: [
+        deposit("2020-01-02", "10000,00"),
+        withdrawal("2025-06-01", "80,00"),
+        withdrawal("2025-06-01", "20,00"),
+        tax("2025-06-01", "10,00"),
+      ],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    const total = report.withdrawals.reduce((sum, w) => sum + Number(formatMoney(w.amountEur)), 0);
+    expect(total.toFixed(2)).toBe("110.00");
+    const withheld = report.withdrawals.reduce(
+      (sum, w) => sum + Number(formatMoney(w.withheldEur)),
+      0,
+    );
+    expect(withheld.toFixed(2)).toBe("10.00");
+  });
+});
+
+describe("after a withdrawal that could not be valued", () => {
+  test("later withdrawals are reported as unknown, not as zero", () => {
+    // The real failure this prevents: an unpriced holding blocked a 2021
+    // withdrawal, the deposits were never reduced, and every later withdrawal
+    // then looked like it came from an account holding no profit -- reported as
+    // 0,00 € taxable on withdrawals the broker had actually withheld tax from.
+    let call = 0;
+    const report = ostReport({
+      txns: [
+        deposit("2020-01-02", "1000,00"),
+        withdrawal("2021-06-01", "100,00"),
+        withdrawal("2025-06-01", "100,00"),
+      ],
+      valueAt: () => {
+        call += 1;
+        return call === 1
+          ? { ok: false, instrumentId: 42 }
+          : { ok: true, valueEur: parseMoney("2000,00", EUR) };
+      },
+      from: "2020-01-01",
+      to: "2025-12-31",
+    });
+
+    const later = report.withdrawals[1]!.outcome;
+    expect(later.ok).toBe(false);
+    if (later.ok || later.reason !== "earlier-withdrawal")
+      throw new Error("expected an earlier-gap block");
+    expect(later.since).toBe("2021-06-01");
+    expect(report.incomplete).toBe(true);
+  });
+
+  test("does not keep asking for a valuation it cannot use", () => {
+    let calls = 0;
+    ostReport({
+      txns: [
+        deposit("2020-01-02", "1000,00"),
+        withdrawal("2021-06-01", "100,00"),
+        withdrawal("2025-06-01", "100,00"),
+      ],
+      valueAt: () => {
+        calls += 1;
+        return { ok: false, instrumentId: 42 };
+      },
+      from: "2020-01-01",
+      to: "2025-12-31",
+    });
+
+    expect(calls).toBe(1);
   });
 });

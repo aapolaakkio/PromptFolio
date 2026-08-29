@@ -116,6 +116,7 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                   <th className="text-right">Tilin arvo</th>
                   <th className="text-right">Voitto</th>
                   <th className="text-right">Veronalaista</th>
+                  <th className="text-right">Veroa pidätetty</th>
                 </tr>
               </thead>
               <tbody>
@@ -136,6 +137,9 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                         eur(row.taxableEur)
                       )}
                     </td>
+                    {/* The broker's own figure, beside ours. Two derivations
+                        that disagree is the point of computing this twice. */}
+                    <td className="text-right">{eur(row.withheldEur)}</td>
                   </tr>
                 ))}
               </tbody>

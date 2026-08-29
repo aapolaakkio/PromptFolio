@@ -37,6 +37,7 @@ export const TaxDividendSchema = z.object({
 export const OstWithdrawalSchema = z.object({
   withdrawnOn: z.string(),
   amountEur: z.string(),
+  withheldEur: z.string(),
   valueEur: z.string().nullable(),
   profitEur: z.string().nullable(),
   taxableEur: z.string().nullable(),
@@ -51,7 +52,10 @@ export const OstSchema = z.object({
   incomplete: z.boolean(),
 });
 
-const CarriedLossSchema = z.object({ fromYear: z.number(), amountEur: z.string() });
+const CarriedLossSchema = z.object({
+  fromYear: z.number(),
+  amountEur: z.string(),
+});
 
 export const TaxYearSchema = z.object({
   year: z.number(),
@@ -67,7 +71,10 @@ export const TaxYearSchema = z.object({
   dividends: z.array(TaxDividendSchema),
   dividendTaxableEur: z.string(),
   ost: z.array(OstSchema),
-  source: z.object({ transactions: z.number(), earliest: z.string().nullable() }),
+  source: z.object({
+    transactions: z.number(),
+    earliest: z.string().nullable(),
+  }),
 });
 
 export const TaxYearsSchema = z.array(z.number());

@@ -22,11 +22,39 @@ export type OstWithdrawalOutcome =
       readonly profitEur: Money;
       readonly taxableEur: Money;
     }
-  | { readonly ok: false; readonly instrumentId: number };
+  /** No price for a holding on that day, so the account has no known value. */
+  | {
+      readonly ok: false;
+      readonly reason: "no-price";
+      readonly instrumentId: number;
+    }
+  /**
+   * An earlier withdrawal could not be valued, so how much of it was profit and
+   * how much was capital returned is unknown -- and with it the deposits every
+   * later withdrawal is measured against.
+   *
+   * This is reported rather than computed anyway. Carrying on regardless is what
+   * produced a 0,00 € taxable figure for a withdrawal the broker had actually
+   * withheld tax on: the deposits were too high, so the account looked like it
+   * held no profit. A wrong figure that looks certain is worse than a gap.
+   */
+  | {
+      readonly ok: false;
+      readonly reason: "earlier-withdrawal";
+      readonly since: IsoDate;
+    };
 
 export type OstWithdrawal = {
   readonly withdrawnOn: IsoDate;
+  /** What left the account, tax withheld included. */
   readonly amountEur: Money;
+  /**
+   * Capital income tax the broker withheld from this withdrawal, where the
+   * ledger records it. Evidence, not an input: it is what our own figure can be
+   * checked against, and a disagreement is the whole point of computing this
+   * twice.
+   */
+  readonly withheldEur: Money;
   readonly outcome: OstWithdrawalOutcome;
 };
 
@@ -108,6 +136,53 @@ export const reservationPairIds = (txns: readonly Txn[]): ReadonlySet<number> =>
   return paired;
 };
 
+/**
+ * Capital income tax withheld, by date.
+ *
+ * On an equity savings account the broker books this as a fee row of its own
+ * ("PÄÄOMATULOVERO OST"), which the importer maps to `FEE` -- deliberately, so
+ * that money leaving permanently without reaching the investor does not read as
+ * a withdrawal they enjoyed. Every `FEE` on such an account is that tax; no
+ * other charge has been observed on one. If a broker ever books another kind of
+ * fee here, it would be read as withholding, which is why the figure is
+ * reported beside our own rather than silently folded into it.
+ */
+const withheldTaxByDate = (txns: readonly Txn[]): Map<IsoDate, Money> => {
+  const byDate = new Map<IsoDate, Money>();
+  for (const t of txns) {
+    if (t.type !== "FEE") continue;
+    const magnitude = t.amount.minor < 0n ? -t.amount.minor : t.amount.minor;
+    byDate.set(
+      t.tradeDate,
+      addMoney(
+        byDate.get(t.tradeDate) ?? zeroMoney(EUR),
+        toEur(money(magnitude, t.amount.currency), t.fxRateEur, "half-up"),
+      ),
+    );
+  }
+  return byDate;
+};
+
+/** What was withdrawn on each date, net of tax -- the denominator for splitting it. */
+const withdrawnTotalByDate = (
+  txns: readonly Txn[],
+  reserved: ReadonlySet<number>,
+): Map<IsoDate, Money> => {
+  const byDate = new Map<IsoDate, Money>();
+  for (const t of txns) {
+    if (t.type !== "WITHDRAWAL" || reserved.has(t.id)) continue;
+    const magnitude = t.amount.minor < 0n ? -t.amount.minor : t.amount.minor;
+    byDate.set(
+      t.tradeDate,
+      addMoney(
+        byDate.get(t.tradeDate) ?? zeroMoney(EUR),
+        toEur(money(magnitude, t.amount.currency), t.fxRateEur, "half-up"),
+      ),
+    );
+  }
+  return byDate;
+};
+
 export const ostReport = (args: {
   /** This account's transactions, every year -- earlier ones set up the state. */
   readonly txns: readonly Txn[];
@@ -126,8 +201,12 @@ export const ostReport = (args: {
   const withdrawals: OstWithdrawal[] = [];
   let deposited = zeroMoney(EUR);
   let incomplete = false;
+  /** The first withdrawal whose value was unknown; everything after it is guesswork. */
+  let blockedSince: IsoDate | null = null;
 
   const reserved = reservationPairIds(args.txns);
+  const withheldByDate = withheldTaxByDate(args.txns);
+  const withdrawnByDate = withdrawnTotalByDate(args.txns, reserved);
   const chronological = [...args.txns].sort((a, b) =>
     a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1,
   );
@@ -144,24 +223,64 @@ export const ostReport = (args: {
 
     // A withdrawal's `amount` is negative (cash leaving); the tax rules talk
     // about the amount withdrawn, so it is carried positive here.
-    const amountEur = toEur(
+    const net = toEur(
       t.amount.minor < 0n ? money(-t.amount.minor, t.amount.currency) : t.amount,
       t.fxRateEur,
       "half-up",
     );
-    const valuation = args.valueAt(t.tradeDate, t.id);
+    // The broker withholds the capital income tax out of the withdrawal, and
+    // books it as its own row. What was withdrawn is therefore what reached the
+    // owner plus what was withheld from it -- apportioning only the net would
+    // understate the taxable share of every withdrawal that was taxed. Where a
+    // day has several withdrawal rows, the day's withholding is split between
+    // them in proportion, so the parts sum to what actually left.
+    const dayWithheld = withheldByDate.get(t.tradeDate) ?? zeroMoney(EUR);
+    const dayWithdrawn = withdrawnByDate.get(t.tradeDate) ?? zeroMoney(EUR);
+    const withheldEur =
+      dayWithheld.minor === 0n || dayWithdrawn.minor === 0n
+        ? zeroMoney(EUR)
+        : divMoney(money(dayWithheld.minor * net.minor, EUR), dayWithdrawn.minor, "half-up");
+    const amountEur = addMoney(net, withheldEur);
+
     const inWindow = t.tradeDate >= args.from && t.tradeDate <= args.to;
+
+    // Once one withdrawal's split is unknown, the deposits are too high by an
+    // unknown amount, and every later withdrawal measured against them reads as
+    // less profitable than it was -- as zero, in the case that exposed this.
+    if (blockedSince !== null) {
+      if (inWindow) {
+        withdrawals.push({
+          withdrawnOn: t.tradeDate,
+          amountEur,
+          withheldEur,
+          outcome: {
+            ok: false,
+            reason: "earlier-withdrawal",
+            since: blockedSince,
+          },
+        });
+      }
+      continue;
+    }
+
+    const valuation = args.valueAt(t.tradeDate, t.id);
 
     if (!valuation.ok) {
       // The split between profit and returned capital is unknown, so
       // `deposited` cannot be advanced either: everything after this point is
       // provisional, which `incomplete` says out loud.
       incomplete = true;
+      blockedSince = t.tradeDate;
       if (inWindow) {
         withdrawals.push({
           withdrawnOn: t.tradeDate,
           amountEur,
-          outcome: { ok: false, instrumentId: valuation.instrumentId },
+          withheldEur,
+          outcome: {
+            ok: false,
+            reason: "no-price",
+            instrumentId: valuation.instrumentId,
+          },
         });
       }
       continue;
@@ -182,6 +301,7 @@ export const ostReport = (args: {
       withdrawals.push({
         withdrawnOn: t.tradeDate,
         amountEur,
+        withheldEur,
         outcome: { ok: true, valueEur, profitEur, taxableEur },
       });
     }

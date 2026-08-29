@@ -61,7 +61,10 @@ export type TaxDividendView = {
 
 export type OstWithdrawalView = {
   readonly withdrawnOn: IsoDate;
+  /** What left the account, tax withheld included. */
   readonly amountEur: string;
+  /** Capital income tax the broker withheld -- evidence to check our own figure against. */
+  readonly withheldEur: string;
   readonly valueEur: string | null;
   readonly profitEur: string | null;
   readonly taxableEur: string | null;
@@ -77,7 +80,10 @@ export type OstView = {
   readonly incomplete: boolean;
 };
 
-export type CarriedLossView = { readonly fromYear: number; readonly amountEur: string };
+export type CarriedLossView = {
+  readonly fromYear: number;
+  readonly amountEur: string;
+};
 
 export type TaxYearView = {
   readonly year: number;
@@ -94,16 +100,32 @@ export type TaxYearView = {
   readonly dividendTaxableEur: string;
   readonly ost: readonly OstView[];
   /** What the figures were derived from, so a changed number is explicable. */
-  readonly source: { readonly transactions: number; readonly earliest: IsoDate | null };
+  readonly source: {
+    readonly transactions: number;
+    readonly earliest: IsoDate | null;
+  };
 };
 
 /** Names an unvaluable OST holding the way the rest of the app names its gaps. */
-const explainBlockedValuation = (instrument: Instrument | undefined, on: IsoDate): string =>
+const explainNoPrice = (instrument: Instrument | undefined, on: IsoDate): string =>
   instrument === undefined
     ? `Osakesäästötilin arvoa ei voi laskea päivälle ${on}, koska yhdelle omistukselle ei ole hintaa.`
     : `Instrumentille ${instrument.name} (${instrument.isin}) ei ole hintaa päivälle ${on}, ` +
       `joten osakesäästötilin arvoa ja noston veronalaista osuutta ei voi laskea. ` +
       `Kirjaa hinta kyseiselle päivälle, niin rivi laskeutuu.`;
+
+/**
+ * Why a withdrawal that follows an unvaluable one cannot be computed either.
+ *
+ * Said plainly rather than shown as a figure: the earlier gap leaves the
+ * account's deposits too high by an unknown amount, so this withdrawal reads as
+ * less profitable than it was -- as not profitable at all, in the real case
+ * that exposed it, on a withdrawal the broker had withheld tax from.
+ */
+const explainEarlierGap = (since: IsoDate): string =>
+  `Aiemman noston (${since}) veronalaista osuutta ei voitu laskea, joten talletusten määrä on ` +
+  `liian suuri eikä tämän noston voitto-osuutta voi laskea luotettavasti. Kirjaa aiemmalta ` +
+  `päivältä puuttuva hinta, niin tämäkin rivi laskeutuu.`;
 
 export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView => {
   const { txns, instruments, prices } = loadPortfolio(db, userId);
@@ -162,7 +184,13 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
   // Cost basis is built from every transaction the user owns, not only the
   // year's: FIFO needs the purchases, which are usually in earlier years.
   const { disposals } = buildLots(txns.filter((t) => t.instrumentId !== null));
-  const computed = taxYear({ txns, disposals, ostAccountIds, ostValueAt, year });
+  const computed = taxYear({
+    txns,
+    disposals,
+    ostAccountIds,
+    ostValueAt,
+    year,
+  });
 
   const money = (m: Money): string => formatMoney(m);
 
@@ -226,12 +254,12 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
           valueEur: outcome.ok ? money(outcome.valueEur) : null,
           profitEur: outcome.ok ? money(outcome.profitEur) : null,
           taxableEur: outcome.ok ? money(outcome.taxableEur) : null,
+          withheldEur: money(withdrawal.withheldEur),
           blockedBy: outcome.ok
             ? null
-            : explainBlockedValuation(
-                instrumentById.get(outcome.instrumentId),
-                withdrawal.withdrawnOn,
-              ),
+            : outcome.reason === "no-price"
+              ? explainNoPrice(instrumentById.get(outcome.instrumentId), withdrawal.withdrawnOn)
+              : explainEarlierGap(outcome.since),
         };
       }),
       depositedEur: money(entry.report.depositedEur),
