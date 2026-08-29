@@ -70,7 +70,15 @@ const splitLine = (line: string, delimiter: string, lineNumber: number): string[
  * continues with the next line. One bad row must not discard every good
  * row already parsed — see the spec's import-review-screen behaviour.
  */
-export const parseCsv = (bytes: ArrayBuffer, config: BrokerCsvConfig) => {
+/**
+ * Only the two fields this function actually reads. Narrowed from
+ * `BrokerCsvConfig` so a format with no securities columns -- a bank statement,
+ * see import/bank-statement.ts -- can share the CSV mechanics without inventing
+ * a broker config it has no fields for.
+ */
+type CsvDialect = Pick<BrokerCsvConfig, "encoding" | "delimiter">;
+
+export const parseCsv = (bytes: ArrayBuffer, config: CsvDialect) => {
   const text = new TextDecoder(config.encoding).decode(bytes).replace(/^﻿/, "");
   const lines = text.split(/\r?\n/);
   const headerLine = lines[0];
