@@ -249,7 +249,7 @@ describe("classifyNewMerchants", () => {
     expect(result.added).toBe(0);
   });
 
-  test("survives a reply that is not JSON at all", async () => {
+  test("reports a reply it could not read, rather than passing it off as nothing to do", async () => {
     const userId = await makeUser();
     const result = await classifyNewMerchants(db, userId, {
       txns,
@@ -258,7 +258,10 @@ describe("classifyNewMerchants", () => {
       model: "test",
     });
 
+    // A truncated or unparseable answer looks identical to "no new merchants"
+    // from the outside, and one of the two needs looking at. This was a real
+    // silent failure: a full batch's JSON hit the token ceiling mid-object.
     expect(result.added).toBe(0);
-    expect(result.error).toBeNull();
+    expect(result.error).toContain("ei palauttanut");
   });
 });

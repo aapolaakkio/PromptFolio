@@ -16,18 +16,11 @@ import {
   describeMaturity,
   describeReconciliation,
   ENTRY_LABELS,
-  SpendingSchema,
 } from "./cash-view";
 import { AccountsSchema } from "./imports-draft";
 import { CreateAccountForm } from "./CreateAccountForm";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
-const yearAgo = (): string => {
-  const date = new Date();
-  date.setUTCFullYear(date.getUTCFullYear() - 1);
-  return date.toISOString().slice(0, 10);
-};
-
 /**
  * Bank accounts: what they hold, what a statement adds to them, and where the
  * money went.
@@ -42,9 +35,6 @@ export const CashPage = () => {
   const [accountId, setAccountId] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [balance, setBalance] = useState("");
-  const [from, setFrom] = useState(yearAgo);
-  const [to, setTo] = useState(today);
-  const [groupBy, setGroupBy] = useState<"category" | "counterparty">("category");
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,10 +43,6 @@ export const CashPage = () => {
     queryFn: () => apiGet("/api/accounts", AccountsSchema),
   });
   const cash = useQuery({ queryKey: ["cash"], queryFn: () => apiGet("/api/cash", CashSchema) });
-  const spending = useQuery({
-    queryKey: ["spending", from, to, groupBy],
-    queryFn: () => apiGet(`/api/spending?from=${from}&to=${to}&by=${groupBy}`, SpendingSchema),
-  });
 
   const bankAccounts = (accounts.data ?? []).filter((account) => account.kind === "bank");
   const chosen = accountId ?? bankAccounts[0]?.id ?? null;
@@ -383,61 +369,6 @@ export const CashPage = () => {
           </div>
         </>
       )}
-
-      <div className="card grid gap-3">
-        <h2>Mihin raha meni</h2>
-        <div className="flex flex-wrap items-end gap-2">
-          <label>
-            Alkaen
-            <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-          </label>
-          <label>
-            Asti
-            <input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-          </label>
-          <label>
-            Ryhmittely
-            <select
-              value={groupBy}
-              onChange={(event) =>
-                setGroupBy(event.target.value === "counterparty" ? "counterparty" : "category")
-              }
-            >
-              <option value="category">Luokittain</option>
-              <option value="counterparty">Saajittain</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="max-h-96 overflow-auto rounded border border-line">
-          <table>
-            <thead className="sticky top-0 bg-surface">
-              <tr>
-                <th>{groupBy === "category" ? "Luokka" : "Saaja"}</th>
-                <th className="text-right">Tapahtumia</th>
-                <th className="text-right">Yhteensä</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(spending.data?.groups ?? []).map((group) => (
-                <tr key={group.key}>
-                  <td>{group.label}</td>
-                  <td className="text-right">{group.count}</td>
-                  <td className="text-right">{eur(group.totalEur)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {spending.data && (
-          <p className="text-muted text-sm">
-            Yhteensä {eur(spending.data.totalEur)}.{" "}
-            {spending.data.uncategorisedShare > 0.05 &&
-              `Luokittelematta ${Math.round(spending.data.uncategorisedShare * 100)} % — nämä näkyvät luokassa Muu.`}
-          </p>
-        )}
-      </div>
     </section>
   );
 };

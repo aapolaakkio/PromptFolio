@@ -46,7 +46,8 @@ export type TurnParams = {
   system: string;
   messages: BetaMessageParam[];
   tools: BetaRunnableTool<ToolArgs>[];
-  thinking: { type: "adaptive" };
+  /** Adaptive for a conversation; disabled for a classification, which is a lookup. */
+  thinking: { type: "adaptive" } | { type: "disabled" };
 };
 
 export type TurnOptions = { signal?: AbortSignal };

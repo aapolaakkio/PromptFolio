@@ -51,6 +51,18 @@ export const SpendingSchema = z.object({
   uncategorisedShare: z.number(),
 });
 
+/** GET /api/spending/rules: the user's own rules and the categories they may use. */
+export const RulesSchema = z.object({
+  rules: z.array(
+    z.object({
+      pattern: z.string(),
+      category: z.string(),
+      source: z.enum(["seed", "ai", "user"]),
+    }),
+  ),
+  categories: z.array(z.object({ id: z.string(), label: z.string() })),
+});
+
 export const BankPreviewSchema = z.object({
   bank: z.string(),
   rows: z.number(),

@@ -112,11 +112,17 @@ export const classifyNewMerchants = async (
   try {
     const runner = args.client.beta.messages.toolRunner({
       model: args.model,
-      max_tokens: 2048,
+      // Room for a rule per merchant and then some. At 2048 a full batch's JSON
+      // was cut off mid-object, which parsed to nothing and reported as "no new
+      // rules" -- a silent failure that looked like a quiet success.
+      max_tokens: 8192,
       system: "Olet luokittelija. Vastaat pelkällä JSONilla, ilman selityksiä tai koodilohkoja.",
       messages: [{ role: "user", content: promptFor(merchants) }],
       tools: [],
-      thinking: { type: "adaptive" },
+      // No extended thinking: this is a lookup from a name to one of a dozen
+      // labels, and the budget is better spent on the answer than on reasoning
+      // about it.
+      thinking: { type: "disabled" },
     });
 
     let reply = "";
@@ -126,8 +132,9 @@ export const classifyNewMerchants = async (
       }
     }
 
+    const parsed = parseProposals(reply);
     const upper = merchants.map((name) => name.toUpperCase());
-    const proposals = parseProposals(reply).filter((proposal) =>
+    const proposals = parsed.filter((proposal) =>
       upper.some((name) => name.includes(proposal.pattern.trim().toUpperCase())),
     );
     const { added, rejected } = addRules(db, userId, proposals, "ai");
@@ -135,7 +142,11 @@ export const classifyNewMerchants = async (
       asked: merchants.length,
       added: added.length,
       rejected: rejected.length,
-      error: null,
+      // A reply that yielded nothing is reported as a failure rather than as an
+      // import with no new merchants: the two look identical from the outside,
+      // and one of them needs looking at.
+      error:
+        parsed.length === 0 ? "Malli ei palauttanut yhtään sääntöä (vastaus ei jäsentynyt)" : null,
     };
   } catch (cause) {
     return {
