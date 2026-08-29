@@ -1,6 +1,6 @@
 import type { Disposal } from "../costbasis";
-import { addMoney, subMoney, type Money } from "../money";
-import type { IsoDate, Quantity } from "../types";
+import { addMoney, subMoney, type Money, type Quantity } from "../money";
+import type { IsoDate } from "../types";
 import {
   DEEMED_COST_LONG_PERCENT,
   DEEMED_COST_LONG_YEARS,

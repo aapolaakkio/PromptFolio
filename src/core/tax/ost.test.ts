@@ -29,7 +29,7 @@ const worth =
     valueEur: parseMoney(value, EUR),
   });
 
-const YEAR = { from: "2025-01-01" as IsoDate, to: "2025-12-31" as IsoDate };
+const YEAR = { from: "2025-01-01", to: "2025-12-31" };
 
 describe("ostReport", () => {
   test("reproduces vero.fi's own worked example", () => {

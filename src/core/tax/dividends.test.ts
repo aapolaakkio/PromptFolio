@@ -25,7 +25,7 @@ const dividend = (o: {
   fxRateEur: parseFxRate("1", EUR),
 });
 
-const YEAR = { from: "2025-01-01" as IsoDate, to: "2025-12-31" as IsoDate };
+const YEAR = { from: "2025-01-01", to: "2025-12-31" };
 const rows = (txns: readonly Txn[], ostAccountIds: ReadonlySet<number> = new Set()) =>
   taxableDividends({ txns, ostAccountIds, ...YEAR });
 

@@ -1,0 +1,166 @@
+import type { Disposal } from "../costbasis";
+import { addMoney, negateMoney, subMoney, zeroMoney, EUR, type Money } from "../money";
+import type { IsoDate, Txn } from "../types";
+import { taxableDisposals, type TaxableDisposal } from "./disposals";
+import { taxableDividends, totalDividendTaxable, type TaxableDividend } from "./dividends";
+import type { OstReport, OstValuation } from "./ost";
+import { ostReport } from "./ost";
+import { LOSS_CARRY_YEARS, SMALL_SALE_LIMIT_EUR } from "./rates";
+
+/** A loss from an earlier year, still deductible. */
+export type CarriedLoss = { readonly fromYear: number; readonly amountEur: Money };
+
+export type TaxYear = {
+  readonly year: number;
+  readonly disposals: readonly TaxableDisposal[];
+  /** Gross sale prices for the year -- what the 1 000 € exemption is measured against. */
+  readonly totalSalePriceEur: Money;
+  readonly exempt: boolean;
+  readonly gainsEur: Money;
+  readonly lossesEur: Money;
+  /** Gains less losses, after the exemption, floored at zero. */
+  readonly netEur: Money;
+  readonly lossesUsedEur: Money;
+  readonly lossCarriedIn: readonly CarriedLoss[];
+  readonly lossCarriedOut: readonly CarriedLoss[];
+  readonly dividends: readonly TaxableDividend[];
+  readonly dividendTaxableEur: Money;
+  readonly ost: readonly { readonly accountId: number; readonly report: OstReport }[];
+};
+
+const yearOf = (date: IsoDate): number => Number(date.slice(0, 4));
+const sum = (amounts: readonly Money[]): Money =>
+  amounts.reduce((total, amount) => addMoney(total, amount), zeroMoney(EUR));
+
+/**
+ * A disposal is taxable only if a SELL produced it. `buildLots` also records a
+ * TRANSFER_OUT as a disposal, correctly, so cost basis follows the shares to
+ * the receiving account -- but moving one's own shares is not a sale, and a
+ * taxable set that included transfers would report gains nobody realised.
+ *
+ * Matched on account, instrument and date, which is what a disposal carries.
+ * A transfer and a sale of the same instrument from the same account on the
+ * same day would be indistinguishable here; the SELL wins, which is the safe
+ * direction -- reporting a real sale beats silently dropping one.
+ */
+const soldOnly = (disposals: readonly Disposal[], txns: readonly Txn[]): Disposal[] => {
+  const sold = new Set(
+    txns
+      .filter((t) => t.type === "SELL" && t.instrumentId !== null)
+      .map((t) => `${t.accountId}:${t.instrumentId}:${t.tradeDate}`),
+  );
+  return disposals.filter((d) => sold.has(`${d.accountId}:${d.instrumentId}:${d.soldOn}`));
+};
+
+/** One year's realised result, before any carried loss is applied. */
+const resultFor = (
+  disposals: readonly Disposal[],
+  txns: readonly Txn[],
+  ostAccountIds: ReadonlySet<number>,
+  year: number,
+) => {
+  const rows = taxableDisposals({
+    disposals: soldOnly(disposals, txns).filter((d) => yearOf(d.soldOn) === year),
+    ostAccountIds,
+  });
+  const totalSalePriceEur = sum(rows.map((row) => row.grossProceedsEur));
+  // "Sold for a total of EUR 1,000 at maximum" -- measured on the sale prices,
+  // not on the gains.
+  const exempt = totalSalePriceEur.minor <= SMALL_SALE_LIMIT_EUR.minor;
+  const gains = rows.filter((row) => row.gainEur.minor > 0n).map((row) => row.gainEur);
+  const losses = rows
+    .filter((row) => row.gainEur.minor < 0n)
+    .map((row) => negateMoney(row.gainEur));
+
+  // The exemption cuts both ways: under the threshold the gains are exempt and
+  // the losses are correspondingly not deductible. Reporting one without the
+  // other would overstate what carries forward.
+  return {
+    rows,
+    totalSalePriceEur,
+    exempt,
+    gainsEur: exempt ? zeroMoney(EUR) : sum(gains),
+    lossesEur: exempt ? zeroMoney(EUR) : sum(losses),
+  };
+};
+
+export const taxYear = (args: {
+  readonly txns: readonly Txn[];
+  readonly disposals: readonly Disposal[];
+  readonly ostAccountIds: ReadonlySet<number>;
+  readonly ostValueAt: (accountId: number, on: IsoDate) => OstValuation;
+  readonly year: number;
+}): TaxYear => {
+  const { year, txns, disposals, ostAccountIds } = args;
+  const current = resultFor(disposals, txns, ostAccountIds, year);
+
+  // Losses from the previous five years, oldest first, each already net of the
+  // gains of its own year and of every year since.
+  const carried: CarriedLoss[] = [];
+  for (let from = year - LOSS_CARRY_YEARS; from < year; from++) {
+    const past = resultFor(disposals, txns, ostAccountIds, from);
+    let unused = subMoney(past.lossesEur, past.gainsEur);
+    if (unused.minor <= 0n) continue;
+    for (let after = from + 1; after < year && unused.minor > 0n; after++) {
+      const later = resultFor(disposals, txns, ostAccountIds, after);
+      const absorbed = later.gainsEur.minor < unused.minor ? later.gainsEur : unused;
+      unused = subMoney(unused, absorbed);
+    }
+    if (unused.minor > 0n) carried.push({ fromYear: from, amountEur: unused });
+  }
+
+  // This year's own losses first, then the carried ones oldest first: a loss
+  // that expires soonest is worth using first.
+  let remainingGains = subMoney(current.gainsEur, current.lossesEur);
+  const carriedOut: CarriedLoss[] = [];
+  let lossesUsed =
+    current.lossesEur.minor > current.gainsEur.minor ? current.gainsEur : current.lossesEur;
+
+  for (const loss of carried) {
+    if (remainingGains.minor <= 0n) {
+      carriedOut.push(loss);
+      continue;
+    }
+    const used = loss.amountEur.minor < remainingGains.minor ? loss.amountEur : remainingGains;
+    remainingGains = subMoney(remainingGains, used);
+    lossesUsed = addMoney(lossesUsed, used);
+    const left = subMoney(loss.amountEur, used);
+    if (left.minor > 0n) carriedOut.push({ fromYear: loss.fromYear, amountEur: left });
+  }
+
+  const ownLossLeft = subMoney(current.lossesEur, current.gainsEur);
+  if (ownLossLeft.minor > 0n) carriedOut.push({ fromYear: year, amountEur: ownLossLeft });
+
+  const ostAccounts = [...ostAccountIds].map((accountId) => ({
+    accountId,
+    report: ostReport({
+      txns: txns.filter((t) => t.accountId === accountId),
+      valueAt: (on) => args.ostValueAt(accountId, on),
+      from: `${year}-01-01`,
+      to: `${year}-12-31`,
+    }),
+  }));
+
+  const dividends = taxableDividends({
+    txns,
+    ostAccountIds,
+    from: `${year}-01-01`,
+    to: `${year}-12-31`,
+  });
+
+  return {
+    year,
+    disposals: current.rows,
+    totalSalePriceEur: current.totalSalePriceEur,
+    exempt: current.exempt,
+    gainsEur: current.gainsEur,
+    lossesEur: current.lossesEur,
+    netEur: remainingGains.minor > 0n ? remainingGains : zeroMoney(EUR),
+    lossesUsedEur: lossesUsed,
+    lossCarriedIn: carried,
+    lossCarriedOut: carriedOut,
+    dividends,
+    dividendTaxableEur: totalDividendTaxable(dividends),
+    ost: ostAccounts,
+  };
+};
