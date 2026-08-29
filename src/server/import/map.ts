@@ -16,6 +16,8 @@ export type DraftTxn = {
   readonly currency: Currency;
   readonly fxRateEur: number;
   readonly externalId: string | null;
+  /** The broker's own text for the row, when the export carries one. */
+  readonly note: string | null;
 };
 
 /**
@@ -322,6 +324,7 @@ export const mapRows = (
         currency,
         fxRateEur: currency === EUR ? 100_000_000 : 0, // marker; Task 12 resolves from fx_rates at commit
         externalId: cell(row, "externalId").trim() || null,
+        note: cell(row, "note").trim() || null,
       });
     } catch (cause) {
       problems.push({

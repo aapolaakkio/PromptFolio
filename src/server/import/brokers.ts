@@ -53,6 +53,7 @@ export const NORDNET: BrokerCsvConfig = {
     costBasis: "Hankinta-arvo",
     fee: "Kokonaiskulut",
     amount: "Summa",
+    note: "Tapahtumateksti",
   },
   columnPositions: {
     currency: 13,

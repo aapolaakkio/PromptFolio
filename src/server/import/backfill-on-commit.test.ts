@@ -65,6 +65,7 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   currency: EUR,
   fxRateEur: 100_000_000,
   externalId: null,
+  note: null,
   ...over,
 });
 

@@ -9,6 +9,7 @@ import { ImportHistory } from "./ImportHistory";
 import {
   AccountsSchema,
   CommitResultSchema,
+  type CommitResult,
   DraftResponseSchema,
   minorToEur,
   summarise,
@@ -24,6 +25,18 @@ import { UnknownInstrumentForm } from "./UnknownInstrumentForm";
 
 /** Which upload path produced the current `draft`, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
+
+/**
+ * What an import did, in one line.
+ *
+ * Enriched rows are named separately from skipped ones: a re-import that filled
+ * in a field the ledger was missing did something, and reporting it as "ohitettu
+ * kaksoiskappaleena" would tell the owner nothing happened when something did.
+ */
+const importSummary = (data: CommitResult): string => {
+  const base = `${data.inserted} tapahtumaa tuotu, ${data.skipped} ohitettu kaksoiskappaleena`;
+  return data.enriched > 0 ? `${base}, ${data.enriched} täydennetty.` : `${base}.`;
+};
 
 export const ImportsPage = () => {
   const queryClient = useQueryClient();
@@ -128,7 +141,7 @@ export const ImportsPage = () => {
   const commitFile = useMutation({
     mutationFn: () => apiUpload("/api/imports/commit", fileForm(), CommitResultSchema),
     onSuccess: (data) => {
-      setResult(`${data.inserted} tapahtumaa tuotu, ${data.skipped} ohitettu kaksoiskappaleena.`);
+      setResult(importSummary(data));
       setDraft(null);
       void queryClient.invalidateQueries();
     },
@@ -161,7 +174,7 @@ export const ImportsPage = () => {
   const commitPaste = useMutation({
     mutationFn: () => apiPost("/api/imports/op-paste/commit", pasteBody(), CommitResultSchema),
     onSuccess: (data) => {
-      setResult(`${data.inserted} tapahtumaa tuotu, ${data.skipped} ohitettu kaksoiskappaleena.`);
+      setResult(importSummary(data));
       setDraft(null);
       void queryClient.invalidateQueries();
     },

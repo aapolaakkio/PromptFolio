@@ -13,6 +13,13 @@ export type CommitResult = {
   readonly importId: number;
   readonly inserted: number;
   readonly skipped: number;
+  /**
+   * Rows already stored that this import filled a blank field on -- today the
+   * broker's own row text. Counted apart from `skipped` because a re-import
+   * that corrected something is not the same event as one that did nothing,
+   * and the import history should not describe it as nothing.
+   */
+  readonly enriched: number;
 };
 export type UndoResult = { readonly deleted: number };
 
@@ -74,10 +81,15 @@ const resolveFxRate = (tx: TxDb, row: DraftTxn): number => {
   return rate;
 };
 
-/** True when a row with this external id or content hash already exists for the account. */
-const isDuplicate = (tx: TxDb, accountId: number, row: DraftTxn, hash: string): boolean => {
-  const duplicate = tx
-    .select({ id: transactions.id })
+/** The already-stored row this draft row duplicates, if there is one. */
+const existingRow = (
+  tx: TxDb,
+  accountId: number,
+  row: DraftTxn,
+  hash: string,
+): { id: number; note: string | null } | undefined =>
+  tx
+    .select({ id: transactions.id, note: transactions.note })
     .from(transactions)
     .where(
       row.externalId
@@ -85,7 +97,29 @@ const isDuplicate = (tx: TxDb, accountId: number, row: DraftTxn, hash: string): 
         : and(eq(transactions.accountId, accountId), eq(transactions.contentHash, hash)),
     )
     .get();
-  return duplicate !== undefined;
+
+/**
+ * Fills in a row's text when the ledger has none and this import does.
+ *
+ * The broker's text was not stored until it was needed to tell one kind of cash
+ * movement from another, so every row imported before then has none -- and
+ * because the text is not part of the content hash (rightly: the same
+ * transaction is the same transaction whatever the export says about it), a
+ * re-import skips those rows rather than correcting them. Without this, getting
+ * the text would mean deleting and re-importing a whole history.
+ *
+ * Only a blank is filled. An existing text is never overwritten: two exports of
+ * the same period can word a row differently, and the first one imported is no
+ * less authoritative than the second.
+ */
+const enrichNote = (
+  tx: TxDb,
+  existing: { id: number; note: string | null },
+  row: DraftTxn,
+): boolean => {
+  if (existing.note !== null || row.note === null) return false;
+  tx.update(transactions).set({ note: row.note }).where(eq(transactions.id, existing.id)).run();
+  return true;
 };
 
 /**
@@ -121,12 +155,13 @@ const insertRow = (
   accountId: number,
   importId: number,
   row: DraftTxn,
-): "inserted" | "skipped" => {
+): "inserted" | "skipped" | "enriched" => {
   if (!isTxnType(row.type)) {
     throw new HttpError(400, `Tuntematon tapahtumatyyppi: ${row.type} (rivi ${row.line})`);
   }
   const hash = storedContentHash(row, accountId);
-  if (isDuplicate(tx, accountId, row, hash)) return "skipped";
+  const existing = existingRow(tx, accountId, row, hash);
+  if (existing !== undefined) return enrichNote(tx, existing, row) ? "enriched" : "skipped";
 
   tx.insert(transactions)
     .values({
@@ -142,6 +177,7 @@ const insertRow = (
       currency: row.currency,
       fxRateEur: resolveFxRate(tx, row),
       externalId: row.externalId,
+      note: row.note,
       contentHash: hash,
       importId,
     })
@@ -217,6 +253,7 @@ export const commitDraft = async (
 
   let inserted = 0;
   let skipped = 0;
+  let enriched = 0;
   let importId = 0;
 
   db.transaction((tx) => {
@@ -235,7 +272,9 @@ export const commitDraft = async (
     importId = created.id;
 
     for (const row of draft.txns) {
-      if (insertRow(tx, args.accountId, importId, row) === "inserted") inserted++;
+      const outcome = insertRow(tx, args.accountId, importId, row);
+      if (outcome === "inserted") inserted++;
+      else if (outcome === "enriched") enriched++;
       else skipped++;
     }
 
@@ -252,7 +291,7 @@ export const commitDraft = async (
       .run();
   });
 
-  return { importId, inserted, skipped };
+  return { importId, inserted, skipped, enriched };
 };
 
 /**

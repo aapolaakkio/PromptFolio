@@ -68,6 +68,8 @@ const nordnetRow = (o: {
   fee?: string;
   currency?: string;
   amount: string;
+  /** `Tapahtumateksti`, the broker's own words for the row. */
+  text?: string;
 }): string => {
   const c = Array.from({ length: 30 }, () => "");
   c[0] = o.id;
@@ -85,6 +87,7 @@ const nordnetRow = (o: {
   c[12] = o.currency ?? "";
   c[13] = o.amount;
   c[14] = "EUR";
+  c[22] = o.text ?? "";
   return c.join("\t");
 };
 
@@ -440,10 +443,16 @@ test("content hash is stable for identical rows and differs otherwise", () => {
     currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
+    note: null,
     line: 2,
   };
   expect(contentHash(base)).toBe(contentHash({ ...base, line: 99 }));
   expect(contentHash(base)).not.toBe(contentHash({ ...base, amount: -41801 }));
+  // The broker's own text is not part of a row's identity: the same
+  // transaction is the same transaction however the export words it. This is
+  // what lets a re-import fill in a text the ledger is missing instead of
+  // inserting the row a second time.
+  expect(contentHash(base)).toBe(contentHash({ ...base, note: "Internal to 123" }));
 });
 
 // --- Fix round 1: mapRows options object, contentHash's wider parameter --
@@ -465,6 +474,7 @@ test("content hash accepts a row with no line field at all", () => {
     currency: EUR,
     fxRateEur: 100_000_000,
     externalId: null,
+    note: null,
     line: 2,
   };
   expect(contentHash(withoutLine)).toBe(contentHash({ ...withoutLine, line: 2 }));
@@ -865,4 +875,43 @@ test("maps OP's corporate actions so a reverse split lands on the right share co
   expect(draft.txns[3]!.quantity).toBe(18_000_000);
   // Rights in, rights out, and the split's pre-split count are all reported.
   expect(draft.problems).toHaveLength(2);
+});
+
+// The transaction type alone cannot say what a cash movement was: a transfer to
+// another of the owner's own accounts, the cash leg of a subscription that
+// returns days later, and money genuinely leaving all arrive as the same label
+// and amount. Nordnet says which in `Tapahtumateksti`, and the importer used to
+// drop it -- which left the equity savings account's tax figures resting on
+// structural guesswork.
+test("keeps the broker's own text for a row", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({
+      id: "1",
+      date: "2025-03-13",
+      type: "NOSTO OST.",
+      amount: "-120",
+      text: "Internal to 12345678",
+    }),
+  ].join("\r\n");
+
+  const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+
+  expect(draft.problems).toEqual([]);
+  expect(draft.txns[0]!.note).toBe("Internal to 12345678");
+});
+
+test("leaves the text null when the export carries none", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({ id: "1", date: "2025-03-13", type: "TALLETUS", amount: "500" }),
+  ].join("\r\n");
+
+  const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+
+  // Null, not an empty string: "nobody wrote one" and "they wrote nothing" are
+  // the same fact here, and null is how the rest of the ledger says it.
+  expect(draft.txns[0]!.note).toBeNull();
 });

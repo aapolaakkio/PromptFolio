@@ -44,6 +44,19 @@ export type CanonicalField =
    */
   | "costBasis"
   /**
+   * The broker's own text for the row (Nordnet's `Tapahtumateksti`).
+   *
+   * Kept because the transaction type alone cannot say what a cash movement
+   * was: a withdrawal to another of the owner's own accounts, the cash leg of
+   * a share subscription that returns days later, and money genuinely leaving
+   * all arrive as the same label and amount. The text distinguishes them --
+   * "Internal to <account>" on the first two -- and without it the equity
+   * savings account's tax figures rest on structural guesswork. Never parsed
+   * for meaning by `core`; it is evidence for a reader and for the rules that
+   * classify cash movements.
+   */
+  | "note"
+  /**
    * The broker's own account number for the row (Nordnet's `Salkku`). Never
    * imported into a transaction -- the owner chooses the account -- but read to
    * refuse a file covering more than one of them. See import/portfolios.ts.

@@ -58,6 +58,7 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   currency: EUR,
   fxRateEur: 100_000_000,
   externalId: null,
+  note: null,
   ...over,
 });
 
@@ -473,4 +474,42 @@ test("undo refuses an already-undone import", async () => {
 test("undo of an unknown import id throws", () => {
   const { db } = seed();
   expect(() => undoImport(db, { userId: "u1", importId: 999_999 })).toThrow();
+});
+
+// The broker's row text was not stored until it was needed to tell one kind of
+// cash movement from another, so rows imported before then have none. The text
+// is deliberately not part of a row's content hash, so a re-import skips those
+// rows rather than correcting them -- and without enrichment, getting the text
+// would mean deleting and re-importing a whole history.
+test("a re-import fills in a row text the ledger is missing, without duplicating the row", async () => {
+  const { db, accountId } = seed();
+  await commitDraft(db, args(accountId, draftOf([draftTxn({ accountId, note: null })])));
+
+  const second = await commitDraft(
+    db,
+    args(accountId, draftOf([draftTxn({ accountId, note: "Internal to 12345678" })])),
+  );
+
+  expect(second.inserted).toBe(0);
+  expect(second.enriched).toBe(1);
+  expect(second.skipped).toBe(0);
+  const rows = db.select().from(transactions).all();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.note).toBe("Internal to 12345678");
+});
+
+test("a re-import never overwrites a row text the ledger already has", async () => {
+  const { db, accountId } = seed();
+  await commitDraft(db, args(accountId, draftOf([draftTxn({ accountId, note: "Ensimmäinen" })])));
+
+  const second = await commitDraft(
+    db,
+    args(accountId, draftOf([draftTxn({ accountId, note: "Toinen" })])),
+  );
+
+  // Two exports of the same period can word a row differently, and the one
+  // imported first is no less authoritative than the one imported second.
+  expect(second.enriched).toBe(0);
+  expect(second.skipped).toBe(1);
+  expect(db.select().from(transactions).all()[0]!.note).toBe("Ensimmäinen");
 });

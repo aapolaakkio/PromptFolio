@@ -77,12 +77,19 @@ export const DraftResponseSchema: z.ZodType<DraftResponse> = z.object({
   ),
 });
 
-export type CommitResult = { importId: number; inserted: number; skipped: number };
+export type CommitResult = {
+  importId: number;
+  inserted: number;
+  skipped: number;
+  /** Rows already stored that this import filled a blank field on. */
+  enriched: number;
+};
 
 export const CommitResultSchema: z.ZodType<CommitResult> = z.object({
   importId: z.number(),
   inserted: z.number(),
   skipped: z.number(),
+  enriched: z.number(),
 });
 
 export type Account = {
