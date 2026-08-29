@@ -866,6 +866,96 @@ The importer reads Nordnet's `Salkku` column and refuses a file naming more than
 listing them. The owner exports per account instead. This replaces the old behaviour of ignoring
 the column, which filed every row under whichever account was selected -- the merge C7 measured.
 
+## 10f. Amendment -- 2026-08-29, bank accounts, cash and spending
+
+The spec described a portfolio manager. The owner asked for the rest of the household's money as
+well, and this records what that turned into, since §4's data model and §7's definitions both
+changed.
+
+### F1. Two kinds of account, not one
+
+`accounts.kind` is `brokerage` or `bank`, and each kind carries its own types: a brokerage account
+is an arvo-osuustili or osakesäästötili, a bank account is current, savings or fixed-term. The two
+sets never mix, and a mismatch is refused rather than corrected -- "a savings account that is an
+osakesäästötili" is not a typo with an obvious fix.
+
+The distinction is the owner's to make, never the importer's: a bank statement looks identical
+whether the account behind it is a current account or a savings account.
+
+### F2. Bank movements never reach the return figures
+
+`DEPOSIT` and `WITHDRAWAL` feed XIRR as external cash flows, so a grocery payment among them reads
+as capital pulled out of the portfolio. `loadPortfolio` returns `investedTxns` beside `txns`, and
+every return path -- value series, both cash-flow definitions, the opening valuation, and the
+chat's own tools -- reads the invested subset. Money genuinely moving from a bank account to a
+broker still counts, because the broker's own export records that arrival.
+
+### F3. Statement import, and why the PDF path returned
+
+§10c/C9 dropped the PDF path. It is back, and for a reason that did not exist then: a statement
+prints its own opening and closing balance, so the import can check its own work. Parsed rows plus
+the opening balance must equal the printed closing balance, or the file is refused and the
+difference named. A mis-parsed layout cannot pass silently, which is what makes reading a layout
+acceptable at all. The CSV path has no such guard, which is why it needs the balance typed in by
+hand.
+
+Two banks, two parsers, no shared configuration: OP writes Finnish with a unicode minus and a space
+for thousands; SweepBank writes English, where a comma groups thousands and a dot separates cents.
+Rows are identified by the bank's archive id, which is stable across OP's own two formats, so the
+same period may be imported twice -- the PDF fills in payees the CSV leaves blank.
+
+### F4. Cash: counted, but not everywhere
+
+Cash counts toward portfolio value and allocation, and never toward TWR or XIRR. Balances are
+derived per account and currency from the ledger rather than stored, since every row already moves
+cash by its own amount. Three rules the implementation makes explicit:
+
+- An account that records no cash at all is skipped entirely -- OP's securities export lists
+  securities only, so summing it yields the negative of everything ever bought.
+- A balance with no fx rate for the day is `null`, not zero.
+- A fixed-term deposit is reported as locked until its maturity date, and gets its own allocation
+  slice: it behaves like a short bond, not like money in a current account. A deposit whose terms
+  nobody recorded stays locked.
+
+### F5. Internal transfers are matched structurally
+
+Money the owner moves between their own accounts is neither income nor spending, and text cannot
+identify it: a transfer to a savings account carries the owner's own name, and an assistant-written
+rule on that name once turned moved savings into income. An outgoing row is matched against an
+incoming one on another owned account, same amount, within five days, each row used once. A
+transfer whose other half is not in the ledger stays income or spending, because that is what it is
+from the ledger's point of view.
+
+A payment that funded a securities purchase is matched separately, against the purchase itself, on
+brokers that record no cash -- a regular fund saving leaves the bank as a payment and arrives as a
+BUY, so both halves are negative and the opposite-sign matching cannot see them.
+
+### F6. Spending categories live in the database
+
+Rules are `(pattern, category, source)` rows per user, seeded from a built-in Finnish merchant list
+on first use and owned by the user afterwards. The longest matching pattern wins, so the answer does
+not depend on insertion order. `source` records who decided -- `seed`, `ai` or `user` -- because a
+rule the model guessed is a weaker claim than one a person made.
+
+Each bank import puts the payees no rule recognises to the model once, in one batch. Every proposal
+is validated before storage: the category must exist, the pattern must occur in a payee that import
+actually contained, and a rule already stored is never replaced. Failure never fails the import.
+
+### F7. §8's ban on arithmetic is relaxed, with a calculator
+
+§8 required that every figure come from a tool and that the model perform no arithmetic in prose.
+The owner asked for derived figures. The rule now is that base figures still come from tools, and
+anything derived goes through a `calculate` tool doing exact integer-hundredth arithmetic -- so the
+model chooses what to compute without doing the computing. Derived figures must be named as such.
+
+### F8. Still open
+
+- **Debt as an account.** A loan repayment is one spending category today. Principal reduces a debt
+  and only interest is a cost, but a statement line does not separate them. Modelling a loan as an
+  account with a negative balance would let net worth include what is owed; not built.
+- **Income beyond the bank.** Only bank rows are read as income; a salary paid to an account this
+  app does not know is invisible to the flow diagram.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

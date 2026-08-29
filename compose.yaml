@@ -13,6 +13,13 @@ services:
       # Compose refuse just as loudly if .env is missing entirely.
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set this in .env -- see .env.example}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      # Optional, and empty by default: the assistant and the import-time
+      # classification of new payees both call Anthropic's API. Without this
+      # the container still runs -- chat answers 503 and classification is
+      # skipped -- which is why it has a default where the auth secret does
+      # not. Passed through explicitly all the same: a key sitting in .env
+      # that Compose never forwards looks exactly like a broken feature.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Bun.cron is given tz: 'Europe/Helsinki' explicitly for the price
       # refresh schedule regardless of this setting, but log timestamps
       # and any other new Date() formatting follow the container clock --
