@@ -137,7 +137,9 @@ export const accountsMissingCashRecord = (txns: readonly Txn[]): number[] => {
   const withCash = new Set<number>();
   const withPurchases = new Set<number>();
   for (const t of txns) {
-    if (t.type === "DEPOSIT" || t.type === "WITHDRAWAL") withCash.add(t.accountId);
+    if (t.type === "DEPOSIT" || t.type === "WITHDRAWAL" || t.type === "OPENING_BALANCE") {
+      withCash.add(t.accountId);
+    }
     if (t.type === "BUY" || t.type === "SELL") withPurchases.add(t.accountId);
   }
   return [...withPurchases].filter((id) => !withCash.has(id)).sort((a, b) => a - b);

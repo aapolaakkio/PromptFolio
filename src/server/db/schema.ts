@@ -190,6 +190,7 @@ export const transactions = sqliteTable(
         "SPLIT",
         "TRANSFER_IN",
         "TRANSFER_OUT",
+        "OPENING_BALANCE",
       ],
     }).notNull(),
     tradeDate: text("trade_date").notNull(),

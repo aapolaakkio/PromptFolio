@@ -24,6 +24,11 @@ const key = (accountId: number, currency: Currency): string => `${accountId} ${c
 /**
  * The types whose `amount` is money that actually entered or left the account.
  *
+ * OPENING_BALANCE is included: it is the money the account already held when its
+ * recorded history begins, which is exactly what a balance is made of. It stays
+ * out of the cash-flow definitions in ledger.ts instead, since it is not a
+ * contribution anyone made during the period being measured.
+ *
  * TRANSFER_IN and TRANSFER_OUT are excluded because their `amount` is not cash:
  * on a share swap or a tender offer the incoming leg carries the acquisition
  * value the broker states, so the original cost rides across to the new
@@ -32,6 +37,7 @@ const key = (accountId: number, currency: Currency): string => `${accountId} ${c
  * never left the account. SPLIT moves units only and carries no amount at all.
  */
 const CASH_MOVING: ReadonlySet<TransactionType> = new Set([
+  "OPENING_BALANCE",
   "BUY",
   "SELL",
   "DEPOSIT",

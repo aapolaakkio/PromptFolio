@@ -24,13 +24,16 @@ const IsoDateSchema = z
  * position in the ledger that no broker record backs. Trades arrive through the
  * import pipeline, which is the app's one source for them.
  *
- * These three are what a savings account produces -- money in, money out, and
- * interest paid -- for accounts no broker exports at all.
+ * These are what an account produces when no export covers it: money in, money
+ * out, interest paid, and the balance it already held when its recorded history
+ * begins. A bank statement reaches back a year or two, not to the account's
+ * opening, so without that last one every balance derived from it is short by
+ * whatever came before -- silently.
  */
 const CashEntry = z
   .object({
     accountId: z.number().int().positive(),
-    type: z.enum(["DEPOSIT", "WITHDRAWAL", "INTEREST"]),
+    type: z.enum(["OPENING_BALANCE", "DEPOSIT", "WITHDRAWAL", "INTEREST"]),
     tradeDate: IsoDateSchema,
     /** A decimal string, never a JSON number -- the wire rule money follows everywhere. */
     amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Summa muodossa 1234.56"),
@@ -47,7 +50,7 @@ const CashEntry = z
  * would make "-100" mean two different things depending on which type it was
  * paired with, and the ledger would carry whichever the form happened to send.
  */
-const signedMinor = (type: "DEPOSIT" | "WITHDRAWAL" | "INTEREST", amount: bigint): bigint =>
+const signedMinor = (type: z.infer<typeof CashEntry>["type"], amount: bigint): bigint =>
   type === "WITHDRAWAL" ? -amount : amount;
 
 export const cashEntryRoutes = {
@@ -99,6 +102,30 @@ export const cashEntryRoutes = {
       assertAccountOwned(userId, body.accountId);
 
       const minor = signedMinor(body.type, parseMoney(body.amount, body.currency).minor);
+
+      // One opening balance per account and currency. A second would not read
+      // as a correction, it would silently double the money the account started
+      // with -- and nothing downstream could tell that had happened. Correcting
+      // one means deleting it and entering the right figure.
+      if (body.type === "OPENING_BALANCE") {
+        const existing = db
+          .select({ id: transactions.id })
+          .from(transactions)
+          .where(
+            and(
+              eq(transactions.accountId, body.accountId),
+              eq(transactions.type, "OPENING_BALANCE"),
+              eq(transactions.currency, body.currency),
+            ),
+          )
+          .get();
+        if (existing) {
+          throw new HttpError(
+            409,
+            `Tilillä on jo alkusaldo valuutassa ${body.currency}. Poista se ensin.`,
+          );
+        }
+      }
 
       // A non-EUR entry needs a rate for its own date, exactly like an imported
       // row: without one the amount cannot be valued, and storing a marker rate

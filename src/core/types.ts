@@ -12,7 +12,18 @@ export type TransactionType =
   | "WITHDRAWAL"
   | "SPLIT"
   | "TRANSFER_IN"
-  | "TRANSFER_OUT";
+  | "TRANSFER_OUT"
+  /**
+   * The balance an account already held when its recorded history begins.
+   *
+   * A bank statement reaches back a year or two, not to the account's opening,
+   * so without this the derived balance is only "everything since the export
+   * starts" -- wrong, and wrong quietly. Deliberately its own type rather than
+   * a DEPOSIT: a deposit is money arriving from outside, which is what the
+   * money-weighted return measures contributions by, and an opening balance is
+   * not a contribution. Kept out of every cash-flow definition for that reason.
+   */
+  | "OPENING_BALANCE";
 
 export type InstrumentKind = "stock" | "etf" | "fund" | "cash";
 
