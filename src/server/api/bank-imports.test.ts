@@ -363,3 +363,31 @@ describe("a PDF statement", () => {
     expect(check.differenceEur).toBe(41_000n);
   });
 });
+
+describe("a PDF this app cannot read", () => {
+  test("is refused with the reason, not as a generic server error", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+    // A valid PDF that is not a statement: the parser's complaint has to reach
+    // the owner, since "Palvelinvirhe" tells them nothing about what to do.
+    const notAStatement = await Bun.file(
+      `${import.meta.dir}/../import/fixtures/scanned-no-text.pdf`,
+    ).arrayBuffer();
+
+    const response = await upload("/api/imports/bank/preview", cookie, accountId, notAStatement);
+
+    expect(response.status).toBe(400);
+    expect(ErrorSchema.parse(await response.json()).error).toContain("ei sisällä tekstiä");
+  });
+
+  test("a PDF with text but no balances says which is missing", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+    const { parseOpStatementText } = await import("../import/bank-pdf");
+
+    // The same path the route takes, on text that has rows but no balance line.
+    expect(() =>
+      parseOpStatementText("29.8.2025 −13,61 PKORTTIMAKSU 1 202508 J\nKAUPPA\n"),
+    ).toThrow(/alku- ja loppusaldoa/);
+  });
+});

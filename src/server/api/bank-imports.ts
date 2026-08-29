@@ -47,6 +47,13 @@ const readUpload = async (request: Request): Promise<{ file: File; accountId: nu
   return { file, accountId };
 };
 
+/**
+ * A parser's own complaint, as a 400 the caller can read. Anything that is not
+ * an `Error` keeps the generic message rather than stringifying whatever it was.
+ */
+const asBadRequest = (cause: unknown): HttpError =>
+  new HttpError(400, cause instanceof Error ? cause.message : "Tiliotetta ei voitu lukea");
+
 /** A PDF announces itself in its first bytes; everything else is tried as CSV. */
 const isPdf = (bytes: ArrayBuffer): boolean =>
   new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
@@ -74,12 +81,24 @@ const readStatement = async (
     return { bank: config.bank, rows, problems, statement: null };
   }
 
-  const text = await extractStatementText(bytes);
+  const text = await extractStatementText(bytes).catch((cause: unknown) => {
+    throw asBadRequest(cause);
+  });
   // Which bank's PDF this is, decided from the document's own words rather than
   // from the file name: a statement saved as "tiliote.pdf" is still whatever the
   // bank wrote inside it.
   const sweep = isSweepStatement(text);
-  const statement = sweep ? parseSweepStatementText(text) : parseOpStatementText(text);
+  let statement: PdfStatement;
+  try {
+    statement = sweep ? parseSweepStatementText(text) : parseOpStatementText(text);
+  } catch (cause) {
+    // A PDF this parser cannot read is the caller's problem to act on -- a
+    // statement from another bank, a different report saved as a statement --
+    // so it must arrive as the message that says so. Left as a thrown Error it
+    // became a generic 500 "Palvelinvirhe", which tells the owner nothing about
+    // what to do next.
+    throw asBadRequest(cause);
+  }
   const check = verifyStatement(statement);
   if (!check.ok) {
     const difference = formatMoney({ minor: check.differenceEur, currency: EUR });
