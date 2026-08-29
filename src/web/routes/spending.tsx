@@ -3,7 +3,9 @@ import { useState } from "react";
 
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { eur } from "../lib/format";
-import { RulesSchema, SpendingSchema } from "./cash-view";
+import { CashFlowChart } from "../charts/CashFlowChart";
+import { MonthlyFlowChart } from "../charts/MonthlyFlowChart";
+import { CashFlowSchema, MonthlySchema, RulesSchema, SpendingSchema } from "./cash-view";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const yearAgo = (): string => {
@@ -32,6 +34,16 @@ export const SpendingPage = () => {
   const spending = useQuery({
     queryKey: ["spending", from, to, groupBy],
     queryFn: () => apiGet(`/api/spending?from=${from}&to=${to}&by=${groupBy}`, SpendingSchema),
+  });
+
+  const cashflow = useQuery({
+    queryKey: ["cashflow", from, to],
+    queryFn: () => apiGet(`/api/cashflow?from=${from}&to=${to}`, CashFlowSchema),
+  });
+
+  const monthly = useQuery({
+    queryKey: ["monthly", from, to],
+    queryFn: () => apiGet(`/api/spending/monthly?from=${from}&to=${to}`, MonthlySchema),
   });
 
   const rules = useQuery({
@@ -92,6 +104,24 @@ export const SpendingPage = () => {
           </label>
         </div>
 
+        <h2 className="text-sm text-muted">Rahavirrat</h2>
+        {cashflow.data?.empty === false ? (
+          <CashFlowChart nodes={cashflow.data.nodes} links={cashflow.data.links} />
+        ) : (
+          <p className="text-muted">Ei rahavirtoja tällä jaksolla.</p>
+        )}
+        <p className="max-w-prose text-muted text-sm">
+          Omien tilien väliset siirrot on jätetty pois molemmilta puolilta: raha, jonka siirrät
+          käyttötililtä säästöön, ei ole tuloa eikä menoa. Sijoituksiin-haara on arvopaperitilien
+          talletukset. Viimeinen haara on jäännös, eli se osa jota muut eivät selitä.
+        </p>
+
+        <h2 className="mt-2 text-sm text-muted">Kuukausittain</h2>
+        <MonthlyFlowChart months={monthly.data?.months ?? []} />
+
+        <h2 className="mt-2 text-sm text-muted">
+          {groupBy === "category" ? "Luokittain" : "Saajittain"}
+        </h2>
         <div className="max-h-[32rem] overflow-auto rounded border border-line">
           <table>
             <thead className="sticky top-0 bg-surface">

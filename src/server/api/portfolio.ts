@@ -23,6 +23,8 @@ import {
   valueCash,
 } from "../../core/cash";
 import { CATEGORY_LABELS } from "../spending/categories";
+import { cashFlowFor } from "../spending/cashflow";
+import { monthlyFlows } from "../spending/monthly";
 import { addRules, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
@@ -64,6 +66,54 @@ export const portfolioRoutes = {
       const { userId } = await requireUser(request);
       const on = IsoDateSchema.parse(new URL(request.url).searchParams.get("on") ?? today());
       return json(holdingsFor(db, userId, on));
+    }),
+  },
+
+  "/api/cashflow": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const url = new URL(request.url);
+      const from = IsoDateSchema.parse(url.searchParams.get("from") ?? "1900-01-01");
+      const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
+
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      // Every account that is not a bank one holds investments, and its own
+      // deposits are the reliable record of money moved into it.
+      const invested = new Set(
+        txns.map((txn) => txn.accountId).filter((accountId) => !bank.has(accountId)),
+      );
+
+      return json(
+        cashFlowFor({
+          txns,
+          rules: rulesFor(db, userId),
+          bankAccountIds: bank,
+          investedAccountIds: invested,
+          from,
+          to,
+        }),
+      );
+    }),
+  },
+
+  "/api/spending/monthly": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const url = new URL(request.url);
+      const from = IsoDateSchema.parse(url.searchParams.get("from") ?? "1900-01-01");
+      const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
+
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      return json({
+        months: monthlyFlows({
+          txns,
+          rules: rulesFor(db, userId),
+          bankAccountIds: new Set(bankAccountIds),
+          from,
+          to,
+        }),
+      });
     }),
   },
 

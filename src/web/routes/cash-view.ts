@@ -63,6 +63,27 @@ export const RulesSchema = z.object({
   categories: z.array(z.object({ id: z.string(), label: z.string() })),
 });
 
+/** GET /api/cashflow: a Sankey's nodes and links, already summed. */
+export const CashFlowSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  nodes: z.array(z.object({ id: z.string(), label: z.string(), totalEur: z.string() })),
+  links: z.array(z.object({ from: z.string(), to: z.string(), amountEur: z.string() })),
+  empty: z.boolean(),
+});
+
+/** GET /api/spending/monthly. */
+export const MonthlySchema = z.object({
+  months: z.array(
+    z.object({
+      month: z.string(),
+      incomeEur: z.string(),
+      expensesEur: z.string(),
+      netEur: z.string(),
+    }),
+  ),
+});
+
 export const BankPreviewSchema = z.object({
   bank: z.string(),
   rows: z.number(),
