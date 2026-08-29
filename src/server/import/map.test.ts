@@ -70,6 +70,10 @@ const nordnetRow = (o: {
   amount: string;
   /** `Tapahtumateksti`, the broker's own words for the row. */
   text?: string;
+  /** The `Valuutta` after `Summa` -- what the cash settled in. */
+  settled?: string;
+  /** The `Valuutta` after `Tulos` -- what the trade was priced in. */
+  priceCurrency?: string;
 }): string => {
   const c = Array.from({ length: 30 }, () => "");
   c[0] = o.id;
@@ -86,7 +90,8 @@ const nordnetRow = (o: {
   c[11] = o.fee ?? "";
   c[12] = o.currency ?? "";
   c[13] = o.amount;
-  c[14] = "EUR";
+  c[14] = o.settled ?? "EUR";
+  c[18] = o.priceCurrency ?? "";
   c[22] = o.text ?? "";
   return c.join("\t");
 };
@@ -101,7 +106,10 @@ const REAL_INDEX = {
   Määrä: 8,
   Kurssi: 9,
   Kokonaiskulut: 11,
-  Valuutta: 12,
+  // The `Valuutta` that follows `Summa`: the currency the cash settled in, and
+  // the one the config reads as the transaction's own. The blank one at index
+  // 12 qualifies `Kokonaiskulut`.
+  Valuutta: 14,
   Summa: 13,
 } satisfies Record<string, number>;
 
@@ -914,4 +922,63 @@ test("leaves the text null when the export carries none", () => {
   // Null, not an empty string: "nobody wrote one" and "they wrote nothing" are
   // the same fact here, and null is how the rest of the ledger says it.
   expect(draft.txns[0]!.note).toBeNull();
+});
+
+// A US share bought through a Finnish broker is priced in USD and paid for in
+// EUR. Reading one currency for both made the price EUR, and instrument
+// resolution -- which picks a listing by the holding's own currency -- then put
+// a US share on a European listing, priced it from the wrong exchange, and
+// carried no history from before that listing existed.
+test("a trade priced abroad keeps the instrument's own currency, not the cash's", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({
+      id: "1",
+      date: "2025-03-14",
+      type: "OSTO",
+      name: "Example Corp",
+      isin: "US0000000000",
+      qty: "4",
+      price: "28,30",
+      amount: "-94,91",
+      settled: "EUR",
+      priceCurrency: "USD",
+    }),
+  ].join("\r\n");
+
+  const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+
+  expect(draft.problems).toEqual([]);
+  // The cash that moved is EUR -- that is what left the account.
+  expect(draft.txns[0]!.currency).toBe(EUR);
+  expect(draft.txns[0]!.amount).toBe(-9491);
+  // The price is 28,30 USD, and the unresolved instrument is offered for
+  // resolution as a USD one, so it gets a US listing rather than a European
+  // one that happens to quote the same ISIN.
+  expect(draft.txns[0]!.unitPrice).toBe(2830);
+  expect(draft.unknownIsins[0]!.currency).toBe(parseCurrency("USD"));
+});
+
+test("a domestic trade still resolves in the currency it settled in", () => {
+  const csv = [
+    NORDNET_HEADER,
+    nordnetRow({
+      id: "1",
+      date: "2025-03-14",
+      type: "OSTO",
+      name: "Kotimainen Oyj",
+      isin: "FI0000000000",
+      qty: "10",
+      price: "5,00",
+      amount: "-50,00",
+      settled: "EUR",
+    }),
+  ].join("\r\n");
+
+  const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
+  const draft = mapRows(rows, NORDNET, new Map());
+
+  // No separate price currency stated: the settlement currency stands.
+  expect(draft.unknownIsins[0]!.currency).toBe(EUR);
 });

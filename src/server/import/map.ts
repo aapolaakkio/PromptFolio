@@ -268,6 +268,20 @@ export const mapRows = (
       // or a rejection of a real, valid, non-EUR/USD code such as "SEK".
       const currencyText = cell(row, "currency").trim().toUpperCase() || "EUR";
       const currency = parseCurrency(currencyText);
+      /**
+       * The currency the *instrument* is quoted in, which is not always the one
+       * the cash settled in: a US share bought through a Finnish broker is
+       * priced in USD and paid for in EUR. It decides `unitPrice`'s
+       * denomination (see `Txn.unitPrice`) and which listing the holding
+       * resolves to, so reading the settlement currency for both put a US share
+       * on a European listing, priced from the wrong exchange.
+       *
+       * Falls back to the settlement currency when the export states no
+       * separate one, which is every row that is not a trade.
+       */
+      const priceCurrency = parseCurrency(
+        cell(row, "priceCurrency").trim().toUpperCase() || currencyText,
+      );
 
       const isinText = cell(row, "isin").trim();
       const isin = isinText === "" ? null : isinText;
@@ -284,13 +298,16 @@ export const mapRows = (
           ? (knownNamesUpper.get(nameText.toUpperCase()) ?? null)
           : null;
       if (isin && instrumentId === null) {
-        if (!unknown.has(isin)) unknown.set(isin, { isin, name: nameText, currency });
+        if (!unknown.has(isin))
+          unknown.set(isin, { isin, name: nameText, currency: priceCurrency });
       } else if (!isin && nameText !== "" && instrumentId === null) {
         // No ISIN to key on at all (OP's web-paste view). Resolution is
         // deferred to the review flow, by name, exactly like an unresolved
         // ISIN -- never silently attached to a guessed instrument, and
         // never given an invented ISIN.
-        if (!unknown.has(nameText)) unknown.set(nameText, { isin: null, name: nameText, currency });
+        if (!unknown.has(nameText)) {
+          unknown.set(nameText, { isin: null, name: nameText, currency: priceCurrency });
+        }
       }
 
       const quantityText = cell(row, "quantity").trim();
@@ -317,7 +334,7 @@ export const mapRows = (
         unitPrice:
           priceText === "" || priceText === "0"
             ? null
-            : Number(parseMoney(priceText, currency).minor),
+            : Number(parseMoney(priceText, priceCurrency).minor),
         amount: Number(acquisitionAmount(row, type, currency, label)),
         fee: feeText === "" ? 0 : Number(parseMoney(feeText, currency).minor),
         tax: 0,

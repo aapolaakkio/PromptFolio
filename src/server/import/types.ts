@@ -57,6 +57,18 @@ export type CanonicalField =
    */
   | "note"
   /**
+   * The currency the row's `unitPrice` is quoted in, when the broker states it
+   * separately from the currency the cash settled in.
+   *
+   * These differ whenever a holding trades abroad: a US share bought through a
+   * Finnish broker is priced in USD and paid for in EUR. Reading one currency
+   * for both made the price EUR, and instrument resolution -- which picks a
+   * listing by the holding's own currency -- then chose a European listing of a
+   * US share, priced it from the wrong exchange, and carried no history from
+   * before that listing existed.
+   */
+  | "priceCurrency"
+  /**
    * The broker's own account number for the row (Nordnet's `Salkku`). Never
    * imported into a transaction -- the owner chooses the account -- but read to
    * refuse a file covering more than one of them. See import/portfolios.ts.

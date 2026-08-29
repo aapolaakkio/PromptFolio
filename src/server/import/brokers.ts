@@ -8,11 +8,15 @@ import type { BrokerCsvConfig, OpPasteConfig } from "./types";
  * config; encoding and delimiter were not.
  *
  * The export has five columns named `Valuutta` (positions 13, 15, 17, 19,
- * 28). Position 13 is the transaction's own currency; position 28 is the
- * commission's currency. `columns.currency` is deliberately absent --
- * `columnPositions.currency: 13` addresses it positionally instead, so the
- * name-keyed (and therefore last-wins) `values` map is never consulted for
- * this field. See src/server/import/types.ts's `BrokerCsvConfig` comment.
+ * 28), each qualifying the value before it: 13 the total costs, 15 the
+ * `Summa`, 17 the acquisition value, 19 the result, 28 the commission.
+ * Position 15 is therefore the currency the cash settled in -- the only one
+ * populated on every row -- and position 19 is the currency the trade was
+ * priced in, which differs from it whenever the holding trades abroad.
+ * `columns.currency` is deliberately absent -- `columnPositions` addresses
+ * these positionally instead, so the name-keyed (and therefore last-wins)
+ * `values` map is never consulted for them. See src/server/import/types.ts's
+ * `BrokerCsvConfig` comment.
  *
  * `typeMap` covers exactly the transaction-type labels observed in real
  * exports; nothing here is a guess at a label Nordnet might also emit
@@ -56,7 +60,16 @@ export const NORDNET: BrokerCsvConfig = {
     note: "Tapahtumateksti",
   },
   columnPositions: {
-    currency: 13,
+    // The `Valuutta` that follows `Summa`: the currency the cash settled in,
+    // and the only one of the five populated on every row. Position 13 (the
+    // one after `Kokonaiskulut`) was read before, and is blank on every
+    // deposit, withdrawal and dividend -- those only landed in EUR because the
+    // mapper defaults a blank to EUR.
+    currency: 15,
+    // The `Valuutta` that follows `Tulos`: the currency the trade itself was
+    // priced in, which is the instrument's own. USD for a US share bought
+    // through a Finnish broker whose cash leg is EUR.
+    priceCurrency: 19,
   },
   ignoredTypes: {
     "desim. uloskirj. kät":
