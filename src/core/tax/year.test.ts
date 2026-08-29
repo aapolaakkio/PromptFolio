@@ -49,7 +49,12 @@ const sold = (on: IsoDate, o: { proceeds: string; cost: string }) => ({
 
 const base = {
   ostAccountIds: new Set<number>(),
-  ostValueAt: () => ({ ok: true as const, valueEur: parseMoney("0,00", EUR) }),
+  ostValueAt: () => ({
+    ok: true as const,
+    valueEur: parseMoney("0,00", EUR),
+    pricedFrom: null,
+    pricedFromInstrumentId: null,
+  }),
 };
 
 const yearOf = (year: number, entries: readonly { txn: Txn; disposal: Disposal }[]) =>

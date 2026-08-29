@@ -68,16 +68,22 @@ export type OstWithdrawalView = {
   readonly valueEur: string | null;
   readonly profitEur: string | null;
   readonly taxableEur: string | null;
+  /**
+   * The oldest price date the valuation leaned on, when a holding had none for
+   * the withdrawal's own day. Null when every price was current -- see
+   * `core/tax/ost.ts`'s `OstValuation.pricedFrom`.
+   */
+  readonly pricedFrom: IsoDate | null;
   /** Finnish, user-facing, naming the instrument and date. Null when computed. */
   readonly blockedBy: string | null;
   /**
-   * The instrument whose missing price blocks this row, when that is the
-   * reason. Carried so the screen can offer to record a price for it: the
-   * holding has usually been sold by now, so it appears on no other screen, and
-   * an instruction to record a price would otherwise name a form the user
-   * cannot reach.
+   * The instrument whose price this row depends on and does not have for its
+   * own day -- missing entirely, or carried forward from earlier. Carried so
+   * the screen can offer to record one: the holding has usually been sold by
+   * now, so it appears on no other screen, and an instruction to record a price
+   * would otherwise name a form the user cannot reach.
    */
-  readonly blockedInstrument: {
+  readonly priceInstrument: {
     readonly id: number;
     readonly name: string;
     readonly currency: string;
@@ -167,10 +173,24 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
         (t.tradeDate < on || (t.tradeDate === on && t.id < beforeTxnId)),
     );
     let value = zeroMoney(EUR);
+    // The oldest price the valuation leaned on, when any holding had none for
+    // the day itself. One recorded price makes every later date compute, so
+    // without this a figure can rest on a months-old quote and not say so.
+    let pricedFrom: IsoDate | null = null;
+    let pricedFromInstrumentId: number | null = null;
     for (const [instrumentId, quantity] of positionsAt(accountTxns, on)) {
       if (quantity.scaled === 0n) continue;
       const price = prices.priceOn(instrumentId, on);
       if (price === null) return { ok: false, instrumentId };
+      const priceDate = prices.priceDateOn(instrumentId, on);
+      if (
+        priceDate !== null &&
+        priceDate !== on &&
+        (pricedFrom === null || priceDate < pricedFrom)
+      ) {
+        pricedFrom = priceDate;
+        pricedFromInstrumentId = instrumentId;
+      }
       const instrument = instrumentById.get(instrumentId);
       const native = mulMoney(price, quantity);
       if (instrument === undefined || instrument.currency === EUR) {
@@ -190,7 +210,7 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
       }
       value = addMoney(value, balance.amount);
     }
-    return { ok: true, valueEur: value };
+    return { ok: true, valueEur: value, pricedFrom, pricedFromInstrumentId };
   };
 
   // Cost basis is built from every transaction the user owns, not only the
@@ -266,16 +286,23 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
           valueEur: outcome.ok ? money(outcome.valueEur) : null,
           profitEur: outcome.ok ? money(outcome.profitEur) : null,
           taxableEur: outcome.ok ? money(outcome.taxableEur) : null,
+          pricedFrom: outcome.ok ? outcome.pricedFrom : null,
           withheldEur: money(withdrawal.withheldEur),
-          blockedInstrument:
-            outcome.ok || outcome.reason !== "no-price"
+          priceInstrument: ((id) =>
+            id === null
               ? null
-              : ((blocked) =>
-                  blocked === undefined
+              : ((found) =>
+                  found === undefined
                     ? null
-                    : { id: blocked.id, name: blocked.name, currency: blocked.currency })(
-                  instrumentById.get(outcome.instrumentId),
-                ),
+                    : { id: found.id, name: found.name, currency: found.currency })(
+                  instrumentById.get(id),
+                ))(
+            outcome.ok
+              ? outcome.pricedFromInstrumentId
+              : outcome.reason === "no-price"
+                ? outcome.instrumentId
+                : null,
+          ),
           blockedBy: outcome.ok
             ? null
             : outcome.reason === "no-price"

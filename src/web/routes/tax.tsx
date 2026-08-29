@@ -93,12 +93,14 @@ const Disposals = ({ report }: { report: TaxYearView }) => {
  * appears on no other screen -- telling the reader to record a price without
  * showing them where would name a form they cannot reach.
  */
-const FixBlocked = ({
+const FixPrice = ({
   instrument,
   on,
+  label,
 }: {
   instrument: { id: number; name: string; currency: string };
   on: string;
+  label: string;
 }) => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -106,7 +108,7 @@ const FixBlocked = ({
   if (!open) {
     return (
       <button type="button" className="text-xs underline" onClick={() => setOpen(true)}>
-        Kirjaa {instrument.name} hinta {fiDate(on)}
+        {label} {instrument.name} {fiDate(on)}
       </button>
     );
   }
@@ -164,6 +166,16 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                     <td className="text-right">{eur(row.amountEur)}</td>
                     <td className="text-right">
                       {row.valueEur === null ? "—" : eur(row.valueEur)}
+                      {/* A valuation resting on a carried-forward price is not
+                          the same claim as one priced on the day, and nothing
+                          in the figure itself shows the difference. */}
+                      {row.pricedFrom !== null && (
+                        <Badge
+                          title={`Tilin arvo on laskettu hinnalla päivältä ${row.pricedFrom}, koska nostopäivälle ei ole hintaa. Luku tarkentuu kun kirjaat hinnan nostopäivälle.`}
+                        >
+                          {`hinta ${fiDate(row.pricedFrom)}`}
+                        </Badge>
+                      )}
                     </td>
                     <td className="text-right">
                       {row.profitEur === null ? "—" : eur(row.profitEur)}
@@ -172,14 +184,33 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                       {row.taxableEur === null ? (
                         <>
                           <Badge title={row.blockedBy ?? undefined}>ei laskettavissa</Badge>
-                          {row.blockedInstrument !== null && (
+                          {row.priceInstrument !== null && (
                             <span className="mt-1 block">
-                              <FixBlocked instrument={row.blockedInstrument} on={row.withdrawnOn} />
+                              <FixPrice
+                                instrument={row.priceInstrument}
+                                on={row.withdrawnOn}
+                                label="Kirjaa hinta:"
+                              />
                             </span>
                           )}
                         </>
                       ) : (
-                        eur(row.taxableEur)
+                        <>
+                          {eur(row.taxableEur)}
+                          {/* A computed row can still rest on an old price, and
+                              then it is this figure that is wrong -- so the way
+                              to correct it belongs here too, not only on rows
+                              that failed outright. */}
+                          {row.pricedFrom !== null && row.priceInstrument !== null && (
+                            <span className="mt-1 block">
+                              <FixPrice
+                                instrument={row.priceInstrument}
+                                on={row.withdrawnOn}
+                                label="Tarkenna hinnalla:"
+                              />
+                            </span>
+                          )}
+                        </>
                       )}
                     </td>
                     {/* The broker's own figure, beside ours. Two derivations

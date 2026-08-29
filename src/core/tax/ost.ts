@@ -12,7 +12,23 @@ import { OST_DEPOSIT_CAP_EUR } from "./rates";
  * blank.
  */
 export type OstValuation =
-  | { readonly ok: true; readonly valueEur: Money }
+  | {
+      readonly ok: true;
+      readonly valueEur: Money;
+      /**
+       * The oldest price date the valuation actually leaned on, when some
+       * holding had no price for the day itself and a carried-forward one was
+       * used instead. Null when every price was dated the day.
+       *
+       * Carried because the difference is invisible in the figure and decisive
+       * in the result: one recorded price is enough to make every later date
+       * compute, silently valuing a share at what it was worth months earlier.
+       * A figure resting on that must say so, exactly as a holding does.
+       */
+      readonly pricedFrom: IsoDate | null;
+      /** Which holding's price was carried forward, for the screen to offer a fix. */
+      readonly pricedFromInstrumentId: number | null;
+    }
   | { readonly ok: false; readonly instrumentId: number };
 
 export type OstWithdrawalOutcome =
@@ -21,6 +37,9 @@ export type OstWithdrawalOutcome =
       readonly valueEur: Money;
       readonly profitEur: Money;
       readonly taxableEur: Money;
+      /** See `OstValuation.pricedFrom`. Null when nothing was carried forward. */
+      readonly pricedFrom: IsoDate | null;
+      readonly pricedFromInstrumentId: number | null;
     }
   /** No price for a holding on that day, so the account has no known value. */
   | {
@@ -302,7 +321,14 @@ export const ostReport = (args: {
         withdrawnOn: t.tradeDate,
         amountEur,
         withheldEur,
-        outcome: { ok: true, valueEur, profitEur, taxableEur },
+        outcome: {
+          ok: true,
+          valueEur,
+          profitEur,
+          taxableEur,
+          pricedFrom: valuation.pricedFrom,
+          pricedFromInstrumentId: valuation.pricedFromInstrumentId,
+        },
       });
     }
 

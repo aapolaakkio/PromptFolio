@@ -41,10 +41,9 @@ export const OstWithdrawalSchema = z.object({
   valueEur: z.string().nullable(),
   profitEur: z.string().nullable(),
   taxableEur: z.string().nullable(),
+  pricedFrom: z.string().nullable(),
   blockedBy: z.string().nullable(),
-  blockedInstrument: z
-    .object({ id: z.number(), name: z.string(), currency: z.string() })
-    .nullable(),
+  priceInstrument: z.object({ id: z.number(), name: z.string(), currency: z.string() }).nullable(),
 });
 
 export const OstSchema = z.object({

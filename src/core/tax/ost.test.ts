@@ -27,6 +27,8 @@ const worth =
   () => ({
     ok: true,
     valueEur: parseMoney(value, EUR),
+    pricedFrom: null,
+    pricedFromInstrumentId: null,
   });
 
 const YEAR = { from: "2025-01-01", to: "2025-12-31" };
@@ -143,7 +145,12 @@ test("values the account before the withdrawal, not after it", () => {
     txns: [deposit("2020-01-02", "10000,00"), withdrawn],
     valueAt: (_on, beforeTxnId) => {
       seen.push(beforeTxnId);
-      return { ok: true, valueEur: parseMoney("15000,00", EUR) };
+      return {
+        ok: true,
+        valueEur: parseMoney("15000,00", EUR),
+        pricedFrom: null,
+        pricedFromInstrumentId: null,
+      };
     },
     ...YEAR,
   });
@@ -298,7 +305,12 @@ describe("after a withdrawal that could not be valued", () => {
         call += 1;
         return call === 1
           ? { ok: false, instrumentId: 42 }
-          : { ok: true, valueEur: parseMoney("2000,00", EUR) };
+          : {
+              ok: true,
+              valueEur: parseMoney("2000,00", EUR),
+              pricedFrom: null,
+              pricedFromInstrumentId: null,
+            };
       },
       from: "2020-01-01",
       to: "2025-12-31",
