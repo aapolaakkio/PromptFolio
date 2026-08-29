@@ -1,7 +1,7 @@
 import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
 import type { IsoDate, Txn } from "../../core/types";
 import { CATEGORY_LABELS } from "./categories";
-import { internalTransferIds } from "./internal";
+import { internalTransferIds, investmentPaymentIds } from "./internal";
 import { categoriseWith, type SpendingRule } from "./rules";
 
 /**
@@ -49,6 +49,8 @@ export const cashFlowFor = (args: {
   rules: readonly SpendingRule[];
   bankAccountIds: ReadonlySet<number>;
   investedAccountIds: ReadonlySet<number>;
+  /** Invested accounts whose export records no cash -- see investmentPaymentIds. */
+  cashlessInvestedAccountIds?: ReadonlySet<number>;
   from: IsoDate;
   to: IsoDate;
 }): CashFlow => {
@@ -57,6 +59,14 @@ export const cashFlowFor = (args: {
   // internalTransferIds. Matched over the whole ledger, not just the period, so
   // a transfer booked either side of the boundary still finds its other half.
   const internal = internalTransferIds(args.txns);
+  // A regular fund saving leaves the bank as a payment and lands at the broker
+  // as a purchase; it is money invested, not money spent, and belongs on the
+  // investment branch rather than among the shops.
+  const intoInvestments = investmentPaymentIds(
+    args.txns,
+    args.cashlessInvestedAccountIds ?? new Set(),
+    args.bankAccountIds,
+  );
   const inPeriod = args.txns.filter(
     (txn) =>
       txn.tradeDate >= args.from &&
@@ -83,6 +93,8 @@ export const cashFlowFor = (args: {
   let taxes = zeroMoney(EUR);
   for (const txn of bankRows) {
     if (txn.amount.minor >= 0n) continue;
+    if (txn.type === "OPENING_BALANCE") continue;
+    if (intoInvestments.has(txn.id)) continue;
     const category = categoriseWith(txn.note ?? "", args.rules);
     if (category === "siirrot") continue;
     const positive = negate(txn.amount);
@@ -108,13 +120,22 @@ export const cashFlowFor = (args: {
     )
     .reduce((sum, txn) => addMoney(sum, txn.amount), zeroMoney(EUR));
 
+  // ...plus the payments that funded purchases at a broker recording no cash.
+  const investedFromBank = args.txns
+    .filter(
+      (txn) =>
+        intoInvestments.has(txn.id) && txn.tradeDate >= args.from && txn.tradeDate <= args.to,
+    )
+    .reduce((sum, txn) => addMoney(sum, negate(txn.amount)), zeroMoney(EUR));
+  const investedTotal = addMoney(invested, investedFromBank);
+
   const totalIn = [...income.values()].reduce((sum, value) => addMoney(sum, value), zeroMoney(EUR));
   const totalSpent = [...expenses.values()].reduce(
     (sum, value) => addMoney(sum, value),
     zeroMoney(EUR),
   );
   const leftover: Money = {
-    minor: totalIn.minor - totalSpent.minor - taxes.minor - invested.minor,
+    minor: totalIn.minor - totalSpent.minor - taxes.minor - investedTotal.minor,
     currency: EUR,
   };
 
@@ -153,9 +174,9 @@ export const cashFlowFor = (args: {
   if (taxes.minor > 0n) {
     links.push({ from: "income", to: "taxes", amountEur: formatMoney(taxes) });
   }
-  push("invested", "Sijoituksiin", invested);
-  if (invested.minor > 0n) {
-    links.push({ from: "income", to: "invested", amountEur: formatMoney(invested) });
+  push("invested", "Sijoituksiin", investedTotal);
+  if (investedTotal.minor > 0n) {
+    links.push({ from: "income", to: "invested", amountEur: formatMoney(investedTotal) });
   }
   // Named as what it is: the part the other flows do not explain. Negative means
   // the period spent more than it earned, which is a fact worth showing rather
@@ -186,6 +207,6 @@ export const cashFlowFor = (args: {
     to: args.to,
     nodes,
     links,
-    empty: totalIn.minor === 0n && totalSpent.minor === 0n && invested.minor === 0n,
+    empty: totalIn.minor === 0n && totalSpent.minor === 0n && investedTotal.minor === 0n,
   };
 };

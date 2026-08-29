@@ -86,7 +86,18 @@ const BALANCE = new RegExp(`^(${AMOUNT})\\s+Saldo\\s+(${DATE})$`);
  * simply "the next line".
  */
 const FURNITURE =
-  /^(Tilinumero|BIC|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja\/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Ajalta|\d+ \(\d+\)$)/;
+  /^(Tilinumero|BIC|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja\/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|\d+ \(\d+\)$)/;
+
+/**
+ * The period the statement covers, printed under "Ajalta" and repeated on every
+ * page: `29.8.2025 - 28.8.2026`.
+ *
+ * It sits directly below a page's repeated header, which is exactly where a row
+ * continued across the page break looks for its counterparty -- so seventeen
+ * payments in a real statement were filed under a date range as though it were
+ * a shop.
+ */
+const PERIOD_LINE = new RegExp(`^${DATE}\\s*-\\s*${DATE}$`);
 
 /** `Eräpäivä 1.2.2027`, on the statement of a fixed-term deposit. */
 const MATURITY = new RegExp(`^Eräpäivä$`);
@@ -171,15 +182,24 @@ export const parseOpStatementText = (text: string): PdfStatement => {
       // The counterparty is the first line after the header that is not the
       // statement's own furniture and not the start of the message block. A row
       // with none (interest, a cash deposit) simply has no counterparty.
-      const following = lines.slice(index + 1, index + 6);
+      //
+      // Scanned as far as the next transaction rather than a fixed few lines: a
+      // row broken across a page break has the whole repeated header between it
+      // and its counterparty, and a window that stopped short took the period
+      // line instead.
+      const following: string[] = [];
+      for (let ahead = index + 1; ahead < lines.length; ahead++) {
+        const candidate = lines[ahead] ?? "";
+        if (HEADER.test(candidate) || BALANCE.test(candidate)) break;
+        following.push(candidate);
+      }
       const counterparty =
         following.find(
           (candidate) =>
             candidate !== "" &&
             !FURNITURE.test(candidate) &&
-            !candidate.startsWith("Viesti:") &&
-            !HEADER.test(candidate) &&
-            !BALANCE.test(candidate),
+            !PERIOD_LINE.test(candidate) &&
+            !candidate.startsWith("Viesti:"),
         ) ?? "";
 
       rows.push({

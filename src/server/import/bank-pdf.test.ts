@@ -164,3 +164,25 @@ describe("a fixed-term deposit's statement", () => {
     expect(parseOpStatementText(await fixture()).maturityDate).toBeNull();
   });
 });
+
+describe("a row continued across a page break", () => {
+  test("does not take the statement's own period line as its counterparty", () => {
+    // The period sits directly under a page's repeated header, which is where a
+    // row broken across pages looks for its counterparty. Seventeen payments in
+    // a real statement were filed under a date range as though it were a shop.
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "2.1.2026 −10,00 PKORTTIMAKSU 1 202601025UTZ00000001 J",
+      "Tiliote",
+      "Käyttötili",
+      "Ajalta",
+      "29.8.2025 - 28.8.2026",
+      "2 (5)",
+      "OIKEA KAUPPA",
+      "+90,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    const { rows } = parseOpStatementText(text);
+    expect(rows[0]?.counterparty).toBe("OIKEA KAUPPA");
+  });
+});

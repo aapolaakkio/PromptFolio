@@ -178,3 +178,18 @@ describe("the widened category rules", () => {
     expect(categorise("PKORTTIMAKSU — RAVINTOLA PRISMA")).toBe("ravintolat");
   });
 });
+
+describe("rows that are not spending", () => {
+  test("an opening balance is left out, however negative", () => {
+    const summary = summariseSpending(
+      [
+        row("Alkusaldo, johdettu saldosta", "-1200.00", "2026-03-01", "OPENING_BALANCE"),
+        row("PKORTTIMAKSU — K-MARKET", "-42.15"),
+      ],
+      { ...YEAR, by: "category" },
+    );
+
+    expect(summary.totalEur).toBe("-42.15");
+    expect(summary.groups).toHaveLength(1);
+  });
+});

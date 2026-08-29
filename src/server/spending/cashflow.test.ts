@@ -4,7 +4,7 @@ import { EUR, parseMoney } from "../../core/money";
 import type { IsoDate, TransactionType, Txn } from "../../core/types";
 import { cashFlowFor } from "./cashflow";
 import { SEED_RULES } from "./categories";
-import { internalTransferIds } from "./internal";
+import { internalTransferIds, investmentPaymentIds } from "./internal";
 import { monthlyFlows } from "./monthly";
 import type { SpendingRule } from "./rules";
 
@@ -227,5 +227,69 @@ describe("monthlyFlows", () => {
       expensesEur: "0.00",
       netEur: "0.00",
     });
+  });
+});
+
+describe("payments that are really investments", () => {
+  // A regular fund saving leaves the bank as an ordinary payment and lands at
+  // the broker as a purchase -- never as a deposit, because OP's securities
+  // export records no cash. Both halves are negative, so the opposite-sign
+  // pairing cannot see them.
+  const saving = row(1, "SÄÄNN.SÄÄST. — RAHASTO", "-250.00", "2026-03-01");
+  const purchase = row(9, "", "-250.00", "2026-03-02", "BUY");
+  const CASHLESS = new Set([9]);
+
+  test("are recognised by the purchase they funded", () => {
+    expect(investmentPaymentIds([saving, purchase], CASHLESS, BANK).has(saving.id)).toBe(true);
+  });
+
+  test("are not matched when the broker records its own cash", () => {
+    // With a deposit on the broker's side, that deposit is the better half to
+    // count, and this rule would double it.
+    expect(investmentPaymentIds([saving, purchase], new Set(), BANK).size).toBe(0);
+  });
+
+  test("are not matched to a purchase of a different size", () => {
+    const other = row(9, "", "-100.00", "2026-03-02", "BUY");
+    expect(investmentPaymentIds([saving, other], CASHLESS, BANK).size).toBe(0);
+  });
+
+  test("count as investing rather than as spending", () => {
+    const flow = cashFlowFor({
+      txns: [
+        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+        saving,
+        purchase,
+      ],
+      rules: RULES,
+      bankAccountIds: BANK,
+      investedAccountIds: new Set([9]),
+      cashlessInvestedAccountIds: CASHLESS,
+      ...YEAR,
+    });
+
+    expect(flow.nodes.find((node) => node.id === "invested")?.totalEur).toBe("250.00");
+    expect(flow.nodes.find((node) => node.id === "expenses")).toBeUndefined();
+  });
+});
+
+describe("an opening balance", () => {
+  test("is not spending, however negative it is", () => {
+    const opening = row(
+      1,
+      "Alkusaldo, johdettu saldosta",
+      "-1200.00",
+      "2026-01-01",
+      "OPENING_BALANCE",
+    );
+    const flow = flowOf([
+      row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+      opening,
+      row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10"),
+    ]);
+
+    // A derived opening balance was being reported as the year's largest
+    // expense, which is a statement about the ledger, not about the owner.
+    expect(flow.nodes.find((node) => node.id === "expenses")?.totalEur).toBe("200.00");
   });
 });

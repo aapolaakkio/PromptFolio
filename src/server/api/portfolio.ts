@@ -9,7 +9,7 @@ import {
 } from "../../core/ledger";
 import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
-import type { IsoDate } from "../../core/types";
+import type { IsoDate, Txn } from "../../core/types";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
 import { accounts } from "../db/schema";
@@ -24,11 +24,24 @@ import {
 } from "../../core/cash";
 import { CATEGORY_LABELS } from "../spending/categories";
 import { cashFlowFor } from "../spending/cashflow";
+import { investmentPaymentIds } from "../spending/internal";
 import { monthlyFlows } from "../spending/monthly";
 import { addRules, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
 const { db } = getDb();
+
+/**
+ * Invested accounts whose own export never records cash arriving -- OP's
+ * securities view is one. Their purchases stand in for the deposits that fund
+ * them, which is how a regular fund saving is recognised as investing rather
+ * than spending.
+ */
+const cashlessAccountIds = (
+  txns: readonly Txn[],
+  bankAccountIds: ReadonlySet<number>,
+): ReadonlySet<number> =>
+  new Set(accountsMissingCashRecord(txns).filter((accountId) => !bankAccountIds.has(accountId)));
 
 const IsoDateSchema = z
   .string()
@@ -90,6 +103,7 @@ export const portfolioRoutes = {
           rules: rulesFor(db, userId),
           bankAccountIds: bank,
           investedAccountIds: invested,
+          cashlessInvestedAccountIds: cashlessAccountIds(txns, bank),
           from,
           to,
         }),
@@ -172,9 +186,12 @@ export const portfolioRoutes = {
       // not spending.
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
+      // A payment that funded a fund purchase is investing, not spending, and
+      // would otherwise sit among the shops as one of the year's largest lines.
+      const invested = investmentPaymentIds(txns, cashlessAccountIds(txns, bank), bank);
       return json(
         summariseSpending(
-          txns.filter((txn) => bank.has(txn.accountId)),
+          txns.filter((txn) => bank.has(txn.accountId) && !invested.has(txn.id)),
           { from, to, by, limit, rules: rulesFor(db, userId) },
         ),
       );

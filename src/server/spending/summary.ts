@@ -74,6 +74,10 @@ export const summariseSpending = (
 ): SpendingSummary => {
   const rows: SpendingRow[] = txns
     .filter((txn) => txn.tradeDate >= args.from && txn.tradeDate <= args.to)
+    // An opening balance is what an account already held, not money spent. A
+    // negative one -- the ledger showing more outgoings than the bank's stated
+    // balance explains -- was being reported as the year's largest expense.
+    .filter((txn) => txn.type !== "OPENING_BALANCE")
     .filter((txn) => txn.amount.minor < 0n && txn.currency === EUR)
     .map((txn) => ({ note: txn.note ?? "", amount: txn.amount, date: txn.tradeDate }));
 
