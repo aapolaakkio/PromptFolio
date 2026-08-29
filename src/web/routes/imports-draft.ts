@@ -85,12 +85,19 @@ export const CommitResultSchema: z.ZodType<CommitResult> = z.object({
   skipped: z.number(),
 });
 
-export type Account = { id: number; name: string; broker: string };
+export type Account = {
+  id: number;
+  name: string;
+  broker: string;
+  /** null until the owner classifies it -- see routes/account-type.ts. */
+  accountType: "aot" | "ost" | "other" | null;
+};
 
 export const AccountSchema: z.ZodType<Account> = z.object({
   id: z.number(),
   name: z.string(),
   broker: z.string(),
+  accountType: z.enum(["aot", "ost", "other"]).nullable(),
 });
 
 export const AccountsSchema = z.array(AccountSchema);

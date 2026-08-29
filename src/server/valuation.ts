@@ -102,6 +102,16 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
           .orderBy(asc(transactions.tradeDate), asc(transactions.id))
           .all();
 
+  // Loaded before the transactions because a row's `unit_price` is denominated
+  // in its instrument's currency, not in the row's own (see below).
+  const instrumentCurrencies = new Map(
+    db
+      .select({ id: instruments.id, currency: instruments.currency })
+      .from(instruments)
+      .all()
+      .map((row) => [row.id, parseCurrency(row.currency)]),
+  );
+
   const txns: Txn[] = txnRows.map((row) => ({
     id: row.id,
     accountId: row.accountId,
@@ -109,7 +119,19 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     type: row.type,
     tradeDate: row.tradeDate,
     quantity: { scaled: BigInt(row.quantity) },
-    unitPrice: row.unitPrice === null ? null : asMoney(row.unitPrice, row.currency),
+    // `transactions.currency` is the CASH side of the row -- what the account
+    // was debited in -- while the broker prints the unit price in the security's
+    // own currency. A real Nordnet row proves they differ: 0,6043 units at
+    // 471,67 with amount -28,00, which is 285 SEK, i.e. 28 EUR. Tagging the
+    // price with the cash currency would state a SEK figure as euros.
+    unitPrice:
+      row.unitPrice === null
+        ? null
+        : asMoney(
+            row.unitPrice,
+            (row.instrumentId === null ? undefined : instrumentCurrencies.get(row.instrumentId)) ??
+              row.currency,
+          ),
     amount: asMoney(row.amount, row.currency),
     fee: asMoney(row.fee, row.currency),
     tax: asMoney(row.tax, row.currency),

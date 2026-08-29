@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { z } from "zod";
+
+import { ACCOUNT_TYPES, isAccountType, UNSET_LABEL, type AccountType } from "./account-type";
 import { apiPost, ApiError } from "../lib/api";
 
 /**
@@ -46,6 +48,10 @@ export type CreateAccountFormProps = {
 export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
   const [name, setName] = useState("");
   const [broker, setBroker] = useState<Broker>("nordnet");
+  // Starts unset on purpose: an owner importing an export may not yet know
+  // which of their accounts it covers, and a guessed OST is worse than a blank
+  // one (see account-type.ts).
+  const [accountType, setAccountType] = useState<AccountType | "">("");
   // Any ISO 4217 code is valid (spec §10a A1 -- the real portfolio holds
   // both EUR and SEK), so this is a plain validated text input, not a
   // closed EUR/USD dropdown -- mirrors UnknownInstrumentForm.tsx's currency
@@ -58,10 +64,20 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
+    const chosenType = accountType === "" ? null : accountType;
     try {
       const created = await apiPost(
         "/api/accounts",
-        { name: name.trim(), broker, baseCurrency: baseCurrency.trim().toUpperCase() },
+        // The type is omitted rather than sent as "": an unclassified account is
+        // stored as null, and the server's enum would refuse an empty string.
+        chosenType === null
+          ? { name: name.trim(), broker, baseCurrency: baseCurrency.trim().toUpperCase() }
+          : {
+              name: name.trim(),
+              broker,
+              baseCurrency: baseCurrency.trim().toUpperCase(),
+              accountType: chosenType,
+            },
         CreatedAccountSchema,
       );
       setName("");
@@ -98,6 +114,22 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
           {BROKERS.map((b) => (
             <option key={b.id} value={b.id}>
               {b.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Tilin laji
+        <select
+          value={accountType}
+          onChange={(e) => {
+            setAccountType(isAccountType(e.target.value) ? e.target.value : "");
+          }}
+        >
+          <option value="">{UNSET_LABEL}</option>
+          {ACCOUNT_TYPES.map((type) => (
+            <option key={type.id} value={type.id}>
+              {type.label}
             </option>
           ))}
         </select>

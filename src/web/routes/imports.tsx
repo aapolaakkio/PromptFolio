@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
 import { eur, fiDate } from "../lib/format";
 import { CreateAccountForm } from "./CreateAccountForm";
+import { accountTypeLabel } from "./account-type";
 import { RenameAccount } from "./RenameAccount";
 import { ImportHistory } from "./ImportHistory";
 import {
@@ -207,7 +208,16 @@ export const ImportsPage = () => {
               {showCreateAccount ? "Peruuta" : "+ Uusi tili"}
             </button>
             {selectedAccount && (
-              <RenameAccount accountId={selectedAccount.id} currentName={selectedAccount.name} />
+              <span className="mt-3 text-sm text-muted">
+                {accountTypeLabel(selectedAccount.accountType)}
+              </span>
+            )}
+            {selectedAccount && (
+              <RenameAccount
+                accountId={selectedAccount.id}
+                currentName={selectedAccount.name}
+                currentType={selectedAccount.accountType}
+              />
             )}
           </div>
         )}

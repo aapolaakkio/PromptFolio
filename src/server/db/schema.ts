@@ -70,6 +70,16 @@ export const accounts = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     broker: text("broker", { enum: ["nordnet", "op", "spankki", "danske", "other"] }).notNull(),
+    /**
+     * Arvo-osuustili, osakesäästötili, or something else (a fund account, a
+     * savings account). Nullable because it is genuinely unknown for an account
+     * created before this column existed, and a wrong answer here is worse than
+     * no answer: inside an OST, trades and dividends are untaxed and tax falls
+     * only on withdrawal, so phase 4 must refuse to report on an account whose
+     * type nobody has confirmed rather than assume the ordinary case. Set by the
+     * owner, never inferred from the broker's numbering (spec §10c/C7).
+     */
+    accountType: text("account_type", { enum: ["aot", "ost", "other"] }),
     // Any ISO 4217 code, not a closed enum -- see core/money.ts's `Currency`.
     // This column has no runtime CHECK constraint; the guarantee comes from
     // every write going through `parseCurrency` first (import/map.ts,

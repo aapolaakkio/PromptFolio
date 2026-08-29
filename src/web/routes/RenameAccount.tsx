@@ -3,28 +3,49 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { ApiError, apiPatch } from "../lib/api";
+import {
+  ACCOUNT_TYPES,
+  isAccountType,
+  toSelection,
+  UNSET_LABEL,
+  type AccountType,
+} from "./account-type";
 
-const RenamedSchema = z.object({ id: z.number(), name: z.string() });
+const UpdatedSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  accountType: z.enum(["aot", "ost", "other"]).nullable(),
+});
 
 /**
- * Renames an account. Only the name: the broker and base currency are facts the
- * stored transactions were already interpreted under, so changing either after
- * rows exist would silently reinterpret them. The server enforces that too.
+ * Edits an account's name and its type. Not its broker or base currency: those
+ * are facts the stored transactions were already interpreted under, so changing
+ * either after rows exist would silently reinterpret them. The type is
+ * different -- nothing has been interpreted under it yet, and it must stay
+ * correctable, since a frozen wrong type is how a tax report goes wrong.
  */
 export const RenameAccount = ({
   accountId,
   currentName,
+  currentType,
 }: {
   readonly accountId: number;
   readonly currentName: string;
+  readonly currentType: string | null;
 }) => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(currentName);
+  const [accountType, setAccountType] = useState<AccountType | "">(toSelection(currentType));
   const [error, setError] = useState<string | null>(null);
 
   const rename = useMutation({
-    mutationFn: () => apiPatch(`/api/accounts/${accountId}`, { name: name.trim() }, RenamedSchema),
+    mutationFn: () =>
+      apiPatch(
+        `/api/accounts/${accountId}`,
+        { name: name.trim(), accountType: accountType === "" ? null : accountType },
+        UpdatedSchema,
+      ),
     onSuccess: () => {
       setError(null);
       setOpen(false);
@@ -42,10 +63,11 @@ export const RenameAccount = ({
         className="mt-3 text-sm"
         onClick={() => {
           setName(currentName);
+          setAccountType(toSelection(currentType));
           setOpen(true);
         }}
       >
-        Muuta nimeä
+        Muokkaa tiliä
       </button>
     );
   }
@@ -61,6 +83,22 @@ export const RenameAccount = ({
       <label>
         Tilin nimi
         <input value={name} required maxLength={100} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label>
+        Tilin laji
+        <select
+          value={accountType}
+          onChange={(e) => {
+            setAccountType(isAccountType(e.target.value) ? e.target.value : "");
+          }}
+        >
+          <option value="">{UNSET_LABEL}</option>
+          {ACCOUNT_TYPES.map((type) => (
+            <option key={type.id} value={type.id}>
+              {type.label}
+            </option>
+          ))}
+        </select>
       </label>
       <button type="submit" className="text-sm" disabled={rename.isPending || name.trim() === ""}>
         {rename.isPending ? "Tallennetaan…" : "Tallenna"}

@@ -43,6 +43,7 @@ export const NORDNET: BrokerCsvConfig = {
   dateFormat: "iso",
   columns: {
     externalId: "Id",
+    portfolio: "Salkku",
     tradeDate: "Kauppapäivä",
     type: "Tapahtumatyyppi",
     instrumentName: "Arvopaperi",

@@ -108,6 +108,48 @@ const seed = () => {
   return { db, sqlite, instrumentId: nokia.id, accountId: mine.id };
 };
 
+test("reads a unit price in the instrument's currency, not the row's cash currency", () => {
+  const { db, accountId } = seed();
+  const sek = db
+    .insert(instruments)
+    .values({
+      isin: "SE0002756973",
+      ticker: null,
+      name: "Ruotsalainen indeksirahasto",
+      kind: "fund",
+      currency: parseCurrency("SEK"),
+      priceSource: "manual",
+      sourceKey: "manual",
+    })
+    .returning()
+    .get();
+  // A real Nordnet shape: the fund trades in SEK, the account paid in EUR.
+  // 0,6043 units at 471,67 SEK is 285 SEK, which is the 28,00 EUR that left
+  // the account -- so the price is SEK and the amount is EUR.
+  db.insert(transactions)
+    .values({
+      accountId,
+      instrumentId: sek.id,
+      type: "BUY",
+      tradeDate: "2025-02-01",
+      quantity: 604_300,
+      unitPrice: 47_167,
+      amount: -2800,
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: "sek-buy",
+      externalId: null,
+      importId: null,
+    })
+    .run();
+
+  const txn = loadPortfolio(db, "u1").txns.find((t) => t.instrumentId === sek.id);
+  expect(txn?.unitPrice?.currency).toBe(parseCurrency("SEK"));
+  expect(txn?.amount.currency).toBe(EUR);
+});
+
 test("loads only the requesting user's rows", () => {
   const { db } = seed();
   expect(loadPortfolio(db, "u1").txns).toHaveLength(1);

@@ -9,6 +9,7 @@ import { BROKER_CONFIGS, OP_WEB_PASTE } from "../import/brokers";
 import { commitDraft, undoImport } from "../import/commit";
 import { detectBroker, parseCsv } from "../import/csv";
 import { mapRows, type Draft } from "../import/map";
+import { portfoliosNamed } from "../import/portfolios";
 import { parseOpPaste } from "../import/op-paste";
 import type { BrokerCsvConfig } from "../import/types";
 import { assertAccountOwned } from "./accounts";
@@ -110,6 +111,19 @@ const buildDraft = async (file: File, accountId: number) => {
   if (!config) throw new HttpError(400, "Tuntematon CSV-muoto: välittäjää ei tunnistettu");
 
   const { rows, problems: csvProblems } = parseCsv(bytes, config);
+
+  // Refused, not split: importing rows from two accounts under one of them is
+  // what made a real portfolio's returns unreproducible. The owner exports per
+  // account instead -- and the message names the accounts so they know which.
+  const portfolios = portfoliosNamed(rows, config);
+  if (portfolios.length > 1) {
+    throw new HttpError(
+      400,
+      `Tiedosto sisältää useamman salkun (${portfolios.join(", ")}). ` +
+        "Vie tapahtumat erikseen kullekin tilille.",
+    );
+  }
+
   const { knownIsins, knownNames } = knownInstrumentMaps();
   const sha256 = new Bun.CryptoHasher("sha256").update(new Uint8Array(bytes)).digest("hex");
   // Task 10's structural problems (bad column count, malformed quoting)

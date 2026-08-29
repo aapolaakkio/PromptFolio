@@ -383,3 +383,69 @@ describe("PATCH /api/accounts/:id", () => {
     expect(updated.baseCurrency).toBe("EUR");
   });
 });
+
+/** The row shape /api/accounts returns, parsed rather than cast. */
+const AccountSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  broker: z.string(),
+  accountType: z.enum(["aot", "ost", "other"]).nullable(),
+});
+
+test("stores an account type at creation, and leaves it null when unstated", async () => {
+  const { cookie } = await signUp(`type-create-${crypto.randomUUID()}@example.com`);
+
+  const withType = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Nordnet OST", broker: "nordnet", accountType: "ost" }),
+    }),
+  );
+  expect(withType.status).toBe(201);
+  expect(AccountSchema.parse(await withType.json()).accountType).toBe("ost");
+
+  const without = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Tuntematon", broker: "op" }),
+    }),
+  );
+  // Null, not "aot": an unconfirmed type must not read as an ordinary account.
+  expect(AccountSchema.parse(await without.json()).accountType).toBeNull();
+});
+
+test("changes the account type without touching the name, and can clear it", async () => {
+  const { cookie } = await signUp(`type-patch-${crypto.randomUUID()}@example.com`);
+  const created = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "Nordnet", broker: "nordnet" }),
+    }),
+  );
+  const id = AccountSchema.parse(await created.json()).id;
+
+  const patch = (body: { name?: string; accountType?: "aot" | "ost" | "other" | null }) =>
+    accountRoutes["/api/accounts/:id"].PATCH(
+      new Request(`http://x/api/accounts/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  const typed = AccountSchema.parse(await (await patch({ accountType: "ost" })).json());
+  expect(typed.accountType).toBe("ost");
+  expect(typed.name).toBe("Nordnet");
+
+  const renamed = AccountSchema.parse(await (await patch({ name: "Nordnet OST" })).json());
+  expect(renamed.accountType).toBe("ost");
+  expect(renamed.name).toBe("Nordnet OST");
+
+  const cleared = AccountSchema.parse(await (await patch({ accountType: null })).json());
+  expect(cleared.accountType).toBeNull();
+
+  expect((await patch({})).status).toBe(400);
+});

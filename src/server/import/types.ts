@@ -42,7 +42,13 @@ export type CanonicalField =
    * such a row, so without this the new holding would get a cost basis of
    * zero and report its entire value as gain.
    */
-  | "costBasis";
+  | "costBasis"
+  /**
+   * The broker's own account number for the row (Nordnet's `Salkku`). Never
+   * imported into a transaction -- the owner chooses the account -- but read to
+   * refuse a file covering more than one of them. See import/portfolios.ts.
+   */
+  | "portfolio";
 
 /**
  * The part of a broker's configuration `mapRows` actually consumes:

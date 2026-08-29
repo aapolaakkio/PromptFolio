@@ -9,21 +9,36 @@ import { HttpError, handle, json } from "../http";
 
 const { db } = getDb();
 
+const accountType = z.enum(["aot", "ost", "other"]);
+
 /**
- * Renaming only. A broker and a base currency are facts about the account that
- * its stored transactions were already interpreted under -- changing either
- * after rows exist would silently reinterpret them -- so neither is editable
- * here. The name is a label for the owner's benefit and carries no meaning the
- * ledger depends on.
+ * Name and account type only. A broker and a base currency are facts about the
+ * account that its stored transactions were already interpreted under --
+ * changing either after rows exist would silently reinterpret them -- so
+ * neither is editable here.
+ *
+ * The type is editable, unlike those two, because nothing in the ledger has
+ * been interpreted under it yet: it is a fact about the account's tax treatment
+ * that only phase 4 reads. Getting it wrong and correcting it later must be
+ * possible -- an account whose type was guessed once and then frozen is exactly
+ * how a tax report ends up confidently wrong.
  */
-const RenameAccount = z.object({
-  name: z.string().trim().min(1, "Nimi ei voi olla tyhjä").max(100),
-});
+const UpdateAccount = z
+  .object({
+    name: z.string().trim().min(1, "Nimi ei voi olla tyhjä").max(100).optional(),
+    accountType: accountType.nullable().optional(),
+  })
+  .refine((body) => body.name !== undefined || body.accountType !== undefined, {
+    message: "Ei muutettavia kenttiä",
+  });
 
 const CreateAccount = z.object({
   name: z.string().min(1).max(100),
   broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
   baseCurrency: currencyField.default(EUR),
+  // Optional at creation: an owner importing a broker export may not know yet
+  // which of their accounts it covers. Left null until they say.
+  accountType: accountType.optional(),
 });
 
 /**
@@ -72,11 +87,17 @@ export const accountRoutes = {
         .parse(new URL(request.url).pathname.split("/").at(-1));
       assertAccountOwned(userId, accountId);
 
-      const body = RenameAccount.parse(await request.json());
+      const body = UpdateAccount.parse(await request.json());
+      // Only the fields the request actually carried: an absent `name` must not
+      // blank the stored one, and an absent type must not clear it. An explicit
+      // null for the type does clear it -- "I no longer know" is a valid answer.
+      const named = body.name === undefined ? {} : { name: body.name };
+      const typed = body.accountType === undefined ? {} : { accountType: body.accountType };
+      const changes = { ...named, ...typed } satisfies Partial<typeof accounts.$inferInsert>;
       return json(
         db
           .update(accounts)
-          .set({ name: body.name })
+          .set(changes)
           .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
           .returning()
           .get(),

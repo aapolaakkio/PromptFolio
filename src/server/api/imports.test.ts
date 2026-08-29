@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { NORDNET } from "../import/brokers";
 
 // This file exercises importRoutes (preview/commit/undo) and
@@ -129,6 +130,7 @@ const nordnetRow = (o: {
   id: string;
   date: string;
   type: string;
+  portfolio?: string;
   name?: string;
   isin?: string;
   qty?: string;
@@ -142,7 +144,7 @@ const nordnetRow = (o: {
   c[1] = o.date;
   c[2] = o.date;
   c[3] = o.date;
-  c[4] = "11223344";
+  c[4] = o.portfolio ?? "11223344";
   c[5] = o.type;
   c[6] = o.name ?? "";
   c[7] = o.isin ?? "";
@@ -168,6 +170,9 @@ const nordnetBytes = (text: string): ArrayBuffer => {
   return bytes.buffer;
 };
 
+/** http.ts's error envelope, parsed rather than cast. */
+const ErrorSchema = z.object({ error: z.string() });
+
 const csvFile = (contents: string, name = "export.csv"): File =>
   new File([contents], name, { type: "text/csv" });
 
@@ -178,6 +183,10 @@ const binaryFile = (bytes: ArrayBuffer, name = "export.csv"): File =>
 /** A Nordnet-shaped upload: real header + one real-format row, UTF-16LE-with-BOM encoded. */
 const nordnetFile = (row: string, name = "export.csv"): File =>
   binaryFile(nordnetBytes(`${NORDNET_HEADER}\n${row}\n`), name);
+
+/** The same, with several rows -- for a file that spans more than one account. */
+const nordnetFileOf = (rows: readonly string[], name = "export.csv"): File =>
+  binaryFile(nordnetBytes(`${NORDNET_HEADER}\n${rows.join("\n")}\n`), name);
 
 const uploadRequest = (
   url: string,
@@ -253,6 +262,35 @@ describe("POST /api/imports/preview", () => {
       uploadRequest("http://x/api/imports/preview", undefined, csvFile("a;b\n1;2\n"), 1),
     );
     expect(response.status).toBe(401);
+  });
+
+  test("refuses a file covering two accounts, naming them, instead of merging them", async () => {
+    const { cookie } = await signUp(`imp-multi-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(cookie);
+
+    const response = await importRoutes["/api/imports/preview"].POST(
+      uploadRequest(
+        "http://x/api/imports/preview",
+        cookie,
+        nordnetFileOf([
+          nordnetRow({ id: "1", date: "2025-01-10", type: "TALLETUS", amount: "500,00" }),
+          nordnetRow({
+            id: "2",
+            date: "2025-01-11",
+            type: "TALLETUS",
+            portfolio: "55667788",
+            amount: "300,00",
+          }),
+        ]),
+        accountId,
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    const body = ErrorSchema.parse(await response.json());
+    // Both account numbers named: the owner has to know which file to re-export.
+    expect(body.error).toContain("11223344");
+    expect(body.error).toContain("55667788");
   });
 
   test("rejects an account the caller does not own", async () => {
