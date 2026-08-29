@@ -52,6 +52,62 @@ export type OstReport = {
  * The profit share of a withdrawal is proportional: profit over value, applied
  * to the amount withdrawn.
  */
+/** How far apart a reservation and its refund may sit and still be one event. */
+const RESERVATION_DAYS = 8;
+
+const daysBetween = (from: IsoDate, to: IsoDate): number =>
+  Math.round(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000,
+  );
+
+/**
+ * The transaction ids of withdrawal/deposit pairs that cancel each other out.
+ *
+ * A share subscription on an equity savings account is booked by the broker as
+ * money leaving to pay for it and returning days later, with the allotment
+ * itself recorded separately as the purchase. Both legs are ordinary
+ * TALLETUS/NOSTO rows -- nothing in the export marks them as belonging to a
+ * subscription -- so a real IPO produced a withdrawal of the full subscription
+ * amount that never left the owner's hands.
+ *
+ * Counting that as a withdrawal is wrong twice: it invents a taxable event out
+ * of money that stayed on the account, and it removes deposits that still
+ * count against the lifetime cap.
+ *
+ * Matched structurally, the same way `spending/internal.ts` pairs transfers
+ * between the owner's own accounts: an outflow and an inflow of exactly equal
+ * size, within days, each used at most once. Deliberately conservative --
+ * requiring an exact amount match means a genuine withdrawal followed by an
+ * unrelated deposit of a different size is untouched, which is the direction
+ * to err in: a missed pair overstates tax, an invented pair hides it.
+ */
+export const reservationPairIds = (txns: readonly Txn[]): ReadonlySet<number> => {
+  const paired = new Set<number>();
+  const deposits = txns
+    .filter((t) => t.type === "DEPOSIT")
+    .sort((a, b) =>
+      a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1,
+    );
+
+  for (const withdrawal of txns.filter((t) => t.type === "WITHDRAWAL")) {
+    const size = withdrawal.amount.minor < 0n ? -withdrawal.amount.minor : withdrawal.amount.minor;
+    const refund = deposits.find(
+      (deposit) =>
+        !paired.has(deposit.id) &&
+        deposit.amount.minor === size &&
+        // The refund follows the reservation; a deposit that came first is the
+        // money being paid in, not paid back.
+        deposit.tradeDate >= withdrawal.tradeDate &&
+        daysBetween(withdrawal.tradeDate, deposit.tradeDate) <= RESERVATION_DAYS,
+    );
+    if (refund === undefined) continue;
+    paired.add(refund.id);
+    paired.add(withdrawal.id);
+  }
+
+  return paired;
+};
+
 export const ostReport = (args: {
   /** This account's transactions, every year -- earlier ones set up the state. */
   readonly txns: readonly Txn[];
@@ -71,11 +127,15 @@ export const ostReport = (args: {
   let deposited = zeroMoney(EUR);
   let incomplete = false;
 
+  const reserved = reservationPairIds(args.txns);
   const chronological = [...args.txns].sort((a, b) =>
     a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1,
   );
 
   for (const t of chronological) {
+    // Neither leg of a subscription's reservation is a real movement of the
+    // owner's money: it left to pay for shares and came back.
+    if (reserved.has(t.id)) continue;
     if (t.type === "DEPOSIT") {
       deposited = addMoney(deposited, toEur(t.amount, t.fxRateEur, "half-up"));
       continue;

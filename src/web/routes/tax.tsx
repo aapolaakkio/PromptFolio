@@ -94,9 +94,13 @@ const Ost = ({ report }: { report: TaxYearView }) => {
         <div key={account.accountName} className="mb-6">
           <h3 className="font-medium">{account.accountName}</h3>
           <p className="text-sm text-muted">
-            Talletettu {eur(account.depositedEur)}, tilaa jäljellä {eur(account.capRemainingEur)}
+            {/* Not "what is on the account": this is what has been paid in over
+                the account's life, less the capital part of withdrawals, which
+                is the figure the 100 000 € cap is measured against. */}
+            Talletuksia yhteensä {eur(account.depositedEur)} (nostojen pääomaosuus vähennettynä),
+            joten tilaa on jäljellä {eur(account.capRemainingEur)}
             {account.incomplete && (
-              <Badge title="Ainakin yhden noston arvoa ei voitu laskea, joten talletusten määrä on jäljessä.">
+              <Badge title="Ainakin yhden noston veronalaista osuutta ei voitu laskea, joten sen pääomaosuutta ei ole vähennetty talletuksista. Todellinen luku on tätä pienempi.">
                 epätäydellinen
               </Badge>
             )}

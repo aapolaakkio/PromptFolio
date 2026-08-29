@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money";
 import type { IsoDate, TransactionType, Txn } from "../types";
-import { ostReport, type OstValuation } from "./ost";
+import { ostReport, reservationPairIds, type OstValuation } from "./ost";
 
 let nextId = 1;
 const row = (type: TransactionType, tradeDate: IsoDate, amount: string): Txn => ({
@@ -149,4 +149,83 @@ test("values the account before the withdrawal, not after it", () => {
   });
 
   expect(seen).toEqual([withdrawn.id]);
+});
+
+describe("a share subscription's reservation", () => {
+  // The shape a real IPO produced on an equity savings account: money paid in,
+  // the subscription amount taken out to pay for it, the allotment booked as a
+  // purchase, and the reservation returned days later. Both cash legs are
+  // ordinary TALLETUS/NOSTO rows -- nothing in the export marks them.
+  const subscription = () => [
+    deposit("2026-03-02", "900,00"),
+    withdrawal("2026-03-05", "900,00"),
+    deposit("2026-03-09", "900,00"),
+  ];
+
+  test("is not a withdrawal, because the money never left the owner", () => {
+    const report = ostReport({
+      txns: subscription(),
+      valueAt: worth("900,00"),
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+
+    expect(report.withdrawals).toEqual([]);
+  });
+
+  test("does not consume the deposits that fund the cap", () => {
+    const report = ostReport({
+      txns: subscription(),
+      valueAt: worth("900,00"),
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+
+    // One payment in of 900,00 -- not two, and not reduced by a withdrawal that
+    // was really a subscription payment.
+    expect(formatMoney(report.depositedEur)).toBe("900.00");
+    expect(formatMoney(report.capRemainingEur)).toBe("99100.00");
+  });
+
+  test("pairs the refund with the reservation, each row used once", () => {
+    const rows = subscription();
+    const paired = reservationPairIds(rows);
+
+    expect(paired.has(rows[1]!.id)).toBe(true);
+    expect(paired.has(rows[2]!.id)).toBe(true);
+    // The original payment in is not part of the pair.
+    expect(paired.has(rows[0]!.id)).toBe(false);
+  });
+
+  test("leaves a genuine withdrawal alone when no equal deposit follows it", () => {
+    const report = ostReport({
+      txns: [deposit("2020-01-02", "10000,00"), withdrawal("2025-06-01", "1500,00")],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    expect(report.withdrawals).toHaveLength(1);
+  });
+
+  test("does not pair a deposit that came before the withdrawal", () => {
+    // Money paid in and then genuinely taken out again is two real events, not
+    // a reservation: only a refund that *follows* its reservation cancels one.
+    const report = ostReport({
+      txns: [deposit("2025-05-01", "1500,00"), withdrawal("2025-06-01", "1500,00")],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    expect(report.withdrawals).toHaveLength(1);
+  });
+
+  test("does not pair a refund that arrives weeks later", () => {
+    const report = ostReport({
+      txns: [withdrawal("2025-06-01", "1500,00"), deposit("2025-07-15", "1500,00")],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    expect(report.withdrawals).toHaveLength(1);
+  });
 });
