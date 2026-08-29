@@ -10,6 +10,7 @@ import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
 import type { getDb } from "../db";
+import { driftReportFor, feeReportFor } from "../rebalance";
 import { taxYearFor, taxYearsFor } from "../tax";
 import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
 
@@ -71,6 +72,8 @@ export type ToolArgs = {
   readonly operation?: "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
   readonly values?: readonly string[];
   readonly year?: number;
+  /** The allocation dimension a drift question is asked on. */
+  readonly by?: Dimension;
 };
 
 /** What a tool hands back: JSON, because that is what the model reads. */
@@ -80,6 +83,9 @@ export type ToolResult = { readonly [key: string]: JsonValue | ToolResult | read
 const NoArgs = z.object({}).strict();
 const OnDate = z.object({ on: IsoDateSchema.optional() }).strict();
 const Range = z.object({ from: IsoDateSchema.optional(), to: IsoDateSchema.optional() }).strict();
+const Grouping = z
+  .object({ by: z.enum(["kind", "currency", "account", "instrument"]).optional() })
+  .strict();
 const TaxYear = z.object({ year: z.number().int().min(1990).max(2100).optional() }).strict();
 const Allocation = z
   .object({
@@ -425,6 +431,47 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
             currency: i.currency,
             priceSource: i.priceSource,
           })),
+      };
+    },
+  },
+  {
+    name: "get_drift",
+    description:
+      "Ero tavoitejakaumaan: kunkin erän tavoite, nykyosuus ja erotus prosentteina ja euroina, " +
+      "sekä kulut vuosittain. by: kind (oletus), currency, account tai instrument. " +
+      "Älä ehdota kauppoja -- kerro ero ja mitä sen korjaaminen vaatisi.",
+    schema: Grouping,
+    run: (input) => {
+      const { by = "kind" } = Grouping.parse(input);
+      const on = today();
+      // Reads through the same functions the Tasapaino screen calls, so chat
+      // and the screen cannot disagree about how far off the portfolio is.
+      const drift = driftReportFor(db, userId, by, on);
+      const fees = feeReportFor(db, userId);
+      return {
+        asOf: on,
+        groupBy: by,
+        totalEur: drift.totalEur,
+        // Said out loud: one unpriceable holding makes every slice's euro
+        // figure wrong by an unknown amount, not only its own.
+        incomplete: drift.incomplete,
+        rows: drift.rows.map((row) => ({
+          erä: row.label,
+          tavoite: row.targetPercent,
+          nyt: row.actualPercent,
+          ero: row.driftPercent,
+          siirrettävä: row.driftEur,
+          tavoitteessa: row.withinBand,
+          ilmanTavoitetta: row.untargeted,
+        })),
+        fees: fees.map((year) => ({
+          year: year.year,
+          kulutEur: year.totalEur,
+          pidätettyVeroEur: year.withheldTaxEur,
+        })),
+        note:
+          "Ilman tavoitetta oleville erille ei lasketa eroa. Pidätetty pääomatulovero ei ole kulu " +
+          "vaan veroa voitosta. Et anna sijoitusneuvoja etkä kehota myymään.",
       };
     },
   },

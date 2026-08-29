@@ -984,6 +984,31 @@ Fixed in phase 4: lots and disposals carry their account. `costBasisAt` and
 `costBasisPerInstrument` still aggregate per instrument, so the holdings view is unchanged -- a
 position spans accounts even though tax does not.
 
+## 10h. Amendment -- 2026-08-30, phase 5 shipped
+
+Phase 5 is specified in its own document,
+[2026-08-29-rebalancing-design.md](2026-08-29-rebalancing-design.md), and answers §1's third
+question. Two things about it belong here, because they set a precedent for every later phase.
+
+### H1. This is the first phase whose output is advice
+
+Everything before it describes what happened; a rebalance plan says what to do. That changes the
+standard of care, and the design draws the line explicitly: drift is arithmetic and always shown,
+while a suggestion always states what it costs before it can be acted on. Every suggested sale
+carries the gain it would realise, and the default remedy for drift is new money, which realises
+nothing at all.
+
+### H2. A broker's fee row is not always a fee
+
+`PÄÄOMATULOVERO OST` is mapped to `FEE` by the importer for a documented reason -- the money leaves
+permanently without reaching the investor, and calling it a withdrawal would tell the money-weighted
+return it was money taken out and enjoyed. For a report on the cost of investing it is neither: it
+is tax on a gain. It is excluded from fee totals and reported under its own name.
+
+The general lesson, which the tax module hit first from the other direction: a type in this ledger
+records what a row *did to the cash*, not what it *was*. Any report about what something was has to
+read further.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

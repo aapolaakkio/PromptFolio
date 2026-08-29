@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError, apiGet, apiPut } from "../lib/api";
+import { apiGet, apiPut } from "../lib/api";
 import { eur } from "../lib/format";
 import {
   DepositSchema,
   DriftSchema,
   FeesSchema,
   PlanSchema,
+  SaveResultSchema,
   TargetsSchema,
   targetTotal,
   type DriftRowView,
@@ -116,14 +117,16 @@ const TargetEditor = ({
   const labelOf = (key: string) => rows.find((row) => row.key === key)?.label ?? key;
 
   const save = useMutation({
-    mutationFn: () => apiPut("/api/targets", { dimension, targets }, TargetsSchema.optional()),
+    mutationFn: () => apiPut("/api/targets", { dimension, targets }, SaveResultSchema),
     onSuccess: () => {
       setError(null);
       setDraft(null);
       onSaved();
     },
-    onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Tallennus epäonnistui"),
+    // The server's own message says what is wrong -- what the set sums to, or
+    // which field it could not read. A blanket "tallennus epäonnistui" throws
+    // that away and leaves the owner guessing at their own arithmetic.
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui"),
   });
 
   return (

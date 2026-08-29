@@ -59,6 +59,9 @@ export const FeesSchema = z.array(
 
 export const TargetsSchema = z.array(TargetSchema);
 
+/** What PUT /api/targets answers with -- not the targets themselves. */
+export const SaveResultSchema = z.object({ saved: z.number() });
+
 export type DriftView = z.infer<typeof DriftSchema>;
 export type DriftRowView = z.infer<typeof DriftRowSchema>;
 export type PlanView = z.infer<typeof PlanSchema>;

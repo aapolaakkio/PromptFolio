@@ -532,3 +532,38 @@ describe("get_tax_year", () => {
     expect(result.availableYears).toEqual([]);
   });
 });
+
+describe("get_drift", () => {
+  test("reports the gap to target and never suggests a trade", () => {
+    return (async () => {
+      const { tools } = await seed();
+      // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
+      // tools.ts; the assertion only names the fields read below.
+      const result = toolNamed(tools, "get_drift").run({}) as {
+        asOf: string;
+        groupBy: string;
+        totalEur: string;
+        incomplete: boolean;
+        rows: readonly { erä: string; ilmanTavoitetta: boolean }[];
+        note: string;
+      };
+
+      expect(result.groupBy).toBe("kind");
+      // With no targets set, every slice is untargeted rather than at zero.
+      expect(result.rows.every((row) => row.ilmanTavoitetta)).toBe(true);
+      expect(result.note).toContain("Et anna sijoitusneuvoja");
+    })();
+  });
+
+  test("carries the fee report with withheld tax kept apart", async () => {
+    const { tools } = await seed();
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_drift").run({}) as {
+      fees: readonly { year: number; kulutEur: string; pidätettyVeroEur: string }[];
+    };
+
+    // The two are different things and the tool must not let an answer add
+    // them together, so each year carries them as separate fields.
+    expect(result.fees).toEqual([]);
+  });
+});

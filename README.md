@@ -20,6 +20,7 @@ holds everything. No external database, no message queue, nothing else to run.
 | **Käteinen**   | Bank accounts, balances per currency, statement import, manual entries                       |
 | **Kulutus**    | Spending by category or payee, a Sankey of the year's money, monthly income against spending |
 | **Verot**      | Per tax year: realised gains both permitted ways, dividends, OST withdrawals                  |
+| **Tasapaino**  | Target allocation, drift against it, where to put new money, and fees per year                |
 | **Avustaja**   | A chat assistant that answers from the same figures the screens show                         |
 | **Tuonnit**    | Import history, with undo                                                                    |
 
@@ -172,7 +173,7 @@ Ask questions in Finnish on **Avustaja**. It reads through the same functions th
 chat and dashboard cannot disagree. It is read-only: no tool writes to the ledger.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
-uncategorised spending, the tax year, and an exact decimal calculator. Every result carries the date it was
+uncategorised spending, the tax year, drift against target, and an exact decimal calculator. Every result carries the date it was
 computed for and whether any price behind it is stale.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
@@ -239,6 +240,38 @@ year's gain and loss totals, from splitting one sale's proceeds across many acqu
 app allocates the cash pro rata so the parts sum to what actually arrived, while the broker prices
 each lot independently — which is why *their* rows do not sum to *their* own stated total either.
 The pre-filled return is the one to file; this report is for catching euros, not cents.
+
+## Targets, drift and fees
+
+**Tasapaino** answers the third question this app exists for: where have I drifted, and what am I
+paying?
+
+You set a target allocation on one dimension — by kind, currency, account or instrument — as
+percentages that must sum to exactly 100 %. A set that sums to 90 % is refused rather than scaled
+up: it means a slice was forgotten, and inventing the missing tenth would have you measuring drift
+against a target you never set. A slice with no target is *untargeted*, which is not the same as
+targeted at zero — only the second implies selling it.
+
+Drift is shown in percentage points and in euros, and a slice within five points of its target reads
+*tavoitteessa*. The figure is always computed; the band only decides how it reads, because a screen
+that calls everything drifted teaches you to ignore it.
+
+**Two ways to correct it, and they are not equal.**
+
+- **New money** is the default. You enter an amount and the app says where it should go, measured
+  against the target applied to the total *after* the deposit — adding money changes every weight.
+  This realises no gain and triggers no tax.
+- **Full rebalance** is a view you ask for. It shows the buys and sells that hit the target exactly,
+  and **every sale states the gain it would realise**, because a tool that says "sell 4 000 €"
+  without saying what that realises is quietly recommending a taxable event. The figure is a gain,
+  never a tax — the tax depends on capital income this app cannot see. Trades under 50 € are dropped
+  and listed, since a broker's minimum commission would cost more than the drift they correct.
+
+**Fees** are reported per year: commission paid on trades, the broker's own charges, and both
+together. **Capital income tax withheld on an equity savings account is excluded and shown in its
+own column.** The broker books it as a fee row, for a good reason, but it is tax on a gain rather
+than a cost of investing — and in a real ledger it is most of the fee total in the years it appears,
+so counting it would make the figure meaningless.
 
 ## Prices and the nightly refresh
 

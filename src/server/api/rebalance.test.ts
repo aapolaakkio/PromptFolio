@@ -107,6 +107,23 @@ describe("PUT /api/targets", () => {
     expect(targets.every((t) => t.weightPercent === "50.00")).toBe(true);
   });
 
+  test("answers in the shape the screen parses", async () => {
+    // The screen parses this response, and parsing it with the wrong schema is
+    // indistinguishable from the save having failed: a successful write showed
+    // "tallennus epäonnistui" until this test existed. Asserted against the
+    // screen's own schema, so the two cannot drift apart.
+    const { SaveResultSchema } = await import("../../web/routes/rebalance-view");
+    const cookie = await signUp();
+
+    const response = await putTargets(cookie, {
+      dimension: "kind",
+      targets: [{ key: "stock", weightPercent: "100" }],
+    });
+
+    expect(response.status).toBe(200);
+    expect(SaveResultSchema.parse(await response.json())).toEqual({ saved: 1 });
+  });
+
   test("keeps one user's targets away from another's", async () => {
     const owner = await signUp();
     const stranger = await signUp();

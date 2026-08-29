@@ -1,10 +1,10 @@
 # PromptFolio — handover
 
-Current as of 2026-08-29 (phase 4 shipped). Replaces the per-phase handovers for phases 1 and 2, which had gone out
+Current as of 2026-08-30 (phases 4 and 5 shipped). Replaces the per-phase handovers for phases 1 and 2, which had gone out
 of date in ways that mattered: phase 2's said the PDF import path was dropped, and it has since
 been built.
 
-`bun run check`: 922 tests, 0 failures, 80 % per-file coverage floor held.
+`bun run check`: 985 tests, 0 failures, 80 % per-file coverage floor held.
 
 ## What exists
 
@@ -47,6 +47,10 @@ five years. Every rule cited to vero.fi in `core/tax/rates.ts`. No tax owed is s
 line by line against a broker's own per-disposal report: agrees to a cent on the year's totals,
 and the disagreement that was larger turned out to be a real defect in this code, not in theirs.
 
+**Targets and rebalancing.** A target allocation on one dimension, the drift against it in points
+and euros, where to direct new money, a full-rebalance plan in which every sale states the gain it
+would realise, and fees per year with withheld tax kept out of them.
+
 **The assistant.** Read-only tool calling over the same functions the screens use, with an exact
 decimal calculator. Conversations persist per user.
 
@@ -72,6 +76,13 @@ Each of these was arrived at by getting it wrong first.
   alone until phase 4; that pooled them across accounts, and only agreed with the real rule while
   an instrument was held in one account. Cost basis still aggregates per instrument for the
   holdings view: a position spans accounts, tax does not.
+- **A suggestion always states what it costs.** Drift is arithmetic and always shown; the sell view
+  is a deliberate disclosure, and each sale carries the gain FIFO would realise. Naming the gain is
+  the difference between a calculation and an unmarked recommendation to trigger a tax event.
+- **New money is the default remedy for drift**, because directing a deposit realises nothing.
+  Selling is asked for, never offered first.
+- **Withheld capital income tax is not a fee.** The broker books it as one; it is tax on a gain. It
+  is excluded from fee totals and reported under its own name.
 - **The tax module reports taxable income, never tax owed.** The 30 %/34 % bracket depends on
   capital income the app cannot see, so those rates appear nowhere in the code.
 - **Nothing inside an OST is taxed when it happens.** Sales and dividends there are excluded from
@@ -112,16 +123,18 @@ Each of these was arrived at by getting it wrong first.
 
 - **Filing.** The tax module verifies; it does not file. No tax owed, no foreign dividend tax
   credit, no OmaVero export, no unlisted-dividend regime. See the phase 4 spec §2.
+- **Whether to rebalance.** The app shows the gap and what closing it costs; it never says now is
+  the time. Nor does it choose which lots to sell for the smallest gain, or place any order.
 - **Freezing a filed tax year.** Figures are derived, so a late import changes a past year. The
   report says what it was computed from; a `tax_reports` table is the alternative, not built.
-- **Rebalancing, drift and fee analysis.**
 - **Debt as an account.** A loan repayment is currently one spending category; principal and
   interest are not separated. See spec §10f.
 
 ## Layout
 
 ```
-src/core/      money, ledger, cost basis, returns, allocation, cash, tax — no I/O
+src/core/      money, ledger, cost basis, returns, allocation, cash, tax,
+               rebalance — no I/O
 src/server/    routes, SQLite, importers, price sources, chat, spending
 src/web/       React frontend (TanStack Router, Query, Charts)
 docs/superpowers/specs/2026-08-27-portfolio-manager-design.md
