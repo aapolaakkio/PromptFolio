@@ -10,6 +10,30 @@
   --color-loss: #b3261e;
   --color-accent: #14484f;
 
+  /*
+   * Chart series colours, light mode.
+   *
+   * Validated rather than chosen by eye: every adjacent pair clears the
+   * colour-vision-deficiency separation floor and the normal-vision floor, all
+   * eight sit inside the lightness band and above the chroma floor, and each is
+   * checked against this theme's own surface. The palette they replaced failed
+   * four of those five checks -- its blue and its purple were 12.8 apart to
+   * normal vision, below the 15 floor, so two series were genuinely hard to
+   * tell apart for everyone.
+   *
+   * Three of the eight sit under 3:1 contrast on white, which is allowed only
+   * because every chart carries a legend or direct labels: identity is never
+   * colour alone. Do not drop a legend from a chart with two or more series.
+   */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 
@@ -32,6 +56,19 @@
     --color-gain: #4ade80;
     --color-loss: #f87171;
     --color-accent: #5eead4;
+
+    /*
+     * The same eight hues stepped for the dark surface, not an automatic flip:
+     * each step is validated against #1c2024 in its own right.
+     */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
   }
 }
 
