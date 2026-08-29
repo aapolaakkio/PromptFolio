@@ -4,7 +4,7 @@ Current as of 2026-08-29 (phase 4 shipped). Replaces the per-phase handovers for
 of date in ways that mattered: phase 2's said the PDF import path was dropped, and it has since
 been built.
 
-`bun run check`: 909 tests, 0 failures, 80 % per-file coverage floor held.
+`bun run check`: 922 tests, 0 failures, 80 % per-file coverage floor held.
 
 ## What exists
 
@@ -43,7 +43,9 @@ list of everything no rule matched.
 
 **Tax figures.** One tax year at a time, computed from the ledger to check the pre-filled return:
 realised gains both permitted ways, dividends at 85 %, OST withdrawals apportioned, losses carried
-five years. Every rule cited to vero.fi in `core/tax/rates.ts`. No tax owed is stated.
+five years. Every rule cited to vero.fi in `core/tax/rates.ts`. No tax owed is stated. Reconciled
+line by line against a broker's own per-disposal report: agrees to a cent on the year's totals,
+and the disagreement that was larger turned out to be a real defect in this code, not in theirs.
 
 **The assistant.** Read-only tool calling over the same functions the screens use, with an exact
 decimal calculator. Conversations persist per user.
@@ -75,11 +77,23 @@ Each of these was arrived at by getting it wrong first.
 - **Nothing inside an OST is taxed when it happens.** Sales and dividends there are excluded from
   the taxable sets; tax falls on withdrawal, and the account is valued immediately *before* the
   withdrawal being apportioned — valuing it after understates the total the profit is divided by.
+- **A withdrawal after an unvaluable one is reported as unknown, not computed.** The earlier gap
+  leaves the deposits too high by an unknown amount, so the account looks like it holds no profit.
+  Carrying on regardless produced a 0,00 € taxable figure for withdrawals the broker had actually
+  withheld tax on — found only because the broker's withheld figure sits beside ours.
+- **A swap carries its lots, not a merged total.** Each keeps its acquisition date (which sets the
+  deemed-cost percentage) and its own cost (which FIFO consumes on a later partial sale). Merging
+  them made a fractional cash-out take cost pro rata across the whole position instead of from the
+  oldest lot, understating the basis of every remaining share until they were sold.
 - **Every AI-proposed classification is validated** before it is stored: the category must exist,
   the pattern must occur in a payee the import contained, and an existing rule is never replaced.
 
 ## Where the numbers can still be wrong
 
+- **Lot proceeds are allocated pro rata, with the remainder on the last lot**, so they sum exactly
+  to the cash received. A broker instead prices each lot independently, so individual lots can
+  differ by a few cents (and a broker's own rows need not sum to its own stated total). Matching
+  that would mean reproducing their rounding rather than being correct.
 - **Dividend withholding is absent from the ledger.** Both broker exports publish one combined
   "Kulut / Korot / Verot" column, so a dividend's amount is what arrived and the taxable 85 % is
   computed on it. Where the payer withheld, the true gross is higher; every such row is badged.

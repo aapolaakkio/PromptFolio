@@ -182,6 +182,62 @@ Per the phase 1 spec §9.4 and the 80 % per-file floor:
   other's lots — and `holdingsFor` returns what it returned before the change.
 - No test touches the network (§9.4); the rules are constants, not fetched.
 
+## 8a. Amendment — what checking against a real broker report found
+
+§1 says the point of a second derivation is disagreement. It was worth having: reconciling one
+year's figures line by line against a broker's own per-disposal statement found four defects, three
+of them in code this spec had already described as correct.
+
+### A1. A share swap must carry its lots, not one merged total
+
+`buildLots` recorded an arriving swap leg as a single lot dated the swap, holding the whole carried
+basis. Two things that decide tax were lost with it: each lot's acquisition date, which sets the
+deemed-cost percentage (§3), and the per-lot cost that FIFO consumes on a later partial sale.
+
+A fractional cash-out days after a swap then took its cost pro rata across the whole position
+rather than from the oldest lot, leaving every remaining share's basis short until they were sold
+two years later. This was the entire difference between our loss total and the broker's.
+
+The departing legs' lots are now carried whole and rescaled to the arriving quantity — used when
+the arriving row states no value (OP states none) and when it states exactly what the departing leg
+gave up (Nordnet states the same total). A stated value that disagrees with the carried total
+describes something other than a plain swap and is still taken at its word.
+
+### A2. Tax the broker withholds is part of the withdrawal
+
+On an OST the broker withholds the capital income tax and books it as its own row, which the
+importer maps to `FEE`. §4 treated only the cash that reached the owner as withdrawn, understating
+the taxable share of every withdrawal that was taxed. The withholding now counts toward the amount
+withdrawn, split in proportion where a day carries several withdrawal rows, and is reported beside
+our own figure — it is the only independent check on it.
+
+### A3. A withdrawal after an unvaluable one cannot be computed either
+
+§7 named the blocked withdrawal but let later ones compute as usual. They cannot: the earlier gap
+leaves the deposits too high by an unknown amount, so the account looks like it holds no profit.
+The report stated **0,00 € taxable** for withdrawals the broker had demonstrably withheld tax on.
+An unknown presented as a zero is the failure this whole document argues against, and only the
+broker's withheld figure exposed it. Later withdrawals now report as not computable, naming the
+earlier one to fix first.
+
+### A4. A subscription's reservation is not a withdrawal
+
+A share subscription reaches the ledger as money leaving to pay for it and returning days later,
+with the allotment booked separately as the purchase. Both legs are ordinary deposit/withdrawal
+rows; the importer stores no row text to tell them from a genuine transfer out. Counting the
+reservation as a withdrawal invented a taxable event out of money that never left, and removed
+deposits that still count against the cap. Matched structurally — equal amounts, refund following
+reservation within eight days, each row used once — as `spending/internal.ts` already pairs
+transfers between the owner's own accounts.
+
+### What remains, and is not a defect
+
+A cent on each of the year's gain and loss totals. A sale is split across many acquisition lots;
+this module allocates the cash pro rata and puts the remainder on the last lot, so the parts sum to
+what actually arrived. A broker prices each lot independently, so its rows need not sum to its own
+stated total — and in the report checked here, they did not. Reproducing that would mean copying an
+inconsistency. The pre-filled return is the one to file.
+
 ## 9. Not built
 
 - **Freezing a filed year.** §5.

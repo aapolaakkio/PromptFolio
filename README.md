@@ -214,11 +214,31 @@ report knows:
   with the account valued *immediately before* the withdrawal. The capital part of a withdrawal
   reduces the deposits, which is both the base for the next withdrawal and what the 100 000 €
   lifetime cap is measured against.
+- **What counts as a withdrawal, and what doesn't.** The tax the broker withholds is booked as its
+  own row but is part of the withdrawal, so it counts toward the amount withdrawn and is shown
+  beside our own figure to compare against. A share subscription's *reservation* — money taken out
+  to pay for it and returned days later, with the allotment booked separately as the purchase — is
+  not a withdrawal at all, and is matched structurally, since nothing in the export marks it.
+- **A swap carries its lots.** When a holding changes form (a fund merger, a tender offer), the
+  original lots travel with it — each keeping its own acquisition date and cost — rather than
+  merging into one lot dated the swap. Both matter: the date sets the deemed-cost percentage, and
+  the per-lot cost is what FIFO consumes on a later partial sale.
 
 A withdrawal whose account holds something unpriceable — an unlisted share, or a delisted one with
 no surviving feed — reports *ei laskettavissa* naming the instrument and date, never an
-apportionment resting on a guessed value. Recording a price for that date on **Omistukset** makes
-the row compute.
+apportionment resting on a guessed value. The row itself offers to record that price, because the
+blocking holding has usually been sold since and appears on no other screen. Every later withdrawal
+reads as not computable too: the earlier gap leaves the deposits too high by an unknown amount, so
+the account would look like it holds no profit — and a zero that is really an unknown is the one
+failure this whole report exists to avoid.
+
+**Checked against a real broker report.** The year's figures were compared line by line against a
+broker's own per-disposal statement. That found one real defect, worth several euros of
+understated loss, in how a swap's cost basis was carried. What remains is a cent on each of the
+year's gain and loss totals, from splitting one sale's proceeds across many acquisition lots: this
+app allocates the cash pro rata so the parts sum to what actually arrived, while the broker prices
+each lot independently — which is why *their* rows do not sum to *their* own stated total either.
+The pre-filled return is the one to file; this report is for catching euros, not cents.
 
 ## Prices and the nightly refresh
 
