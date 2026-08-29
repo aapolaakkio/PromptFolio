@@ -24,6 +24,21 @@ import { loadPortfolio } from "./valuation";
 type Db = ReturnType<typeof getDb>["db"];
 
 /**
+ * How large a hole in a price feed still counts as the market being closed
+ * rather than the data being missing.
+ *
+ * Five days covers a weekend with holidays on both sides -- Easter's Thursday
+ * to Tuesday, or Christmas -- while a hand-recorded price weeks or months from
+ * its neighbour stays visible as the gap it is.
+ */
+const MAX_TRADING_GAP_DAYS = 5;
+
+const daysBetween = (from: IsoDate, to: IsoDate): number =>
+  Math.round(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000,
+  );
+
+/**
  * The tax year as the API reports it: decimal strings, and instruments named
  * rather than numbered.
  *
@@ -147,7 +162,7 @@ const explainEarlierGap = (since: IsoDate): string =>
   `päivältä puuttuva hinta, niin tämäkin rivi laskeutuu.`;
 
 export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView => {
-  const { txns, instruments, prices } = loadPortfolio(db, userId);
+  const { txns, instruments, prices, nextPriceDateAfter } = loadPortfolio(db, userId);
   const owned = db.select().from(accounts).where(eq(accounts.userId, userId)).all();
   const nameOf = new Map(owned.map((account) => [account.id, account.name]));
   const instrumentById = new Map(instruments.map((i) => [i.id, i]));
@@ -185,6 +200,15 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
       if (price === null) return { ok: false, instrumentId };
       const instrument = instrumentById.get(instrumentId);
       const priceDate = prices.priceDateOn(instrumentId, on);
+      // A market holiday is not a missing price. If the feed carries a bar
+      // within days after this date but none on it, the exchange was shut --
+      // which is how a Xetra listing on Whit Monday used to read as a gap. The
+      // history answers it without an exchange calendar, and a genuinely
+      // sparse source (a hand-recorded price months apart) still reads stale,
+      // because its next bar is nowhere near.
+      const nextPrice = nextPriceDateAfter(instrumentId, on);
+      const marketWasShut =
+        nextPrice !== null && daysBetween(on, nextPrice) <= MAX_TRADING_GAP_DAYS;
       // Not "dated some earlier day" -- markets close, and a fund's NAV
       // publishes a weekday behind, so Friday's close is the freshest price a
       // Sunday withdrawal can have. `isPriceStale` is the same rule the
@@ -192,6 +216,7 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
       // that could not exist and made every weekend look like a gap.
       if (
         priceDate !== null &&
+        !marketWasShut &&
         isPriceStale({ kind: instrument?.kind ?? "stock", priceDate, on }) &&
         (pricedFrom === null || priceDate < pricedFrom)
       ) {

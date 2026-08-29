@@ -97,6 +97,17 @@ export type Portfolio = {
   readonly prices: PriceLookup;
   /** Account ids whose kind is a bank one, for callers that group by account. */
   readonly bankAccountIds: readonly number[];
+  /**
+   * The first price this instrument has strictly after `date`, or null if it
+   * has none.
+   *
+   * Lets a caller tell a market holiday from a real gap without an exchange
+   * calendar: if a price feed carries a bar a day or two after a date but none
+   * on it, the market was shut. A Xetra listing on Whit Monday looked like a
+   * missing price until this existed, and no Finnish holiday table would have
+   * covered a German one.
+   */
+  readonly nextPriceDateAfter: (instrumentId: number, date: IsoDate) => IsoDate | null;
 };
 
 /**
@@ -184,6 +195,11 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   const fxRows = db.select().from(fxRates).orderBy(asc(fxRates.date)).all();
   const fxByCurrency = groupBy(fxRows, (row) => row.currency);
 
+  const nextPriceDateAfter = (instrumentId: number, date: IsoDate): IsoDate | null =>
+    // `priceRows` is ordered by date, and `groupBy` preserves that order, so
+    // the first row past `date` is the nearest one.
+    pricesByInstrument.get(instrumentId)?.find((row) => row.date > date)?.date ?? null;
+
   const priceLookup: PriceLookup = {
     priceOn: (instrumentId, date) => {
       const row = latestOnOrBefore(pricesByInstrument.get(instrumentId), date);
@@ -222,6 +238,7 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     instruments: instrumentList,
     prices: priceLookup,
     bankAccountIds,
+    nextPriceDateAfter,
   };
 };
 
