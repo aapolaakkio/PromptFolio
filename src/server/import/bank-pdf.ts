@@ -86,7 +86,14 @@ const BALANCE = new RegExp(`^(${AMOUNT})\\s+Saldo\\s+(${DATE})$`);
  * simply "the next line".
  */
 const FURNITURE =
-  /^(Tilinumero|BIC|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja\/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|\d+ \(\d+\)$)/;
+  /^(Tilinumero|BIC|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja\/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|Jatkuu|\d+ \(\d+\)$)/;
+
+/** A bank identifier code, as the header prints under "BIC". */
+const BIC_LINE = /^[A-Z]{6}[A-Z0-9]{2,5}$/;
+
+/** An IBAN with the spacing OP prints: `FI00 0000 0000 0000 00`. */
+const IBAN_LINE = /^[A-Z]{2}\d{2}(\s\d{4})+(\s\d{1,4})?$/;
+const IBAN_INSIDE = /[A-Z]{2}\d{2}(\s\d{4})+(\s\d{1,4})?/;
 
 /**
  * The period the statement covers, printed under "Ajalta" and repeated on every
@@ -174,6 +181,26 @@ export const parseOpStatementText = (text: string): PdfStatement => {
   const lines = text.split("\n").map((line) => line.trim());
   const problems: Array<{ line: number; message: string }> = [];
 
+  /**
+   * The account this statement is for, printed in the header block that repeats
+   * on every page. Recognised so it is not read as a payee: a transaction
+   * continued across a page break has that whole block between it and its own
+   * counterparty, and the first line through it that looked like a name was the
+   * account's own number.
+   *
+   * Only this account's number is furniture. An IBAN in a payee's place is a
+   * real payee -- a transfer to someone whose name the bank did not print.
+   */
+  const ownAccount = ((): string => {
+    const labelled = lines.findIndex((line) => line.startsWith("Tilinumero"));
+    if (labelled === -1) return "";
+    // Either "Tilinumero FI00 ..." on one line, or the label with the number a
+    // few lines below it, depending on how the page's header wrapped.
+    const inline = IBAN_INSIDE.exec(lines[labelled] ?? "");
+    if (inline?.[0] !== undefined) return inline[0];
+    return lines.slice(labelled + 1, labelled + 6).find((line) => IBAN_LINE.test(line)) ?? "";
+  })();
+
   const balances: Array<{ amount: Money; date: IsoDate }> = [];
   for (const line of lines) {
     const match = BALANCE.exec(line);
@@ -222,7 +249,9 @@ export const parseOpStatementText = (text: string): PdfStatement => {
           candidate !== "" &&
           !FURNITURE.test(candidate) &&
           !PERIOD_LINE.test(candidate) &&
-          !TERMINAL_NOISE.test(candidate),
+          !TERMINAL_NOISE.test(candidate) &&
+          !BIC_LINE.test(candidate) &&
+          candidate !== ownAccount,
       );
       const counterparty = usable.find((candidate) => !candidate.startsWith("Viesti:")) ?? "";
 

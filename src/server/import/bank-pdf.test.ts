@@ -247,3 +247,57 @@ describe("the message a payer wrote", () => {
     expect(parseOpStatementText(text).rows[0]?.note).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
   });
 });
+
+describe("a transaction continued across a page break", () => {
+  // The real statement puts the payee of a page's last row at the top of the
+  // next page, past the footer and the whole repeated header. A dozen payments
+  // in a real statement landed that way and lost their payee entirely.
+  const acrossPages = [
+    "+100,00 Saldo 1.1.2026",
+    "Tilinumero FI00 0000 0000 0000 00",
+    "2.1.2026 −12,00 PKORTTIMAKSU 12570 202601025EQEO0000001 J",
+    "Tiliote",
+    "Käyttötili",
+    "Ajalta",
+    "29.8.2025 - 28.8.2026",
+    "82 (87)",
+    "Jatkuu",
+    "Tilinumero",
+    "BIC",
+    "FI00 0000 0000 0000 00",
+    "OKOYFIHH",
+    "Kirjaus-",
+    "päivä",
+    "Selitys",
+    "Maksunsaaja/maksaja",
+    "K-SUPERMARKET ESIMERKKI",
+    "+88,00 Saldo 31.1.2026",
+  ].join("\n");
+
+  test("finds its payee on the far side of the header", () => {
+    expect(parseOpStatementText(acrossPages).rows[0]?.note).toBe(
+      "PKORTTIMAKSU — K-SUPERMARKET ESIMERKKI",
+    );
+  });
+
+  test("does not take the page footer or the account's own number as the payee", () => {
+    const { rows } = parseOpStatementText(acrossPages);
+    expect(rows[0]?.counterparty).not.toBe("Jatkuu");
+    expect(rows[0]?.counterparty).not.toContain("FI00");
+    expect(rows[0]?.counterparty).not.toBe("OKOYFIHH");
+  });
+
+  test("still treats an IBAN in a payee's place as a payee", () => {
+    // Only the account's own number is furniture. A transfer to someone the
+    // bank did not name is identified by their account number and nothing else.
+    const text = [
+      "+100,00 Saldo 1.1.2026",
+      "Tilinumero FI00 0000 0000 0000 00",
+      "2.1.2026 −50,00 TILISIIRTO 20260102000000000001 A",
+      "FI11 1111 1111 1111 11",
+      "+50,00 Saldo 31.1.2026",
+    ].join("\n");
+
+    expect(parseOpStatementText(text).rows[0]?.counterparty).toBe("FI11 1111 1111 1111 11");
+  });
+});
