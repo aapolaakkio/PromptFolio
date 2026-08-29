@@ -94,6 +94,25 @@ export const apiPatch = async <T, B>(
   return parsed as T;
 };
 
+/** Replaces a whole resource, where PATCH would amend one. Same contract otherwise. */
+export const apiPut = async <T, B>(
+  path: string,
+  body: B,
+  schema?: z.ZodType<T>,
+  fetchImpl: FetchLike = fetch,
+): Promise<T> => {
+  const response = await fetchImpl(path, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = await unwrap(response);
+  if (schema) return schema.parse(parsed);
+  // SAFETY: see apiGet's doc comment -- same call-site response contract.
+  return parsed as T;
+};
+
 export const apiDelete = async (path: string, fetchImpl: FetchLike = fetch): Promise<void> => {
   const response = await fetchImpl(path, { method: "DELETE", credentials: "include" });
   await unwrap(response);

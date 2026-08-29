@@ -28,6 +28,7 @@ export type RouteComponents = {
   readonly cash: RouteComponent;
   readonly spending: RouteComponent;
   readonly tax: RouteComponent;
+  readonly rebalance: RouteComponent;
   readonly login: RouteComponent;
 };
 
@@ -100,6 +101,11 @@ export const buildRouteTree = (components: RouteComponents) => {
     path: "/tax",
     component: components.tax,
   });
+  const rebalanceRoute = createRoute({
+    getParentRoute: () => authenticatedRoute,
+    path: "/rebalance",
+    component: components.rebalance,
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/login",
@@ -116,6 +122,7 @@ export const buildRouteTree = (components: RouteComponents) => {
       cashRoute,
       spendingRoute,
       taxRoute,
+      rebalanceRoute,
     ]),
     loginRoute,
   ]);
@@ -132,6 +139,7 @@ export const buildRouteTree = (components: RouteComponents) => {
     cashRoute,
     spendingRoute,
     taxRoute,
+    rebalanceRoute,
     loginRoute,
   };
 };

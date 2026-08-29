@@ -15,6 +15,7 @@ const {
   cashRoute,
   spendingRoute,
   taxRoute,
+  rebalanceRoute,
   loginRoute,
 } = buildRouteTree({
   authenticated: Stub,
@@ -26,6 +27,7 @@ const {
   cash: Stub,
   spending: Stub,
   tax: Stub,
+  rebalance: Stub,
   login: Stub,
 });
 
@@ -86,6 +88,14 @@ test("the spending route sits inside the session gate", () => {
 test("the tax route sits inside the session gate", () => {
   expect(taxRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
   expect(taxRoute.fullPath).toBe("/tax");
+});
+
+// Targets and a rebalance plan describe what someone owns and what they would
+// realise by selling it -- authenticated for the same reason every other screen
+// is.
+test("the rebalance route sits inside the session gate", () => {
+  expect(rebalanceRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
+  expect(rebalanceRoute.fullPath).toBe("/rebalance");
 });
 
 test("the cash route sits inside the session gate", () => {

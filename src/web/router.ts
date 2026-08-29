@@ -8,6 +8,7 @@ import { ImportsPage } from "./routes/imports";
 import { LoginPage } from "./routes/login";
 import { ReconcilePage } from "./routes/reconcile";
 import { SpendingPage } from "./routes/spending";
+import { RebalancePage } from "./routes/rebalance";
 import { TaxPage } from "./routes/tax";
 import { AuthenticatedLayout } from "./routes/root";
 
@@ -27,6 +28,7 @@ const { routeTree } = buildRouteTree({
   cash: CashPage,
   spending: SpendingPage,
   tax: TaxPage,
+  rebalance: RebalancePage,
   login: LoginPage,
 });
 
