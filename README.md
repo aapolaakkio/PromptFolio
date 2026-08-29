@@ -1,9 +1,12 @@
 # PromptFolio
 
 A self-hosted portfolio and money tracker for a Finnish household. It keeps an append-only ledger
-of brokerage transactions and bank statements, values holdings in euros, and answers three
-questions from data you control: what the portfolio is worth, how it has performed, and where the
-money went.
+of brokerage transactions and bank statements, values holdings in euros, and answers four questions
+from data you control: what the portfolio is worth, how it has performed, where the money went, and
+how far it has drifted from where you wanted it.
+
+It also computes your Finnish capital-gains figures independently, so the pre-filled tax return has
+something to be checked against.
 
 One Bun process serves the API, the React frontend and a nightly price refresh. One SQLite file
 holds everything. No external database, no message queue, nothing else to run.
@@ -104,9 +107,20 @@ The format is detected by its header (UTF-16LE, tab-delimited). A file covering 
 `Salkku` is **refused**, naming the accounts: importing two accounts as one made a real
 portfolio's returns unreproducible, so export per account.
 
+A trade's price and its cash can be in different currencies: a US share bought through a Finnish
+broker is quoted in USD and paid for in EUR. The importer reads both, so the instrument resolves to
+its own listing rather than a European one that happens to quote the same ISIN.
+
 **OP** — OP has no securities CSV. Copy the web transaction table and paste it into the OP box on
 **Tuonnit**. Pages can be pasted in any order, but a sale whose purchase is on a page you have not
 imported yet shows an unknown cost basis (_tuntematon_) until that page arrives.
+
+The importer keeps the broker's own text for each row (Nordnet's `Tapahtumateksti`). A transaction
+type alone cannot say what a cash movement was — a transfer to another of your own accounts, the
+cash leg of a share subscription that returns days later, and money genuinely leaving all arrive as
+the same label — and that text is what tells them apart. Re-importing a file fills the text in on
+rows that predate this, reported as *täydennetty* rather than skipped, so nothing has to be deleted
+and imported again.
 
 Two Nordnet label pairs stay **unmapped** on purpose and surface for review rather than being
 booked: `VAIHTO AP-OTTO`/`VAIHTO AP-JÄTTÖ` (a share-class swap, whose correct cost basis depends
@@ -147,6 +161,13 @@ get wrong:
 - **Money is integers.** Amounts are minor units (`bigint`), quantities scale by 10⁶, FX by 10⁸.
   Decimal strings on the wire, never JSON floats. The assistant gets a calculator tool rather than
   doing arithmetic in prose.
+- **Cost basis is FIFO within one account**, which is the rule Finnish tax states. The same share
+  held in two accounts has two independent queues; a position's total still spans accounts, because
+  a position is not an account.
+- **A swap carries its lots.** When a holding changes form — a fund merger, a tender offer — the
+  original lots travel with it, each keeping its own acquisition date and cost, rather than merging
+  into one lot dated the swap. Both matter: the date sets the deemed-cost percentage, and the
+  per-lot cost is what FIFO consumes on a later partial sale.
 - **Returns measure invested capital.** TWR and XIRR see brokerage transactions only. A bank
   account's salary and groceries never enter them — otherwise a month of shopping would read as
   portfolio underperformance.
@@ -162,8 +183,12 @@ get wrong:
   is from the ledger's point of view.
 - **A payment that funded a fund purchase is investing, not spending.** Matched against the
   purchase it paid for, on brokers that record no cash of their own.
-- **An unpriceable holding is excluded and named**, never valued at zero. A stale price shows
-  _vanha_ with its date; a holding with no price at all shows _ei hintaa_.
+- **An unpriceable holding is excluded and named**, never valued at zero. A holding with no price
+  at all shows _ei hintaa_.
+- **"Old" means older than a price that could exist**, not "not dated today". Markets close, and a
+  fund's NAV publishes a weekday behind, so on a Saturday a share's Friday close is current and a
+  fund's Thursday NAV is too. Only a price older than that shows _vanha_, with its date. A gap in
+  a price feed with bars on both sides is read as a market holiday rather than a missing price.
 - **Spending totals exclude what is not spending**: opening balances, investment funding, internal
   transfers.
 
@@ -173,8 +198,10 @@ Ask questions in Finnish on **Avustaja**. It reads through the same functions th
 chat and dashboard cannot disagree. It is read-only: no tool writes to the ledger.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
-uncategorised spending, the tax year, drift against target, and an exact decimal calculator. Every result carries the date it was
-computed for and whether any price behind it is stale.
+uncategorised spending, the tax year, drift against target, and an exact decimal calculator. Every
+result carries the date it was computed for and whether any price behind it is stale. The assistant
+reports the gap to a target but never recommends a trade, and where it mentions a sale it reports
+the gain that sale would realise.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
 monthly rates) but is told to use the calculator rather than mental arithmetic, and to say when a
@@ -324,10 +351,12 @@ and the test suite with an 80 % per-file coverage floor. No test may touch the n
 replaces `fetch` with one that throws, so every external call is injected and stubbed.
 
 ```
-src/core/      pure domain: money, ledger, cost basis, returns, allocation, cash
-src/server/    HTTP routes, SQLite access, importers, price sources, chat, spending
+src/core/      pure domain: money, ledger, cost basis, returns, allocation, cash,
+               staleness, tax/, rebalance/
+src/server/    HTTP routes, SQLite access, importers, price sources, chat,
+               spending, tax, rebalance
 src/web/       React frontend (TanStack Router, Query, Charts)
-docs/superpowers/specs/  the design document and its amendments
+docs/superpowers/specs/  the design documents and their amendments
 ```
 
 `src/core` never sees a database row, and `src/server/valuation.ts` is the one module that
@@ -342,6 +371,9 @@ translates between stored integers and the domain's `Money`/`Quantity`/`FxRate`.
   "Kulut / Korot / Verot" column, so a dividend's stored amount is what arrived, and the taxable
   85 % is computed on that. Where the payer withheld tax, the real gross is higher — the report
   badges every such row rather than implying certainty.
+- **Nothing here says whether to rebalance.** The app shows the gap and what closing it would
+  realise; choosing when to act, and which lots to sell for the smallest gain, is yours. It places
+  no orders and never will.
 - **Fund NAV history starts at your deployment** for Nordnet- and OP-priced funds (above).
 - **OP's securities export records no cash**, so those accounts show no balance and their
   money-weighted return is measured from purchases instead of deposits.
@@ -349,5 +381,7 @@ translates between stored integers and the domain's `Money`/`Quantity`/`FxRate`.
   accounts fixes it.
 - **Spending classification is substring rules**, not understanding. Unmatched payees land in _Muu_
   and are always reported as a share, so a total is never quietly missing a third of the money.
+- **A sale's realised gain is a gain, not a tax.** What tax it attracts depends on your other
+  capital income, which this app cannot see, so it reports the gain and stops.
 - **One process, one SQLite file.** The first-run race guard assumes a single process; do not run
   two against the same database.
