@@ -21,6 +21,17 @@ export type Category =
   | "terveys"
   | "vapaa-aika"
   | "verkkokauppa"
+  | "vaatteet"
+  | "koti"
+  | "lemmikit"
+  | "lapset"
+  | "matkailu"
+  | "koulutus"
+  | "lahjat"
+  | "tilaukset"
+  | "pankki"
+  | "vakuutukset"
+  | "verot"
   | "siirrot"
   | "palkka"
   | "korko"
@@ -34,6 +45,17 @@ export const CATEGORY_LABELS = {
   terveys: "Terveys",
   "vapaa-aika": "Vapaa-aika",
   verkkokauppa: "Verkkokauppa",
+  vaatteet: "Vaatteet",
+  koti: "Koti ja remontti",
+  lemmikit: "Lemmikit",
+  lapset: "Lapset",
+  matkailu: "Matkailu",
+  koulutus: "Koulutus",
+  lahjat: "Lahjat ja hyväntekeväisyys",
+  tilaukset: "Tilaukset ja jäsenmaksut",
+  pankki: "Pankkikulut",
+  vakuutukset: "Vakuutukset",
+  verot: "Verot",
   siirrot: "Tilisiirrot",
   palkka: "Palkka ja etuudet",
   korko: "Korot",
@@ -50,9 +72,21 @@ type Rule = { readonly category: Category; readonly patterns: readonly string[] 
  * Order matters where a name could match two rules. `RAVINTOLA` before the
  * grocery chains, since "K-MARKET RAVINTOLA" is a restaurant inside a shop.
  */
-const RULES: readonly Rule[] = [
-  { category: "korko", patterns: ["TALLETUSKORKO", "KORKO"] },
-  { category: "palkka", patterns: ["PALKKA", "ETUUS", "KELA", "ELÄKE", "OP-BONUS"] },
+const SEED: readonly Rule[] = [
+  { category: "korko", patterns: ["TALLETUSKORKO", "KORKO", "INTEREST"] },
+  {
+    category: "palkka",
+    patterns: ["PALKKA", "ETUUS", "KELA", "ELÄKE", "OP-BONUS", "PALKKIO", "TYÖTTÖMYYSKASSA"],
+  },
+  { category: "verot", patterns: ["VEROHALLINTO", "VEROTILI", "JÄÄNNÖSVERO", "ENNAKKOVERO"] },
+  {
+    category: "pankki",
+    patterns: ["PALVELUMAKSU", "TILINHOITO", "KORTTIMAKSU KK", "LAINANHOITO", "LUOTON MAKSU"],
+  },
+  {
+    category: "vakuutukset",
+    patterns: ["VAKUUTUS", "IF VAHINKO", "POHJOLA VAKUUTUS", "LÄHITAPIOLA", "TURVA", "FENNIA"],
+  },
   {
     category: "ravintolat",
     patterns: [
@@ -68,6 +102,19 @@ const RULES: readonly Rule[] = [
       "WOLT",
       "FOODORA",
       "STARBUCKS",
+      "KOTIPIZZA",
+      "TACO",
+      "SUSHI",
+      "KEBAB",
+      "BAARI",
+      "PUB ",
+      "PANIMO",
+      "ESPRESSO",
+      "ROBERTS",
+      "FAZER",
+      "SODEXO",
+      "AMICA",
+      "UNICAFE",
     ],
   },
   {
@@ -85,6 +132,16 @@ const RULES: readonly Rule[] = [
       "RUOHONJUURI",
       "M CHAN",
       "SESTO",
+      "SIWA",
+      "VALINTATALO",
+      "MINIMANI",
+      "TOKMANNI",
+      "LEIPOMO",
+      "KAUPPAHALLI",
+      "REKO",
+      "FOODIE",
+      "S-RYHMÄ",
+      "K-RAUTA RUOKA",
     ],
   },
   {
@@ -105,6 +162,17 @@ const RULES: readonly Rule[] = [
       "FINNAIR",
       "PARKING",
       "PYSÄKÖINTI",
+      "EASYPARK",
+      "AIMO PARK",
+      "KATSASTUS",
+      "AUTOKORJAAMO",
+      "RENGAS",
+      "VIRTA ",
+      "K-LATAUS",
+      "RECHARGE",
+      "NORDIC RIDE",
+      "FÖLI",
+      "NYSSE",
     ],
   },
   {
@@ -113,6 +181,7 @@ const RULES: readonly Rule[] = [
       "VUOKRA",
       "ISÄNNÖINTI",
       "TALOYHTIÖ",
+      "ASUNTO OY",
       "SÄHKÖ",
       "FORTUM",
       "HELEN",
@@ -120,49 +189,183 @@ const RULES: readonly Rule[] = [
       "ELISA",
       "TELIA",
       "DNA ",
-      "VAKUUTUS",
-      "IF VAHINKO",
-      "POHJOLA VAKUUTUS",
+      "MOI MOBIILI",
+      "TELIA FINLAND",
+      "KAUKOLÄMPÖ",
+      "JÄTEHUOLTO",
+      "VASTIKE",
+    ],
+  },
+  {
+    category: "koti",
+    patterns: [
+      "K-RAUTA",
+      "RAUTIA",
+      "BAUHAUS",
+      "STARK",
+      "PUUILO",
+      "BILTEMA",
+      "MOTONET",
+      "IKEA",
+      "JYSK",
+      "ASKO",
+      "SOTKA",
+      "CLAS OHLSON",
+      "REMONTTI",
+      "LVI",
+      "SÄHKÖASENNUS",
     ],
   },
   {
     category: "terveys",
-    patterns: ["APTEEKKI", "TERVEYS", "HAMMAS", "LÄÄKÄRI", "MEHILÄINEN", "TERVEYSTALO", "PIHLAJA"],
+    patterns: [
+      "APTEEKKI",
+      "TERVEYS",
+      "HAMMAS",
+      "LÄÄKÄRI",
+      "MEHILÄINEN",
+      "TERVEYSTALO",
+      "PIHLAJA",
+      "AAVA",
+      "OPTIKKO",
+      "SPECSAVERS",
+      "SILMÄASEMA",
+      "FYSIOTERAPIA",
+      "HYVINVOINTIALUE",
+    ],
   },
   {
-    category: "vapaa-aika",
+    category: "vaatteet",
+    patterns: [
+      "H&M",
+      "ZARA",
+      "LINDEX",
+      "KAPPAHL",
+      "SEPPÄLÄ",
+      "STOCKMANN",
+      "DRESSMANN",
+      "JACK & JONES",
+      "VERO MODA",
+      "INTERSPORT",
+      "STADIUM",
+      "XXL",
+      "SPORTIA",
+      "KENKÄ",
+      "HALONEN",
+    ],
+  },
+  {
+    category: "lemmikit",
+    patterns: ["ELÄINLÄÄKÄRI", "MUSTI JA MIRRI", "FAUNATAR", "ELÄINKAUPPA", "ZOOPLUS"],
+  },
+  {
+    category: "lapset",
+    patterns: ["PÄIVÄKOTI", "VARHAISKASVATUS", "LASTENTARHA", "KOULURUOKA", "PRISMA LELU", "LELU"],
+  },
+  {
+    category: "matkailu",
+    patterns: [
+      "HOTEL",
+      "HOTELLI",
+      "AIRBNB",
+      "BOOKING.COM",
+      "SCANDIC",
+      "SOKOS HOTEL",
+      "RADISSON",
+      "VIKING LINE",
+      "TALLINK",
+      "SILJA",
+      "NORWEGIAN",
+      "RYANAIR",
+      "LUFTHANSA",
+      "EXPEDIA",
+      "MATKATOIMISTO",
+    ],
+  },
+  {
+    category: "koulutus",
+    patterns: ["YLIOPISTO", "AMMATTIKORKEA", "KURSSI", "OPINTO", "KIRJASTO", "UDEMY", "COURSERA"],
+  },
+  {
+    category: "lahjat",
+    patterns: ["LAHJA", "KUKKA", "INTERFLORA", "PUNAINEN RISTI", "UNICEF", "PELASTAKAA LAPSET"],
+  },
+  {
+    category: "tilaukset",
     patterns: [
       "SPOTIFY",
       "NETFLIX",
       "HBO",
       "DISNEY",
+      "VIAPLAY",
+      "RUUTU",
+      "C MORE",
+      "YLE",
+      "HELSINGIN SANOMAT",
+      "HS DIGI",
+      "ILTALEHTI",
+      "AAMULEHTI",
+      "APPLE.COM",
+      "GOOGLE",
+      "MICROSOFT",
+      "ADOBE",
+      "JÄSENMAKSU",
+      "LIITTO",
+    ],
+  },
+  {
+    category: "vapaa-aika",
+    patterns: [
       "STEAM",
+      "PLAYSTATION",
+      "NINTENDO",
       "KIRJAKAUPPA",
       "AKATEEMINEN",
+      "SUOMALAINEN KIRJAKAUPPA",
       "ELOKUVA",
       "FINNKINO",
       "KUNTOSALI",
       "GYM",
       "LIIKUNTA",
+      "UIMAHALLI",
+      "GOLF",
+      "TEATTERI",
+      "KONSERTTI",
+      "TIKETTI",
+      "LIPPU.FI",
+      "VEIKKAUS",
+      "MUSEO",
     ],
   },
   {
     category: "verkkokauppa",
-    patterns: ["VERKKOKAUPPA", "AMAZON", "ZALANDO", "POWER", "GIGANTTI", "CDON", "EBAY", "PAYPAL"],
+    patterns: [
+      "VERKKOKAUPPA",
+      "AMAZON",
+      "ZALANDO",
+      "POWER",
+      "GIGANTTI",
+      "CDON",
+      "EBAY",
+      "PAYPAL",
+      "ALIEXPRESS",
+      "TEMU",
+      "WISH",
+      "KLARNA",
+      "ETSY",
+    ],
   },
-  { category: "siirrot", patterns: ["TILISIIRTO", "PANO", "OTTO", "TALLETUSAUTOM"] },
+  { category: "siirrot", patterns: ["TILISIIRTO", "PANO", "OTTO", "TALLETUSAUTOM", "MOBILEPAY"] },
 ];
 
 /**
- * The category a note falls into.
+ * The built-in rules, flattened to one row per pattern.
  *
- * Matching is on upper-cased text so a bank that changes its capitalisation does
- * not silently reclassify history.
+ * These seed a user's own table the first time their spending is read; from
+ * then on the rules live in the database, where the owner and the assistant can
+ * extend them (see spending/rules.ts). Kept in code as the starting point
+ * rather than as a migration so a new install begins with something useful.
  */
-export const categorise = (note: string): Category => {
-  const text = note.toUpperCase();
-  for (const rule of RULES) {
-    if (rule.patterns.some((pattern) => text.includes(pattern))) return rule.category;
-  }
-  return "muu";
-};
+export const SEED_RULES: readonly { pattern: string; category: Category }[] = SEED.flatMap((rule) =>
+  rule.patterns.map((pattern) => ({ pattern, category: rule.category })),
+);

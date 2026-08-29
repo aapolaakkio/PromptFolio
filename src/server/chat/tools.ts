@@ -2,7 +2,9 @@ import { z } from "zod";
 
 import { allocateBy, type Dimension } from "../../core/allocation";
 import { cashBalancesAt, valueCash } from "../../core/cash";
+import { categoriseWith, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
+import { calculate } from "./calculator";
 import { fundingCashFlows, investedCashFlows } from "../../core/ledger";
 import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
@@ -65,6 +67,8 @@ export type ToolArgs = {
   readonly dimension?: Dimension;
   readonly groupBy?: "category" | "counterparty";
   readonly limit?: number;
+  readonly operation?: "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
+  readonly values?: readonly string[];
 };
 
 /** What a tool hands back: JSON, because that is what the model reads. */
@@ -86,6 +90,13 @@ const Spending = z
     to: IsoDateSchema.optional(),
     groupBy: z.enum(["category", "counterparty"]).optional(),
     limit: z.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+const Calculation = z
+  .object({
+    operation: z.enum(["sum", "subtract", "multiply", "divide", "percent", "average"]),
+    /** Decimal strings, so nothing is lost on the way in. */
+    values: z.array(z.string()).min(1).max(200),
   })
   .strict();
 const Transactions = z
@@ -320,7 +331,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       const bank = new Set(bankAccountIds);
       const summary = summariseSpending(
         txns.filter((txn) => bank.has(txn.accountId)),
-        { from, to, by: groupBy, limit },
+        { from, to, by: groupBy, limit, rules: rulesFor(db, userId) },
       );
       return {
         from: summary.from,
@@ -337,6 +348,56 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           "Summat ovat negatiivisia (rahaa ulos). Luokittelu perustuu maksun tekstiin, " +
           "joten osa päätyy luokkaan Muu. Kerro uncategorisedShare jos se on merkittävä.",
       };
+    },
+  },
+
+  {
+    name: "get_uncategorised_spending",
+    description:
+      "Maksut, joita sääntöpohjainen luokittelu ei tunnistanut (luokka Muu), saajittain " +
+      "ja summattuna. Käytä tätä kun haluat arvioida itse mihin ne kuuluvat.",
+    schema: Spending,
+    run: (input) => {
+      const { from = "1900-01-01", to = today(), limit = 30 } = Spending.parse(input);
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      const rules = rulesFor(db, userId);
+      const summary = summariseSpending(
+        txns.filter(
+          (txn) => bank.has(txn.accountId) && categoriseWith(txn.note ?? "", rules) === "muu",
+        ),
+        { from, to, by: "counterparty", limit, rules },
+      );
+      return {
+        from,
+        to,
+        totalEur: summary.totalEur,
+        merchants: summary.groups.map((group) => ({
+          name: group.label,
+          totalEur: group.totalEur,
+          count: group.count,
+        })),
+        note:
+          "Nämä eivät osu mihinkään sääntöön. Voit arvioida luokan nimen perusteella, " +
+          "mutta sano selvästi että kyse on arviosta -- sääntöpohjaiset luvut ovat varmoja, " +
+          "arviosi ei.",
+      };
+    },
+  },
+
+  {
+    name: "calculate",
+    description:
+      "Laskee tarkasti sentin tarkkuudella: sum, subtract, multiply, divide, percent, average. " +
+      "Käytä tätä aina kun johdat luvun toisista luvuista -- älä laske päässäsi.",
+    schema: Calculation,
+    run: (input) => {
+      const { operation, values } = Calculation.parse(input);
+      try {
+        return calculate({ operation, values });
+      } catch (cause) {
+        return { error: cause instanceof Error ? cause.message : "Laskenta epäonnistui" };
+      }
     },
   },
 

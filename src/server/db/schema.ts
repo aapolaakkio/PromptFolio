@@ -262,6 +262,39 @@ export const snapshotRows = sqliteTable("snapshot_rows", {
  * follow on from the last one; they are scoped to their owner like every other
  * ledger row, never shared across a family instance.
  */
+/**
+ * What a payment was for, as a pattern matched against the text the bank prints.
+ *
+ * In the database rather than in code because the set is never finished: every
+ * statement brings shops nobody wrote a rule for, and the owner (or the
+ * assistant, on import) should be able to teach it one without a deployment.
+ *
+ * `source` records who decided: "seed" for the built-in Finnish merchants,
+ * "ai" for a classification the assistant proposed, "user" for one entered by
+ * hand. Kept because a rule the model guessed is a weaker claim than one a
+ * person made, and a wrong bucket is easier to find when you can see which
+ * rules came from where.
+ */
+export const spendingRules = sqliteTable(
+  "spending_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Upper-cased substring of the payment's text. */
+    pattern: text("pattern").notNull(),
+    category: text("category").notNull(),
+    source: text("source", { enum: ["seed", "ai", "user"] })
+      .notNull()
+      .default("user"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [unique("spending_rule_uq").on(t.userId, t.pattern)],
+);
+
 export const conversations = sqliteTable("conversations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id")

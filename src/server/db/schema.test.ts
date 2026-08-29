@@ -14,6 +14,7 @@ import {
   session,
   snapshotRows,
   snapshots,
+  spendingRules,
   transactions,
   user,
 } from "./schema";
@@ -170,6 +171,19 @@ test("declares both transaction unique constraints and the account/date index", 
   expect(uniqueNames).toEqual(["txn_external_uq", "txn_hash_uq"]);
   const indexNames = config.indexes.map((idx) => idx.config.name).sort();
   expect(indexNames).toEqual(["txn_account_date_idx", "txn_import_idx"]);
+});
+
+test("declares one spending rule per pattern per user", () => {
+  const config = getTableConfig(spendingRules);
+  const constraint = config.uniqueConstraints[0];
+
+  // addRules checks this before inserting, but the constraint is what holds if
+  // two imports classify at the same time: without it the assistant could add a
+  // second rule for a pattern the owner had already answered, and which one
+  // applied would come down to row order.
+  expect(config.uniqueConstraints).toHaveLength(1);
+  expect(constraint?.name).toBe("spending_rule_uq");
+  expect(constraint?.columns.map((column) => column.name)).toEqual(["user_id", "pattern"]);
 });
 
 test("declares the composite primary keys on prices and fx_rates", () => {

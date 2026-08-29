@@ -433,6 +433,54 @@ describe("get_spending", () => {
   });
 });
 
+describe("get_uncategorised_spending", () => {
+  test("names the merchants no rule matched, so the model can propose a class", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -1000, "2026-03-02");
+    spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -500, "2026-03-03");
+
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
+    // lines above in tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_uncategorised_spending").run({
+      from: "2026-01-01",
+      to: "2026-12-31",
+    }) as { totalEur: string; merchants: Array<{ name: string; totalEur: string; count: number }> };
+
+    // The recognised grocery shop is not here; the unknown one is, summed.
+    expect(result.merchants).toHaveLength(1);
+    expect(result.merchants[0]?.name).toBe("JOKIN TUNTEMATON LIIKE");
+    expect(result.merchants[0]?.totalEur).toBe("-15.00");
+    expect(result.totalEur).toBe("-15.00");
+  });
+});
+
+describe("calculate", () => {
+  test("adds exactly, which is the point of doing it here rather than in prose", async () => {
+    const { tools } = await seed();
+    // SAFETY: as above.
+    const result = toolNamed(tools, "calculate").run({
+      operation: "sum",
+      values: ["0.10", "0.20"],
+    }) as { result: string; working: string };
+
+    expect(result.result).toBe("0.30");
+    expect(result.working).toBe("0.10 + 0.20 = 0.30");
+  });
+
+  test("returns a bad calculation as a message the model can act on", async () => {
+    const { tools } = await seed();
+    // SAFETY: as above.
+    const result = toolNamed(tools, "calculate").run({
+      operation: "divide",
+      values: ["10.00", "0"],
+    }) as { error?: string };
+
+    // A thrown tool kills the turn; a message lets the model say what happened.
+    expect(result.error).toContain("Nollalla");
+  });
+});
+
 describe("get_instruments", () => {
   test("lists the registered instruments", async () => {
     const { tools } = await seed();

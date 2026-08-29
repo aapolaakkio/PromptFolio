@@ -1,6 +1,7 @@
 import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
 import type { IsoDate, Txn } from "../../core/types";
-import { CATEGORY_LABELS, categorise, type Category } from "./categories";
+import { CATEGORY_LABELS, type Category } from "./categories";
+import { categoriseWith, type SpendingRule } from "./rules";
 
 export type SpendingGroup = {
   readonly key: string;
@@ -26,9 +27,13 @@ export type SpendingSummary = {
 /** One transaction, reduced to what a spending view needs. */
 export type SpendingRow = { readonly note: string; readonly amount: Money; readonly date: IsoDate };
 
-const groupKey = (row: SpendingRow, by: "category" | "counterparty"): [string, string] => {
+const groupKey = (
+  row: SpendingRow,
+  by: "category" | "counterparty",
+  rules: readonly SpendingRule[],
+): [string, string] => {
   if (by === "category") {
-    const category: Category = categorise(row.note);
+    const category: Category = categoriseWith(row.note, rules);
     return [category, CATEGORY_LABELS[category]];
   }
   // The counterparty is the note's middle field when the bank printed one
@@ -61,6 +66,8 @@ export const summariseSpending = (
     from: IsoDate;
     to: IsoDate;
     by: "category" | "counterparty";
+    /** The user's own rules -- see spending/rules.ts. */
+    rules: readonly SpendingRule[];
     /** Groups to return, largest first. The rest are folded into one "muut" row. */
     limit?: number;
   },
@@ -72,7 +79,7 @@ export const summariseSpending = (
 
   const totals = new Map<string, { label: string; total: Money; count: number }>();
   for (const row of rows) {
-    const [key, label] = groupKey(row, args.by);
+    const [key, label] = groupKey(row, args.by, args.rules);
     const existing = totals.get(key);
     totals.set(key, {
       label,
@@ -83,7 +90,7 @@ export const summariseSpending = (
 
   const total = rows.reduce((sum, row) => addMoney(sum, row.amount), zeroMoney(EUR));
   const uncategorised = rows
-    .filter((row) => categorise(row.note) === "muu")
+    .filter((row) => categoriseWith(row.note, args.rules) === "muu")
     .reduce((sum, row) => addMoney(sum, row.amount), zeroMoney(EUR));
 
   const sorted = [...totals.entries()]

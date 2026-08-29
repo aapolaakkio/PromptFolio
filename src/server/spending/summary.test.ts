@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { EUR, parseMoney, type Currency } from "../../core/money";
 import type { IsoDate, TransactionType, Txn } from "../../core/types";
-import { categorise } from "./categories";
+import { SEED_RULES } from "./categories";
+import { categoriseWith, type SpendingRule } from "./rules";
 import { summariseSpending } from "./summary";
 
 // The assistant is not allowed to add these up in prose, so whatever this
@@ -33,7 +34,12 @@ const row = (
   note,
 });
 
-const YEAR = { from: "2026-01-01", to: "2026-12-31" } as const;
+/** The built-in rules, as a user's table holds them before anything is added. */
+const RULES: SpendingRule[] = SEED_RULES.map((rule) => ({ ...rule, source: "seed" }));
+
+const categorise = (note: string) => categoriseWith(note, RULES);
+
+const YEAR = { from: "2026-01-01", to: "2026-12-31", rules: RULES } as const;
 
 describe("categorise", () => {
   test("puts Finnish grocery chains under food", () => {
@@ -146,5 +152,29 @@ describe("summariseSpending", () => {
     const summary = summariseSpending([row("", "-10.00")], { ...YEAR, by: "category" });
     expect(summary.groups[0]?.key).toBe("muu");
     expect(summary.uncategorisedShare).toBeCloseTo(1, 10);
+  });
+});
+
+describe("the widened category rules", () => {
+  test("recognise the shops a Finnish statement actually names", () => {
+    expect(categorise("PKORTTIMAKSU — K-CITYMARKET TURKU")).toBe("ruoka");
+    expect(categorise("PKORTTIMAKSU — KOTIPIZZA SALO")).toBe("ravintolat");
+    expect(categorise("PKORTTIMAKSU — EASYPARK")).toBe("liikenne");
+    expect(categorise("PKORTTIMAKSU — GIGANTTI")).toBe("verkkokauppa");
+    expect(categorise("PKORTTIMAKSU — H&M HELSINKI")).toBe("vaatteet");
+    expect(categorise("PKORTTIMAKSU — MUSTI JA MIRRI")).toBe("lemmikit");
+    expect(categorise("PKORTTIMAKSU — SCANDIC")).toBe("matkailu");
+    expect(categorise("MAKSUPALVELU — SPOTIFY")).toBe("tilaukset");
+    expect(categorise("MAKSUPALVELU — VEROHALLINTO")).toBe("verot");
+    expect(categorise("PKORTTIMAKSU — K-RAUTA")).toBe("koti");
+  });
+
+  test("still leave a shop nobody wrote a rule for in Muu", () => {
+    // The point of the "muu" bucket is that it is honest, not that it is empty.
+    expect(categorise("PKORTTIMAKSU — PIENI PUOTI 12345")).toBe("muu");
+  });
+
+  test("keep eating out apart from the weekly shop", () => {
+    expect(categorise("PKORTTIMAKSU — RAVINTOLA PRISMA")).toBe("ravintolat");
   });
 });

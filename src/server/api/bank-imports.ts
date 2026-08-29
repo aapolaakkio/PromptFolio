@@ -19,6 +19,8 @@ import { getDb } from "../db";
 import { accounts, transactions } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { loadPortfolio } from "../valuation";
+import { CHAT_MODEL, createClient, type ToolRunnerClient } from "../chat/runner";
+import { classifyNewMerchants, type ClassifyResult } from "../spending/classify";
 
 type Db = ReturnType<typeof getDb>["db"];
 
@@ -156,6 +158,35 @@ const assertBankAccount = (accountId: number): void => {
  * and the disagreement reported, since a deposit whose terms changed is worth
  * looking at rather than silently adopting.
  */
+/**
+ * Classifies the merchants this account's spending does not yet have rules for.
+ *
+ * Skipped silently when the instance has no API key: classification is a
+ * convenience on top of the import, not a condition of it.
+ */
+const classifyImportedSpending = async (
+  db: Db,
+  userId: string,
+  accountId: number,
+): Promise<ClassifyResult | null> => {
+  const apiKey = Bun.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  const { txns } = loadPortfolio(db, userId);
+  return classifyNewMerchants(db, userId, {
+    txns,
+    accountIds: new Set([accountId]),
+    client: classifierClient ?? createClient(apiKey),
+    model: CHAT_MODEL,
+  });
+};
+
+/** Injected by tests, so classification never reaches the real API. */
+let classifierClient: ToolRunnerClient | null = null;
+export const _setClassifierClient = (client: ToolRunnerClient | null): void => {
+  classifierClient = client;
+};
+
 type MaturityOutcome = {
   /** What the account carries after this import. */
   readonly maturityDate: string | null;
@@ -354,6 +385,12 @@ export const bankImportRoutes = {
       // account no longer has to be told separately. Only a blank is filled.
       const maturity = statement === null ? null : recordMaturity(db, accountId, statement);
 
+      // Whatever this file named that no rule covers is put to the model once,
+      // in one batch, and what it proposes becomes rules for next time. Failure
+      // is reported rather than thrown: the rows are already in, and an import
+      // that worked must not read as failed because the classifier did not.
+      const classified = await classifyImportedSpending(db, userId, accountId);
+
       // Problems travel with the result rather than blocking it: a statement
       // whose 700th row is malformed should still import the other 699, and the
       // owner needs to know which one was left out.
@@ -362,6 +399,7 @@ export const bankImportRoutes = {
           ...result,
           problems,
           reconciliation,
+          classified,
           maturityDate: maturity?.maturityDate ?? null,
           maturityConflict: maturity?.maturityConflict ?? null,
         },

@@ -22,6 +22,8 @@ import {
   totalCashEur,
   valueCash,
 } from "../../core/cash";
+import { CATEGORY_LABELS } from "../spending/categories";
+import { addRules, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
 const { db } = getDb();
@@ -65,6 +67,41 @@ export const portfolioRoutes = {
     }),
   },
 
+  "/api/spending/rules": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      return json({
+        rules: rulesFor(db, userId),
+        categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
+      });
+    }),
+
+    POST: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const body = z
+        .object({
+          rules: z
+            .array(z.object({ pattern: z.string().trim().min(3).max(60), category: z.string() }))
+            .min(1)
+            .max(50),
+        })
+        .strict()
+        .parse(await request.json());
+
+      // Entered by a person, so recorded as theirs: a rule the assistant
+      // guessed and one its owner wrote are different claims (see schema.ts).
+      const { added, rejected } = addRules(db, userId, body.rules, "user");
+      return json({ added, rejected }, 201);
+    }),
+
+    DELETE: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const pattern = new URL(request.url).searchParams.get("pattern") ?? "";
+      if (!removeRule(db, userId, pattern)) throw new HttpError(404, "Sääntöä ei löydy");
+      return json({ ok: true });
+    }),
+  },
+
   "/api/spending": {
     GET: handle(async (request) => {
       const { userId } = await requireUser(request);
@@ -88,7 +125,7 @@ export const portfolioRoutes = {
       return json(
         summariseSpending(
           txns.filter((txn) => bank.has(txn.accountId)),
-          { from, to, by, limit },
+          { from, to, by, limit, rules: rulesFor(db, userId) },
         ),
       );
     }),

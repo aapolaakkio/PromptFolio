@@ -8,13 +8,16 @@ import { z } from "zod";
 let auth: (typeof import("../auth"))["auth"];
 let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
 let bankImportRoutes: (typeof import("./bank-imports"))["bankImportRoutes"];
+let setClassifierClient: (typeof import("./bank-imports"))["_setClassifierClient"];
 let importRoutes: (typeof import("./imports"))["importRoutes"];
 let portfolioRoutes: (typeof import("./portfolio"))["portfolioRoutes"];
 
 beforeAll(async () => {
   auth = (await import("../auth")).auth;
   accountRoutes = (await import("./accounts")).accountRoutes;
-  bankImportRoutes = (await import("./bank-imports")).bankImportRoutes;
+  const bankImports = await import("./bank-imports");
+  bankImportRoutes = bankImports.bankImportRoutes;
+  setClassifierClient = bankImports._setClassifierClient;
   importRoutes = (await import("./imports")).importRoutes;
   portfolioRoutes = (await import("./portfolio")).portfolioRoutes;
 });
@@ -524,5 +527,141 @@ describe("a fixed-term deposit's maturity date", () => {
 
     expect(body.lockedEur).toBe("5000.00");
     expect(body.availableEur).toBe("0.00");
+  });
+});
+
+describe("classifying an import's new merchants", () => {
+  /**
+   * SAFETY: the classifier reaches only `beta.messages.toolRunner`, which this
+   * implements; nothing else of the SDK's surface is touched.
+   */
+  const replying = (text: string) =>
+    ({
+      beta: {
+        messages: {
+          toolRunner: () => ({
+            async *[Symbol.asyncIterator]() {
+              yield {
+                id: "msg",
+                type: "message",
+                role: "assistant",
+                model: "test",
+                content: [{ type: "text", text, citations: null }],
+                stop_reason: "end_turn",
+                stop_sequence: null,
+                container: null,
+                context_management: null,
+                diagnostics: null,
+                stop_details: null,
+                usage: {
+                  input_tokens: 0,
+                  output_tokens: 0,
+                  cache_creation_input_tokens: null,
+                  cache_read_input_tokens: null,
+                  cache_creation: null,
+                  server_tool_use: null,
+                  service_tier: null,
+                  fallback_credit: null,
+                  inference_geo: null,
+                  iterations: null,
+                  output_tokens_details: null,
+                  speed: null,
+                },
+              };
+            },
+          }),
+        },
+      },
+    }) as Parameters<typeof setClassifierClient>[0];
+
+  const ClassifiedSchema = z.object({
+    classified: z
+      .object({
+        asked: z.number(),
+        added: z.number(),
+        rejected: z.number(),
+        error: z.string().nullable(),
+      })
+      .nullable(),
+  });
+
+  test("teaches the rules a shop the file named, in one batch", async () => {
+    setClassifierClient(
+      replying('{"rules":[{"pattern":"ESIMERKKI VAKUUTUS","category":"vakuutukset"}]}'),
+    );
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    // Reading the rules is what seeds them for a new account; deleting before
+    // that would match nothing and the seed would put the pattern straight back.
+    await portfolioRoutes["/api/spending/rules"].GET(
+      new Request("http://x/api/spending/rules", { headers: { cookie } }),
+    );
+    // The seed rules already know the word "VAKUUTUS", so it is removed first:
+    // classification only ever runs on merchants no rule covers, and this is
+    // what one looks like.
+    await portfolioRoutes["/api/spending/rules"].DELETE(
+      new Request("http://x/api/spending/rules?pattern=VAKUUTUS", {
+        method: "DELETE",
+        headers: { cookie },
+      }),
+    );
+
+    const body = ClassifiedSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId)).json(),
+    );
+
+    expect(body.classified?.added).toBeGreaterThan(0);
+    expect(body.classified?.error).toBeNull();
+
+    // ...and the rule holds for the next question about spending.
+    const spending = await portfolioRoutes["/api/spending"].GET(
+      new Request("http://x/api/spending?from=2025-01-01&to=2026-12-31&by=category", {
+        headers: { cookie },
+      }),
+    );
+    const groups = z
+      .object({ groups: z.array(z.object({ key: z.string() })) })
+      .parse(await spending.json());
+    expect(groups.groups.some((group) => group.key === "vakuutukset")).toBe(true);
+
+    setClassifierClient(null);
+  });
+
+  test("an import still succeeds when the classifier cannot be reached", async () => {
+    // SAFETY: as with `replying` above -- one method, implemented here.
+    setClassifierClient({
+      beta: {
+        messages: {
+          toolRunner: () => ({
+            // eslint-disable-next-line require-yield
+            async *[Symbol.asyncIterator]() {
+              throw new Error("upstream unavailable");
+            },
+          }),
+        },
+      },
+    } as Parameters<typeof setClassifierClient>[0]);
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+    await portfolioRoutes["/api/spending/rules"].GET(
+      new Request("http://x/api/spending/rules", { headers: { cookie } }),
+    );
+    await portfolioRoutes["/api/spending/rules"].DELETE(
+      new Request("http://x/api/spending/rules?pattern=VAKUUTUS", {
+        method: "DELETE",
+        headers: { cookie },
+      }),
+    );
+
+    const response = await upload("/api/imports/bank/commit", cookie, accountId);
+    const body = ClassifiedSchema.parse(await response.json());
+
+    // The rows are in; only the classification failed, and it says so.
+    expect(response.status).toBe(201);
+    expect(body.classified?.error).toBe("upstream unavailable");
+    expect(await cashTotal(cookie, "2026-06-01")).toBe("1660.29");
+
+    setClassifierClient(null);
   });
 });
