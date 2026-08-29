@@ -3,6 +3,7 @@ import { auth } from "./auth";
 import { accountRoutes } from "./api/accounts";
 import { bankImportRoutes } from "./api/bank-imports";
 import { cashEntryRoutes } from "./api/cash-entries";
+import { rebalanceRoutes } from "./api/rebalance";
 import { taxRoutes } from "./api/tax";
 import { chatRoutes } from "./api/chat";
 import { importRoutes } from "./api/imports";
@@ -63,6 +64,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
       ...accountRoutes,
       ...bankImportRoutes,
       ...cashEntryRoutes,
+      ...rebalanceRoutes,
       ...taxRoutes,
       ...chatRoutes,
       ...instrumentRoutes,

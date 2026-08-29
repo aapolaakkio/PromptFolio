@@ -39,6 +39,20 @@ const KIND_LABELS = {
   cash: "Käteinen",
 } satisfies Record<Instrument["kind"], string>;
 
+/**
+ * Which slice an instrument held in an account falls into.
+ *
+ * Exported because a caller that acts on a slice -- a rebalance plan proposing
+ * to sell 1 000 € "of funds" -- has to know which holdings that names before it
+ * can say what the sale would realise. Deriving it a second time in the caller
+ * would let the two disagree about what a slice contains.
+ */
+export const sliceKeyFor = (
+  dimension: Dimension,
+  accountId: number,
+  instrument: Instrument,
+): string => keyAndLabel(dimension, accountId, instrument)[0];
+
 const keyAndLabel = (
   dimension: Dimension,
   accountId: number,
