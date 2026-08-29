@@ -10,6 +10,7 @@ import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate } from "../../core/types";
 import type { getDb } from "../db";
+import { taxYearFor, taxYearsFor } from "../tax";
 import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
 
 type Db = ReturnType<typeof getDb>["db"];
@@ -69,6 +70,7 @@ export type ToolArgs = {
   readonly limit?: number;
   readonly operation?: "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
   readonly values?: readonly string[];
+  readonly year?: number;
 };
 
 /** What a tool hands back: JSON, because that is what the model reads. */
@@ -78,6 +80,7 @@ export type ToolResult = { readonly [key: string]: JsonValue | ToolResult | read
 const NoArgs = z.object({}).strict();
 const OnDate = z.object({ on: IsoDateSchema.optional() }).strict();
 const Range = z.object({ from: IsoDateSchema.optional(), to: IsoDateSchema.optional() }).strict();
+const TaxYear = z.object({ year: z.number().int().min(1990).max(2100).optional() }).strict();
 const Allocation = z
   .object({
     on: IsoDateSchema.optional(),
@@ -422,6 +425,54 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
             currency: i.currency,
             priceSource: i.priceSource,
           })),
+      };
+    },
+  },
+  {
+    name: "get_tax_year",
+    description:
+      "Verovuoden luvut: luovutusvoitot ja -tappiot, osingot ja osakesäästötilin nostot. " +
+      "Nämä ovat veroilmoituksen tarkistamista varten -- veron määrää ei lasketa, koska " +
+      "pääomatulon veroprosentti riippuu myös tuloista joita sovellus ei näe. Ilman " +
+      "vuotta palautetaan viimeisin vuosi jolla on verotettavia tapahtumia.",
+    schema: TaxYear,
+    run: (input) => {
+      const { year } = TaxYear.parse(input);
+      const years = taxYearsFor(db, userId);
+      // A ledger with no taxable event at all still answers, for the year we
+      // are in: an empty report is the true answer to "what do I owe on 2026",
+      // and `availableYears` says which years have anything in them.
+      const chosen = year ?? years[0] ?? Number(today().slice(0, 4));
+
+      // Reads through the same function the Verot screen calls, so chat and
+      // the screen cannot disagree about a figure someone files on.
+      const report = taxYearFor(db, userId, chosen);
+      return {
+        year: report.year,
+        availableYears: years,
+        exempt: report.exempt,
+        totalSalePriceEur: report.totalSalePriceEur,
+        gainsEur: report.gainsEur,
+        lossesEur: report.lossesEur,
+        taxableGainEur: report.netEur,
+        lossCarriedOut: report.lossCarriedOut,
+        dividendTaxableEur: report.dividendTaxableEur,
+        // Said out loud so an answer cannot present a net figure as a gross one.
+        dividendWithholdingMissing: report.dividends.some((row) => !row.withholdingRecorded),
+        ost: report.ost.map((account) => ({
+          account: account.accountName,
+          depositedEur: account.depositedEur,
+          capRemainingEur: account.capRemainingEur,
+          withdrawals: account.withdrawals.map((row) => ({
+            date: row.withdrawnOn,
+            amountEur: row.amountEur,
+            taxableEur: row.taxableEur,
+            blocked: row.blockedBy,
+          })),
+        })),
+        note:
+          "Veron määrää ei lasketa. Jos jokin osakesäästötilin nosto on blocked, sen " +
+          "veronalaista osuutta ei voitu laskea -- kerro syy äläkä arvaa lukua.",
       };
     },
   },

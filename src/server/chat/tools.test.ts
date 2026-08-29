@@ -494,3 +494,41 @@ describe("get_instruments", () => {
     ]);
   });
 });
+
+describe("get_tax_year", () => {
+  test("reports taxable income for the year, and never a euro of tax owed", async () => {
+    const { tools } = await seed();
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
+    // tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_tax_year").run({ year: 2026 }) as {
+      year: number;
+      availableYears: readonly number[];
+      taxableGainEur: string;
+      dividendTaxableEur: string;
+      note: string;
+    };
+
+    expect(result.year).toBe(2026);
+    expect(result.taxableGainEur).toBe("0.00");
+    expect(result.dividendTaxableEur).toBe("0.00");
+    // The bracket depends on capital income the app cannot see, so a chat
+    // answer must have no rate to reach for either.
+    expect(JSON.stringify(result)).not.toContain("30 %");
+    expect(result).not.toHaveProperty("taxOwedEur");
+  });
+
+  test("answers for the current year when the ledger has no taxable event", async () => {
+    const { tools } = await seed();
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
+    // tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_tax_year").run({}) as {
+      year: number;
+      availableYears: readonly number[];
+    };
+
+    // An empty report is the true answer, and availableYears says which years
+    // hold anything -- better than refusing to answer at all.
+    expect(result.year).toBe(new Date().getUTCFullYear());
+    expect(result.availableYears).toEqual([]);
+  });
+});
