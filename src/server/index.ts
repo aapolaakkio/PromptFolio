@@ -1,6 +1,7 @@
 import index from "../web/index.html";
 import { auth } from "./auth";
 import { accountRoutes } from "./api/accounts";
+import { bankImportRoutes } from "./api/bank-imports";
 import { cashEntryRoutes } from "./api/cash-entries";
 import { chatRoutes } from "./api/chat";
 import { importRoutes } from "./api/imports";
@@ -51,6 +52,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
       "/api/auth/*": (request) => auth.handler(request),
       ...setupRoutes,
       ...accountRoutes,
+      ...bankImportRoutes,
       ...cashEntryRoutes,
       ...chatRoutes,
       ...instrumentRoutes,

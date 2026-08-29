@@ -149,7 +149,9 @@ export const imports = sqliteTable("imports", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  kind: text("kind", { enum: ["csv_nordnet", "csv_op", "pdf", "vision", "manual"] }).notNull(),
+  kind: text("kind", {
+    enum: ["csv_nordnet", "csv_op", "csv_bank", "pdf", "vision", "manual"],
+  }).notNull(),
   filename: text("filename").notNull(),
   sha256: text("sha256").notNull(),
   status: text("status", { enum: ["draft", "committed", "undone"] })

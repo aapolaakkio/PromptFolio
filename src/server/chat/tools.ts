@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { allocateBy, type Dimension } from "../../core/allocation";
 import { cashBalancesAt, valueCash } from "../../core/cash";
+import { summariseSpending } from "../spending/summary";
 import { fundingCashFlows, investedCashFlows } from "../../core/ledger";
 import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
 import { twr, valueSeries, xirr } from "../../core/returns";
@@ -62,6 +63,7 @@ export type ToolArgs = {
   readonly from?: string;
   readonly to?: string;
   readonly dimension?: Dimension;
+  readonly groupBy?: "category" | "counterparty";
   readonly limit?: number;
 };
 
@@ -76,6 +78,14 @@ const Allocation = z
   .object({
     on: IsoDateSchema.optional(),
     dimension: z.enum(["kind", "currency", "account", "instrument"]).optional(),
+  })
+  .strict();
+const Spending = z
+  .object({
+    from: IsoDateSchema.optional(),
+    to: IsoDateSchema.optional(),
+    groupBy: z.enum(["category", "counterparty"]).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
   })
   .strict();
 const Transactions = z
@@ -280,6 +290,46 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       };
     },
   },
+  {
+    name: "get_spending",
+    description:
+      "Mihin rahaa on kulunut pankkitileiltä jaksolla. groupBy: category (luokittain, " +
+      "esim. ruoka, ravintolat, liikenne) tai counterparty (saajittain). Summat on " +
+      "laskettu valmiiksi -- älä laske niitä itse yhteen.",
+    schema: Spending,
+    run: (input) => {
+      const {
+        from = "1900-01-01",
+        to = today(),
+        groupBy = "category",
+        limit = 15,
+      } = Spending.parse(input);
+      // Bank rows only: a share purchase is money leaving too, and counting it
+      // would report the year's biggest investment as its biggest expense.
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      const summary = summariseSpending(
+        txns.filter((txn) => bank.has(txn.accountId)),
+        { from, to, by: groupBy, limit },
+      );
+      return {
+        from: summary.from,
+        to: summary.to,
+        totalEur: summary.totalEur,
+        groups: summary.groups.map((group) => ({
+          label: group.label,
+          totalEur: group.totalEur,
+          count: group.count,
+        })),
+        // Said out loud so an answer cannot imply every euro was classified.
+        uncategorisedShare: summary.uncategorisedShare,
+        note:
+          "Summat ovat negatiivisia (rahaa ulos). Luokittelu perustuu maksun tekstiin, " +
+          "joten osa päätyy luokkaan Muu. Kerro uncategorisedShare jos se on merkittävä.",
+      };
+    },
+  },
+
   {
     name: "get_instruments",
     description: "Rekisteröidyt arvopaperit: nimi, ISIN, laji, valuutta ja hintalähde.",

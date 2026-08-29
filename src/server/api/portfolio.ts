@@ -16,6 +16,7 @@ import { accounts } from "../db/schema";
 import { HttpError, handle, json } from "../http";
 import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
 import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash";
+import { summariseSpending } from "../spending/summary";
 
 const { db } = getDb();
 
@@ -55,6 +56,35 @@ export const portfolioRoutes = {
       const { userId } = await requireUser(request);
       const on = IsoDateSchema.parse(new URL(request.url).searchParams.get("on") ?? today());
       return json(holdingsFor(db, userId, on));
+    }),
+  },
+
+  "/api/spending": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const url = new URL(request.url);
+      const from = IsoDateSchema.parse(url.searchParams.get("from") ?? "1900-01-01");
+      const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
+      const by = z
+        .enum(["category", "counterparty"])
+        .parse(url.searchParams.get("by") ?? "category");
+      const limit = z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .parse(url.searchParams.get("limit") ?? "15");
+
+      // Bank rows only -- see summariseSpending's own note on why a purchase is
+      // not spending.
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      return json(
+        summariseSpending(
+          txns.filter((txn) => bank.has(txn.accountId)),
+          { from, to, by, limit },
+        ),
+      );
     }),
   },
 

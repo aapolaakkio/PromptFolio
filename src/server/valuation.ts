@@ -162,6 +162,7 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     tax: asMoney(row.tax, row.currency),
     currency: parseCurrency(row.currency),
     fxRateEur: asRate(row.fxRateEur, row.currency),
+    note: row.note,
   }));
 
   const instrumentList: Instrument[] = db

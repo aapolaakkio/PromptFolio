@@ -64,6 +64,20 @@ const createAccount = async (cookie: string, name = "Nordnet"): Promise<number> 
   return ((await response.json()) as { id: number }).id;
 };
 
+/** A bank account, the only kind a statement's spending may land on. */
+const createBankAccount = async (cookie: string): Promise<number> => {
+  const response = await accountRoutes["/api/accounts"].POST(
+    new Request("http://x/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ name: "OP käyttötili", broker: "op", accountType: "current" }),
+    }),
+  );
+  expect(response.status).toBe(201);
+  // SAFETY: a 201 from POST /api/accounts always returns the inserted row.
+  return ((await response.json()) as { id: number }).id;
+};
+
 const createInstrument = async (cookie: string, name: string): Promise<number> => {
   const response = await instrumentRoutes["/api/instruments"].POST(
     new Request("http://x/api/instruments", {
@@ -123,6 +137,27 @@ const deposit = (accountId: number, date: string, minor: number): void => {
     .run();
 };
 
+/** One card payment on a bank account, as a statement import would write it. */
+const spend = (accountId: number, note: string, minor: number, date: string): void => {
+  db.insert(transactions)
+    .values({
+      accountId,
+      instrumentId: null,
+      type: "WITHDRAWAL",
+      tradeDate: date,
+      quantity: 0,
+      unitPrice: null,
+      amount: minor,
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: crypto.randomUUID(),
+      note,
+    })
+    .run();
+};
+
 const price = (instrumentId: number, date: string, minor: number): void => {
   db.insert(prices)
     .values({
@@ -144,15 +179,21 @@ const toolNamed = (tools: Tools, name: string): Tools[number] => {
 };
 
 /** One user, one account, one instrument bought at 10,00 and last priced at 12,00. */
-const seed = async (): Promise<{ tools: Tools; instrumentId: number; accountId: number }> => {
+const seed = async (): Promise<{
+  tools: Tools;
+  instrumentId: number;
+  accountId: number;
+  bankAccountId: number;
+}> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
   const accountId = await createAccount(cookie);
+  const bankAccountId = await createBankAccount(cookie);
   const instrumentId = await createInstrument(cookie, "Testirahasto");
   deposit(accountId, "2026-01-01", 100_000);
   buy(accountId, instrumentId, "2026-01-02");
   price(instrumentId, "2026-01-02", 1000);
   price(instrumentId, "2026-06-01", 1200);
-  return { tools: buildChatTools(db, userId), instrumentId, accountId };
+  return { tools: buildChatTools(db, userId), instrumentId, accountId, bankAccountId };
 };
 
 describe("get_holdings", () => {
@@ -342,6 +383,48 @@ describe("payload limits", () => {
 
     expect(result.returned).toBe(25);
     expect(result.truncated).toBe(true);
+  });
+});
+
+describe("get_spending", () => {
+  test("returns totals already added up, per category", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3120, "2026-03-02");
+    spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -1850, "2026-03-03");
+
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
+    // lines above in tools.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_spending").run({
+      from: "2026-01-01",
+      to: "2026-12-31",
+    }) as {
+      totalEur: string;
+      groups: Array<{ label: string; totalEur: string; count: number }>;
+      uncategorisedShare: number;
+    };
+
+    const food = result.groups.find((group) => group.label === "Ruokakauppa");
+    expect(food?.totalEur).toBe("-73.35");
+    expect(food?.count).toBe(2);
+    expect(result.totalEur).toBe("-91.85");
+    expect(result.uncategorisedShare).toBe(0);
+  });
+
+  test("groups by counterparty when asked", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -1785, "2026-03-02");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_spending").run({
+      from: "2026-01-01",
+      to: "2026-12-31",
+      groupBy: "counterparty",
+    }) as { groups: Array<{ label: string; totalEur: string }> };
+
+    expect(result.groups[0]?.label).toBe("K-MARKET ESIMERKKI");
+    expect(result.groups[0]?.totalEur).toBe("-60.00");
   });
 });
 

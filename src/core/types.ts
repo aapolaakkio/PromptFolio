@@ -68,6 +68,13 @@ export type Txn = {
   readonly tax: Money;
   readonly currency: Currency;
   readonly fxRateEur: FxRate;
+  /**
+   * What the source called this row: a broker's own text, or a bank's label,
+   * counterparty and message joined. Null for a row nobody wrote one for.
+   * Never parsed for meaning by `core` -- it is evidence for a reader, and the
+   * material the spending view groups by.
+   */
+  readonly note?: string | null;
 };
 
 export type CashFlow = { readonly date: IsoDate; readonly amountEur: Money };
