@@ -14,6 +14,7 @@ import {
 } from "../core/money";
 import { cashBalancesAt } from "../core/cash";
 import type { OstValuation } from "../core/tax/ost";
+import { isPriceStale } from "../core/staleness";
 import { taxYear } from "../core/tax/year";
 import type { Instrument, IsoDate } from "../core/types";
 import type { getDb } from "./db";
@@ -182,16 +183,21 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
       if (quantity.scaled === 0n) continue;
       const price = prices.priceOn(instrumentId, on);
       if (price === null) return { ok: false, instrumentId };
+      const instrument = instrumentById.get(instrumentId);
       const priceDate = prices.priceDateOn(instrumentId, on);
+      // Not "dated some earlier day" -- markets close, and a fund's NAV
+      // publishes a weekday behind, so Friday's close is the freshest price a
+      // Sunday withdrawal can have. `isPriceStale` is the same rule the
+      // holdings badge uses; comparing the dates directly asked for a price
+      // that could not exist and made every weekend look like a gap.
       if (
         priceDate !== null &&
-        priceDate !== on &&
+        isPriceStale({ kind: instrument?.kind ?? "stock", priceDate, on }) &&
         (pricedFrom === null || priceDate < pricedFrom)
       ) {
         pricedFrom = priceDate;
         pricedFromInstrumentId = instrumentId;
       }
-      const instrument = instrumentById.get(instrumentId);
       const native = mulMoney(price, quantity);
       if (instrument === undefined || instrument.currency === EUR) {
         value = addMoney(value, native);

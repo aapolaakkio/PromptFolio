@@ -41,7 +41,7 @@ type Seeded = { userId: string; accountId: number; instrumentId: number };
  * An equity savings account holding one priced share, funded by a deposit,
  * with a dividend paid into an ordinary account alongside it.
  */
-const seedOst = async (o: { priced: boolean }): Promise<Seeded> => {
+const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Seeded> => {
   const { getDb } = await import("./db");
   const { accounts, instruments, prices, transactions } = await import("./db/schema");
   const { db } = getDb();
@@ -128,7 +128,7 @@ const seedOst = async (o: { priced: boolean }): Promise<Seeded> => {
       row({
         accountId,
         type: "WITHDRAWAL",
-        tradeDate: "2025-06-02",
+        tradeDate: o.withdrawnOn ?? "2025-06-02",
         amount: -30_000,
       }),
       row({
@@ -178,6 +178,34 @@ describe("taxYearFor", () => {
     // 1 000,00 paid in, 150,00 of the withdrawal was capital returned.
     expect(ost.depositedEur).toBe("850.00");
     expect(ost.incomplete).toBe(false);
+  });
+
+  test("does not ask for a price the weekend could not have", async () => {
+    // A withdrawal dated a Sunday, valued from the Friday close -- the
+    // freshest price that can exist for it. Comparing the price's date to the
+    // withdrawal's directly, instead of asking `isPriceStale`, made every
+    // non-trading day look like a gap and offered to "fix" holdings that were
+    // fine. A real Sunday withdrawal is what surfaced it.
+    const { userId, instrumentId } = await seedOst({ priced: false, withdrawnOn: "2025-06-08" });
+    const { getDb } = await import("./db");
+    const { prices } = await import("./db/schema");
+    const { db } = getDb();
+    db.insert(prices)
+      .values({
+        instrumentId,
+        // The Friday before that Sunday.
+        date: "2025-06-06",
+        close: 20_000,
+        currency: EUR,
+        source: "manual",
+        fetchedAt: new Date("2025-06-06T00:00:00Z"),
+      })
+      .run();
+
+    const withdrawal = taxYearFor(db, userId, 2025).ost[0]!.withdrawals[0]!;
+
+    expect(withdrawal.taxableEur).not.toBeNull();
+    expect(withdrawal.pricedFrom).toBeNull();
   });
 
   test("names the unpriced instrument instead of guessing a withdrawal's tax", async () => {
