@@ -738,6 +738,36 @@ no migration.
 Phase 2 is therefore: reconciliation (§5.4), PDF import (§5.2's first half), manual entry. That
 leaves phase 3's AI chat as the first feature needing an API key at all.
 
+### C9. The PDF path is dropped too; holdings arrive as an export or a paste
+
+C8 dropped vision import. This drops the other half of §5.2: PDFs are not read at all.
+
+Both were built and both worked. OP's year-end statement parsed correctly from its text layer, and
+Nordnet's needed a font decoder — its text is drawn as two-byte glyph codes into embedded subset
+fonts, decodable only through each font's `ToUnicode` map, with fonts embedded per page. That
+decoder was written and verified against two real statements.
+
+It was still the wrong source. A year-end PDF is a document you get once a year, describing a date
+months in the past, and reading one costs a font engine to maintain. The brokers already publish
+what reconciliation actually wants, as of today:
+
+- **Nordnet** exports a holdings CSV. Tab-separated, UTF-16LE with a byte-order mark — the same
+  encoding as its transaction export (A2).
+- **OP** exports nothing, but its holdings view copies as text: one value per line, in sections
+  (`Osakkeet`, `Rahasto-osuudet`), with column labels that wrap across lines.
+
+Two parsers, chosen by whether the input has tabs. A CSV's columns are matched by heading rather
+than position, for the reason A2 established: a broker is free to reorder its columns, and a
+positional read files a market value as a quantity without complaining. A pasted table has no
+columns, so rows are found by shape — a name followed by exactly the eight figures the table
+prints — and a row with a different count is reported rather than absorbed, because counting
+positions would file the next holding's name as this one's market value.
+
+Removed with it: `pdf-text.ts`, `op-pdf.ts`, their fixtures and the upload screen. One fix from
+that work is worth remembering even though its code is gone: `TextDecoder("latin1")` is an alias
+for windows-1252 in the WHATWG standard, so bytes 0x80-0x9F are rewritten into typographic
+characters. Harmless for prose, silently destructive for binary data read as text.
+
 ## 11. Open questions
 
 - Whether Nordnet's transaction export reaches back to account opening or only a recent window.

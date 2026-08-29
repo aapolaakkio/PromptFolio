@@ -1,7 +1,8 @@
 # PromptFolio Phase 2 — handover
 
-Written 2026-08-28. Phase 2 is reconciliation and PDF import; vision import was
-dropped (spec 10c/C8). 558 tests passing, merged to `master`.
+Written 2026-08-28, revised 2026-08-29 once both brokers' real exports had been
+run through it. Phase 2 is reconciliation and holdings import. Vision import was
+dropped (spec 10c/C8), and so was the PDF path (C9). 575 tests passing.
 
 ## What it does
 
@@ -12,10 +13,11 @@ differences. It resolves none of them by itself.
 - **/reconcile** — pick an account and a statement, see a row per instrument:
   what the ledger derives, what the statement says, the delta, and what that
   difference most likely means.
-- **Upload a PDF** — OP's year-end statement is read directly. It has a real text
-  layer, so no model, no API key and no per-page cost.
-- **Type one in by hand** — same shape, for a broker whose statement this cannot
-  read.
+- **Upload a holdings export** — Nordnet publishes a CSV; it is read directly,
+  including its UTF-16 encoding.
+- **Paste a holdings table** — OP publishes no export, but its holdings view
+  copies as text, in sections, and is read by shape.
+- **Type one in by hand** — same shape again, for anything neither route covers.
 - **Resolve a row** — accept a difference and it becomes an adjusting
   transaction, one row at a time.
 
@@ -42,10 +44,15 @@ change holdings as a side effect. The transaction stays, still naming a statemen
 that no longer exists.
 
 **A row the parser cannot match is not guessed at.** A statement names funds the
-way the broker prints them — one real statement says
-`OP-MAAILMA INDEKSI -SIJOITUSRAHASTO A` for a holding registered as
-`OP-MAAILMA INDEKSI A`. Matching strips the broker's own suffixes and then
-demands an exact hit; anything else waits for you.
+way the broker prints them, which is not always how they are registered here.
+Matching strips the broker's own suffixes and then demands an exact hit; anything
+else waits for you.
+
+**Columns are found by heading, rows by shape.** A CSV's columns are matched by
+their heading, never their position: a broker reordering them would otherwise
+file a market value as a quantity in silence. A pasted table has no columns at
+all, so a row is a name followed by exactly the figures the table prints, and a
+row with a different count is reported rather than absorbed.
 
 ## Also fixed in this phase
 
@@ -72,7 +79,9 @@ demands an exact hit; anything else waits for you.
    storage but whether cash belongs in value, allocation and returns at all.
 5. **`bun run dev`** bundles and serves cleanly now, but the browser-side failure
    it had in phase 1 could not be re-checked without a browser. Worth trying.
-6. **`@tanstack/react-table`** is installed and unused.
+6. **Nordnet transactions need re-importing.** The Nordnet accounts were deleted
+   after an automatic account-split attempt was reverted; only OP's 161
+   transactions remain. Import each Nordnet account separately.
 
 ## Where things are
 
