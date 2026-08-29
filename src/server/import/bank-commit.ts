@@ -12,6 +12,15 @@ export type BankCommitResult = {
   readonly inserted: number;
   /** Rows the account already had, matched on the bank's own archive id. */
   readonly skipped: number;
+  /**
+   * Rows that were already stored but gained a payee from this file.
+   *
+   * OP's CSV leaves the payee column empty for some card payments while its PDF
+   * names the shop, and both carry the same archive id. A second import in the
+   * other format therefore knows something the first did not, and dropping it
+   * as a duplicate would throw that away.
+   */
+  readonly enriched: number;
 };
 
 /**
@@ -51,6 +60,7 @@ export const commitBankStatement = (
 ): BankCommitResult => {
   let inserted = 0;
   let skipped = 0;
+  let enriched = 0;
   let importId = 0;
 
   db.transaction((tx) => {
@@ -72,9 +82,13 @@ export const commitBankStatement = (
     // per row: a year of card payments is several hundred rows, and a
     // statement is normally re-imported with most of it already stored.
     const hashes = args.rows.map((row) => identityOf(args.accountId, row));
-    const existing = new Set(
+    const stored = new Map(
       tx
-        .select({ contentHash: transactions.contentHash })
+        .select({
+          id: transactions.id,
+          contentHash: transactions.contentHash,
+          note: transactions.note,
+        })
         .from(transactions)
         .where(
           and(
@@ -83,13 +97,25 @@ export const commitBankStatement = (
           ),
         )
         .all()
-        .map((row) => row.contentHash),
+        .map((row) => [row.contentHash, row]),
     );
+    const existing = new Set(stored.keys());
 
     for (const row of args.rows) {
       const contentHash = identityOf(args.accountId, row);
       if (existing.has(contentHash)) {
         skipped++;
+        // Only ever fills a blank: a note this file can say more about gets the
+        // fuller text, and one that already names a payee is left alone. The
+        // amounts, dates and identity are the same row either way.
+        const previous = stored.get(contentHash);
+        if (previous && row.counterparty !== "" && !(previous.note ?? "").includes(" — ")) {
+          tx.update(transactions)
+            .set({ note: row.note })
+            .where(eq(transactions.id, previous.id))
+            .run();
+          enriched++;
+        }
         continue;
       }
       existing.add(contentHash);
@@ -122,5 +148,5 @@ export const commitBankStatement = (
       .run();
   });
 
-  return { importId, inserted, skipped };
+  return { importId, inserted, skipped, enriched };
 };

@@ -15,6 +15,12 @@ describe("describeImport", () => {
     );
   });
 
+  test("names payees filled in from a second format", () => {
+    expect(describeImport({ inserted: 0, skipped: 12, enriched: 12, problems: [] })).toBe(
+      "0 uutta tapahtumaa, 12 jo tuotua, 12 täydennettyä saajatietoa.",
+    );
+  });
+
   test("names unreadable rows when there were any", () => {
     expect(describeImport({ inserted: 4, skipped: 0, problems: [{}] })).toBe(
       "4 uutta tapahtumaa, 0 jo tuotua, 1 riviä ei voitu lukea.",

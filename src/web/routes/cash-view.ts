@@ -119,6 +119,7 @@ export const BankCommitSchema = z.object({
   importId: z.number(),
   inserted: z.number(),
   skipped: z.number(),
+  enriched: z.number(),
   maturityDate: z.string().nullable(),
   maturityConflict: z.string().nullable(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
@@ -207,9 +208,13 @@ export const ENTRY_LABELS = new Map<string, string>([
 export const describeImport = (result: {
   inserted: number;
   skipped: number;
+  enriched?: number;
   problems: readonly unknown[];
 }): string => {
   const parts = [`${result.inserted} uutta tapahtumaa`, `${result.skipped} jo tuotua`];
+  // Worth saying: it is the reason to import the same period in both formats,
+  // and otherwise invisible -- the rows were already there.
+  if ((result.enriched ?? 0) > 0) parts.push(`${result.enriched} täydennettyä saajatietoa`);
   if (result.problems.length > 0) parts.push(`${result.problems.length} riviä ei voitu lukea`);
   return `${parts.join(", ")}.`;
 };

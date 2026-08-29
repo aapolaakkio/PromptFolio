@@ -210,8 +210,9 @@ export const CashPage = () => {
           <div className="card grid gap-3">
             <h2>Tuo tiliote</h2>
             <p className="text-muted text-sm">
-              OP:n tapahtumavienti (CSV). Sama tiedosto voidaan tuoda uudelleen: jo tuodut rivit
-              ohitetaan pankin arkistointitunnuksen perusteella.
+              OP:n tapahtumavienti (CSV) tai tiliote (PDF). Sama tiedosto voidaan tuoda uudelleen:
+              jo tuodut rivit ohitetaan pankin arkistointitunnuksen perusteella. Saman jakson voi
+              tuoda molemmissa muodoissa — PDF täydentää saajatiedot, jotka CSV jättää tyhjiksi.
             </p>
             <input
               type="file"

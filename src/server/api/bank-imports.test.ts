@@ -52,6 +52,7 @@ const CommitSchema = z.object({
   importId: z.number(),
   inserted: z.number(),
   skipped: z.number(),
+  enriched: z.number(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
 });
 const PreviewSchema = z.object({
@@ -663,5 +664,68 @@ describe("classifying an import's new merchants", () => {
     expect(await cashTotal(cookie, "2026-06-01")).toBe("1660.29");
 
     setClassifierClient(null);
+  });
+});
+
+describe("a statement that knows more than the one already imported", () => {
+  const noteOf = async (externalId: string): Promise<string | null> => {
+    const { getDb } = await import("../db");
+    const { transactions } = await import("../db/schema");
+    const { eq } = await import("drizzle-orm");
+    const row = getDb()
+      .db.select({ note: transactions.note })
+      .from(transactions)
+      .where(eq(transactions.externalId, externalId))
+      .get();
+    return row?.note ?? null;
+  };
+
+  test("fills in a payee the first file left blank, without doubling the row", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+
+    // OP's CSV leaves the payee column empty for some card payments; its PDF
+    // names the shop, and both carry the same archive id.
+    const blank = bytesOf(
+      [
+        '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"',
+        '"2025-09-10";"2025-09-10";"-7,27";"162";"PKORTTIMAKSU";"";"";"";"";"";"20250910ESIM00000009"',
+        "",
+      ].join("\n"),
+    );
+    const named = bytesOf(
+      [
+        '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"',
+        '"2025-09-10";"2025-09-10";"-7,27";"162";"PKORTTIMAKSU";"K-MARKET ESIMERKKI";"";"";"";"";"20250910ESIM00000009"',
+        "",
+      ].join("\n"),
+    );
+
+    await upload("/api/imports/bank/commit", cookie, accountId, blank);
+    expect(await noteOf("20250910ESIM00000009")).toBe("PKORTTIMAKSU");
+
+    const second = CommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId, named)).json(),
+    );
+
+    expect(second.inserted).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(second.enriched).toBe(1);
+    expect(await noteOf("20250910ESIM00000009")).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
+    // The balance is untouched: this is the same row, better described.
+    expect(await cashTotal(cookie, "2026-06-01")).toBe("-7.27");
+  });
+
+  test("never overwrites a payee that is already there", async () => {
+    const cookie = await signUp();
+    const accountId = await openAccount(cookie, "current");
+    await upload("/api/imports/bank/commit", cookie, accountId);
+
+    const second = CommitSchema.parse(
+      await (await upload("/api/imports/bank/commit", cookie, accountId)).json(),
+    );
+
+    expect(second.skipped).toBe(5);
+    expect(second.enriched).toBe(0);
   });
 });
