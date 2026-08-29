@@ -5,7 +5,12 @@ import type { IsoDate, TransactionType, Txn } from "../types";
 import { ostReport, reservationPairIds, type OstValuation } from "./ost";
 
 let nextId = 1;
-const row = (type: TransactionType, tradeDate: IsoDate, amount: string): Txn => ({
+const row = (
+  type: TransactionType,
+  tradeDate: IsoDate,
+  amount: string,
+  note: string | null = null,
+): Txn => ({
   id: nextId++,
   accountId: 7,
   instrumentId: null,
@@ -18,10 +23,13 @@ const row = (type: TransactionType, tradeDate: IsoDate, amount: string): Txn => 
   tax: parseMoney("0", EUR),
   currency: EUR,
   fxRateEur: parseFxRate("1", EUR),
+  note,
 });
 
-const deposit = (on: IsoDate, amount: string) => row("DEPOSIT", on, amount);
-const withdrawal = (on: IsoDate, amount: string) => row("WITHDRAWAL", on, `-${amount}`);
+const deposit = (on: IsoDate, amount: string, note: string | null = null) =>
+  row("DEPOSIT", on, amount, note);
+const withdrawal = (on: IsoDate, amount: string, note: string | null = null) =>
+  row("WITHDRAWAL", on, `-${amount}`, note);
 const worth =
   (value: string): (() => OstValuation) =>
   () => ({
@@ -341,5 +349,60 @@ describe("after a withdrawal that could not be valued", () => {
     });
 
     expect(calls).toBe(1);
+  });
+});
+
+describe("when the broker says what a row was", () => {
+  test("its own words identify a subscription, not the shape of the amounts", () => {
+    const report = ostReport({
+      txns: [
+        deposit("2026-03-02", "900,00"),
+        withdrawal("2026-03-05", "900,00", "REAKTOR MERKINTÄSITOUMUS 7,43 EUR/OSAKE"),
+        deposit("2026-03-09", "900,00", "REAKTOR MERK.MAKSUN PALAUTUS 7,43 EUR/OSAKE"),
+      ],
+      valueAt: worth("900,00"),
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+
+    expect(report.withdrawals).toEqual([]);
+    expect(formatMoney(report.depositedEur)).toBe("900.00");
+  });
+
+  test("a withdrawal it named something else stays a withdrawal, however neatly it pairs", () => {
+    // An ordinary withdrawal followed days later by a deposit of the same size
+    // is two real events. The shape alone cannot tell them from a subscription,
+    // and treating them as one hides a taxable withdrawal.
+    const report = ostReport({
+      txns: [
+        deposit("2020-01-02", "10000,00"),
+        withdrawal("2025-06-01", "1500,00", "Internal to 12345678"),
+        deposit("2025-06-04", "1500,00", "Internal from 12345678"),
+      ],
+      valueAt: worth("15000,00"),
+      ...YEAR,
+    });
+
+    expect(report.withdrawals).toHaveLength(1);
+    const outcome = report.withdrawals[0]!.outcome;
+    if (!outcome.ok) throw new Error("expected a valued withdrawal");
+    expect(formatMoney(outcome.taxableEur)).toBe("500.00");
+  });
+
+  test("rows with no text at all still fall back to the shape", () => {
+    // Everything imported before the broker's text was kept has none, and those
+    // ledgers must keep working.
+    const report = ostReport({
+      txns: [
+        deposit("2026-03-02", "900,00"),
+        withdrawal("2026-03-05", "900,00"),
+        deposit("2026-03-09", "900,00"),
+      ],
+      valueAt: worth("900,00"),
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+
+    expect(report.withdrawals).toEqual([]);
   });
 });

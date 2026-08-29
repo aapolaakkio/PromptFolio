@@ -108,6 +108,19 @@ const daysBetween = (from: IsoDate, to: IsoDate): number =>
   );
 
 /**
+ * What the broker calls the two legs of a share subscription: the money
+ * committed to it, and the money returned when the allotment is settled.
+ *
+ * Matched on the broker's own words rather than inferred from shape, wherever
+ * the ledger has them. A row that says `MERKINTÄSITOUMUS` is a commitment and a
+ * row that says `MERK.MAKSUN PALAUTUS` is its refund; no amount-and-window
+ * guess can be as sure as that, and a real subscription paired with an
+ * unrelated deposit of the same size would be an invented tax event.
+ */
+const SUBSCRIPTION_COMMITMENT = /merkint(äsitoumus|ämaksu)/i;
+const SUBSCRIPTION_REFUND = /palautus/i;
+
+/**
  * The transaction ids of withdrawal/deposit pairs that cancel each other out.
  *
  * A share subscription on an equity savings account is booked by the broker as
@@ -138,16 +151,27 @@ export const reservationPairIds = (txns: readonly Txn[]): ReadonlySet<number> =>
 
   for (const withdrawal of txns.filter((t) => t.type === "WITHDRAWAL")) {
     const size = withdrawal.amount.minor < 0n ? -withdrawal.amount.minor : withdrawal.amount.minor;
+    // When the broker said what the row was, believe it. The shape-based rule
+    // below is for rows imported before that text was kept, and for exports
+    // that carry none.
+    const named = SUBSCRIPTION_COMMITMENT.test(withdrawal.note ?? "");
     const refund = deposits.find(
       (deposit) =>
         !paired.has(deposit.id) &&
         deposit.amount.minor === size &&
-        // The refund follows the reservation; a deposit that came first is the
+        // The refund follows the commitment; a deposit that came first is the
         // money being paid in, not paid back.
         deposit.tradeDate >= withdrawal.tradeDate &&
-        daysBetween(withdrawal.tradeDate, deposit.tradeDate) <= RESERVATION_DAYS,
+        daysBetween(withdrawal.tradeDate, deposit.tradeDate) <= RESERVATION_DAYS &&
+        (!named || SUBSCRIPTION_REFUND.test(deposit.note ?? "")),
     );
     if (refund === undefined) continue;
+    // A row the broker named something else is not a subscription leg, however
+    // neatly it pairs: an ordinary withdrawal followed days later by an equal
+    // deposit is two real events, and treating them as one hides a taxable
+    // withdrawal. Only rows with no text at all fall back to the shape.
+    const texted = withdrawal.note !== null || refund.note !== null;
+    if (texted && !named) continue;
     paired.add(refund.id);
     paired.add(withdrawal.id);
   }
