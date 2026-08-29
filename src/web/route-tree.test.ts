@@ -14,6 +14,7 @@ const {
   chatRoute,
   cashRoute,
   spendingRoute,
+  taxRoute,
   loginRoute,
 } = buildRouteTree({
   authenticated: Stub,
@@ -24,6 +25,7 @@ const {
   chat: Stub,
   cash: Stub,
   spending: Stub,
+  tax: Stub,
   login: Stub,
 });
 
@@ -77,6 +79,13 @@ test("the pathless layout route resolves to the URLs the app actually serves", (
 test("the spending route sits inside the session gate", () => {
   expect(spendingRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
   expect(spendingRoute.fullPath).toBe("/spending");
+});
+
+// A tax report says what someone sold, earned and withdrew -- authenticated
+// for the same reason the reconciliation screen is.
+test("the tax route sits inside the session gate", () => {
+  expect(taxRoute.options.getParentRoute?.()).toBe(authenticatedRoute);
+  expect(taxRoute.fullPath).toBe("/tax");
 });
 
 test("the cash route sits inside the session gate", () => {
