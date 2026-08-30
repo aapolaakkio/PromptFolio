@@ -62,7 +62,7 @@ export const getValueSeries = createServerFn()
   .middleware([authed])
   .validator(Range)
   .handler(({ data, context }) =>
-    valueSeriesView(db, context.userId, data.from ?? "1900-01-01", data.to ?? today()),
+    valueSeriesView(db, context.userId, data.from, data.to ?? today()),
   );
 
 /** The allocation on a date, and every holding it could not place, with reasons. */

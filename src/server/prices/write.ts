@@ -7,68 +7,24 @@ import type { FetchedPrice } from "./types.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 
-/**
- * The minimal query surface `writePrices` needs from a transaction handle
- * (`select`/`insert` for the price row and the pending-rejection row,
- * `delete` to clear a resolved pending row). Mirrors
- * `src/server/import/commit.ts`'s `TxDb` -- `db.transaction()`'s callback
- * parameter is a `SQLiteAsyncTransaction`, not assignable to `Db` itself,
- * so any helper called *with* that callback's `tx` (rather than written
- * inline inside the callback) needs a type both `Db` and `tx` satisfy
- * structurally.
- */
+// A transaction callback's `tx` is not assignable to `Db`, so a helper called
+// with it needs a type both satisfy structurally.
 type TxDb = Pick<Db, "select" | "insert" | "delete">;
 
 export type WriteOutcome = {
   readonly written: number;
   readonly rejectedImplausible: number;
-  /**
-   * How many of `written` were accepted specifically via the re-baseline
-   * path (`RE_BASELINE_CONFIRMATIONS` consecutive consistent
-   * observations), not an ordinary plausible day-over-day move. Always
-   * `<= written`. A caller should log this loudly -- see `refresh.ts`.
-   */
+  /** Of `written`, how many came through the re-baseline path. Log these loudly. */
   readonly reBaselined: number;
 };
 
 /**
- * ## The large-jump sanity check (Task 15, point 5)
+ * A single fetch has no history to check itself against; this layer does.
  *
- * Task 14's `requirePositiveMinor` (types.ts) rejects a zero/negative
- * close but deliberately does *not* reject an implausibly large jump,
- * because a single fetch has no prior value to compare against -- "that
- * check belongs at a layer with historical context." This is that layer:
- * `writePrices` is the one place that writes into `prices`, a table that
- * already holds every instrument's prior close, so it can compare.
- *
- * **What this guards against, concretely.** Every scraper-shaped bug this
- * project has actually hit so far (Task 14's zero/negative closes; the
- * wrong-column Nordnet `Valuutta` mix-up in §10a A2) is a *structural*
- * misread, not a plausible-but-wrong number: a decimal point read one
- * place over, a value read in the wrong minor-unit scale (cents vs.
- * whole units), a NAV field swapped for a different one entirely. Every
- * one of those produces a value that is off by a whole order of
- * magnitude or more, not by a few percent. A single-digit percentage
- * threshold would be exactly the kind of unverified guess Task 14
- * declined to invent (it cannot be justified without knowing this
- * portfolio's real historical daily volatility, which this task has no
- * more evidence for than Task 14 did) -- but "off by 10x or more" is not
- * a volatility question, it is the specific, observed shape of this
- * project's actual bug class.
- *
- * **Why 10x, and not tighter.** A genuine 10x-or-more single-day move
- * requires either a >=90% crash (essentially never, for a diversified
- * fund/ETF; individual stocks occasionally gap far on binary news, but
- * this portfolio per §10a is fund/ETF/stock holdings, not speculative
- * single names) or a stock split/reverse split of ratio 10:1 or steeper,
- * which is rare but real. Rejecting a genuine one is not silent
- * corruption -- see `RE_BASELINE_CONFIRMATIONS` below for how a genuine
- * one now recovers on its own, rather than freezing forever. Accepting a
- * false one silently, on the other hand, is exactly "a silently wrong
- * total" -- the one outcome this project's constraints rule out
- * outright. Between a rare false rejection (safe, visible, and now
- * self-correcting) and a rare false acceptance (a financial total
- * silently off by an order of magnitude), this project takes the former.
+ * Every scraper bug this project has actually hit is structural -- a decimal
+ * read one place over, cents against whole units, the wrong column -- and those
+ * are off by an order of magnitude, not a few percent. A tighter threshold
+ * would be a guess about this portfolio's volatility; 10x is not.
  */
 export const MAX_PLAUSIBLE_RATIO = 10;
 
@@ -77,70 +33,21 @@ const isPlausibleMove = (previousMinor: number, nextMinor: number): boolean =>
   nextMinor * MAX_PLAUSIBLE_RATIO >= previousMinor;
 
 /**
- * ## Making a rejection self-healing (Task 15 review fix)
+ * How many consistent readings at a new scale it takes to accept it as real.
  *
- * The plausibility check above compares only against the last *stored*
- * price. Left there, a genuine permanent change -- a stock split steeper
- * than 10:1, a reverse split, a fund re-denominating its NAV per 100
- * units -- freezes forever: every later real price is compared against
- * the same stale stored baseline and rejected too, and this app has no
- * price-correction UI anywhere to unstick it by hand (`instruments.ts`
- * exposes `priceSource`, never a price value). An unattended nightly job
- * discovering that months later, with the chart quietly wrong the whole
- * time, is worse than the false-rejection risk this check exists to
- * avoid in the first place.
+ * Comparing only against the last stored price freezes an instrument forever
+ * after a genuine permanent change -- a steep split, a fund re-denominating --
+ * and there is no UI anywhere to unstick a price by hand. Persistence tells the
+ * two apart, not magnitude: a transient glitch does not recur at the same new
+ * scale across separate scheduled fetches, a real split reports it every day.
  *
- * **The signal used to tell the two cases apart is persistence, not
- * magnitude** -- magnitude alone cannot distinguish a real 10:1 split
- * from a decimal-shift bug, since both produce the same single implausible
- * ratio. But a *transient* glitch (a malformed one-off response, a
- * momentary parsing race) is extremely unlikely to recur at a
- * consistent new scale across several separate, independent fetches; a
- * real split or re-denomination reports that same new scale every single
- * day from the day it takes effect, permanently. So: `writePrices`
- * tracks a rejected value in `pending_price_rejections` (one row per
- * instrument) and only re-baselines once the same new scale has been
- * seen `RE_BASELINE_CONFIRMATIONS` times in a row -- each confirmation
- * checked against the *previous pending candidate*, not the original
- * frozen baseline, using this same `isPlausibleMove` (so day-to-day
- * movement *at* the new scale is still allowed between confirmations,
- * exactly as it would be at the old scale). A confirming value does not
- * need to be numerically identical, only plausible relative to the prior
- * one -- that is what "the same new scale" means for a real security
- * that keeps trading.
+ * Three, because the job runs once a weekday: two would not rule out one cached
+ * bad response served twice, and more would leave the chart stale for weeks.
  *
- * **Why 3, not fewer or more.** `refreshPrices` runs once per weekday
- * evening (see `refresh.ts`), so "N confirmations" is roughly N market
- * days, not N hours -- the chart stays visibly stale for that long
- * before a genuine change resolves. This is a real cost of picking N
- * too high. Picking N too low trades that away for false-positive risk:
- * N=1 would mean no confirmation at all (identical to no self-healing).
- * N=2 accepts on the very next fetch after the first rejection, which
- * does not rule out two glitches in a row from the very same underlying
- * cause (e.g. a CDN serving one cached bad response across two
- * consecutive scheduled fetches a day apart -- a real, observed failure
- * mode for scraped pages, not a hypothetical one). N=3 requires that
- * same wrong scale to independently reproduce across three separate
- * scheduled runs -- roughly a business week accounting for weekends --
- * which is a much less likely coincidence for a transient bug while
- * still resolving a real split within days rather than weeks. This is
- * also a standard, unremarkable "three strikes" confirmation count in
- * monitoring/alerting generally, not a number invented for this
- * codebase specifically.
- *
- * **What this does not solve, by design.** A *persistent* scraper bug
- * (a page template change that breaks a selector in a way that
- * consistently produces the same wrong scale every day until a human
- * fixes the code) is indistinguishable from a real split by this same
- * signal -- both look like N consistent consecutive readings. Nothing
- * in "did it repeat" alone can tell those apart; only a human reading
- * the loud log entry this produces (`refresh.ts` logs every
- * re-baseline distinctly) can. That is an explicit, accepted limit of
- * this fix, not an oversight: the alternative -- consulting
- * `transactions` for a nearby `SPLIT` row -- was considered and
- * rejected, because it couples this price layer to the ledger and would
- * not help a fund re-denomination at all, which has no `SPLIT`
- * transaction to find.
+ * A persistent scraper bug looks identical to a split by this signal. That is
+ * an accepted limit -- only a human reading the re-baseline log can tell them
+ * apart. Consulting the ledger for a SPLIT row would couple this layer to it
+ * and would not help a re-denomination, which has no such row.
  */
 export const RE_BASELINE_CONFIRMATIONS = 3;
 
@@ -223,63 +130,14 @@ const upsertPrice = (tx: TxDb, instrumentId: number, source: string, point: Fetc
 };
 
 /**
- * ## Skipping the guard for a human-entered price (manual price entry)
+ * Writes a point without the guard, for a price a person typed in.
  *
- * `resolvePoint`'s plausibility check and its `RE_BASELINE_CONFIRMATIONS`
- * self-healing streak (both documented just above) exist for one specific
- * threat: a *scraper* silently returning a structurally wrong number --
- * misread decimal point, wrong minor-unit scale, wrong column -- with
- * nothing in the loop that could tell that apart from a real, large price
- * move. Their whole design leans on that: a transient scraper glitch does
- * not repeat at a consistent new scale across several independent
- * scheduled fetches, but a permanent change (a real split) does, so
- * "seen 3 times in a row" is a meaningful signal to wait for.
- *
- * A human typing a price into the manual-entry route (`src/server/api/prices.ts`)
- * is not that threat model at all. Two things are different, not one:
- *
- * 1. **The failure mode this check exists to catch cannot occur here.**
- *    There is no column-misread, no wrong-scale-JSON-field risk -- the
- *    value came from `core/money`'s own decimal-string parser
- *    (`parseMoney`), typed in by a person looking at a real statement or
- *    fund page. The plausibility guard would be checking a human's
- *    *judgement*, not a scraper's *plumbing*, which is not what it was
- *    built to check.
- * 2. **The self-healing mechanism does not fit a one-off human action.**
- *    `RE_BASELINE_CONFIRMATIONS` assumes the same *source* calls back on
- *    its own schedule (a nightly job) and will naturally repeat a real
- *    change several times running. A human filling in a form once has no
- *    such schedule -- "come back and enter the same number two more
- *    times, on two more separate days, before it's trusted" is not a
- *    reasonable thing to ask of someone who is, right now, correcting a
- *    number they can already see is wrong. The very scenario this task
- *    exists to fix -- an instrument set to `manual` because no source
- *    covers it, whose very first real price has no prior stored baseline
- *    to compare against anyway (see the "first-ever price" branch above)
- *    -- would only ever HIT this guard on a *correction*, i.e. exactly
- *    the case where blocking it is worst.
- *
- * The alternative -- leaving the guard on and telling the user to submit
- * the same correction three separate times -- was rejected because a
- * feature whose entire job is "let a human fix a wrong price" that
- * silently (or even loudly, but repeatedly) refuses the fix is worse than
- * not having the feature at all (this task's own brief calls that out
- * explicitly). So `writePrices`' caller may pass
- * `skipPlausibilityCheck: true` to bypass `isPlausibleMove` entirely for
- * that call's points, writing them unconditionally and clearing any
- * in-flight pending-rejection streak for the instrument (a human's
- * explicit correction supersedes whatever a scraper was in the middle of
- * disputing). This does NOT weaken the guard for anything else: every
- * automated caller (`refreshPrices`, `backfillInstrument`) never passes
- * this option, so a scraper's own output is still fully checked, exactly
- * as before. What is intentionally NOT added: no separate, looser
- * threshold for manual entries (e.g. "reject only >1000x") -- any such
- * number would be exactly the kind of unverified guess `MAX_PLAUSIBLE_RATIO`'s
- * own doc comment already declines to invent, and a human is a strictly
- * better judge of "is this price right" than any threshold could be.
- * `requirePositiveMinor` (types.ts) still runs before a manual point ever
- * reaches this function -- a zero or negative price is never a real price,
- * human-entered or not, and that check is a fact, not a guess, so it stays.
+ * The guard exists for a scraper returning a structurally wrong number, which
+ * is not what a human correcting a price on screen is doing -- and waiting for
+ * three confirmations means asking them to submit the same fix on three
+ * separate days. A feature whose job is fixing a wrong price cannot refuse the
+ * fix. Every automated caller omits the option, so scraped output is still
+ * fully checked, and `requirePositiveMinor` still runs either way.
  */
 const acceptUnconditionally = (
   tx: TxDb,
@@ -292,11 +150,7 @@ const acceptUnconditionally = (
   return "written";
 };
 
-/**
- * Decides one point's fate against the stored baseline and any pending
- * rejection streak, mutating `pending_price_rejections` as needed.
- * Returns which outcome happened so the caller can total it up.
- */
+/** Decides one point against the stored baseline and any pending streak. */
 const resolvePoint = (
   tx: TxDb,
   instrumentId: number,
@@ -310,10 +164,7 @@ const resolvePoint = (
     isPlausibleMove(baseline.close, point.closeMinor);
 
   if (plausibleVsBaseline) {
-    // Either a normal move, no baseline yet, or a currency change (never
-    // checked -- see MAX_PLAUSIBLE_RATIO's doc comment). Any in-flight
-    // pending streak is moot once a value is accepted normally: the
-    // instrument is no longer stuck, so there is nothing left to confirm.
+    // Accepting normally unsticks the instrument, so a pending streak is moot.
     upsertPrice(tx, instrumentId, source, point);
     clearPendingRejection(tx, instrumentId);
     return "written";
@@ -326,8 +177,7 @@ const resolvePoint = (
     isPlausibleMove(pending.close, point.closeMinor);
 
   if (!continuesPendingStreak) {
-    // A fresh anomaly, unrelated to whatever was pending (if anything):
-    // start counting from 1 again.
+    // A fresh anomaly, unrelated to whatever was pending: count from 1 again.
     recordPendingRejection(tx, instrumentId, point, 1);
     return "rejected";
   }
@@ -338,53 +188,22 @@ const resolvePoint = (
     return "rejected";
   }
 
-  // RE_BASELINE_CONFIRMATIONS consecutive, mutually consistent
-  // observations at this new scale: accept it as the real, permanent new
-  // baseline and stop tracking it as pending.
+  // Enough consistent readings at this scale: it is the real new baseline.
   upsertPrice(tx, instrumentId, source, point);
   clearPendingRejection(tx, instrumentId);
   return "reBaselined";
 };
 
 /**
- * Writes fetched price points for one instrument, upserting by
- * `(instrumentId, date)` -- a re-run for a date already stored overwrites
- * rather than duplicating (both `refreshPrices`' daily re-run and
- * `backfillInstrument`'s history rely on this).
+ * Writes one instrument's points, upserting by `(instrumentId, date)`.
  *
- * Points are written in date order, one decision per point, inside a
- * single transaction. Both the plausibility baseline and any pending
- * rejection streak are read fresh from the database immediately before
- * each point is resolved -- not carried in memory -- so an earlier point
- * from *this same batch*, once written, is already visible to the next
- * one (SQLite sees a transaction's own prior writes; verified directly
- * against this project's real `testDb()` before relying on it). This
- * matters for `backfillInstrument`, whose batch can be years of daily
- * closes: each day is checked against the actual immediately-preceding
- * day, not against some earlier snapshot.
+ * Each point's baseline and streak are read fresh from the database rather than
+ * carried in memory, so an earlier point in the same batch is already visible to
+ * the next -- which matters for a backfill spanning years of daily closes.
  *
- * A point whose close fails the plausibility check (see
- * `MAX_PLAUSIBLE_RATIO`) is not written -- the instrument keeps whatever
- * price it already had for that date (or none) -- unless it is the
- * `RE_BASELINE_CONFIRMATIONS`th consecutive consistent observation of
- * the same new scale, in which case it *is* written and the rejection
- * streak clears (see `RE_BASELINE_CONFIRMATIONS`'s doc comment for the
- * full reasoning). Both outcomes are reported back (`rejectedImplausible`,
- * `reBaselined`) for the caller to log, never silently dropped. The very
- * first price ever stored for an instrument has no baseline to compare
- * against and is always accepted, matching Task 14's own reasoning: no
- * historical context, no check possible. A baseline in a different
- * currency than the new point is also never compared -- a currency
- * change is not what this check exists to catch.
- *
- * `opts.skipPlausibilityCheck` bypasses `resolvePoint`'s guard entirely
- * for every point in `points`, writing each unconditionally and clearing
- * any pending rejection streak -- see `acceptUnconditionally`'s doc
- * comment just above for the full reasoning (manual price entry,
- * `src/server/api/prices.ts`, is the one caller that passes it). Every
- * other caller (`refreshPrices`, `backfillInstrument`) omits it, so a
- * scraped source's output is still fully checked, exactly as before this
- * option existed.
+ * An implausible point is not written and is reported back, never silently
+ * dropped. The first price ever stored has no baseline and is always accepted,
+ * as is a point in a different currency than the baseline.
  */
 export const writePrices = (
   db: Db,

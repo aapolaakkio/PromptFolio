@@ -68,17 +68,28 @@ export const LABEL_ONLY: ReadonlySet<string> = new Set([
   "NIMETÖN",
 ]);
 
+/** The earliest day the ledger records, or undefined when it records nothing. */
+const earliestTradeDate = (txns: readonly { tradeDate: IsoDate }[]): IsoDate | undefined =>
+  txns.reduce<IsoDate | undefined>(
+    (earliest, txn) =>
+      earliest === undefined || txn.tradeDate < earliest ? txn.tradeDate : earliest,
+    undefined,
+  );
+
 export const cashView = (db: Db, userId: string, on: IsoDate) => {
   return cashFor(db, userId, on);
 };
 
-export const valueSeriesView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+export const valueSeriesView = (db: Db, userId: string, from: IsoDate | undefined, to: IsoDate) => {
   const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
-  // Both series are one point per calendar day over the same range, so the
-  // two line up index for index and the chart can draw them together
-  // without matching dates itself.
-  const invested = investedSeries(investedTxns, from, to);
-  return valueSeries(investedTxns, instruments, prices, from, to).map((point, index) => ({
+  // Without a start given, the ledger's own first day -- a fixed floor like
+  // 1900 draws a century of flat zero before anything happened, and bills a
+  // point per day for it.
+  const start = from ?? earliestTradeDate(investedTxns) ?? to;
+  // Both series are one point per calendar day over the same range, so the two
+  // line up index for index and the chart can draw them together.
+  const invested = investedSeries(investedTxns, start, to);
+  return valueSeries(investedTxns, instruments, prices, start, to).map((point, index) => ({
     date: point.date,
     valueEur: formatMoney(point.valueEur),
     investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),

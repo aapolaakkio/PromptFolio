@@ -402,6 +402,21 @@ describe("GET /api/value-series", () => {
     expect(body.slice(1, 4).every((p) => p.stale)).toBe(true);
   });
 
+  test("without a start date the series begins at the ledger's first day, not 1900", async () => {
+    const { userId } = await signUp(`series-start-${crypto.randomUUID()}@example.com`);
+    await seedHolding(userId, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 1000,
+      principal: 10_000,
+      prices: [{ date: "2024-01-01", close: 1000 }],
+    });
+
+    const body = valueSeriesView(getDb().db, userId, undefined, "2024-01-03");
+    expect(body[0]?.date).toBe("2024-01-01");
+    expect(body).toHaveLength(3);
+  });
+
   test("defaults to a long since-inception range without error", async () => {
     const { userId, cookie } = await signUp(`series-default-${crypto.randomUUID()}@example.com`);
     const body = valueSeriesView(getDb().db, userId, "2015-01-01", today());
