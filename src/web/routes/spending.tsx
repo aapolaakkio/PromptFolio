@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
-import { eur } from "../lib/format";
+import { eur, fiDate } from "../lib/format";
 import { CashFlowChart } from "../charts/CashFlowChart";
 import { CategoryTrendChart } from "../charts/CategoryTrendChart";
 import { MonthlyFlowChart } from "../charts/MonthlyFlowChart";
 import {
   CashFlowSchema,
+  ClassifiedSchema,
+  EXCLUDED_LABELS,
   MonthlySchema,
   RulesSchema,
   SpendingSchema,
@@ -36,6 +38,9 @@ export const SpendingPage = () => {
   const [to, setTo] = useState(today);
   const [groupBy, setGroupBy] = useState<"category" | "counterparty">("category");
   const [showRules, setShowRules] = useState(false);
+  const [showLedger, setShowLedger] = useState(false);
+  /** Which class to show; "" is everything. */
+  const [onlyCategory, setOnlyCategory] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const spending = useQuery({
@@ -62,6 +67,12 @@ export const SpendingPage = () => {
     queryKey: ["spending-rules"],
     enabled: showRules,
     queryFn: () => apiGet("/api/spending/rules", RulesSchema),
+  });
+
+  const ledger = useQuery({
+    queryKey: ["spending-transactions", from, to],
+    enabled: showLedger,
+    queryFn: () => apiGet(`/api/spending/transactions?from=${from}&to=${to}`, ClassifiedSchema),
   });
 
   const refresh = () => {
@@ -133,14 +144,19 @@ export const SpendingPage = () => {
         <h2 className="mt-2 text-sm text-muted">Kuukausittain</h2>
         <MonthlyFlowChart months={monthly.data?.months ?? []} />
 
-        <h2 className="mt-2 text-sm text-muted">Luokittain kuukausittain</h2>
-        {/* The Sankey shows one period's shape; this shows whether a category
-            is creeping upward, which no single period can say however well it
-            is drawn. */}
-        <CategoryTrendChart
-          months={monthly.data?.byCategory.months ?? []}
-          categories={monthly.data?.byCategory.categories ?? []}
-        />
+        {/* A trend needs something to trend across: over a single month the
+            area has nothing to connect and can only draw empty space. The
+            Sankey and the category table already say where that month's money
+            went. */}
+        {(monthly.data?.byCategory.months.length ?? 0) > 1 && (
+          <>
+            <h2 className="mt-2 text-sm text-muted">Luokittain kuukausittain</h2>
+            <CategoryTrendChart
+              months={monthly.data?.byCategory.months ?? []}
+              categories={monthly.data?.byCategory.categories ?? []}
+            />
+          </>
+        )}
 
         <h2 className="mt-2 text-sm text-muted">
           {groupBy === "category" ? "Luokittain" : "Saajittain"}
@@ -238,6 +254,76 @@ export const SpendingPage = () => {
       </div>
 
       <div className="card grid gap-3">
+        {/* The categorised totals above are summaries, and a summary nobody can
+            open is one they have to take on trust. This is the ledger behind
+            them, with the same exclusions shown as reasons on the row rather
+            than as rows that quietly are not there. */}
+        <button
+          type="button"
+          className="mt-4 text-sm underline"
+          onClick={() => setShowLedger(!showLedger)}
+        >
+          {showLedger ? "Piilota tapahtumat" : "Näytä kaikki tapahtumat ja luokat"}
+        </button>
+
+        {showLedger && (
+          <>
+            <label className="mt-2 block text-sm">
+              Luokka{" "}
+              <select
+                value={onlyCategory}
+                onChange={(event) => setOnlyCategory(event.target.value)}
+                className="border border-line bg-surface px-2 py-1"
+              >
+                <option value="">Kaikki</option>
+                {[...new Set((ledger.data?.transactions ?? []).map((row) => row.categoryLabel))]
+                  .sort()
+                  .map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <div className="mt-2 max-h-128 overflow-auto rounded border border-line">
+              <table>
+                <thead className="sticky top-0 bg-surface">
+                  <tr>
+                    <th>Päivä</th>
+                    <th>Teksti</th>
+                    <th>Luokka</th>
+                    <th className="text-right">Summa</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(ledger.data?.transactions ?? [])
+                    .filter((row) => onlyCategory === "" || row.categoryLabel === onlyCategory)
+                    .map((row) => (
+                      <tr key={row.id}>
+                        <td>{fiDate(row.date)}</td>
+                        <td>
+                          {row.text === "" ? <span className="text-muted">—</span> : row.text}
+                        </td>
+                        <td>
+                          {row.categoryLabel}
+                          {row.excludedReason !== null && (
+                            <span className="ml-2 text-muted text-xs">
+                              ei kulua: {EXCLUDED_LABELS[row.excludedReason]}
+                            </span>
+                          )}
+                        </td>
+                        <td className="num text-right">{eur(row.amountEur)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            {ledger.data?.transactions.length === 0 && (
+              <p className="text-muted">Ei tapahtumia tällä jaksolla.</p>
+            )}
+          </>
+        )}
+
         <button
           type="button"
           className="justify-self-start"

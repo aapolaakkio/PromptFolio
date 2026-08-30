@@ -26,6 +26,7 @@ import { cashFlowFor } from "../spending/cashflow";
 import { investmentPaymentIds } from "../spending/internal";
 import { CATEGORY_LABELS } from "../spending/categories";
 import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
+import { classifiedTransactions } from "../spending/transactions";
 import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
@@ -157,6 +158,34 @@ export const portfolioRoutes = {
           // was renamed, which shows the raw key rather than nothing.
           labelFor: (category) =>
             CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category,
+        }),
+      });
+    }),
+  },
+
+  "/api/spending/transactions": {
+    GET: handle(async (request) => {
+      const { userId } = await requireUser(request);
+      const url = new URL(request.url);
+      const from = IsoDateSchema.parse(url.searchParams.get("from") ?? "1900-01-01");
+      const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
+
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      return json({
+        from,
+        to,
+        transactions: classifiedTransactions({
+          txns,
+          rules: rulesFor(db, userId),
+          bankAccountIds: bank,
+          cashlessAccountIds: cashlessAccountIds(txns, bank),
+          // SAFETY: as in the monthly route -- the key comes from
+          // `categoriseWith`, which only returns a declared `Category`.
+          labelFor: (category) =>
+            CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category,
+          from,
+          to,
         }),
       });
     }),

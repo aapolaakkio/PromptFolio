@@ -22,8 +22,14 @@ export type TrendRow = {
   readonly amount: number;
 };
 
-/** `2026-03` as `3/26`, short enough that a year of them fits an axis. */
-const shortMonth = (month: string): string => {
+/**
+ * `2026-03` as `3/26`, short enough that a year of them fits an axis.
+ *
+ * Used for tick labels only, never as the value a row is keyed by: two months
+ * that happen to format alike would then collide into one position, and a
+ * stacked chart rejects two values for the same position and series outright.
+ */
+export const shortMonth = (month: string): string => {
   const [year = "", number = ""] = month.split("-");
   return `${Number(number)}/${year.slice(2)}`;
 };
@@ -43,7 +49,9 @@ export const trendRows = (months: readonly CategoryMonth[], categories: readonly
 
   const rows = months.flatMap((month) =>
     shown.map((category) => ({
-      month: shortMonth(month.month),
+      // The ISO month, not its label: the axis formats it for display, and a
+      // display string is not an identity.
+      month: month.month,
       category: category.label,
       amount:
         category.key === "muu"
@@ -84,7 +92,10 @@ export const CategoryTrendChart = ({
           }),
         ],
         scales: {
-          x: { scale: () => scalePoint<string>() },
+          x: {
+            scale: () => scalePoint<string>(),
+            axis: { ticks: { format: shortMonth } },
+          },
           y: {
             scale: scaleLinear,
             nice: true,
@@ -105,6 +116,11 @@ export const CategoryTrendChart = ({
   );
 
   if (rows.length === 0) return <p className="text-muted">Ei vielä dataa.</p>;
+  if (months.length < 2) {
+    // An area over one month is a shape with nothing to connect. Said out loud
+    // rather than drawn as an empty plot, which reads as a broken chart.
+    return <p className="text-muted">Trendi näkyy, kun jaksossa on vähintään kaksi kuukautta.</p>;
+  }
 
   return (
     <div className="h-72">

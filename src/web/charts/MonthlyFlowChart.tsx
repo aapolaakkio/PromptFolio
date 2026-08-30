@@ -11,7 +11,11 @@ import { colourFor } from "./palette";
 
 export type MonthlyPoint = { month: string; incomeEur: string; expensesEur: string };
 
-/** `2026-03` as `3/26`, short enough that twelve of them fit an axis. */
+/**
+ * `2026-03` as `3/26`, short enough that twelve of them fit an axis.
+ *
+ * A tick label, never the value a row is keyed by -- see CategoryTrendChart.
+ */
 const shortMonth = (month: string): string => {
   const [year = "", number = ""] = month.split("-");
   return `${Number(number)}/${year.slice(2)}`;

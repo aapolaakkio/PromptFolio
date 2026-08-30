@@ -249,3 +249,32 @@ export const describeBalance = (result: {
     ? `Täsmää: tapahtumat selittävät koko saldon ${result.statedEur} €.`
     : `Alkusaldoksi kirjattiin ${result.openingBalanceEur} € (${result.openingBalanceDate}); ` +
       `tapahtumat selittävät ${result.derivedFromRowsEur} €.`;
+
+/** Every bank movement with the class it was given -- the ledger behind the totals. */
+export const ClassifiedSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  transactions: z.array(
+    z.object({
+      id: z.number(),
+      date: z.string(),
+      text: z.string(),
+      amountEur: z.string(),
+      category: z.string(),
+      categoryLabel: z.string(),
+      counted: z.boolean(),
+      excludedReason: z
+        .enum(["income", "internal-transfer", "investment", "opening-balance", "other-currency"])
+        .nullable(),
+    }),
+  ),
+});
+
+/** Why a row was left out of the spending figures, in the words the screen shows. */
+export const EXCLUDED_LABELS = {
+  income: "tuloa",
+  "internal-transfer": "oma siirto",
+  investment: "sijoitus",
+  "opening-balance": "alkusaldo",
+  "other-currency": "muu valuutta",
+} as const;

@@ -282,3 +282,18 @@ describe("axis labels", () => {
     expect(compactEur(-12_400)).toBe("-12 k€");
   });
 });
+
+describe("a trend over a single month", () => {
+  test("says why there is nothing to draw rather than drawing an empty plot", () => {
+    // An area needs two points to connect; one month renders as blank axes,
+    // which reads as a broken chart rather than as a short period.
+    const html = renders(
+      <CategoryTrendChart
+        months={[{ month: "2026-08", byCategory: { ruoka: "300.00" } }]}
+        categories={[{ key: "ruoka", label: "Ruoka" }]}
+      />,
+    );
+
+    expect(html).toContain("vähintään kaksi kuukautta");
+  });
+});

@@ -23,6 +23,34 @@ export type MonthlyFlow = {
  * Months with no movement at all are still returned, so a chart shows the gap
  * rather than closing it and implying continuous activity.
  */
+/**
+ * How many months one report may cover: fifty years, which is longer than any
+ * ledger this app will hold and short enough to draw.
+ */
+const MAX_MONTHS = 600;
+
+/**
+ * The months to report, newest last, capped.
+ *
+ * A date field being typed into passes through partial values -- "0006-08-06"
+ * on the way to "2006-08-06" -- and obeying that literally asks for twenty-four
+ * thousand months of nothing: unreadable, unplottable, and every label
+ * repeating. The cap keeps the end of the range, which is the part anyone
+ * typing a date is looking at.
+ *
+ * Months with no movement are still returned inside the range, so a chart shows
+ * the gap rather than closing it and implying continuous activity.
+ */
+const monthsToReport = (from: IsoDate, to: IsoDate): string[] => {
+  const months: string[] = [];
+  const cursor = new Date(`${from.slice(0, 7)}-01T00:00:00Z`);
+  const end = new Date(`${to.slice(0, 7)}-01T00:00:00Z`);
+  for (; cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+    months.push(cursor.toISOString().slice(0, 7));
+  }
+  return months.length <= MAX_MONTHS ? months : months.slice(-MAX_MONTHS);
+};
+
 export const monthlyFlows = (args: {
   txns: readonly Txn[];
   rules: readonly SpendingRule[];
@@ -51,12 +79,7 @@ export const monthlyFlows = (args: {
     }
   }
 
-  const months: string[] = [];
-  const start = new Date(`${args.from.slice(0, 7)}-01T00:00:00Z`);
-  const end = new Date(`${args.to.slice(0, 7)}-01T00:00:00Z`);
-  for (let cursor = start; cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
-    months.push(cursor.toISOString().slice(0, 7));
-  }
+  const months = monthsToReport(args.from, args.to);
 
   return months.map((month) => {
     const earned = income.get(month) ?? zeroMoney(EUR);
@@ -131,12 +154,7 @@ export const monthlyByCategory = (args: {
     .sort((a, b) => Number(b[1].minor - a[1].minor))
     .map(([key]) => ({ key, label: args.labelFor(key) }));
 
-  const months: string[] = [];
-  const start = new Date(`${args.from.slice(0, 7)}-01T00:00:00Z`);
-  const end = new Date(`${args.to.slice(0, 7)}-01T00:00:00Z`);
-  for (let cursor = start; cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
-    months.push(cursor.toISOString().slice(0, 7));
-  }
+  const months = monthsToReport(args.from, args.to);
 
   return {
     categories,

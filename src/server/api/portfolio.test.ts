@@ -1427,6 +1427,51 @@ describe("GET /api/spending/uncategorised", () => {
     expect(response.status).toBe(401);
   });
 
+  test("GET /api/spending/transactions lists every movement with the class it was given", async () => {
+    // The categorised totals are summaries, and a summary nobody can open is
+    // one they have to take on trust. This is the ledger behind them.
+    const { cookie } = await signUp(`ledger-${crypto.randomUUID()}@example.com`);
+    const accountId = await bankAccount(cookie);
+    await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(accountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-02");
+
+    const response = await portfolioRoutes["/api/spending/transactions"].GET(
+      new Request("http://x/api/spending/transactions?from=2026-01-01&to=2026-12-31", {
+        headers: { cookie },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = z
+      .object({
+        transactions: z.array(
+          z.object({
+            date: z.string(),
+            text: z.string(),
+            categoryLabel: z.string(),
+            amountEur: z.string(),
+            counted: z.boolean(),
+            excludedReason: z.string().nullable(),
+          }),
+        ),
+      })
+      .parse(await response.json());
+
+    // Newest first, each with its class, and money in named as income rather
+    // than dropped from the list.
+    expect(body.transactions[0]!.text).toContain("PALKKA");
+    expect(body.transactions[0]!.excludedReason).toBe("income");
+    expect(body.transactions[0]!.counted).toBe(false);
+    expect(body.transactions[1]!.categoryLabel).toBe("Ruokakauppa");
+    expect(body.transactions[1]!.amountEur).toBe("-42.15");
+  });
+
+  test("GET /api/spending/transactions refuses a caller with no session", async () => {
+    const response = await portfolioRoutes["/api/spending/transactions"].GET(
+      new Request("http://x/api/spending/transactions"),
+    );
+    expect(response.status).toBe(401);
+  });
+
   test("lists what no rule matched, summed per payee, and nothing else", async () => {
     const { cookie } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
     const accountId = await bankAccount(cookie);

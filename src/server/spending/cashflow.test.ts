@@ -364,3 +364,21 @@ describe("monthlyByCategory", () => {
     expect(report.categories).toEqual([]);
   });
 });
+
+test("a nonsense start date does not ask for twenty thousand months", () => {
+  // A date field passes through partial values while being typed -- "0006-08-06"
+  // on the way to "2006-08-06" -- and obeying that literally produced a range
+  // no chart can draw, with every label repeating.
+  const months = monthlyFlows({
+    txns: [row(1, "PKORTTIMAKSU — K-MARKET", "-10.00", "2026-03-10")],
+    rules: RULES,
+    bankAccountIds: BANK,
+    from: "0006-01-01",
+    to: "2026-12-31",
+  });
+
+  expect(months.length).toBeLessThanOrEqual(600);
+  // The end of the range is kept, which is the part anyone typing a date is
+  // looking at.
+  expect(months.at(-1)?.month).toBe("2026-12");
+});
