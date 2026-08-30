@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { eur } from "../lib/format";
 
 import { AllocationChart } from "./AllocationChart";
+import { CategoryTrendChart, trendRows } from "./CategoryTrendChart";
 import { barsFor, HoldingsChart, holdingTip } from "./HoldingsChart";
 import { MonthlyFlowChart } from "./MonthlyFlowChart";
 import {
@@ -202,5 +203,82 @@ describe("HoldingsChart", () => {
         />,
       ),
     ).toContain("Ei arvotettavia omistuksia");
+  });
+});
+
+describe("CategoryTrendChart", () => {
+  const months = [
+    { month: "2026-01", byCategory: { ruoka: "300.00", ravintolat: "100.00" } },
+    { month: "2026-02", byCategory: { ruoka: "350.00", ravintolat: "80.00" } },
+  ];
+  const categories = [
+    { key: "ruoka", label: "Ruoka" },
+    { key: "ravintolat", label: "Ravintolat" },
+  ];
+
+  test("draws one band per category per month", () => {
+    expect(trendRows(months, categories).rows).toHaveLength(4);
+  });
+
+  test("folds the ninth category and beyond into one honest group", () => {
+    // Past eight, colour stops telling one series from another, and a band
+    // nobody can identify is worse than a group that says what it is.
+    const many = Array.from({ length: 12 }, (_unused, index) => ({
+      key: `k${index}`,
+      label: `Erä ${index}`,
+    }));
+    const { shown } = trendRows(
+      [{ month: "2026-01", byCategory: Object.fromEntries(many.map((c) => [c.key, "10.00"])) }],
+      many,
+    );
+
+    expect(shown).toHaveLength(8);
+    expect(shown.at(-1)?.label).toBe("Muu (5)");
+  });
+
+  test("sums the folded categories rather than dropping them", () => {
+    const many = Array.from({ length: 10 }, (_unused, index) => ({
+      key: `k${index}`,
+      label: `Erä ${index}`,
+    }));
+    const { rows } = trendRows(
+      [{ month: "2026-01", byCategory: Object.fromEntries(many.map((c) => [c.key, "10.00"])) }],
+      many,
+    );
+
+    // Three folded categories at 10,00 each: the group carries 30,00, so the
+    // stack's top edge is still the month's whole spending.
+    expect(rows.find((row) => row.category.startsWith("Muu"))?.amount).toBe(30);
+  });
+
+  test("renders", () => {
+    expect(() =>
+      renders(<CategoryTrendChart months={months} categories={categories} />),
+    ).not.toThrow();
+  });
+
+  test("says so when there is nothing to show", () => {
+    expect(renders(<CategoryTrendChart months={[]} categories={[]} />)).toContain("Ei vielä dataa");
+  });
+});
+
+describe("axis labels", () => {
+  test("a tick reads as a date, never as the milliseconds behind it", () => {
+    // The x scale carries epoch milliseconds so elapsed time spaces the points
+    // and a span can be narrowed at all -- but nothing a reader sees is ever a
+    // millisecond count.
+    expect(asDate(Date.UTC(2026, 7, 30))).toBe("30.8.2026");
+  });
+
+  test("thousands are compacted, so a five-figure axis stays readable", () => {
+    expect(compactEur(50_000)).toBe("50 k€");
+    expect(compactEur(0)).toBe("0 €");
+  });
+
+  test("a negative tick uses the same minus sign as the tables", () => {
+    // The Finnish locale writes a true minus (U+2212); everything else in the
+    // app normalises it, and an axis that disagreed with the table under it
+    // would look like two different apps.
+    expect(compactEur(-12_400)).toBe("-12 k€");
   });
 });

@@ -82,6 +82,11 @@ export const MonthlySchema = z.object({
       netEur: z.string(),
     }),
   ),
+  /** The same months split by category, for the trend chart. */
+  byCategory: z.object({
+    categories: z.array(z.object({ key: z.string(), label: z.string() })),
+    months: z.array(z.object({ month: z.string(), byCategory: z.record(z.string(), z.string()) })),
+  }),
 });
 
 /** GET /api/spending/uncategorised: what no rule matched, and the buckets on offer. */

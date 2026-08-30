@@ -22,10 +22,10 @@ import {
   totalCashEur,
   valueCash,
 } from "../../core/cash";
-import { CATEGORY_LABELS } from "../spending/categories";
 import { cashFlowFor } from "../spending/cashflow";
 import { investmentPaymentIds } from "../spending/internal";
-import { monthlyFlows } from "../spending/monthly";
+import { CATEGORY_LABELS } from "../spending/categories";
+import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
 import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 
@@ -138,13 +138,25 @@ export const portfolioRoutes = {
       const to = IsoDateSchema.parse(url.searchParams.get("to") ?? today());
 
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const shared = {
+        txns,
+        rules: rulesFor(db, userId),
+        bankAccountIds: new Set(bankAccountIds),
+        from,
+        to,
+      };
       return json({
-        months: monthlyFlows({
-          txns,
-          rules: rulesFor(db, userId),
-          bankAccountIds: new Set(bankAccountIds),
-          from,
-          to,
+        months: monthlyFlows(shared),
+        // The same months split by category, for the chart that shows whether
+        // one is creeping upward -- which a single period's Sankey cannot say.
+        byCategory: monthlyByCategory({
+          ...shared,
+          // SAFETY: the key comes from `categoriseWith`, which only ever
+          // returns a `Category` -- exactly the keys `CATEGORY_LABELS` is
+          // declared over. The fallback covers a rule stored before a category
+          // was renamed, which shows the raw key rather than nothing.
+          labelFor: (category) =>
+            CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category,
         }),
       });
     }),

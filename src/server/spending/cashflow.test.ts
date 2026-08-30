@@ -5,7 +5,7 @@ import type { IsoDate, TransactionType, Txn } from "../../core/types";
 import { cashFlowFor } from "./cashflow";
 import { SEED_RULES } from "./categories";
 import { internalTransferIds, investmentPaymentIds } from "./internal";
-import { monthlyFlows } from "./monthly";
+import { monthlyByCategory, monthlyFlows } from "./monthly";
 import type { SpendingRule } from "./rules";
 
 // These three decide what a person is shown about their own year, so the tests
@@ -291,5 +291,76 @@ describe("an opening balance", () => {
     // A derived opening balance was being reported as the year's largest
     // expense, which is a statement about the ledger, not about the owner.
     expect(flow.nodes.find((node) => node.id === "expenses")?.totalEur).toBe("200.00");
+  });
+});
+
+describe("monthlyByCategory", () => {
+  const label = (key: string) => key.toUpperCase();
+  const args = {
+    rules: RULES,
+    bankAccountIds: BANK,
+    labelFor: label,
+    from: "2026-01-01",
+    to: "2026-02-28",
+  };
+
+  test("splits each month's spending by category", () => {
+    const report = monthlyByCategory({
+      txns: [
+        row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10"),
+        row(1, "PKORTTIMAKSU — RAVINTOLA", "-100.00", "2026-01-11"),
+        row(1, "PKORTTIMAKSU — K-MARKET", "-150.00", "2026-02-10"),
+      ],
+      ...args,
+    });
+
+    expect(report.months.map((month) => month.month)).toEqual(["2026-01", "2026-02"]);
+    expect(report.months[0]!.byCategory.ruoka).toBe("200.00");
+    expect(report.months[1]!.byCategory.ravintolat).toBe("0.00");
+  });
+
+  test("gives every category a figure every month, so a stack has no holes", () => {
+    // A band that disappears for one month reads as missing data rather than
+    // as a month where nothing was spent on it.
+    const report = monthlyByCategory({
+      txns: [row(1, "PKORTTIMAKSU — RAVINTOLA", "-100.00", "2026-01-11")],
+      ...args,
+    });
+
+    expect(Object.keys(report.months[1]!.byCategory)).toEqual(
+      report.categories.map((category) => category.key),
+    );
+  });
+
+  test("orders categories by their whole-period total, so colours stay put", () => {
+    // Ordering by the current month would repaint every band as the reader
+    // scrolls, and a palette that has to be re-learned is not a palette.
+    const report = monthlyByCategory({
+      txns: [
+        row(1, "PKORTTIMAKSU — RAVINTOLA", "-500.00", "2026-01-11"),
+        row(1, "PKORTTIMAKSU — K-MARKET", "-100.00", "2026-01-10"),
+        row(1, "PKORTTIMAKSU — K-MARKET", "-900.00", "2026-02-10"),
+      ],
+      ...args,
+    });
+
+    expect(report.categories.map((category) => category.key)).toEqual(["ruoka", "ravintolat"]);
+    expect(report.categories[0]!.label).toBe("RUOKA");
+  });
+
+  test("leaves out what is not spending", () => {
+    const report = monthlyByCategory({
+      txns: [
+        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+        row(1, "Alkusaldo", "-1200.00", "2026-01-01", "OPENING_BALANCE"),
+        row(1, "TILISIIRTO — OMA SÄÄSTÖ", "-500.00", "2026-01-06"),
+        row(2, "Tilinavaus", "500.00", "2026-01-06", "DEPOSIT"),
+      ],
+      ...args,
+    });
+
+    // Income, an opening balance and a transfer between the owner's own
+    // accounts are none of them spending.
+    expect(report.categories).toEqual([]);
   });
 });

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { eur } from "../lib/format";
 import { CashFlowChart } from "../charts/CashFlowChart";
+import { CategoryTrendChart } from "../charts/CategoryTrendChart";
 import { MonthlyFlowChart } from "../charts/MonthlyFlowChart";
 import {
   CashFlowSchema,
@@ -131,6 +132,15 @@ export const SpendingPage = () => {
 
         <h2 className="mt-2 text-sm text-muted">Kuukausittain</h2>
         <MonthlyFlowChart months={monthly.data?.months ?? []} />
+
+        <h2 className="mt-2 text-sm text-muted">Luokittain kuukausittain</h2>
+        {/* The Sankey shows one period's shape; this shows whether a category
+            is creeping upward, which no single period can say however well it
+            is drawn. */}
+        <CategoryTrendChart
+          months={monthly.data?.byCategory.months ?? []}
+          categories={monthly.data?.byCategory.categories ?? []}
+        />
 
         <h2 className="mt-2 text-sm text-muted">
           {groupBy === "category" ? "Luokittain" : "Saajittain"}
