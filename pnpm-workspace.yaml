@@ -3,6 +3,7 @@ allowBuilds:
   bun: false
   esbuild: true
   prisma: false
+  simple-git-hooks: false
 
 minimumReleaseAge: 1440
 
