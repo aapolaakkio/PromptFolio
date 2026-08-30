@@ -15,8 +15,8 @@
     "test:cov": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
-    "fmt": "oxfmt src e2e",
-    "fmt:check": "oxfmt --check src e2e",
+    "fmt": "oxfmt src e2e '!src/web/routeTree.gen.ts'",
+    "fmt:check": "oxfmt --check src e2e '!src/web/routeTree.gen.ts'",
     "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov",
     "dev:api": "bun --hot src/server/index.ts"
   },

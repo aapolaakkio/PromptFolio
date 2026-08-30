@@ -75,9 +75,11 @@ tree deleted. Routes are files under `src/web/app`, each pointing at the page co
 that already existed, and `routes.test.ts` inherits `route-tree.test.ts`'s job of proving
 every screen is reachable and points at itself.
 
-**6. Session on the server.** The authenticated layout gates in the browser, so SSR
-currently renders a loading state for every page. `beforeLoad` plus a server function
-that reads the session cookie turns that into a real render or a redirect.
+**6. Session on the server.** Done. A `currentSession` server function reads the request's
+own cookie through Better Auth, and `_authenticated`'s `beforeLoad` redirects on `null`.
+A signed-out visitor now gets **307 to /login before any HTML exists** -- no loading
+state, no flash of chrome, no redirect decided after hydration. The layout component
+lost its session hook and its redirect effect: reaching it means a session exists.
 
 **7. The API becomes server functions.** Not 44 route files -- server functions,
 which is what Start is for. `createServerFn({ method }).validator(Schema).handler(fn)`

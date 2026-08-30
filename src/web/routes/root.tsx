@@ -1,6 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
-import { signOut, useSession } from "../lib/auth-client.ts";
+import { signOut } from "../lib/auth-client.ts";
 import { SessionGate } from "./session-gate.tsx";
 
 /**
@@ -29,19 +27,10 @@ import { SessionGate } from "./session-gate.tsx";
  * states -- lives in `./session-gate.tsx`'s `SessionGate`, exercised by
  * `session-gate.test.ts` with `react-dom/server`'s `renderToStaticMarkup`.
  */
-export const AuthenticatedLayout = () => {
-  const { data: session, isPending } = useSession();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (!isPending && !session) void navigate({ to: "/login" });
-  }, [isPending, session, navigate]);
-
-  return (
-    <SessionGate
-      isPending={isPending}
-      hasSession={session != null}
-      onSignOut={() => void signOut()}
-    />
-  );
-};
+export const AuthenticatedLayout = () => (
+  // No session hook and no redirect effect: `_authenticated.tsx`'s beforeLoad
+  // has already decided, on the server, that there is a session -- reaching
+  // this component at all means one exists. What was a loading state, a
+  // redirect effect and a flash of empty chrome is now a rendered page.
+  <SessionGate isPending={false} hasSession onSignOut={() => void signOut()} />
+);
