@@ -8,7 +8,7 @@ import {
   negativePositionIds,
 } from "../../core/ledger";
 import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money";
-import { twr, valueSeries, xirr } from "../../core/returns";
+import { investedSeries, twr, valueSeries, xirr } from "../../core/returns";
 import type { IsoDate, Txn } from "../../core/types";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
@@ -270,10 +270,15 @@ export const portfolioRoutes = {
       const { userId } = await requireUser(request);
       const { from, to } = parseRange(new URL(request.url));
       const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      // Both series are one point per calendar day over the same range, so the
+      // two line up index for index and the chart can draw them together
+      // without matching dates itself.
+      const invested = investedSeries(investedTxns, from, to);
       return json(
-        valueSeries(investedTxns, instruments, prices, from, to).map((point) => ({
+        valueSeries(investedTxns, instruments, prices, from, to).map((point, index) => ({
           date: point.date,
           valueEur: formatMoney(point.valueEur),
+          investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
           stale: point.stale,
           // Instruments excluded from this day's valueEur because their net
           // position was negative (an unmatched disposal -- see core/ledger.ts's

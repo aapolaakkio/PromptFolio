@@ -443,24 +443,30 @@ describe("GET /api/value-series", () => {
     );
     expect(response.status).toBe(200);
     // SAFETY: a 200 from GET /api/value-series (asserted above) always
-    // returns an array of { date, valueEur, stale } points.
+    // returns an array of { date, valueEur, investedEur, stale } points.
     const body = (await response.json()) as Array<{
       date: string;
       valueEur: string;
+      investedEur: string;
       stale: boolean;
       excludedInstrumentIds: number[];
     }>;
     expect(body).toHaveLength(5);
-    // 10 units at 10.00/unit = 100.00; at 11.00/unit = 110.00.
+    // 10 units at 10.00/unit = 100.00; at 11.00/unit = 110.00. The purchase
+    // cost 100.00 and none of it has come back out, so invested capital is
+    // flat across the window -- the gap to `valueEur` is what the chart draws
+    // as the return.
     expect(body[0]).toEqual({
       date: "2024-01-01",
       valueEur: "100.00",
+      investedEur: "100.00",
       stale: false,
       excludedInstrumentIds: [],
     });
     expect(body.at(-1)).toEqual({
       date: "2024-01-05",
       valueEur: "110.00",
+      investedEur: "100.00",
       stale: false,
       excludedInstrumentIds: [],
     });
@@ -526,11 +532,20 @@ describe("GET /api/value-series", () => {
     const body = (await response.json()) as Array<{
       date: string;
       valueEur: string;
+      investedEur: string;
       stale: boolean;
       excludedInstrumentIds: number[];
     }>;
+    // Nothing of the owner's leaks into a stranger's series -- neither what it
+    // is worth nor what was put into it.
     expect(body).toEqual([
-      { date: "2024-01-01", valueEur: "0.00", stale: false, excludedInstrumentIds: [] },
+      {
+        date: "2024-01-01",
+        valueEur: "0.00",
+        investedEur: "0.00",
+        stale: false,
+        excludedInstrumentIds: [],
+      },
     ]);
   });
 

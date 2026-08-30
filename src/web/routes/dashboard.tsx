@@ -18,7 +18,13 @@ import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart
  * explicit `z.ZodType<AllocationSlice>` annotation -- TypeScript rejects
  * this file if the two shapes disagree.
  */
-const ValuePointSchema = z.object({ date: z.string(), valueEur: z.string(), stale: z.boolean() });
+const ValuePointSchema = z.object({
+  date: z.string(),
+  valueEur: z.string(),
+  /** What had been put into holdings by that day; the value line's counterpart. */
+  investedEur: z.string(),
+  stale: z.boolean(),
+});
 
 const ReturnsSchema = z.object({
   /** Positions only -- what twr and mwr below are computed from. */
@@ -235,9 +241,15 @@ export const DashboardPage = () => {
         <>
           <section className="card mt-6">
             <h2>Arvon kehitys</h2>
+            {/* The gap between the two lines is the return, in euros rather
+                than as a percentage to be taken on trust. */}
             <TimeSeriesChart
               label="Salkun arvo"
-              points={series.data.map((p) => ({ date: p.date, value: Number(p.valueEur) }))}
+              points={series.data.map((p) => ({
+                date: p.date,
+                value: Number(p.valueEur),
+                invested: Number(p.investedEur),
+              }))}
             />
           </section>
 

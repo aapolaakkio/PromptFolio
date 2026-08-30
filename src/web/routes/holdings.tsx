@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { eur, qty, share, fiDate } from "../lib/format";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort";
+import { HoldingsChart } from "../charts/HoldingsChart";
 import { RecordPriceForm } from "./RecordPriceForm";
 
 export type { Holding };
@@ -133,6 +134,12 @@ export const HoldingsPage = () => {
   return (
     <>
       <h1>Omistukset</h1>
+      {/* Above the table, because the one question the table makes you work
+          for -- how much rides on a single position -- is answered by the
+          lengths at a glance. */}
+      <section className="mb-6">
+        <HoldingsChart holdings={rows} />
+      </section>
       <table>
         <thead>
           <tr>

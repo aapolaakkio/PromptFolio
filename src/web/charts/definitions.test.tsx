@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { eur } from "../lib/format";
 
 import { AllocationChart } from "./AllocationChart";
+import { barsFor, HoldingsChart, holdingTip } from "./HoldingsChart";
 import { MonthlyFlowChart } from "./MonthlyFlowChart";
 import {
   acceptedRange,
@@ -164,5 +165,42 @@ describe("acceptedRange", () => {
 
   test("treats a click as clearing the window, not selecting nothing", () => {
     expect(acceptedRange({ start: 10, end: 10 }, "commit")).toBeNull();
+  });
+});
+
+describe("HoldingsChart", () => {
+  const holdings = [
+    { instrumentId: 1, name: "Pieni", valueEur: "100.00", unrealisedEur: "-10.00" },
+    { instrumentId: 2, name: "Suuri", valueEur: "900.00", unrealisedEur: "50.00" },
+    { instrumentId: 3, name: "Hinnaton", valueEur: null, unrealisedEur: null },
+  ];
+
+  test("draws the largest holding first, so concentration is the first thing seen", () => {
+    expect(barsFor(holdings).map((row) => row.name)).toEqual(["Suuri", "Pieni"]);
+  });
+
+  test("leaves out a holding that could not be valued rather than drawing it at zero", () => {
+    // A bar of no length claims the holding is worth nothing, which is a
+    // different and false statement. The table names it with its own reason.
+    expect(barsFor(holdings).some((row) => row.name === "Hinnaton")).toBe(false);
+  });
+
+  test("a hovered bar says what it is worth and what of that is gain", () => {
+    expect(holdingTip({ name: "Suuri", value: 900, gain: 50 })).toContain("+");
+    expect(holdingTip({ name: "Tuntematon", value: 900, gain: null })).not.toContain("(");
+  });
+
+  test("renders", () => {
+    expect(() => renders(<HoldingsChart holdings={holdings} />)).not.toThrow();
+  });
+
+  test("says so when nothing can be valued", () => {
+    expect(
+      renders(
+        <HoldingsChart
+          holdings={[{ instrumentId: 1, name: "X", valueEur: null, unrealisedEur: null }]}
+        />,
+      ),
+    ).toContain("Ei arvotettavia omistuksia");
   });
 });

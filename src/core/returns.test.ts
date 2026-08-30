@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { valueSeries, xirr, twr, datesBetween } from "./returns";
+import { valueSeries, xirr, twr, datesBetween, investedSeries } from "./returns";
 import type { PriceLookup } from "./returns";
 import { investedCashFlows } from "./ledger";
 import type { Instrument, Txn, TransactionType, CashFlow } from "./types";
@@ -587,4 +587,25 @@ test("a holding that never split is valued from its raw quantity", () => {
   const prices = multiLookup({ 7: { "2024-01-01": "110,00" } });
   const series = valueSeries(txns, [instrument], prices, "2024-01-01", "2024-01-01");
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["1100.00"]);
+});
+
+test("investedSeries carries what has been put in, and takes back what a sale returned", () => {
+  const bought = txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00" });
+  const sold = txn("SELL", "2025-01-20", { qty: "5", amount: "600,00" });
+  const series = investedSeries([bought, sold], "2025-01-09", "2025-01-21");
+  const on = (date: string) => series.find((point) => point.date === date)!;
+
+  // Nothing before the purchase, the full cost after it, and less again once
+  // half came back out -- the same flows XIRR reads, so the two cannot
+  // disagree about what counts as invested.
+  expect(formatMoney(on("2025-01-09").investedEur)).toBe("0.00");
+  expect(formatMoney(on("2025-01-10").investedEur)).toBe("1000.00");
+  expect(formatMoney(on("2025-01-19").investedEur)).toBe("1000.00");
+  expect(formatMoney(on("2025-01-20").investedEur)).toBe("400.00");
+});
+
+test("investedSeries returns one point per day, including days nothing happened", () => {
+  // The chart draws it against valueSeries, which is also one point per day; a
+  // sparse series would misalign the two lines.
+  expect(investedSeries([], "2025-01-01", "2025-01-05")).toHaveLength(5);
 });

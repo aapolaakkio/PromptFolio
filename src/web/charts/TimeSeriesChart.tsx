@@ -10,7 +10,18 @@ import { eur, fiDate } from "../lib/format";
 import { TIME_FOCUS } from "./interactions";
 import { colourFor } from "./palette";
 
-export type SeriesPoint = { date: string; value: number };
+export type SeriesPoint = {
+  date: string;
+  value: number;
+  /**
+   * What had been put into holdings by that day, when the caller has it. Drawn
+   * as a second line: the gap between the two is the return, and it is the one
+   * picture that makes a percentage feel like money -- a rising value line
+   * above a flat invested line is growth, the same line above an equally
+   * rising one is only deposits.
+   */
+  invested?: number;
+};
 
 /**
  * `@tanstack/react-charts@0.16` is a grammar-of-graphics library:
@@ -75,11 +86,15 @@ const RANGES = [
   { label: "Koko jakso", months: null },
 ] as const;
 
-export type PlotRow = { at: number; value: number };
+export type PlotRow = { at: number; value: number; invested: number | null };
 
 /** Every point, as the chart plots them. */
 export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
-  points.map((point) => ({ at: asMillis(point.date), value: point.value }));
+  points.map((point) => ({
+    at: asMillis(point.date),
+    value: point.value,
+    invested: point.invested ?? null,
+  }));
 
 /**
  * The span a preset button selects: `months` back from the most recent point,
@@ -117,6 +132,18 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
     () =>
       defineChart({
         marks: [
+          ...(rows.some((row) => row.invested !== null)
+            ? [
+                lineY(rows, {
+                  id: "invested",
+                  x: "at",
+                  y: "invested",
+                  stroke: colourFor(1),
+                  strokeWidth: 2,
+                  strokeDasharray: "4 3",
+                }),
+              ]
+            : []),
           lineY(rows, {
             id: "value",
             x: "at",
@@ -202,6 +229,25 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           </button>
         ))}
         <span className="self-center text-muted">tai vedä kuvaajassa</span>
+        {rows.some((row) => row.invested !== null) && (
+          // Two series, so identity may not rest on colour: each line is
+          // named. Kept in this row rather than under the plot, where it
+          // collided with the axis the chart draws for itself.
+          <span className="ml-auto flex items-center gap-3 self-center text-muted">
+            <span className="flex items-center gap-1.5">
+              <span className="h-0.5 w-4" style={{ background: colourFor(0) }} /> Arvo
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                className="h-0.5 w-4"
+                style={{
+                  background: `repeating-linear-gradient(90deg, ${colourFor(1)} 0 4px, transparent 4px 7px)`,
+                }}
+              />
+              Sijoitettu
+            </span>
+          </span>
+        )}
       </div>
       <div className="h-72">
         <Chart definition={definition} ariaLabel={label} />

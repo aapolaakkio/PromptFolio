@@ -10,7 +10,7 @@ import {
   type Quantity,
 } from "./money";
 import { costBasisAt } from "./costbasis";
-import { positionsAt } from "./ledger";
+import { investedCashFlows, positionsAt } from "./ledger";
 import type { CashFlow, Instrument, IsoDate, Txn } from "./types";
 
 export type ValuePoint = {
@@ -435,4 +435,37 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
   if (excludedSkips > 0 && excludedSkips >= contributed) return null;
 
   return chained - 1;
+};
+
+/** One day's invested capital: what has been put into holdings, net of what has been taken out. */
+export type InvestedPoint = { readonly date: IsoDate; readonly investedEur: Money };
+
+/**
+ * What the owner has put into their holdings, day by day.
+ *
+ * The counterpart to `valueSeries`: drawn together, the gap between the two is
+ * the return, and it is the one picture that makes a percentage feel like
+ * money. A rising value line above a flat invested line is growth; the same
+ * value line above an equally rising invested line is only deposits.
+ *
+ * Built from `investedCashFlows`, the same flows XIRR uses, so the two cannot
+ * disagree about what counts as invested. A sale reduces it: the money came
+ * back out, whether or not it was spent.
+ */
+export const investedSeries = (
+  txns: readonly Txn[],
+  from: IsoDate,
+  to: IsoDate,
+): InvestedPoint[] => {
+  const flows = investedCashFlows(txns);
+  let running = zeroMoney(EUR);
+  let next = 0;
+
+  return datesBetween(from, to).map((date) => {
+    while (next < flows.length && flows[next]!.date <= date) {
+      running = addMoney(running, flows[next]!.amountEur);
+      next += 1;
+    }
+    return { date, investedEur: running };
+  });
 };
