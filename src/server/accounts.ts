@@ -51,14 +51,9 @@ const terms = {
 };
 
 /**
- * Terms belong to the account kinds that can carry them, and are refused rather
- * than stored-and-ignored anywhere else: a maturity date sitting on a brokerage
- * account is a claim nobody will re-check, and the screen that later reads it
- * has no way to know it was meaningless.
- *
- * A rate fits either savings kind. A maturity date fits only a fixed-term
- * deposit -- an ordinary savings account's money is available at any time, which
- * is exactly what separates the two.
+ * Terms are refused where they mean nothing rather than stored and ignored: a
+ * maturity date on a brokerage account is a claim nobody re-checks. A rate fits
+ * either savings kind, a maturity date only a fixed-term deposit.
  */
 const assertTermsMatchType = (
   type: z.infer<typeof accountType> | null | undefined,
@@ -89,16 +84,12 @@ const assertTypeMatchesKind = (
 };
 
 /**
- * Name and account type only. A broker and a base currency are facts about the
- * account that its stored transactions were already interpreted under --
- * changing either after rows exist would silently reinterpret them -- so
- * neither is editable here.
+ * Name and type only. The broker and the base currency are what the stored rows
+ * were already interpreted under, so changing either would reinterpret them.
  *
- * The type is editable, unlike those two, because nothing in the ledger has
- * been interpreted under it yet: it is a fact about the account's tax treatment
- * that only phase 4 reads. Getting it wrong and correcting it later must be
- * possible -- an account whose type was guessed once and then frozen is exactly
- * how a tax report ends up confidently wrong.
+ * The type is editable because nothing has been interpreted under it yet: it
+ * decides tax treatment, and one guessed and then frozen is how a tax report
+ * ends up confidently wrong.
  */
 export const UpdateAccount = z
   .object({
@@ -127,13 +118,9 @@ export const CreateAccount = z.object({
 });
 
 /**
- * Confirms `accountId` belongs to `userId`, throwing a 404 `HttpError`
- * otherwise — the same response an account that does not exist at all
- * would produce, so a caller cannot distinguish "not yours" from
- * "does not exist". Any route that accepts an account id from the client
- * (transactions, imports, snapshots — Tasks 12, 13, 16) must call this
- * before touching that account's data; ownership is never inferred from
- * the request alone.
+ * Confirms the account belongs to the user, answering 404 otherwise -- the same
+ * response a missing account gives, so "not yours" cannot be told from "does not
+ * exist". Anything taking an account id from a caller must run this first.
  */
 export const assertAccountOwned = (userId: string, accountId: number): void => {
   const owned = sharedDb

@@ -32,12 +32,9 @@ import { accounts, fxRates, instruments, prices, transactions } from "./db/schem
 type Db = ReturnType<typeof getDb>["db"];
 
 /**
- * Rebuilds core money from a stored row.
- *
- * The schema's `.$type<Currency>()` is a free, unvalidated cast: a code can sit
- * in the column having never passed `parseCurrency`. This is the one place core
- * money comes out of the database, so it is the one place that cast is checked
- * for real rather than trusted onward.
+ * Rebuilds core money from a stored row. The schema's currency type is a free,
+ * unvalidated cast, and this is the one place money comes out of the database,
+ * so it is the one place that cast is checked rather than trusted onward.
  */
 const asMoney = (minor: number, currency: string): Money => ({
   minor: BigInt(minor),
@@ -77,14 +74,10 @@ export type Portfolio = {
   /** Every transaction the user owns, bank accounts included. Cash reads this. */
   readonly txns: readonly Txn[];
   /**
-   * The same, minus every bank account (current, savings, fixed-term deposit).
-   *
-   * This is what the return figures must be computed from. A bank account's
-   * rows are spending and salary, not portfolio events: `DEPOSIT` and
-   * `WITHDRAWAL` feed XIRR as external cash flows, so a grocery payment left in
-   * this list would read as capital pulled out of the portfolio. Money actually
-   * moving from a bank account to a broker still counts, because the broker's
-   * own export records that arrival as a deposit of its own.
+   * The same, minus every bank account -- what the return figures are computed
+   * from. A bank row is spending or salary, not a portfolio event, and a grocery
+   * payment left in would read as capital pulled out. Money that really reaches a
+   * broker still counts: the broker's own export records its arrival.
    */
   readonly investedTxns: readonly Txn[];
   readonly instruments: readonly Instrument[];
@@ -92,24 +85,15 @@ export type Portfolio = {
   /** Account ids whose kind is a bank one, for callers that group by account. */
   readonly bankAccountIds: readonly number[];
   /**
-   * The same transactions, minus every credit account.
-   *
-   * A credit card holds no money: its purchases are spending and its balance is
-   * what is owed for them, so counting that balance as cash subtracts the same
-   * money twice -- once as the purchases, once as the debt they created. Cash
-   * figures read this; spending still reads `txns`, because the purchases are
-   * exactly what a spending report is about.
+   * The same, minus every credit account. A card holds no money, so counting its
+   * balance as cash subtracts the same money twice -- as the purchases and as
+   * the debt they created. Spending still reads `txns`, which is what it is about.
    */
   readonly cashTxns: readonly Txn[];
   /**
-   * The first price this instrument has strictly after `date`, or null if it
-   * has none.
-   *
-   * Lets a caller tell a market holiday from a real gap without an exchange
-   * calendar: if a price feed carries a bar a day or two after a date but none
-   * on it, the market was shut. A Xetra listing on Whit Monday looked like a
-   * missing price until this existed, and no Finnish holiday table would have
-   * covered a German one.
+   * The first price strictly after `date`, or null. Tells a market holiday from a
+   * real gap without an exchange calendar: a bar a day later and none on the date
+   * means the market was shut, and no Finnish holiday table covers a German one.
    */
   readonly nextPriceDateAfter: (instrumentId: number, date: IsoDate) => IsoDate | null;
 };
@@ -252,12 +236,9 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
 };
 
 /**
- * How stale a foreign-exchange rate may be before a valuation refuses to use it.
- *
- * ECB publishes every TARGET business day, so a gap of a few days is ordinary --
- * a long weekend with a public holiday either side reaches four. Ten leaves room
- * for that and for a refresh job that missed a run, while still catching the
- * failure this exists for: a rate years out of date, carried forward silently.
+ * How stale a rate may be before a valuation refuses it. A holiday weekend
+ * reaches four days; ten leaves room for that and a missed refresh while still
+ * catching what this exists for -- a rate years out of date, carried forward.
  */
 const MAX_FX_AGE_DAYS = 10;
 
@@ -290,13 +271,10 @@ export type HoldingView = {
   readonly valueEur: string | null;
   readonly unrealisedEur: string | null;
   /**
-   * Share of the portfolio, e.g. `0.1523`. A ratio, so a number on the wire, and
-   * computed here rather than re-derived from strings in the UI.
-   *
-   * Null, never 0, when the holding cannot be valued: "worth nothing" is a
-   * different claim from "worth unknown". The denominator counts only holdings
-   * that could themselves be valued, so weights still sum to 1 across those
-   * rather than every weight quietly shrinking when one price feed breaks.
+   * Share of the portfolio. A ratio, so a number on the wire, computed here
+   * rather than from strings in the UI. Null and never 0 when the holding cannot
+   * be valued -- a different claim. The denominator counts only valued holdings,
+   * so weights sum to 1 across those instead of all shrinking when a feed breaks.
    */
   readonly weight: number | null;
   readonly priceDate: IsoDate | null;
@@ -331,13 +309,9 @@ const explainValuationFailure = (
       `${instrument.name} (${instrument.isin}) markkina-arvoa ei voi laskea.`;
 
 /**
- * Current holdings, valued as of `on`.
- *
- * Cost basis is resolved per instrument, so one unmatched disposal marks only
- * that row's money fields unknown rather than refusing the whole response.
- * Refusing the sale at import time instead would be wrong: OP pages import
- * newest first, so a page legitimately holds a sale whose purchase has not
- * landed yet, and the state is right again once every page has.
+ * Current holdings, valued as of `on`. Cost basis is resolved per instrument, so
+ * one unmatched disposal marks only its own row unknown. Refusing the sale at
+ * import time would be wrong: pages arrive newest first.
  */
 export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] => {
   const { txns, instruments: all, prices: lookup } = loadPortfolio(db, userId);
@@ -464,21 +438,14 @@ export type CashView = {
 };
 
 /**
- * Uninvested cash per account and currency on `on`, valued in euros.
- *
- * Cash counts toward portfolio value and allocation but never toward the
- * returns in spec 7 (decided 2026-08-29, recorded in 10c/C2): TWR and XIRR keep
- * measuring invested capital, so an account sitting on an unspent deposit does
- * not read as a portfolio that underperformed. The two numbers answer two
- * different questions and each says which.
+ * Uninvested cash per account and currency, in euros. It counts toward portfolio
+ * value and allocation, never toward the returns: an account sitting on an
+ * unspent deposit has not underperformed.
  */
 /**
- * Marks each balance according to whether its account can be drawn on `on`.
- *
- * A fixed-term deposit is locked until its maturity date, and locked with an
- * unknown release date when the account records none -- "we do not know when
- * this frees up" is the honest reading of a deposit whose terms nobody entered,
- * and it is safer than treating it as spendable.
+ * Marks each balance by whether its account can be drawn on `on`. A deposit whose
+ * terms nobody entered is locked with an unknown release date, which is the
+ * honest reading and safer than treating it as spendable.
  */
 export const withAvailability = (
   db: Db,

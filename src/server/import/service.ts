@@ -24,32 +24,15 @@ const probeHeaderLine = (bytes: ArrayBuffer, encoding: BrokerCsvConfig["encoding
   new TextDecoder(encoding).decode(bytes.slice(0, 4096)).split(/\r?\n/)[0] ?? "";
 
 /**
- * Detects which broker produced this upload without assuming any
- * particular delimiter or encoding up front.
+ * Which broker produced this upload, without assuming a delimiter or encoding.
  *
- * `detectBroker` (Task 10) only checks whether a signature's headers are
- * present in an already-split array; it has no opinion on how that array
- * was produced. An earlier version of this function (matching the task
- * brief) always split the raw header line on a hardcoded `;` after
- * decoding it as UTF-8, regardless of which broker's config the bytes
- * actually need -- so a broker configured with a different delimiter or
- * encoding (Task 10's own brokers.ts comment flags this as expected to
- * happen: "If Nordnet's export turns out to be UTF-16LE and tab-delimited
- * ...") would never be detected, even though `parseCsv` would have parsed
- * it correctly once handed the right config.
+ * Every distinct pair the configs use is tried in turn, and each broker's own
+ * pair only ever decodes headers for its own signature, so a mismatch cannot
+ * detect the wrong broker. Probing with one hardcoded pair meant a broker using
+ * any other was never detected, though its rows parsed fine once handed a config.
  *
- * Instead, this tries every distinct (encoding, delimiter) pair that
- * `BROKER_CONFIGS` actually uses, decodes the header probe that way, and
- * asks `detectBroker` whether the resulting header array matches any
- * config. Each broker's own encoding/delimiter is only ever used to
- * decode headers for the signatures being checked in that pass, so a
- * mismatched pair can't accidentally "detect" the wrong broker.
- *
- * `configs` defaults to the real `BROKER_CONFIGS` and exists so
- * imports.test.ts can exercise this with a synthetic delimiter/encoding
- * pair neither shipped broker currently uses -- both Nordnet and OP
- * happen to share `;` and `utf-8` today, so a regression back to a
- * hardcoded probe would pass every test that only uses real fixtures.
+ * `configs` is a parameter so a test can use a pair no shipped broker has: the
+ * real ones share theirs today, and a regression would pass every fixture test.
  */
 export const detectBrokerConfig = (
   bytes: ArrayBuffer,
@@ -124,12 +107,9 @@ const buildDraft = async (file: File, accountId: number) => {
 };
 
 /**
- * Reads and validates a pasted-text import request body. Deliberately no
- * `.trim()`/normalisation anywhere on `text`: OP's paste is anchored on
- * exact row separators (a line containing a single space) and multi-space
- * unit padding ("1,0453   kpl") that trimming or collapsing whitespace
- * would destroy -- see op-paste.ts's own module comment. The bytes travel
- * from `<textarea>` to here through one JSON round-trip and nothing else.
+ * A pasted import's body. Deliberately no trimming or normalising: the paste is
+ * anchored on exact row separators and multi-space unit padding that either
+ * would destroy.
  */
 const PasteBody = z.object({
   text: z.string().min(1, "Liitettävä teksti puuttuu").max(MAX_PASTE_CHARS, "Liite on liian suuri"),
@@ -137,12 +117,9 @@ const PasteBody = z.object({
 });
 
 /**
- * Parses OP's pasted web transaction view into the same `Draft` shape a CSV
- * upload produces, so it can go through the exact same `commitDraft`. There
- * is no `BrokerCsvConfig`/`detectBrokerConfig` step here -- the paste has no
- * delimiter and no header row for a signature match to run against (see
- * op-paste.ts) -- so `OP_WEB_PASTE` and `parseOpPaste` are used directly
- * instead of being routed through `buildDraft`'s CSV-shaped path.
+ * OP's pasted view into the same draft a CSV upload produces, so it commits the
+ * same way. No detection step: the paste has no delimiter and no header row for
+ * a signature to match.
  */
 const buildPasteDraft = (text: string, accountId: number) => {
   let parsed: ReturnType<typeof parseOpPaste>;
@@ -172,12 +149,9 @@ const buildPasteDraft = (text: string, accountId: number) => {
 };
 
 /**
- * Fires backfill for a just-committed draft's instruments without ever letting it delay or fail
- * the response a caller is waiting on -- see backfill-on-commit.ts's own doc comment for why
- * this is fire-and-forget rather than awaited. `backfillCommittedInstruments` already never
- * throws (it isolates every instrument's own failure internally), but the `.catch` here is a
- * second, independent layer for the same reason `runScheduledRefresh` (prices/refresh.ts) keeps
- * its own try/catch around each phase even though the function it calls is meant not to reject.
+ * Backfills a committed draft's instruments without delaying or failing the
+ * response. The catch is a second layer: the call already isolates each
+ * instrument's own failure.
  */
 const fireBackfill = (draft: Draft): void => {
   void backfillCommittedInstruments(db, draft).catch((cause) => {

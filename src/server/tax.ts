@@ -24,12 +24,9 @@ import { loadPortfolio } from "./valuation.ts";
 type Db = ReturnType<typeof getDb>["db"];
 
 /**
- * How large a hole in a price feed still counts as the market being closed
- * rather than the data being missing.
- *
- * Five days covers a weekend with holidays on both sides -- Easter's Thursday
- * to Tuesday, or Christmas -- while a hand-recorded price weeks or months from
- * its neighbour stays visible as the gap it is.
+ * How large a hole still counts as the market being closed. Five days covers
+ * Easter or Christmas, while a hand-recorded price months from its neighbour
+ * stays visible as the gap it is.
  */
 const MAX_TRADING_GAP_DAYS = 5;
 
@@ -39,12 +36,9 @@ const daysBetween = (from: IsoDate, to: IsoDate): number =>
   );
 
 /**
- * The tax year as the API reports it: decimal strings, and instruments named
- * rather than numbered.
- *
- * `core/tax` returns instrument ids because it never sees a database row. A
- * user must never be shown an internal numeric id -- the convention
- * `explainUnmatchedDisposal` already follows -- so the naming happens here.
+ * The tax year as reported: decimal strings, instruments named rather than
+ * numbered. Core returns ids because it never sees a row, and a user must never
+ * be shown one, so the naming happens here.
  */
 export type TaxDisposalView = {
   readonly instrument: string;
@@ -149,12 +143,9 @@ const explainNoPrice = (instrument: Instrument | undefined, on: IsoDate): string
       `Kirjaa hinta kyseiselle päivälle, niin rivi laskeutuu.`;
 
 /**
- * Why a withdrawal that follows an unvaluable one cannot be computed either.
- *
- * Said plainly rather than shown as a figure: the earlier gap leaves the
- * account's deposits too high by an unknown amount, so this withdrawal reads as
- * less profitable than it was -- as not profitable at all, in the real case
- * that exposed it, on a withdrawal the broker had withheld tax from.
+ * Why a withdrawal after an unvaluable one cannot be computed either: the earlier
+ * gap leaves deposits too high by an unknown amount, so this one reads as less
+ * profitable than it was -- as not profitable at all, in the case that exposed it.
  */
 const explainEarlierGap = (since: IsoDate): string =>
   `Aiemman noston (${since}) veronalaista osuutta ei voitu laskea, joten talletusten määrä on ` +
@@ -171,16 +162,12 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
   );
 
   /**
-   * An OST's fair market value immediately before transaction `beforeTxnId`:
-   * its positions priced on the day, plus its cash. A position with no price
-   * stops the whole valuation -- a total missing one holding is not a smaller
-   * total, it is an unknown one.
+   * An OST's value immediately before a transaction: positions priced on the day,
+   * plus cash. A position with no price stops the valuation -- a total missing a
+   * holding is unknown, not smaller.
    *
-   * "Immediately before" is what makes the apportionment right. The ledger is
-   * ordered by date then id, so everything strictly earlier in that order has
-   * happened and everything later has not -- including the withdrawal being
-   * apportioned, whose own cash must not be missing from the total it is
-   * measured against.
+   * "Immediately before" is what makes the apportionment right: the withdrawal
+   * being apportioned must not be missing from the total it is measured against.
    */
   const ostValueAt = (accountId: number, on: IsoDate, beforeTxnId: number): OstValuation => {
     const accountTxns = txns.filter(

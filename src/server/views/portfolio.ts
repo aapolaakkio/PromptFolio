@@ -33,14 +33,10 @@ import { cashFor, loadPortfolio, withAvailability } from "../valuation.ts";
 type Db = ReturnType<typeof getDb>["db"];
 
 /**
- * What the /api/* handlers used to compute between reading the request and
- * writing the response.
- *
- * Split out when those handlers became server functions: the glue is real logic
- * -- it decides what a chart is allowed to draw and what has to be reported as
- * excluded -- and it was only ever testable through a Request and a JSON parse.
- * Here it is a function of (database, user, arguments), which is what its tests
- * always wanted to call.
+ * What the handlers used to compute between reading a request and writing a
+ * response. Real logic -- it decides what a chart may draw and what must be
+ * reported as excluded -- so it lives as a function of database, user and
+ * arguments rather than only being reachable through a Request.
  */
 
 /**
@@ -124,15 +120,9 @@ export const allocationView = (db: Db, userId: string, dimension: Dimension, on:
     cash,
   );
 
-  // Two distinct reasons a holding can be left out of every slice, both of which
-  // must be visible rather than a silent gap (C1): allocateBy() itself already
-  // excludes an instrument it could not price/convert (`excludedInstrumentIds`,
-  // computed per-account -- see its own doc for why negative positions are
-  // deliberately not in that list), and a negative (unmatched-disposal) position
-  // is reported by ledger.ts's whole-ledger negativePositionIds() instead. Merged
-  // here (deduped by instrumentId) into one list, each entry enriched with the
-  // ISIN/name a caller needs to act on it (the same instrumentId /api/holdings
-  // reports the same instrument's costBasisError under).
+  // Two reasons a holding leaves every slice, both of which must be visible
+  // rather than a silent gap: one it could not price, and one whose position is
+  // negative. Merged into one list, named so a caller can act on it.
   const excludedIds = new Set([...negativePositionIds(txns, on), ...excludedInstrumentIds]);
   const excludedInstruments = [...excludedIds].flatMap((instrumentId) => {
     const instrument = byId.get(instrumentId);
@@ -270,16 +260,10 @@ export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
   // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving
   // them in would report every grocery payment as capital withdrawn.
   const series = valueSeries(investedTxns, instruments, prices, from, to);
-  // mwrFlows (deposit/withdrawal-shaped) feeds xirr() below, which measures the
-  // investor's own money-weighted experience -- it legitimately cares about when
-  // *they* moved cash. twrFlows (BUY/SELL-shaped) feeds twr() -- see that
-  // function's doc and `investedCashFlows`'s doc in core/ledger.ts for why the two
-  // must NOT be the same list: `series` prices invested positions only (spec §7),
-  // so the flow describing money entering it is a purchase, not a deposit.
-  // Chosen per account from whichever record that account keeps: deposits
-  // where a broker reports cash, purchases where it reports none. See
-  // fundingCashFlows -- measuring OP's holdings against Nordnet's deposits
-  // alone reported roughly three times the true annual rate.
+  // Two different lists on purpose: xirr measures when the investor moved cash,
+  // twr measures positions, whose flows are purchases rather than deposits.
+  // Chosen per account from whichever record it keeps -- measuring one broker's
+  // holdings against another's deposits reported three times the true rate.
   const mwrFlows = fundingCashFlows(investedTxns).filter(
     (flow) => flow.date >= from && flow.date <= to,
   );
@@ -288,25 +272,14 @@ export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
   );
   const final = series.at(-1);
 
-  // MWR over an arbitrary [from, to] window must account for whatever
-  // the portfolio was already worth going into `from` -- otherwise
-  // xirr() sees the final value as having appeared from nothing and
-  // returns a finite, plausible, WRONG rate instead of failing loudly.
-  // Standard treatment: the value at the start of the window becomes
-  // an implicit contribution dated `from`.
+  // What the portfolio was already worth going into `from`, as an implicit
+  // contribution -- without it xirr sees the final value appear from nothing and
+  // returns a plausible wrong rate rather than failing.
   //
-  // That value is looked up as of the day BEFORE `from`, not `from`
-  // itself (nor reused from `series[0]`, which already reflects any
-  // trade dated exactly `from`). This is what keeps the adjustment a
-  // genuine no-op for the common since-inception default range: when
-  // nothing predates `from` (e.g. the account's very first deposit and
-  // buy are both dated `from`), the day-before value is exactly zero,
-  // so the implicit contribution contributes nothing -- the deposit
-  // dated `from` is still counted exactly once, via the ordinary
-  // `mwrFlows` list below, not doubled here too. `noUncheckedIndexedAccess`
-  // types `[0]` as possibly undefined even though a same-day range
-  // always yields exactly one point; the `opening ? ... : []` below
-  // handles that without an assertion.
+  // Taken from the day before `from`, not `from` itself, which already reflects a
+  // trade dated exactly then. That keeps it a no-op for a since-inception range:
+  // with nothing earlier the day-before value is zero, so a deposit dated `from`
+  // is counted once through the ordinary flows and not doubled here.
   const opening = valueSeries(
     investedTxns,
     instruments,
@@ -368,15 +341,10 @@ export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
     return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
   });
 
-  // Cash on the window's last day, and the total that includes it. Both are
-  // computed here rather than added up in the browser: the client never does
-  // money arithmetic, and there must be exactly one definition of "what the
-  // portfolio is worth" for the dashboard and the chat to agree on.
-  //
-  // `twr`/`mwr` below deliberately stay position-only (spec 7, confirmed
-  // 10c/C2): an account holding an unspent deposit has a lower total value
-  // but has not performed worse, and folding cash into the return would say
-  // it had.
+  // Cash on the last day and the total including it, computed here so the client
+  // never does money arithmetic and one definition of "what it is worth" serves
+  // the dashboard and the chat. The returns below stay position-only: an unspent
+  // deposit lowers the total without meaning the portfolio performed worse.
   const cashAtEnd = withAvailability(
     db,
     userId,

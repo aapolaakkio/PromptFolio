@@ -51,16 +51,12 @@ export type BankStatement = {
 };
 
 /**
- * OP's transaction export (`tapahtumat<from>-<to>.csv`): semicolon-delimited,
- * quoted, UTF-8 with a BOM, ISO dates, and a signed amount using a Finnish
- * decimal comma. `Laji` carries a numeric code and `Selitys` the label it
- * stands for; only the label is read, since the codes are OP's internal
- * numbering and nothing documents them.
+ * OP's transaction export: semicolon-delimited, UTF-8 with a BOM, ISO dates, a
+ * Finnish decimal comma. Only the label is read, never the numeric code beside
+ * it, which is OP's own undocumented numbering.
  *
- * `Arkistointitunnus` is the bank's own archive id for the entry, unique per
- * transaction, which makes it the natural external id: re-importing an
- * overlapping date range then skips what is already stored instead of doubling
- * a year of spending.
+ * The archive id is unique per transaction and so serves as the external id: an
+ * overlapping re-import skips what is stored instead of doubling a year.
  */
 export const OP_BANK: BankStatementConfig = {
   bank: "op",
@@ -81,21 +77,15 @@ export const OP_BANK: BankStatementConfig = {
 };
 
 /**
- * OP's credit card transaction log.
+ * OP's credit card log: the account statement's shape under different header
+ * names, with a decimal point where that one uses a comma.
  *
- * The same shape as the account statement with different header names, and one
- * difference that matters: the amount uses a decimal point where the account
- * statement uses a comma. `parseMoney` accepts both, so nothing else changes.
+ * `Kurssi` holds a currency code rather than a rate, which is OP's naming and not
+ * a mistake here. A row in another currency is refused, never treated as euros.
  *
- * `Kurssi` holds the currency code rather than a rate, which is OP's naming and
- * not a mistake in this config. It is read as the row's currency; a card row in
- * another currency is refused rather than silently treated as euros.
- *
- * The card's own settlement rows -- "Suoritus", "Tilisiirto" -- are imported
- * like any other row. They are the credit side of a payment whose debit is on
- * an ordinary account, and `spending/internal.ts` pairs the two structurally,
- * which is what stops a month of card purchases and the bill that settles them
- * both counting as spending.
+ * The card's own settlement rows are imported like any other: they are the credit
+ * side of a payment debited elsewhere, and pairing the two is what stops a month
+ * of purchases and the bill for them both counting as spending.
  */
 export const OP_CREDIT: BankStatementConfig = {
   bank: "op",
@@ -134,16 +124,11 @@ const csvConfigOf = (
 });
 
 /**
- * What kind of movement a row is.
- *
- * The amount's sign decides, not the bank's label. That is deliberate and it is
- * the opposite of how the securities importer works, which refuses a label it
- * does not recognise: there, a mis-typed row would corrupt a position or a cost
- * basis, so guessing is unacceptable. Here nothing but cash is at stake, every
- * label a bank prints means either "money in" or "money out", and the sign says
- * which without a lookup table that would need extending every time OP invents
- * a new one. An unrecognised label imports correctly; only interest needs
- * naming, because it is money in that is also income.
+ * What kind of movement a row is, decided by the amount's sign rather than the
+ * bank's label -- the opposite of the securities importer, where a mis-typed row
+ * would corrupt a position. Here only cash is at stake and every label means in
+ * or out, so an unrecognised one still imports correctly. Only interest needs
+ * naming, being money in that is also income.
  */
 const rowType = (
   label: string,
@@ -179,12 +164,9 @@ export const matchesBank = (bytes: ArrayBuffer, config: BankStatementConfig): bo
 };
 
 /**
- * Reads a bank statement into cash movements.
- *
- * Every row is kept, spending included: a statement's value is that it accounts
- * for the balance, and a filtered import would produce a number that matches
- * nothing. Rows the parser cannot read are reported rather than dropped, the
- * same rule the securities importer follows.
+ * Reads a statement into cash movements. Every row is kept, spending included: a
+ * statement's value is that it accounts for the balance, and a filtered import
+ * matches nothing. Unreadable rows are reported rather than dropped.
  */
 export const parseBankStatement = (
   bytes: ArrayBuffer,

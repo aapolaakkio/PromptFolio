@@ -1,17 +1,12 @@
 /**
- * What a payment was for, decided from the text a bank prints on it.
+ * What a payment was for, from the text a bank prints on it.
  *
- * This exists because the assistant is forbidden from doing arithmetic in prose
- * (see chat/runner.ts's system prompt). "How much did I spend on food" cannot be
- * the model adding up K-Market and Lidl in its head -- that is exactly the shape
- * of answer that comes out confidently wrong. So the total has to be computed
- * here, in code, which means the server has to decide what counts as food.
+ * The assistant may not do arithmetic in prose, so "how much did I spend on food"
+ * has to be computed in code -- which means the server decides what counts as food.
  *
- * The rules are deliberately shallow: a case-insensitive substring match against
- * the note, first rule wins. No fuzzy matching, no learning, nothing that could
- * silently reclassify a year of history between two runs. Anything unmatched
- * lands in `muu` and is always reported rather than hidden, so a total is never
- * quietly missing the half of spending nobody wrote a rule for.
+ * Shallow on purpose: a case-insensitive substring match, first rule wins. No
+ * learning, nothing that could reclassify a year of history between two runs.
+ * Anything unmatched is reported rather than hidden.
  */
 export type Category =
   | "ruoka"
@@ -67,12 +62,9 @@ export const CATEGORY_LABELS = {
 type Rule = { readonly category: Category; readonly patterns: readonly string[] };
 
 /**
- * Finnish merchants and payment labels, in the form OP prints them (upper case,
- * often with a location or a store number appended -- hence substring matching
- * rather than equality).
- *
- * Order matters where a name could match two rules. `RAVINTOLA` before the
- * grocery chains, since "K-MARKET RAVINTOLA" is a restaurant inside a shop.
+ * Finnish merchants as OP prints them -- upper case, often with a location
+ * appended, hence substring matching. Order matters where a name could match
+ * twice: a restaurant inside a shop is a restaurant.
  */
 const SEED: readonly Rule[] = [
   { category: "korko", patterns: ["TALLETUSKORKO", "KORKO", "INTEREST"] },
@@ -391,24 +383,17 @@ const SEED: readonly Rule[] = [
 ];
 
 /**
- * The built-in rules, flattened to one row per pattern.
- *
- * These seed a user's own table the first time their spending is read; from
- * then on the rules live in the database, where the owner and the assistant can
- * extend them (see spending/rules.ts). Kept in code as the starting point
- * rather than as a migration so a new install begins with something useful.
+ * The built-in rules, one row per pattern. They seed a user's own table once and
+ * then live in the database. Kept in code rather than a migration so a new
+ * install begins with something useful.
  */
 export const SEED_RULES: readonly { pattern: string; category: Category }[] = SEED.flatMap((rule) =>
   rule.patterns.map((pattern) => ({ pattern, category: rule.category })),
 );
 
 /**
- * The Finnish name for a category key.
- *
- * Written once because three call sites needed the same type assertion and the
- * same fallback: the key always comes from `categoriseWith`, which returns a
- * declared `Category`, and the fallback covers a rule stored before a category
- * was renamed -- showing the raw key rather than nothing at all.
+ * The Finnish name for a category key. The fallback covers a rule stored before a
+ * category was renamed, showing the raw key rather than nothing.
  */
 export const labelForCategory = (category: string): string =>
   // SAFETY: `categoriseWith` only ever returns a `Category`, which is exactly

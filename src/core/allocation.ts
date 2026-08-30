@@ -16,18 +16,12 @@ export type Slice = {
 export type AllocationResult = {
   readonly slices: Slice[];
   /**
-   * Instrument ids held with a positive quantity at `on` but left out of every slice
-   * because no price was known for `on`, or (for a non-EUR instrument) no fx rate was
-   * known for `on` -- C1: these used to just vanish from the response with no trace,
-   * indistinguishable from "not held" or "genuinely worth nothing". Mirrors
-   * `returns.ts`'s `ValuePoint.excludedInstrumentIds` in shape and purpose.
+   * Instruments held at `on` but left out of every slice for want of a price or a
+   * rate. They used to vanish with no trace, indistinguishable from not held.
    *
-   * Deliberately does NOT include a negative-position (unmatched-disposal) exclusion --
-   * `ledger.ts`'s `negativePositionIds`, computed over the *whole* ledger, already
-   * covers that case; this function only ever sees one account's transactions at a
-   * time (see `buckets` below), so an instrument negative in one account but positive
-   * overall would be misreported here. Callers combine both lists (see
-   * `server/api/portfolio.ts`'s `/api/allocation`).
+   * Negative positions are not in this list: they are reported over the whole
+   * ledger, while this sees one account at a time, so an instrument negative in one
+   * and positive overall would be misreported. Callers combine both.
    */
   readonly excludedInstrumentIds: readonly number[];
 };
@@ -40,12 +34,9 @@ const KIND_LABELS = {
 } satisfies Record<Instrument["kind"], string>;
 
 /**
- * Which slice an instrument held in an account falls into.
- *
- * Exported because a caller that acts on a slice -- a rebalance plan proposing
- * to sell 1 000 € "of funds" -- has to know which holdings that names before it
- * can say what the sale would realise. Deriving it a second time in the caller
- * would let the two disagree about what a slice contains.
+ * Which slice a holding falls into. Exported because a caller acting on a slice --
+ * a plan proposing to sell 1 000 EUR of funds -- has to know which holdings that
+ * names, and deriving it twice would let the two disagree.
  */
 export const sliceKeyFor = (
   dimension: Dimension,
@@ -124,14 +115,8 @@ export const allocateBy = (
 
   for (const { accountId, positions } of buckets) {
     for (const [instrumentId, qty] of positions) {
-      // A negative quantity means an unmatched disposal (see ledger.ts's
-      // `negativePositionIds`, which the server layer uses to tell the caller
-      // which instruments this excluded) -- price * qty would be negative, and
-      // silently subtracting that from a bucket's total is exactly the
-      // "plausible but wrong number" this must not produce. Skip its
-      // contribution entirely rather than count it as either a negative or a
-      // zero amount. Reported via `negativePositionIds` instead of this
-      // function's own `excludedInstrumentIds` -- see that field's doc.
+      // An unmatched disposal: priced, it would silently subtract from a
+      // bucket's total. Skipped entirely, and reported separately.
       if (qty.scaled < 0n) continue;
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;

@@ -48,13 +48,9 @@ const isPdf = (bytes: ArrayBuffer): boolean =>
   new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
 
 /**
- * Reads whichever format arrived.
- *
- * A PDF carries the balances the CSV export leaves out, so it is checked
- * against them: the parsed rows must account for the difference between the
- * printed opening and closing balance, or the file is refused. Reading a PDF's
- * layout is the more fragile of the two, and this is what makes it the safer
- * import anyway -- a mis-parse cannot pass quietly.
+ * Reads whichever format arrived. A PDF carries the balances the CSV leaves out
+ * and is checked against them: the rows must account for the difference or the
+ * file is refused, which is what makes the more fragile format the safer import.
  */
 const readStatement = async (
   bytes: ArrayBuffer,
@@ -112,12 +108,8 @@ const detect = (bytes: ArrayBuffer): BankStatementConfig => {
 };
 
 /**
- * A statement belongs on a bank account and nowhere else.
- *
- * Loading a year of card payments onto a brokerage account would put spending
- * into the ledger that the return figures are computed from -- exactly the
- * failure the bank/brokerage split exists to prevent (see valuation.ts's
- * `Portfolio.investedTxns`).
+ * A statement belongs on a bank account. Loading a year of card payments onto a
+ * brokerage one would put spending into the ledger the returns are computed from.
  */
 const assertBankAccount = (accountId: number): void => {
   const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
@@ -127,23 +119,16 @@ const assertBankAccount = (accountId: number): void => {
 };
 
 /**
- * Writes the opening balance a PDF statement states, then reports whether the
- * account's own ledger now matches the closing balance it prints.
- *
- * The second half is the part worth having. After importing a statement the two
- * figures agree by construction -- unless the account already held rows for the
- * same period, which is what happens when the same month is imported once as a
- * CSV and once as a PDF. Their archive ids differ between OP's two formats, so
- * nothing else would catch it, and the balance would quietly come out twice
- * what the bank says.
+ * Writes the opening balance a statement states, then checks the ledger against
+ * the closing one. The check is the part worth having: the two agree by
+ * construction unless the account already held rows for the period, which is what
+ * happens when one month arrives as both a CSV and a PDF. Their archive ids
+ * differ between the formats, so nothing else would catch the doubling.
  */
 /**
- * Puts the statement's maturity date on the account when the account has none.
- *
- * Filling a blank from the document that states it is not the same as
- * overwriting something the owner chose: a date already recorded is left alone
- * and the disagreement reported, since a deposit whose terms changed is worth
- * looking at rather than silently adopting.
+ * Puts the statement's maturity date on the account when it has none. Filling a
+ * blank is not overwriting a choice: an existing date is left alone and the
+ * disagreement reported, since changed terms are worth looking at.
  */
 /**
  * Classifies the merchants this account's spending does not yet have rules for.
@@ -383,13 +368,10 @@ export const commitBankStatementUpload = async (userId: string, form: FormData) 
 };
 
 /**
- * Reconciles an account to a balance the owner read off their bank.
- *
- * A statement reaches back a year or two, so the ledger's own sum is short by
- * whatever the account held before it starts. This takes today's balance --
- * which is on screen in the bank's app -- and writes the OPENING_BALANCE that
- * makes the ledger agree with it. Run again later, a difference of zero means
- * every imported row still adds up to what the bank says.
+ * Reconciles an account to a balance read off the bank. A statement reaches back
+ * a year or two, so the ledger is short by whatever came before it: this takes
+ * today's figure and writes the opening balance that closes the gap. Run again,
+ * a difference of zero means every imported row still adds up.
  */
 export const setAccountBalance = (userId: string, body: z.infer<typeof BalanceInput>) => {
   const { accountId, on, balance } = BalanceInput.parse(body);
