@@ -42,6 +42,10 @@ const TOOL_LABELS = new Map<string, string>([
   ["save_spending_rules", "sääntöjen tallennus"],
   ["update_spending_rule", "säännön korjaus"],
   ["remove_spending_rule", "säännön poisto"],
+  ["get_spending_rules", "säännöt"],
+  ["get_reconciliation", "täsmäytys"],
+  ["get_recurring_payments", "toistuvat maksut"],
+  ["get_net_worth_series", "varallisuuden kehitys"],
 ]);
 
 /**

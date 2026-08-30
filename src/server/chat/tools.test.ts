@@ -17,6 +17,8 @@ let buildChatTools: (typeof import("./tools"))["buildChatTools"];
 let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
 let transactions: (typeof import("../db/schema"))["transactions"];
 let prices: (typeof import("../db/schema"))["prices"];
+let snapshots: (typeof import("../db/schema"))["snapshots"];
+let snapshotRows: (typeof import("../db/schema"))["snapshotRows"];
 
 beforeAll(async () => {
   auth = (await import("../auth")).auth;
@@ -28,6 +30,8 @@ beforeAll(async () => {
   db = (await import("../db")).getDb().db;
   transactions = (await import("../db/schema")).transactions;
   prices = (await import("../db/schema")).prices;
+  snapshots = (await import("../db/schema")).snapshots;
+  snapshotRows = (await import("../db/schema")).snapshotRows;
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -197,6 +201,27 @@ const price = (instrumentId: number, date: string, minor: number): void => {
       currency: EUR,
       source: "manual",
       fetchedAt: new Date(`${date}T12:00:00Z`),
+    })
+    .run();
+};
+
+/** A broker's holdings statement, as an import would have written it. */
+const statement = (accountId: number, instrumentId: number, units: number, asOf: string): void => {
+  const snapshot = db
+    .insert(snapshots)
+    .values({ accountId, asOf, source: "manual" })
+    .returning({ id: snapshots.id })
+    .all()[0];
+  if (!snapshot) throw new Error("snapshot insert returned nothing");
+  db.insert(snapshotRows)
+    .values({
+      snapshotId: snapshot.id,
+      instrumentId,
+      quantity: units * 1_000_000,
+      // The statement's own price and value. Reconciliation compares units, not
+      // money, so these only have to be present and consistent.
+      nav: 1200,
+      marketValue: units * 1200,
     })
     .run();
 };
@@ -907,5 +932,126 @@ describe("update_spending_rule and remove_spending_rule", () => {
 
     expect(result.removed).toBe(false);
     expect(result.reason).toBe("no-such-rule");
+  });
+});
+
+describe("get_spending_rules", () => {
+  test("lists the rules and says which ones are the user's own", async () => {
+    const { tools, userId } = await seed();
+    addRules(db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_spending_rules").run({ search: "OMA SÄÄNTÖ" }) as {
+      count: number;
+      bySource: { user: number };
+      rules: readonly { pattern: string; label: string; source: string }[];
+    };
+
+    expect(result.rules[0]?.pattern).toBe("OMA SÄÄNTÖ");
+    expect(result.rules[0]?.label).toBe("Koti ja remontti");
+    expect(result.rules[0]?.source).toBe("user");
+    expect(result.bySource.user).toBe(1);
+  });
+});
+
+describe("get_reconciliation", () => {
+  test("reports an account with no statement as unchecked, not as matching", async () => {
+    const { tools } = await seed();
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+      accounts: readonly { account: string; checkedAgainst: string | null; differences: number }[];
+      unchecked: readonly string[];
+      note: string;
+    };
+
+    // The seeded brokerage account has no snapshot. Zero differences here means
+    // nothing was compared, and the result has to make that impossible to read
+    // as agreement.
+    expect(result.accounts[0]?.checkedAgainst).toBeNull();
+    expect(result.unchecked).toContain("Nordnet");
+    expect(result.note).toContain("älä sano että se täsmää");
+  });
+
+  test("names the holdings whose derived quantity disagrees with the statement", async () => {
+    const { tools, accountId, instrumentId } = await seed();
+    // The ledger derives 10 units from its transactions; the broker says 12.
+    statement(accountId, instrumentId, 12, "2026-06-01");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+      accounts: readonly {
+        account: string;
+        checkedAgainst: string | null;
+        differences: number;
+        rows: readonly { name: string; derived: string; statement: string; delta: string }[];
+      }[];
+    };
+
+    const checked = result.accounts.find((account) => account.checkedAgainst !== null);
+    expect(checked?.checkedAgainst).toBe("2026-06-01");
+    expect(checked?.differences).toBe(1);
+    expect(checked?.rows[0]?.name).toBe("Testirahasto");
+    expect(checked?.rows[0]?.derived).toBe("10.000000");
+    expect(checked?.rows[0]?.statement).toBe("12.000000");
+    // Positive means the ledger is missing units -- a transaction never imported.
+    expect(checked?.rows[0]?.delta).toBe("2.000000");
+  });
+
+  test("leaves bank accounts out, since a statement of holdings is not one", async () => {
+    const { tools } = await seed();
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+      accounts: readonly { account: string }[];
+    };
+
+    expect(result.accounts.map((account) => account.account)).not.toContain("OP käyttötili");
+  });
+});
+
+describe("get_recurring_payments", () => {
+  test("finds a monthly bill and what it costs in a year", async () => {
+    const { tools, bankAccountId } = await seed();
+    for (const date of ["2026-04-05", "2026-05-05", "2026-06-05"]) {
+      spend(bankAccountId, "TILISIIRTO — SUORATOISTO OY", -1_299, date);
+    }
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_recurring_payments").run({
+      from: "2026-01-01",
+      to: "2026-06-30",
+    }) as {
+      payments: readonly { payee: string; cadence: string; annualEur: string; active: boolean }[];
+    };
+
+    const found = result.payments.find((payment) => payment.payee === "SUORATOISTO OY");
+    expect(found?.cadence).toBe("monthly");
+    expect(found?.annualEur).toBe("155.88");
+    expect(found?.active).toBe(true);
+  });
+});
+
+describe("get_net_worth_series", () => {
+  test("adds the bank balances the value series leaves out", async () => {
+    const { tools, bankAccountId } = await seed();
+    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 50_000, "2026-01-03");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_net_worth_series").run({
+      from: "2026-01-01",
+      to: "2026-06-01",
+    }) as {
+      points: readonly { date: string; positionsEur: string; cashEur: string; totalEur: string }[];
+    };
+
+    const last = result.points.at(-1);
+    // 10 units last priced at 12,00 is 120,00 of positions. The cash is every
+    // account's, not only the bank's: 1 000,00 deposited at the broker less the
+    // 100,00 the shares cost, plus 500,00 of salary -- and none of that 1 400,00
+    // appears in get_value_series, which is the whole reason this tool exists.
+    expect(last?.positionsEur).toBe("120.00");
+    expect(last?.cashEur).toBe("1400.00");
+    expect(last?.totalEur).toBe("1520.00");
   });
 });

@@ -1,13 +1,18 @@
 import { z } from "zod";
 
-import { EUR, formatMoney, parseMoney } from "../../core/money";
+import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash";
+import { addMoney, EUR, formatMoney, parseMoney } from "../../core/money";
+import { valueSeries } from "../../core/returns";
 import { cashFlowFor } from "../spending/cashflow";
 import { CATEGORY_LABELS, labelForCategory } from "../spending/categories";
 import { cashlessAccountIds } from "../spending/internal";
 import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
 import { rulesFor } from "../spending/rules";
+import { notSpendingIds } from "../spending/internal";
+import { recurringPayments } from "../spending/recurring";
 import { classifiedTransactions } from "../spending/transactions";
 import { depositPlanFor } from "../rebalance";
+import { reconciliationFor } from "../snapshots";
 import { loadPortfolio } from "../valuation";
 import {
   type ChatTool,
@@ -50,6 +55,23 @@ const Deposit = z
     on: IsoDateSchema.optional(),
     by: z.enum(["kind", "currency", "account", "instrument"]).optional(),
   })
+  .strict();
+
+const NoArgs = z.object({}).strict();
+
+const RuleQuery = z
+  .object({
+    search: z.string().min(1).max(100).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+  })
+  .strict();
+
+const NetWorth = z
+  .object({ from: IsoDateSchema.optional(), to: IsoDateSchema.optional() })
+  .strict();
+
+const Recurring = z
+  .object({ from: IsoDateSchema.optional(), to: IsoDateSchema.optional() })
   .strict();
 
 const Classified = z
@@ -256,6 +278,160 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         note:
           "counted=false tarkoittaa ettei rivi ole mukana kulutusluvuissa, ja excludedReason " +
           "kertoo miksi. Luokka perustuu tapahtuman tekstiin, joten tuntematon maksaja on Muu.",
+      };
+    },
+  },
+
+  {
+    name: "get_spending_rules",
+    description:
+      "Käyttäjän luokittelusäännöt: hakusana (pattern), luokka ja kuka säännön teki (seed = " +
+      "sovelluksen oma, ai = sinä, user = käyttäjä itse). Katso tästä ennen kuin tallennat " +
+      "uuden säännön tai korjaat vanhaa -- näet mitä on jo olemassa ja mitä et saa muuttaa.",
+    schema: RuleQuery,
+    run: (input): ToolResult => {
+      const { search, limit = 60 } = RuleQuery.parse(input);
+      const all = rulesFor(db, userId);
+      const needle = search?.toUpperCase();
+      const matching =
+        needle === undefined
+          ? all
+          : all.filter(
+              (rule) =>
+                rule.pattern.includes(needle) || rule.category.toUpperCase().includes(needle),
+            );
+      const shown = [...matching]
+        .sort((a, b) => a.pattern.localeCompare(b.pattern))
+        .slice(0, limit);
+
+      return {
+        count: matching.length,
+        bySource: {
+          seed: all.filter((rule) => rule.source === "seed").length,
+          ai: all.filter((rule) => rule.source === "ai").length,
+          user: all.filter((rule) => rule.source === "user").length,
+        },
+        rules: shown.map((rule) => ({
+          pattern: rule.pattern,
+          category: rule.category,
+          label: labelForCategory(rule.category),
+          source: rule.source,
+        })),
+        truncated: matching.length > shown.length,
+        note: "Sääntöjä joiden source on 'user' et voi muuttaa etkä poistaa.",
+      };
+    },
+  },
+
+  {
+    name: "get_reconciliation",
+    description:
+      "Täsmäytys: mitä välittäjän oma omistusraportti sanoo verrattuna siihen mitä tapahtumista " +
+      "lasketaan. Vastaa kysymykseen pitävätkö luvut paikkansa. Tili josta ei ole raporttia on " +
+      "tarkistamatta, ei kunnossa.",
+    schema: NoArgs,
+    run: (input): ToolResult => {
+      NoArgs.parse(input);
+      const checks = reconciliationFor(db, userId);
+
+      return {
+        accounts: checks.map((check) => ({
+          account: check.account,
+          checkedAgainst: check.asOf,
+          source: check.source,
+          differences: check.differences,
+          rows: check.rows.map((row) => ({
+            name: row.name,
+            derived: row.derived,
+            statement: row.snapshot,
+            delta: row.delta,
+          })),
+        })),
+        unchecked: checks.filter((check) => check.asOf === null).map((check) => check.account),
+        note:
+          "checkedAgainst = null tarkoittaa ettei tililtä ole tuotu yhtään omistusraporttia, " +
+          "joten sitä ei ole verrattu mihinkään -- älä sano että se täsmää. Pankkitilin saldon " +
+          "täsmäytys tehdään Käteinen-sivulla, ei täällä.",
+      };
+    },
+  },
+
+  {
+    name: "get_recurring_payments",
+    description:
+      "Toistuvat maksut: tilaukset, vuokra, vakuutukset, lainanhoito. Sama saaja vähintään " +
+      "kolmesti, säännöllisin välein ja lähes samalla summalla. annualEur kertoo mitä maksu " +
+      "maksaa vuodessa. active=false tarkoittaa että maksu on loppunut.",
+    schema: Recurring,
+    run: (input): ToolResult => {
+      const { from = LEDGER_START, to = today() } = Recurring.parse(input);
+      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const bank = new Set(bankAccountIds);
+      const payments = recurringPayments({
+        txns,
+        rules: rulesFor(db, userId),
+        bankAccountIds: bank,
+        excludedIds: notSpendingIds(txns, bank),
+        from,
+        to,
+      });
+
+      return {
+        from,
+        to,
+        payments: payments.map((payment) => ({
+          payee: payment.payee,
+          categoryLabel: payment.categoryLabel,
+          cadence: payment.cadence,
+          typicalEur: payment.typicalEur,
+          annualEur: payment.annualEur,
+          count: payment.count,
+          firstDate: payment.firstDate,
+          lastDate: payment.lastDate,
+          active: payment.active,
+        })),
+        note:
+          "Summat ovat positiivisia lukuja siitä mitä maksetaan. Lista on päätelty " +
+          "tapahtumista, ei sopimuksista: vaihtelevasummainen maksu (esim. ruokakauppa) ei " +
+          "ole mukana, eikä maksu jota on tehty alle kolme kertaa.",
+      };
+    },
+  },
+
+  {
+    name: "get_net_worth_series",
+    description:
+      "Koko varallisuuden kehitys: sijoitusten arvo ja pankkitilien saldot yhteensä. " +
+      "get_value_series näyttää vain sijoitukset. Enintään 60 pistettä tasavälein.",
+    schema: NetWorth,
+    run: (input): ToolResult => {
+      const { from = "2015-01-01", to = today() } = NetWorth.parse(input);
+      const { investedTxns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
+      const series = valueSeries(investedTxns, instruments, prices, from, to);
+      // Thinned before the cash is valued, not after: each point costs a walk
+      // over every cash transaction, and sixty points is what a sentence about
+      // a curve needs.
+      const step = Math.max(1, Math.ceil(series.length / MAX_SERIES_POINTS));
+
+      return {
+        from,
+        to,
+        points: series
+          .filter((_, index) => index % step === 0 || index === series.length - 1)
+          .map((point) => {
+            const cash = totalCashEur(
+              valueCash(cashBalancesAt(cashTxns, point.date), prices.fxOn, point.date),
+            );
+            return {
+              date: point.date,
+              positionsEur: formatMoney(point.valueEur),
+              cashEur: formatMoney(cash),
+              totalEur: formatMoney(addMoney(point.valueEur, cash)),
+            };
+          }),
+        note:
+          "Käteinen sisältää määräaikaistalletukset. Tilit joiden aineistossa ei ole " +
+          "käteistapahtumia eivät ole mukana lainkaan -- niiden saldoa ei voi johtaa.",
       };
     },
   },

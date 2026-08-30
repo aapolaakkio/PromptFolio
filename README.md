@@ -226,8 +226,10 @@ misreads a total; it cannot alter a euro of what was imported.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
 uncategorised spending, the money flow of a period, spending month by month, a single
-transaction's classification, the tax year, drift against target, where to put new money, an exact
-decimal calculator, and the three that save, correct and remove a classification rule. Every result carries the date it was computed for and whether any price
+transaction's classification, the classification rules themselves, the tax year, drift against
+target, where to put new money, reconciliation against a broker's own statement, recurring payments,
+total worth over time, an exact decimal calculator, and the three that save, correct and remove a
+classification rule. Every result carries the date it was computed for and whether any price
 behind it is stale. The assistant reports the gap to a target but never recommends a trade, and
 where it mentions a sale it reports the gain that sale would realise.
 
@@ -236,7 +238,11 @@ because the alternative was twelve calls and a sum in prose, and **a transaction
 which answers "why isn't my rent in the figures?" with the reason the row carries — an internal
 transfer, investment funding, a card settlement — rather than a guess. **Where to put new money**
 allocates a deposit you name against your target; it suggests buys only, never a sale, which keeps
-it inside the rule above.
+it inside the rule above. **Recurring payments** is derived, not declared: the same payee three
+times or more, on a regular rhythm, for an amount that barely moves — which is what separates a
+subscription from the weekly shop — reported as what it costs a year. **Reconciliation** reports an
+account with no imported statement as *unchecked* rather than as agreeing, because "nothing to
+compare" and "compared and equal" are the two answers it must never merge.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
 monthly rates) but is told to use the calculator rather than mental arithmetic, and to say when a
