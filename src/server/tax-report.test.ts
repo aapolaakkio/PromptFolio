@@ -1,0 +1,206 @@
+import { beforeAll, describe, expect, test } from "vitest";
+import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
+import { getDb } from "./db/index.ts";
+import { addInstrument } from "./instruments/store.ts";
+import { z } from "zod";
+
+import { EUR } from "../core/money.ts";
+
+// Exercises the tax report (src/server/tax.ts) against a real migrated database
+// and a real Better Auth session, following portfolio.test.ts's setup exactly:
+// the shared getDb() handle is already pinned to a migrated in-memory database
+// by ../test-setup.ts (a vitest.config.ts `setupFiles` entry), so this file
+// must not call resetDbHandleForTests() or migrate() itself. The database is
+// shared across every test file in the process, so every identity here is
+// derived from a fresh crypto.randomUUID().
+
+let auth: (typeof import("./auth.ts"))["auth"];
+let taxYearFor: (typeof import("./tax.ts"))["taxYearFor"];
+let taxYearsFor: (typeof import("./tax.ts"))["taxYearsFor"];
+
+beforeAll(async () => {
+  auth = (await import("./auth.ts")).auth;
+  ({ taxYearFor, taxYearsFor } = await import("./tax.ts"));
+});
+
+const sessionCookieFrom = (response: Response): string => {
+  const setCookie = response.headers.getSetCookie().find((c) => c.includes("session_token"));
+  if (!setCookie) throw new Error("Response carried no session_token cookie");
+  const nameValue = setCookie.split(";")[0];
+  if (!nameValue) throw new Error("Malformed Set-Cookie header");
+  return nameValue;
+};
+
+const signUp = async (email: string): Promise<{ userId: string; cookie: string }> => {
+  const response = await auth.handler(
+    new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Test User", email, password: "correct horse battery staple" }),
+    }),
+  );
+  if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
+  // SAFETY: a 200 from POST /sign-up/email always carries `{ user: { id } }`.
+  const body = (await response.json()) as { user: { id: string } };
+  return { userId: body.user.id, cookie: sessionCookieFrom(response) };
+};
+
+const randomIsin = (): string =>
+  `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
+
+const createAccount = (userId: string, accountType: "aot" | "ost"): number =>
+  openAccountRow(
+    getDb().db,
+    userId,
+    CreateAccount.parse({ name: "Nordnet", broker: "nordnet", accountType }),
+  ).id;
+
+const createInstrument = (): number => {
+  const isin = randomIsin();
+  return addInstrument(getDb().db, {
+    isin,
+    ticker: "TST",
+    name: "Test Co",
+    kind: "stock",
+    currency: EUR,
+    priceSource: "manual",
+    sourceKey: isin,
+  }).id;
+};
+
+/** A buy and a later sale, seeded straight through the shared handle. */
+const seedSale = async (
+  userId: string,
+  o: { buyDate: string; sellDate: string; principal: number; proceeds: number },
+): Promise<void> => {
+  const { getDb } = await import("./db/index.ts");
+  const { transactions } = await import("./db/schema.ts");
+  const accountId = createAccount(userId, "aot");
+  const instrumentId = createInstrument();
+
+  const row = (type: "BUY" | "SELL", tradeDate: string, amount: number) => ({
+    accountId,
+    instrumentId,
+    type,
+    tradeDate,
+    quantity: 10_000_000,
+    unitPrice: null,
+    amount,
+    fee: 0,
+    tax: 0,
+    currency: EUR,
+    fxRateEur: 100_000_000,
+    contentHash: crypto.randomUUID(),
+    externalId: null,
+    importId: null,
+  });
+
+  getDb()
+    .db.insert(transactions)
+    .values([row("BUY", o.buyDate, -o.principal), row("SELL", o.sellDate, o.proceeds)])
+    .run();
+};
+
+const TaxYearSchema = z.object({
+  year: z.number(),
+  disposals: z.array(
+    z.object({
+      instrument: z.string(),
+      accountName: z.string(),
+      gainEur: z.string(),
+      method: z.enum(["actual", "deemed"]),
+      deemedPercent: z.number(),
+      quantity: z.string(),
+    }),
+  ),
+  exempt: z.boolean(),
+  netEur: z.string(),
+  source: z.object({ transactions: z.number(), earliest: z.string().nullable() }),
+});
+
+describe("taxYearFor", () => {
+  test("reports the year's disposals as decimal strings, naming the instrument", () => {
+    // A numeric instrument id is an internal detail; every user-facing message
+    // in this codebase names the instrument instead.
+    return (async () => {
+      const { userId, cookie } = await signUp(`tax-${crypto.randomUUID()}@example.com`);
+      await seedSale(userId, {
+        buyDate: "2020-01-10",
+        sellDate: "2025-06-01",
+        principal: 100_000,
+        proceeds: 500_000,
+      });
+
+      const body = taxYearFor(getDb().db, userId, 2025);
+
+      expect(body.year).toBe(2025);
+      expect(body.disposals).toHaveLength(1);
+      expect(body.disposals[0]!.instrument).toBe("Test Co");
+      expect(body.disposals[0]!.accountName).toBe("Nordnet");
+      // Held under ten years: the deemed cost is 20 % of 5 000,00 = 1 000,00,
+      // giving a 4 000,00 gain against the actual 4 000,00 -- equal, so the
+      // actual method stands.
+      expect(body.disposals[0]!.deemedPercent).toBe(20);
+      expect(body.disposals[0]!.gainEur).toBe("4000.00");
+      expect(body.disposals[0]!.quantity).toBe("10.000000");
+      expect(body.netEur).toBe("4000.00");
+      expect(body.source.transactions).toBe(2);
+    })();
+  });
+
+  test("says a small year is exempt rather than reporting a gain", async () => {
+    const { userId, cookie } = await signUp(`tax-small-${crypto.randomUUID()}@example.com`);
+    await seedSale(userId, {
+      buyDate: "2020-01-10",
+      sellDate: "2025-06-01",
+      principal: 10_000,
+      proceeds: 90_000,
+    });
+
+    const body = taxYearFor(getDb().db, userId, 2025);
+
+    expect(body.exempt).toBe(true);
+    expect(body.netEur).toBe("0.00");
+  });
+
+  test("never returns another user's disposals", async () => {
+    const owner = await signUp(`tax-owner-${crypto.randomUUID()}@example.com`);
+    const stranger = await signUp(`tax-stranger-${crypto.randomUUID()}@example.com`);
+    await seedSale(owner.userId, {
+      buyDate: "2020-01-10",
+      sellDate: "2025-06-01",
+      principal: 100_000,
+      proceeds: 500_000,
+    });
+
+    const body = taxYearFor(getDb().db, stranger.userId, 2025);
+
+    expect(body.disposals).toEqual([]);
+  });
+
+  // Two tests are gone with the route they described: an anonymous caller is
+  // refused by the `authed` middleware every server function declares, and a
+  // year that is not a year is rejected by getTaxYear's own zod validator
+  // before the handler runs. Both were assertions about HTTP, and there is no
+  // longer any HTTP here to assert about.
+});
+
+describe("taxYearsFor", () => {
+  test("lists the years with a taxable event, newest first", async () => {
+    const { userId, cookie } = await signUp(`tax-years-${crypto.randomUUID()}@example.com`);
+    await seedSale(userId, {
+      buyDate: "2020-01-10",
+      sellDate: "2023-06-01",
+      principal: 100_000,
+      proceeds: 500_000,
+    });
+    await seedSale(userId, {
+      buyDate: "2020-01-10",
+      sellDate: "2025-06-01",
+      principal: 100_000,
+      proceeds: 500_000,
+    });
+
+    expect(taxYearsFor(getDb().db, userId)).toEqual([2025, 2023]);
+  });
+});

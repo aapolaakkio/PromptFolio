@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiGet, apiPost } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import { saveSnapshot } from "../server/snapshots.ts";
+import { getInstruments } from "../server/instruments.ts";
 
-const InstrumentSchema = z.object({ id: z.number(), name: z.string() });
 const CreatedSnapshotSchema = z.object({ id: z.number() });
 
 /**
@@ -30,16 +31,15 @@ export const SnapshotForm = ({
 
   const instruments = useQuery({
     queryKey: ["instruments"],
-    queryFn: () => apiGet("/api/instruments", z.array(InstrumentSchema)),
+    queryFn: () => getInstruments(),
   });
 
   const filled = Object.entries(quantities).filter(([, value]) => value.trim() !== "");
 
   const create = useMutation({
     mutationFn: () =>
-      apiPost(
-        "/api/snapshots",
-        {
+      saveSnapshot({
+        data: {
           accountId,
           asOf,
           source: "manual" as const,
@@ -48,8 +48,7 @@ export const SnapshotForm = ({
             quantity: quantity.trim().replace(",", "."),
           })),
         },
-        CreatedSnapshotSchema,
-      ),
+      }),
     onSuccess: (snapshot) => {
       setError(null);
       setQuantities({});

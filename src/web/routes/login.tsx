@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { getSetupState } from "../server/setup.ts";
 import { useEffect, useState } from "react";
 import { FirstRunForm } from "./first-run-form.tsx";
 import { SignInForm } from "./sign-in-form.tsx";
@@ -6,11 +7,11 @@ import { SignInForm } from "./sign-in-form.tsx";
 type Status = "checking" | "needs-setup" | "ready";
 
 /**
- * Thin orchestrator for `/login`: asks `GET /api/setup` (safe to call
+ * Thin orchestrator for `/login`: asks getSetupState (safe to call
  * unauthenticated -- see setup.ts) whether the instance has any user yet,
  * and renders `FirstRunForm` instead of the normal `SignInForm` while it
  * does not. Once an account exists, `FirstRunForm` is never rendered
- * again for anyone -- and `POST /api/setup` refuses a second account
+ * again for anyone -- and createFirstAccount refuses a second account
  * regardless of what any client renders, so this check is a UX decision,
  * not the security boundary; the boundary is server-side (setup.ts).
  *
@@ -27,10 +28,9 @@ export const LoginPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/setup")
-      .then((response) => response.json())
-      .then((body: { hasUsers: boolean }) => {
-        if (!cancelled) setStatus(body.hasUsers ? "ready" : "needs-setup");
+    getSetupState()
+      .then((state) => {
+        if (!cancelled) setStatus(state.hasUsers ? "ready" : "needs-setup");
       })
       .catch(() => {
         if (!cancelled) setStatus("ready");

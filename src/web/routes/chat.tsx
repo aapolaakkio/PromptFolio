@@ -2,17 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
-import { apiDelete, apiGet } from "../lib/api.ts";
 import { Markdown } from "../markdown/Markdown.tsx";
+import { getConversationMessages, getConversations, removeConversation } from "../server/chat.ts";
 import { askChat } from "./chat-stream.ts";
-
-const ConversationsSchema = z.object({
-  conversations: z.array(z.object({ id: z.number(), title: z.string(), createdAt: z.string() })),
-});
-
-const MessagesSchema = z.object({
-  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })),
-});
 
 type Turn = { readonly role: "user" | "assistant"; readonly content: string };
 
@@ -67,7 +59,7 @@ export const ChatPage = () => {
 
   const conversations = useQuery({
     queryKey: ["conversations"],
-    queryFn: () => apiGet("/api/chat/conversations", ConversationsSchema),
+    queryFn: () => getConversations(),
   });
 
   const history = useQuery({
@@ -78,16 +70,15 @@ export const ChatPage = () => {
     // showing its own optimistic copy, and the first message of every new
     // conversation appeared twice until the turn ended.
     enabled: conversationId !== null && !busy,
-    queryFn: () => apiGet(`/api/chat/conversations/${conversationId}`, MessagesSchema),
+    queryFn: () => getConversationMessages({ data: { id: conversationId ?? 0 } }),
   });
 
-  const turns: Turn[] = [...(history.data?.messages ?? []), ...pending];
+  const turns: Turn[] = [...(history.data ?? []), ...pending];
   // The sidebar truncates to one line, so the only place the whole title exists
   // is here. A conversation is titled after its first question, which is
   // usually the one thing that says what the thread is about.
   const title =
-    conversations.data?.conversations.find((conversation) => conversation.id === conversationId)
-      ?.title ?? null;
+    conversations.data?.find((conversation) => conversation.id === conversationId)?.title ?? null;
 
   // A long answer used to push the question box off the bottom of the page. The
   // transcript scrolls instead, and follows the newest turn -- otherwise a
@@ -135,7 +126,7 @@ export const ChatPage = () => {
   };
 
   const remove = async (id: number) => {
-    await apiDelete(`/api/chat/conversations/${id}`);
+    await removeConversation({ data: { id } });
     if (id === conversationId) startNew();
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
   };
@@ -147,7 +138,7 @@ export const ChatPage = () => {
           Uusi keskustelu
         </button>
         <ul className="grid max-h-[60vh] content-start gap-0.5 overflow-y-auto">
-          {(conversations.data?.conversations ?? []).map((conversation) => (
+          {(conversations.data ?? []).map((conversation) => (
             <li key={conversation.id} className="group flex min-w-0 items-center">
               <button
                 type="button"

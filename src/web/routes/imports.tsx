@@ -1,6 +1,15 @@
 import { useState } from "react";
+import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import {
+  commitImport,
+  commitOpPaste,
+  getImports,
+  previewImport,
+  previewOpPaste,
+  undoImport,
+} from "../server/imports.ts";
 import { eur, fiDate } from "../lib/format.ts";
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { accountTypeLabel } from "./account-type.ts";
@@ -56,12 +65,12 @@ export const ImportsPage = () => {
 
   const accounts = useQuery({
     queryKey: ["accounts"],
-    queryFn: () => apiGet("/api/accounts", AccountsSchema),
+    queryFn: () => getAccounts(),
   });
 
   const history = useQuery({
     queryKey: ["imports"],
-    queryFn: () => apiGet("/api/imports", ImportHistorySchema),
+    queryFn: () => getImports(),
   });
 
   // Undo is destructive and irreversible from the user's own point of view (the
@@ -70,8 +79,7 @@ export const ImportsPage = () => {
   // user, stating plainly how many transactions will be removed
   // (`undoConfirmMessage`), before this mutation ever runs.
   const undo = useMutation({
-    mutationFn: (importId: number) =>
-      apiPost(`/api/imports/${importId}/undo`, {}, UndoResultSchema),
+    mutationFn: (importId: number) => undoImport({ data: { importId } }),
     onMutate: (importId) => {
       setUndoingId(importId);
       setUndoError(null);
@@ -128,7 +136,7 @@ export const ImportsPage = () => {
   };
 
   const previewFile = useMutation({
-    mutationFn: () => apiUpload("/api/imports/preview", fileForm(), DraftResponseSchema),
+    mutationFn: () => previewImport({ data: fileForm() }),
     onSuccess: (data) => {
       setDraft(data);
       setError(null);
@@ -139,7 +147,7 @@ export const ImportsPage = () => {
   });
 
   const commitFile = useMutation({
-    mutationFn: () => apiUpload("/api/imports/commit", fileForm(), CommitResultSchema),
+    mutationFn: () => commitImport({ data: fileForm() }),
     onSuccess: (data) => {
       setResult(importSummary(data));
       setDraft(null);
@@ -161,7 +169,7 @@ export const ImportsPage = () => {
   });
 
   const previewPaste = useMutation({
-    mutationFn: () => apiPost("/api/imports/op-paste/preview", pasteBody(), DraftResponseSchema),
+    mutationFn: () => previewOpPaste({ data: pasteBody() }),
     onSuccess: (data) => {
       setDraft(data);
       setError(null);
@@ -172,7 +180,7 @@ export const ImportsPage = () => {
   });
 
   const commitPaste = useMutation({
-    mutationFn: () => apiPost("/api/imports/op-paste/commit", pasteBody(), CommitResultSchema),
+    mutationFn: () => commitOpPaste({ data: pasteBody() }),
     onSuccess: (data) => {
       setResult(importSummary(data));
       setDraft(null);

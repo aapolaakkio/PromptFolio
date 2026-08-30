@@ -1,24 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getAccounts } from "../server/accounts.ts";
 import { useState } from "react";
 
-import { ApiError, apiDelete, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import {
+  commitBankImport,
+  previewBankImport,
+  recordAccountBalance,
+} from "../server/bank-imports.ts";
 import { eur, fiDate } from "../lib/format.ts";
 import { accountTypeLabel } from "./account-type.ts";
 import {
-  BalanceSchema,
-  BankCommitSchema,
-  BankPreviewSchema,
-  CashEntriesSchema,
   availabilityLabel,
-  CashSchema,
   describeBalance,
   describeImport,
   describeMaturity,
   describeReconciliation,
   ENTRY_LABELS,
 } from "./cash-view.ts";
-import { AccountsSchema } from "./imports-draft.ts";
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
+import { getCash } from "../server/portfolio.ts";
+import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
+
+/** What a person can record by hand, as the ledger stores it. */
+type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 /**
@@ -40,9 +45,9 @@ export const CashPage = () => {
 
   const accounts = useQuery({
     queryKey: ["accounts"],
-    queryFn: () => apiGet("/api/accounts", AccountsSchema),
+    queryFn: () => getAccounts(),
   });
-  const cash = useQuery({ queryKey: ["cash"], queryFn: () => apiGet("/api/cash", CashSchema) });
+  const cash = useQuery({ queryKey: ["cash"], queryFn: () => getCash({ data: {} }) });
 
   const bankAccounts = (accounts.data ?? []).filter((account) => account.kind === "bank");
   const chosen = accountId ?? bankAccounts[0]?.id ?? null;
@@ -50,7 +55,10 @@ export const CashPage = () => {
   const entries = useQuery({
     queryKey: ["cash-entries", chosen],
     enabled: chosen !== null,
-    queryFn: () => apiGet(`/api/cash-entries?accountId=${chosen}`, CashEntriesSchema),
+    // `enabled` below keeps this from running while nothing is chosen; the
+    // ?? 0 satisfies the argument type, which is a number rather than a
+    // maybe-number.
+    queryFn: () => getCashEntries({ data: { accountId: chosen ?? 0 } }),
   });
 
   const refresh = () => {
@@ -61,13 +69,13 @@ export const CashPage = () => {
   };
 
   const preview = useMutation({
-    mutationFn: (form: FormData) => apiUpload("/api/imports/bank/preview", form, BankPreviewSchema),
+    mutationFn: (form: FormData) => previewBankImport({ data: form }),
     onError: (cause) =>
       setError(cause instanceof ApiError ? cause.message : "Esikatselu epäonnistui"),
   });
 
   const commit = useMutation({
-    mutationFn: (form: FormData) => apiUpload("/api/imports/bank/commit", form, BankCommitSchema),
+    mutationFn: (form: FormData) => commitBankImport({ data: form }),
     onSuccess: () => {
       setError(null);
       preview.reset();
@@ -79,11 +87,9 @@ export const CashPage = () => {
 
   const reconcile = useMutation({
     mutationFn: () =>
-      apiPost(
-        `/api/accounts/${chosen}/balance`,
-        { on: today(), balance: balance.replace(",", ".") },
-        BalanceSchema,
-      ),
+      recordAccountBalance({
+        data: { accountId: chosen ?? 0, on: today(), balance: balance.replace(",", ".") },
+      }),
     onSuccess: () => {
       setError(null);
       setBalance("");
@@ -94,7 +100,7 @@ export const CashPage = () => {
   });
 
   const removeEntry = useMutation({
-    mutationFn: (id: number) => apiDelete(`/api/cash-entries/${id}`),
+    mutationFn: (id: number) => deleteCashEntry({ data: { id } }),
     onSuccess: refresh,
   });
 
@@ -384,7 +390,9 @@ const ManualEntryForm = ({
   readonly onSaved: () => void;
   readonly onError: (message: string) => void;
 }) => {
-  const [type, setType] = useState("DEPOSIT");
+  // The four kinds the ledger stores, rather than a string: the schema takes
+  // exactly these, and the select can produce nothing else.
+  const [type, setType] = useState<CashEntryType>("DEPOSIT");
   const [tradeDate, setTradeDate] = useState(today);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -392,11 +400,11 @@ const ManualEntryForm = ({
   const save = useMutation({
     mutationFn: () => {
       // The note is left out entirely when empty rather than sent as "": the
-      // route's schema takes an optional string, and a blank one would store a
-      // note that says nothing.
+      // schema takes an optional string, and a blank one would store a note
+      // that says nothing.
       const entry = { accountId, type, tradeDate, amount: amount.replace(",", ".") };
       const trimmed = note.trim();
-      return apiPost("/api/cash-entries", trimmed === "" ? entry : { ...entry, note: trimmed });
+      return saveCashEntry({ data: trimmed === "" ? entry : { ...entry, note: trimmed } });
     },
     onSuccess: () => {
       setAmount("");
@@ -417,7 +425,13 @@ const ManualEntryForm = ({
     >
       <label>
         Laji
-        <select value={type} onChange={(event) => setType(event.target.value)}>
+        <select
+          value={type}
+          onChange={(event) => {
+            // SAFETY: the options are rendered from the same four values.
+            setType(event.target.value as CashEntryType);
+          }}
+        >
           <option value="DEPOSIT">Talletus</option>
           <option value="WITHDRAWAL">Nosto</option>
           <option value="INTEREST">Korko</option>

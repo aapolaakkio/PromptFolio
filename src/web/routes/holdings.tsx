@@ -5,6 +5,7 @@ import { eur, qty, share, fiDate } from "../lib/format.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
+import { getHoldings } from "../server/portfolio.ts";
 
 export type { Holding };
 
@@ -79,7 +80,7 @@ export const HoldingsPage = () => {
 
   const holdings = useQuery({
     queryKey: ["holdings"],
-    queryFn: () => apiGet<Holding[]>("/api/holdings"),
+    queryFn: () => getHoldings({ data: {} }),
   });
 
   const rows = useMemo(

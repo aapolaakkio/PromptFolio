@@ -2,10 +2,15 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import {
+  proposeSnapshotFromCsv,
+  proposeSnapshotFromPaste,
+  saveSnapshot,
+} from "../server/snapshots.ts";
 import { eur, qty } from "../lib/format.ts";
+import { getInstruments } from "../server/instruments.ts";
 
-const InstrumentSchema = z.object({ id: z.number(), name: z.string() });
 const CreatedSnapshotSchema = z.object({ id: z.number() });
 
 const PreviewSchema = z.object({
@@ -53,7 +58,7 @@ export const SnapshotPaste = ({
 
   const instruments = useQuery({
     queryKey: ["instruments"],
-    queryFn: () => apiGet("/api/instruments", z.array(InstrumentSchema)),
+    queryFn: () => getInstruments(),
   });
 
   // Two sources, one preview: a broker that exports a holdings file (Nordnet)
@@ -64,9 +69,9 @@ export const SnapshotPaste = ({
         const form = new FormData();
         form.set("file", file);
         form.set("asOf", asOf);
-        return apiUpload("/api/snapshots/csv", form, PreviewSchema);
+        return proposeSnapshotFromCsv({ data: form });
       }
-      return apiPost("/api/snapshots/paste", { asOf, text }, PreviewSchema);
+      return proposeSnapshotFromPaste({ data: { asOf, text } });
     },
     onSuccess: (result) => {
       setError(null);
@@ -82,9 +87,8 @@ export const SnapshotPaste = ({
 
   const save = useMutation({
     mutationFn: () =>
-      apiPost(
-        "/api/snapshots",
-        {
+      saveSnapshot({
+        data: {
           accountId,
           asOf,
           source: "manual" as const,
@@ -94,8 +98,7 @@ export const SnapshotPaste = ({
             marketValue: row.marketValueEur,
           })),
         },
-        CreatedSnapshotSchema,
-      ),
+      }),
     onSuccess: (snapshot) => {
       setError(null);
       preview.reset();

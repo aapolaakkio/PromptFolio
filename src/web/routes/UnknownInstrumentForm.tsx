@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { apiGet, apiPost, ApiError } from "../lib/api.ts";
+import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
+
+/** The four sources a price can come from, as the instrument store defines them. */
+type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
 
 /**
  * The only two sources worth choosing by hand. Yahoo prices everything this
@@ -90,7 +94,9 @@ export const UnknownInstrumentForm = ({
   // closed EUR/USD dropdown that would make a SEK holding unregisterable
   // from this screen.
   const [currency, setCurrency] = useState(rowCurrency);
-  const [priceSource, setPriceSource] = useState<string>("yahoo");
+  // The union the server function takes, rather than a string the POST body
+  // hoped was one of four values.
+  const [priceSource, setPriceSource] = useState<PriceSource>("yahoo");
   const [sourceKey, setSourceKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -106,10 +112,7 @@ export const UnknownInstrumentForm = ({
     let cancelled = false;
     // rowCurrency decides which of a security's listings is the right price
     // source, so it is part of the lookup rather than only a form default.
-    const query = new URLSearchParams({ name, currency: rowCurrency });
-    if (isin !== null) query.set("isin", isin);
-
-    apiGet(`/api/instruments/lookup?${query.toString()}`, LookupSchema)
+    lookUpInstrument({ data: { isin, name, currency: rowCurrency } })
       .then((result) => {
         if (cancelled) return;
         if (result.kind === null && result.priceSource === null) {
@@ -150,9 +153,8 @@ export const UnknownInstrumentForm = ({
     setError(null);
     setSubmitting(true);
     try {
-      await apiPost(
-        "/api/instruments",
-        {
+      await createInstrument({
+        data: {
           isin: isinInput.trim() === "" ? undefined : isinInput.trim().toUpperCase(),
           name,
           kind,
@@ -161,8 +163,7 @@ export const UnknownInstrumentForm = ({
           sourceKey: sourceKey.trim() === "" ? undefined : sourceKey,
           ticker: priceSource === "yahoo" ? sourceKey : null,
         },
-        CreatedInstrumentSchema,
-      );
+      });
       onResolved();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Tallennus epäonnistui");
@@ -245,7 +246,13 @@ export const UnknownInstrumentForm = ({
       </label>
       <label>
         Hintalähde
-        <select value={priceSource} onChange={(e) => setPriceSource(e.target.value)}>
+        <select
+          value={priceSource}
+          onChange={(e) => {
+            // SAFETY: the options below are exactly the PriceSource union.
+            setPriceSource(e.target.value as PriceSource);
+          }}
+        >
           {SOURCES.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}

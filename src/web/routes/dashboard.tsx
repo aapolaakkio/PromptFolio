@@ -4,6 +4,7 @@ import { apiGet } from "../lib/api.ts";
 import { eur, pct, fiDate } from "../lib/format.ts";
 import { TimeSeriesChart } from "../charts/TimeSeriesChart.tsx";
 import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart.tsx";
+import { getAllocation, getReturns, getValueSeries } from "../server/portfolio.ts";
 
 /**
  * Response schemas for the three endpoints this page calls, parsed
@@ -110,15 +111,15 @@ const Stat = ({
 export const DashboardPage = () => {
   const series = useQuery({
     queryKey: ["value-series"],
-    queryFn: () => apiGet("/api/value-series", z.array(ValuePointSchema)),
+    queryFn: () => getValueSeries({ data: {} }),
   });
   const returns = useQuery({
     queryKey: ["returns"],
-    queryFn: () => apiGet("/api/returns", ReturnsSchema),
+    queryFn: () => getReturns({ data: {} }),
   });
   const allocation = useQuery({
     queryKey: ["allocation", "kind"],
-    queryFn: () => apiGet("/api/allocation?by=kind", AllocationResponseSchema),
+    queryFn: () => getAllocation({ data: { by: "kind" } }),
   });
 
   if (series.isError || returns.isError || allocation.isError) {

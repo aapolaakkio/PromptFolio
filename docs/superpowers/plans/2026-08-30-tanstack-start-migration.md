@@ -107,10 +107,19 @@ Three things stay real HTTP routes, each for a reason:
   header**. Server functions are origin-guarded by default, which is a property this app
   wants and did not have before.
 
-The tests move with them, and get shorter: a test that builds a `Request`, calls
-`accountRoutes["/api/accounts"].POST(...)` and parses JSON back becomes a call to the
-function with an argument. Roughly 30 test files, mechanical but not trivial, and each
-one loses its hand-written request plumbing.
+The tests are the expensive half, and it is worth saying why before starting. They assert
+HTTP: 401 without a session, 400 on a malformed date, a stranger's cookie seeing nothing.
+Server functions answer those differently -- auth is middleware, validation is the
+validator, and neither is reachable by building a `Request`. So each of those tests either
+moves down to the function it was really testing, or disappears because the framework now
+owns what it checked.
+
+That is why each handler is split rather than moved: the body becomes a **view function**
+in `src/server/views/`, taking `(db, userId, args)` and returning the payload, and both
+entry points call it -- the server function the client uses, and the existing route the
+tests still use. One implementation, two ways in, no duplicated logic, and the route can
+be deleted the moment its tests have moved down. Four are converted this way already
+(holdings, cash, value-series, allocation).
 
 **8. The rest of the server.** What Start does not own: migrate-on-boot, the nightly price
 refresh, the unhandled-rejection guard.

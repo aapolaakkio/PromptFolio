@@ -1,16 +1,4 @@
 import { auth } from "./auth.ts";
-import { accountRoutes } from "./api/accounts.ts";
-import { bankImportRoutes } from "./api/bank-imports.ts";
-import { cashEntryRoutes } from "./api/cash-entries.ts";
-import { rebalanceRoutes } from "./api/rebalance.ts";
-import { taxRoutes } from "./api/tax.ts";
-import { chatRoutes } from "./api/chat.ts";
-import { importRoutes } from "./api/imports.ts";
-import { instrumentRoutes } from "./api/instruments.ts";
-import { portfolioRoutes } from "./api/portfolio.ts";
-import { priceRoutes } from "./api/prices.ts";
-import { snapshotRoutes } from "./api/snapshots.ts";
-import { setupRoutes } from "./api/setup.ts";
 import { getDb, migrate } from "./db/index.ts";
 import { startScheduler } from "./prices/refresh.ts";
 
@@ -59,18 +47,6 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
     routes: {
       "/api/health": healthRoute,
       "/api/auth/*": (request) => auth.handler(request),
-      ...setupRoutes,
-      ...accountRoutes,
-      ...bankImportRoutes,
-      ...cashEntryRoutes,
-      ...rebalanceRoutes,
-      ...taxRoutes,
-      ...chatRoutes,
-      ...instrumentRoutes,
-      ...importRoutes,
-      ...portfolioRoutes,
-      ...priceRoutes,
-      ...snapshotRoutes,
       // The frontend is Vite and TanStack Start's now; this server answers the
       // API alone, until the last handler becomes a server function and it
       // stops existing altogether.

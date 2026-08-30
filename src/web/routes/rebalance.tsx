@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiPut } from "../lib/api.ts";
+import type { Dimension } from "../../core/allocation.ts";
+import {
+  getDepositPlan,
+  getDrift,
+  getFees,
+  getRebalancePlan,
+  getTargets,
+  saveTargetAllocation,
+} from "../server/rebalance.ts";
 import { eur } from "../lib/format.ts";
 import {
   DepositSchema,
@@ -94,13 +102,13 @@ const TargetEditor = ({
   rows,
   onSaved,
 }: {
-  dimension: string;
+  dimension: Dimension;
   rows: readonly DriftRowView[];
   onSaved: () => void;
 }) => {
   const stored = useQuery({
     queryKey: ["targets", dimension],
-    queryFn: () => apiGet(`/api/targets?by=${dimension}`, TargetsSchema),
+    queryFn: () => getTargets({ data: { by: dimension } }),
   });
   const [draft, setDraft] = useState<TargetView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +125,7 @@ const TargetEditor = ({
   const labelOf = (key: string) => rows.find((row) => row.key === key)?.label ?? key;
 
   const save = useMutation({
-    mutationFn: () => apiPut("/api/targets", { dimension, targets }, SaveResultSchema),
+    mutationFn: () => saveTargetAllocation({ data: { dimension, targets } }),
     onSuccess: () => {
       setError(null);
       setDraft(null);
@@ -178,26 +186,27 @@ const TargetEditor = ({
 
 export const RebalancePage = () => {
   const queryClient = useQueryClient();
-  const [dimension, setDimension] = useState<string>("kind");
+  // The union rather than a string: the server function takes exactly these
+  // four, where the old URL took any text and failed later.
+  const [dimension, setDimension] = useState<Dimension>("kind");
   const [deposit, setDeposit] = useState("");
   const [showSells, setShowSells] = useState(false);
 
   const drift = useQuery({
     queryKey: ["drift", dimension],
-    queryFn: () => apiGet(`/api/drift?by=${dimension}&on=${today()}`, DriftSchema),
+    queryFn: () => getDrift({ data: { by: dimension, on: today() } }),
   });
   const depositPlan = useQuery({
     queryKey: ["deposit-plan", dimension, deposit],
-    queryFn: () =>
-      apiGet(`/api/deposit-plan?by=${dimension}&on=${today()}&amount=${deposit}`, DepositSchema),
+    queryFn: () => getDepositPlan({ data: { by: dimension, on: today(), amount: deposit } }),
     enabled: /^\d+([.,]\d{1,2})?$/.test(deposit),
   });
   const plan = useQuery({
     queryKey: ["rebalance", dimension],
-    queryFn: () => apiGet(`/api/rebalance?by=${dimension}&on=${today()}`, PlanSchema),
+    queryFn: () => getRebalancePlan({ data: { by: dimension, on: today() } }),
     enabled: showSells,
   });
-  const fees = useQuery({ queryKey: ["fees"], queryFn: () => apiGet("/api/fees", FeesSchema) });
+  const fees = useQuery({ queryKey: ["fees"], queryFn: () => getFees() });
 
   return (
     <>
@@ -211,7 +220,11 @@ export const RebalancePage = () => {
         Jaottelu{" "}
         <select
           value={dimension}
-          onChange={(event) => setDimension(event.target.value)}
+          onChange={(event) => {
+            // SAFETY: the options are rendered from DIMENSIONS, whose values
+            // are exactly the Dimension union.
+            setDimension(event.target.value as Dimension);
+          }}
           className="border border-line bg-surface px-2 py-1"
         >
           {DIMENSIONS.map((option) => (

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { savePrice } from "../server/prices.ts";
 import { z } from "zod";
 import { apiPost, ApiError } from "../lib/api.ts";
 
@@ -53,11 +54,11 @@ export const RecordPriceForm = ({
     setError(null);
     setSubmitting(true);
     try {
-      await apiPost("/api/prices", { instrumentId, date, price }, RecordPriceResponseSchema);
+      await savePrice({ data: { instrumentId, date, price } });
       setPrice("");
       onRecorded();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Hinnan tallennus epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Hinnan tallennus epäonnistui");
     } finally {
       setSubmitting(false);
     }

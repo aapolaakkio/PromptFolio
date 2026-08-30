@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from "react";
+import { createFirstAccount } from "../server/setup.ts";
 import { signIn } from "../lib/auth-client.ts";
 
 export type FirstRunFormProps = {
@@ -6,13 +7,13 @@ export type FirstRunFormProps = {
   readonly onCreated: () => void;
   /**
    * Called when the server refuses the creation because an account
-   * already exists (HTTP 403 from `POST /api/setup`) -- the one outcome
+   * already exists (createFirstAccount refuses) -- the one outcome
    * that means this form should never have been shown, most likely
    * because someone else's request to the same endpoint won a race that
    * started before this page's own status check resolved. The parent
    * switches back to the normal sign-in form; it is still refused
    * server-side regardless of what this component renders (see
-   * `src/server/api/setup.ts`'s `createFirstUser`), so nothing bad
+   * `src/server/setup.ts`'s `createFirstUser`), so nothing bad
    * happens if a caller ignores this -- it only affects what the visitor
    * sees next.
    */
@@ -23,7 +24,7 @@ type SetupErrorBody = { error: string; fields?: ReadonlyArray<{ path: string; me
 
 /**
  * The instance's first-run account creation form -- shown by `login.tsx`
- * in place of the sign-in form only while `GET /api/setup` reports no
+ * in place of the sign-in form only while getSetupState reports no
  * user exists yet. Posts to the same endpoint, which enforces "at most
  * one account, ever" server-side (see setup.ts's module comment for the
  * race reasoning); this form cannot bypass that by being reachable, only
@@ -51,23 +52,18 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
     }
 
     setBusy(true);
-    const response = await fetch("/api/setup", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-    });
-
-    if (!response.ok) {
+    try {
+      await createFirstAccount({ data: { name, email, password } });
+    } catch (cause) {
       setBusy(false);
-      // SAFETY: handle() (src/server/http.ts) shapes every non-2xx JSON
-      // body from this route as { error, fields? }.
-      const body = (await response.json()) as SetupErrorBody;
-      if (response.status === 403) {
+      const message = cause instanceof Error ? cause.message : "Tilin luonti epäonnistui";
+      // The one outcome that is not an error to show: somebody else claimed
+      // the instance first, and this form should give way to signing in.
+      if (message.includes("jo luotu")) {
         onAlreadySetUp();
         return;
       }
-      const detail = body.fields?.map((f) => f.message).join(", ");
-      setError(detail ? `${body.error}: ${detail}` : body.error);
+      setError(message);
       return;
     }
 

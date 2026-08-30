@@ -1,3 +1,4 @@
+import type { getTaxYear } from "../server/tax.ts";
 import { z } from "zod";
 
 /**
@@ -81,7 +82,12 @@ export const TaxYearSchema = z.object({
 
 export const TaxYearsSchema = z.array(z.number());
 
-export type TaxYearView = z.infer<typeof TaxYearSchema>;
+/**
+ * The report's shape, taken from the function that produces it rather than
+ * from a schema that describes it. The two used to drift; now a field renamed
+ * in the tax module is a type error in this page.
+ */
+export type TaxYearView = Awaited<ReturnType<typeof getTaxYear>>;
 export type TaxDisposalView = z.infer<typeof TaxDisposalSchema>;
 
 /**

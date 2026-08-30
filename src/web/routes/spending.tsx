@@ -3,6 +3,18 @@ import { useState } from "react";
 
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api.ts";
 import { eur, fiDate } from "../lib/format.ts";
+import {
+  deleteSpendingRule,
+  getSpendingRules,
+  saveSpendingRules,
+} from "../server/spending-rules.ts";
+import {
+  getCashFlow,
+  getClassifiedTransactions,
+  getMonthlySpending,
+  getSpending,
+  getUncategorised,
+} from "../server/portfolio.ts";
 import { CashFlowChart } from "../charts/CashFlowChart.tsx";
 import { CategoryTrendChart } from "../charts/CategoryTrendChart.tsx";
 import { MonthlyFlowChart } from "../charts/MonthlyFlowChart.tsx";
@@ -45,34 +57,34 @@ export const SpendingPage = () => {
 
   const spending = useQuery({
     queryKey: ["spending", from, to, groupBy],
-    queryFn: () => apiGet(`/api/spending?from=${from}&to=${to}&by=${groupBy}`, SpendingSchema),
+    queryFn: () => getSpending({ data: { from, to, by: groupBy } }),
   });
 
   const cashflow = useQuery({
     queryKey: ["cashflow", from, to],
-    queryFn: () => apiGet(`/api/cashflow?from=${from}&to=${to}`, CashFlowSchema),
+    queryFn: () => getCashFlow({ data: { from, to } }),
   });
 
   const monthly = useQuery({
     queryKey: ["monthly", from, to],
-    queryFn: () => apiGet(`/api/spending/monthly?from=${from}&to=${to}`, MonthlySchema),
+    queryFn: () => getMonthlySpending({ data: { from, to } }),
   });
 
   const unknown = useQuery({
     queryKey: ["uncategorised", from, to],
-    queryFn: () => apiGet(`/api/spending/uncategorised?from=${from}&to=${to}`, UncategorisedSchema),
+    queryFn: () => getUncategorised({ data: { from, to } }),
   });
 
   const rules = useQuery({
     queryKey: ["spending-rules"],
     enabled: showRules,
-    queryFn: () => apiGet("/api/spending/rules", RulesSchema),
+    queryFn: () => getSpendingRules(),
   });
 
   const ledger = useQuery({
     queryKey: ["spending-transactions", from, to],
     enabled: showLedger,
-    queryFn: () => apiGet(`/api/spending/transactions?from=${from}&to=${to}`, ClassifiedSchema),
+    queryFn: () => getClassifiedTransactions({ data: { from, to } }),
   });
 
   const refresh = () => {
@@ -83,8 +95,7 @@ export const SpendingPage = () => {
   };
 
   const removeRule = useMutation({
-    mutationFn: (pattern: string) =>
-      apiDelete(`/api/spending/rules?pattern=${encodeURIComponent(pattern)}`),
+    mutationFn: (pattern: string) => deleteSpendingRule({ data: { pattern } }),
     onSuccess: refresh,
     onError: (cause) =>
       setError(cause instanceof ApiError ? cause.message : "Säännön poisto epäonnistui"),
@@ -396,7 +407,7 @@ const AddRuleForm = ({
 
   const save = useMutation({
     mutationFn: () =>
-      apiPost("/api/spending/rules", { rules: [{ pattern: pattern.trim(), category }] }),
+      saveSpendingRules({ data: { rules: [{ pattern: pattern.trim(), category }] } }),
     onSuccess: () => {
       setPattern("");
       onSaved();
@@ -462,7 +473,7 @@ const ClassifyOne = ({
 }) => {
   const save = useMutation({
     mutationFn: (category: string) =>
-      apiPost("/api/spending/rules", { rules: [{ pattern: merchant, category }] }),
+      saveSpendingRules({ data: { rules: [{ pattern: merchant, category }] } }),
     onSuccess: onSaved,
     onError: (cause) =>
       onError(cause instanceof ApiError ? cause.message : "Säännön tallennus epäonnistui"),

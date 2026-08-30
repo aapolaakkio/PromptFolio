@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createAccount } from "../server/accounts.ts";
 import { z } from "zod";
 
 import {
@@ -75,21 +76,20 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
     setSubmitting(true);
     const chosenType = accountType === "" ? null : accountType;
     try {
-      const created = await apiPost(
-        "/api/accounts",
-        // The type is omitted rather than sent as "": an unclassified account is
-        // stored as null, and the server's enum would refuse an empty string.
-        chosenType === null
-          ? { name: name.trim(), broker, kind, baseCurrency: baseCurrency.trim().toUpperCase() }
-          : {
-              name: name.trim(),
-              broker,
-              kind,
-              baseCurrency: baseCurrency.trim().toUpperCase(),
-              accountType: chosenType,
-            },
-        CreatedAccountSchema,
-      );
+      // The type is omitted rather than sent as "": an unclassified account is
+      // stored as null, and the enum would refuse an empty string.
+      const created = await createAccount({
+        data:
+          chosenType === null
+            ? { name: name.trim(), broker, kind, baseCurrency: baseCurrency.trim().toUpperCase() }
+            : {
+                name: name.trim(),
+                broker,
+                kind,
+                baseCurrency: baseCurrency.trim().toUpperCase(),
+                accountType: chosenType,
+              },
+      });
       setName("");
       setBroker("nordnet");
       setBaseCurrency("EUR");

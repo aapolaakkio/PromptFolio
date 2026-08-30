@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { askTurn } from "../server/chat.ts";
+
 /**
  * The server's chat events, validated at the boundary like every other
  * response this app reads. An unrecognised event is dropped rather than
@@ -35,30 +37,23 @@ export const takeEvents = (buffer: string) => {
   return { events, rest };
 };
 
-type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+type AskBody = { message: string; conversationId?: number };
+type Turn = (body: AskBody) => Promise<Response>;
 
-/**
- * Posts a question and yields the server's events as they arrive.
- *
- * `fetch` rather than `EventSource` because the question travels in the request
- * body -- EventSource can only GET, which would put a user's question in a URL
- * and from there into every access log.
- */
+// `fetch` under the hood rather than `EventSource` because the question travels
+// in the request body -- EventSource can only GET, which would put a user's
+// question in a URL and from there into every access log.
 export async function* askChat(
-  body: { message: string; conversationId?: number },
-  fetchImpl: FetchLike = fetch,
+  body: AskBody,
+  turn: Turn = (data) => askTurn({ data }),
 ): AsyncGenerator<ChatEvent> {
-  const response = await fetchImpl("/api/chat", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const response = await turn(body);
 
   if (!response.ok || !response.body) {
     // The server's own Finnish message when it sent one (a missing API key, a
     // refused question); a generic line when the body is not ours to read.
-    const body: unknown = await response.json().catch(() => null);
-    const parsed = z.object({ error: z.string() }).safeParse(body);
+    const failure: unknown = await response.json().catch(() => null);
+    const parsed = z.object({ error: z.string() }).safeParse(failure);
     yield {
       type: "error",
       message: parsed.success ? parsed.data.error : "Vastauksen haku epäonnistui",

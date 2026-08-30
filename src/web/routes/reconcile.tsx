@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiDelete, apiGet } from "../lib/api.ts";
+import { getReconciliation, getSnapshots, removeSnapshot } from "../server/snapshots.ts";
 import { fiDate, qty } from "../lib/format.ts";
 import { AccountsSchema } from "./imports-draft.ts";
 import { AdjustRow } from "./AdjustRow.tsx";
@@ -36,7 +37,7 @@ export const ReconcilePage = () => {
 
   const accounts = useQuery({
     queryKey: ["accounts"],
-    queryFn: () => apiGet("/api/accounts", AccountsSchema),
+    queryFn: () => getAccounts(),
   });
 
   const chosenAccount = accountId ?? accounts.data?.[0]?.id ?? null;
@@ -44,13 +45,13 @@ export const ReconcilePage = () => {
   const snapshots = useQuery({
     queryKey: ["snapshots", chosenAccount],
     enabled: chosenAccount !== null,
-    queryFn: () => apiGet(`/api/snapshots?accountId=${chosenAccount}`, z.array(SnapshotSchema)),
+    queryFn: () => getSnapshots({ data: { accountId: chosenAccount ?? 0 } }),
   });
 
   const chosenSnapshot = snapshotId ?? snapshots.data?.at(-1)?.id ?? null;
 
   const remove = useMutation({
-    mutationFn: (id: number) => apiDelete(`/api/snapshots/${id}`),
+    mutationFn: (id: number) => removeSnapshot({ data: { snapshotId: id } }),
     onSuccess: () => {
       setSnapshotId(null);
       void queryClient.invalidateQueries({ queryKey: ["snapshots", chosenAccount] });
@@ -60,7 +61,7 @@ export const ReconcilePage = () => {
   const reconciliation = useQuery({
     queryKey: ["reconcile", chosenSnapshot],
     enabled: chosenSnapshot !== null,
-    queryFn: () => apiGet(`/api/snapshots/${chosenSnapshot}/reconcile`, ReconcileSchema),
+    queryFn: () => getReconciliation({ data: { snapshotId: chosenSnapshot ?? 0 } }),
   });
 
   return (

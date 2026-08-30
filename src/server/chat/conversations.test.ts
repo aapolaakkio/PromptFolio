@@ -1,0 +1,307 @@
+import { beforeAll, describe, expect, test, vi } from "vitest";
+import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
+import { z, ZodError } from "zod";
+
+import { HttpError } from "../errors.ts";
+
+// Chat is read-only, but it reads the ledger -- so these tests care most about
+// who is allowed to read what. The model itself is scripted (see runner.test.ts
+// for why): no key, no network, no cost.
+
+type ToolRunnerClient = (typeof import("./runner.ts"))["createClient"] extends (
+  apiKey: string,
+) => infer C
+  ? C
+  : never;
+
+type Conversations = typeof import("./conversations.ts");
+
+let auth: (typeof import("../auth.ts"))["auth"];
+let chat: Conversations;
+let setChatClient: Conversations["_setChatClient"];
+
+beforeAll(async () => {
+  auth = (await import("../auth.ts")).auth;
+  chat = await import("./conversations.ts");
+  setChatClient = chat._setChatClient;
+});
+
+const sessionCookieFrom = (response: Response): string => {
+  const setCookie = response.headers.getSetCookie().find((c) => c.includes("session_token"));
+  if (!setCookie) throw new Error("Response carried no session_token cookie");
+  const nameValue = setCookie.split(";")[0];
+  if (!nameValue) throw new Error("Malformed Set-Cookie header");
+  return nameValue;
+};
+
+const signUp = async (): Promise<string> => {
+  const response = await auth.handler(
+    new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: `chat-api-${crypto.randomUUID()}@example.com`,
+        password: "correct horse battery staple",
+      }),
+    }),
+  );
+  if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
+  // SAFETY: a 200 from POST /sign-up/email is Better Auth's documented success
+  // response, which always carries `{ token, user: { id, ... } }`.
+  const body = (await response.json()) as { user: { id: string } };
+  return body.user.id;
+};
+
+/**
+ * The one field of a `BetaMessage` this route reads is `content`; the rest are
+ * the API's own constants, filled in so the fake is a real message rather than
+ * a cast. Shared with runner.test.ts's reasoning -- see that file.
+ */
+const assistantSaying = (text: string): BetaMessage => ({
+  id: "msg_test",
+  type: "message",
+  role: "assistant",
+  model: "claude-sonnet-5",
+  content: [{ type: "text", text, citations: null }],
+  stop_reason: "end_turn",
+  stop_sequence: null,
+  container: null,
+  context_management: null,
+  diagnostics: null,
+  stop_details: null,
+  usage: {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: null,
+    cache_read_input_tokens: null,
+    cache_creation: null,
+    server_tool_use: null,
+    service_tier: null,
+    fallback_credit: null,
+    inference_geo: null,
+    iterations: null,
+    output_tokens_details: null,
+    speed: null,
+  },
+});
+
+/** Replies with one fixed sentence, whatever it is asked. */
+const scriptedClient = (text = "Salkun arvo on 120,00 EUR."): ToolRunnerClient => ({
+  beta: {
+    messages: {
+      toolRunner: () => ({
+        async *[Symbol.asyncIterator]() {
+          yield assistantSaying(text);
+        },
+      }),
+    },
+  },
+});
+
+/** Fails the way the SDK does when the key is refused: mid-iteration. */
+const failingClient = (): ToolRunnerClient => ({
+  beta: {
+    messages: {
+      toolRunner: () => ({
+        // oxlint-disable-next-line require-yield -- the point is that it throws
+        async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
+          throw new Error("api key rejected by https://internal.example/v1");
+        },
+      }),
+    },
+  },
+});
+
+type AskBody = { message: string; conversationId?: number };
+
+const never = new AbortController().signal;
+
+const turn = (userId: string, body: AskBody, signal: AbortSignal = never) =>
+  chat.startTurn(userId, body, signal);
+
+/** The server's own event shapes, parsed rather than cast -- same rule the browser follows. */
+const ChatEventSchema = z.union([
+  z.object({ type: z.literal("conversation"), id: z.number() }),
+  z.object({ type: z.literal("tool"), name: z.string() }),
+  z.object({ type: z.literal("answer"), text: z.string() }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+type StreamedEvent = z.infer<typeof ChatEventSchema>;
+
+const eventsOf = async (stream: ReadableStream<Uint8Array>): Promise<StreamedEvent[]> => {
+  const body = await new Response(stream).text();
+  return body
+    .split("\n\n")
+    .filter((chunk) => chunk.startsWith("data: "))
+    .map((chunk) => ChatEventSchema.parse(JSON.parse(chunk.slice("data: ".length))));
+};
+
+/** The id the server assigned, from the first event of a turn. */
+const conversationIdOf = (events: readonly StreamedEvent[]): number => {
+  const first = events[0];
+  if (first?.type !== "conversation") throw new Error("First event did not name the conversation");
+  return first.id;
+};
+
+const statusOf = (run: () => void): number => {
+  try {
+    run();
+  } catch (cause) {
+    if (cause instanceof HttpError) return cause.status;
+    if (cause instanceof ZodError) return 400;
+    throw cause;
+  }
+  throw new Error("Expected the turn to be refused");
+};
+
+describe("startTurn", () => {
+  test("refuses an empty question rather than paying for an empty turn", async () => {
+    setChatClient(scriptedClient());
+    const userId = await signUp();
+    expect(statusOf(() => turn(userId, { message: "   " }))).toBe(400);
+  });
+
+  test("streams the conversation id and the answer, and stores both turns", async () => {
+    setChatClient(scriptedClient());
+    const userId = await signUp();
+
+    const events = await eventsOf(turn(userId, { message: "Paljonko salkku on arvoltaan?" }));
+
+    expect(events[0]?.type).toBe("conversation");
+    expect(events.at(-1)).toEqual({ type: "answer", text: "Salkun arvo on 120,00 EUR." });
+
+    expect(chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
+      { role: "user", content: "Paljonko salkku on arvoltaan?" },
+      { role: "assistant", content: "Salkun arvo on 120,00 EUR." },
+    ]);
+  });
+
+  test("keeps a failed turn's question, and tells the browser without leaking the cause", async () => {
+    setChatClient(failingClient());
+    const userId = await signUp();
+
+    const events = await eventsOf(turn(userId, { message: "Mikä on tuotto?" }));
+
+    expect(events.at(-1)).toEqual({ type: "error", message: "Vastauksen haku epäonnistui" });
+    expect(chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
+      { role: "user", content: "Mikä on tuotto?" },
+    ]);
+  });
+
+  test("continues an existing conversation and refuses someone else's, as 404", async () => {
+    setChatClient(scriptedClient("Jatkoa."));
+    const owner = await signUp();
+    const stranger = await signUp();
+
+    const id = conversationIdOf(await eventsOf(turn(owner, { message: "Ensimmäinen kysymys" })));
+
+    const again = await eventsOf(turn(owner, { conversationId: id, message: "Entä toinen?" }));
+    expect(again[0]).toEqual({ type: "conversation", id });
+
+    expect(statusOf(() => turn(stranger, { conversationId: id, message: "Näytä" }))).toBe(404);
+  });
+});
+
+describe("a client that goes away mid-turn", () => {
+  test("stops the model loop and reports nothing, instead of throwing into the log", async () => {
+    // Counts how far the loop got: an aborted turn must stop pulling messages
+    // from the model, not run to the end and discard the result.
+    let pulled = 0;
+    setChatClient({
+      beta: {
+        messages: {
+          toolRunner: (_params, options) => ({
+            async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
+              expect(options?.signal).toBeDefined();
+              pulled += 1;
+              yield assistantSaying("Ensimmäinen osa.");
+              pulled += 1;
+              yield assistantSaying("Toinen osa.");
+            },
+          }),
+        },
+      },
+    });
+    const userId = await signUp();
+
+    const abort = new AbortController();
+    abort.abort();
+    const events = await eventsOf(turn(userId, { message: "Pitkä kysymys" }, abort.signal));
+
+    expect(pulled).toBe(1);
+    // No error event: the user leaving is not a failure to report.
+    expect(events.some((event) => event.type === "error")).toBe(false);
+    // ...and no answer stored, because none was received.
+    const stored = chat.conversationMessages(userId, conversationIdOf(events));
+    expect(stored.map((m) => m.role)).toEqual(["user"]);
+  });
+});
+
+describe("a client that closes the stream", () => {
+  test("keeps serving the turn to the end, storing the answer it can no longer send", async () => {
+    setChatClient(scriptedClient("Vastaus jota kukaan ei lue."));
+    const userId = await signUp();
+
+    const stream = turn(userId, { message: "Suljetaan kesken" });
+    // What a browser navigating away does: stop reading and cancel the body.
+    // Enqueueing into that closed stream must not surface as a failed turn.
+    await stream.cancel();
+
+    const id = chat.listConversations(userId)[0]?.id;
+    expect(id).toBeDefined();
+    if (id === undefined) return;
+    // Waited for, not read: the turn outlives the reader, so the answer lands
+    // after the cancel rather than before it.
+    await vi.waitFor(() =>
+      expect(chat.conversationMessages(userId, id).map((m) => m.role)).toEqual([
+        "user",
+        "assistant",
+      ]),
+    );
+  });
+});
+
+describe("configuration", () => {
+  test("refuses with 503 when the instance has no API key, instead of failing mid-stream", async () => {
+    setChatClient(null);
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const userId = await signUp();
+      expect(statusOf(() => turn(userId, { message: "moi" }))).toBe(503);
+    } finally {
+      if (previous !== undefined) process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+});
+
+describe("listConversations", () => {
+  test("lists only the caller's own threads, newest first", async () => {
+    setChatClient(scriptedClient());
+    const mine = await signUp();
+    const other = await signUp();
+    await eventsOf(turn(mine, { message: "Vanhempi kysymys" }));
+    await eventsOf(turn(mine, { message: "Uudempi kysymys" }));
+    await eventsOf(turn(other, { message: "Jonkun muun kysymys" }));
+
+    expect(chat.listConversations(mine).map((c) => c.title)).toEqual([
+      "Uudempi kysymys",
+      "Vanhempi kysymys",
+    ]);
+  });
+});
+
+describe("deleteConversation", () => {
+  test("removes the thread and its messages, and refuses someone else's", async () => {
+    setChatClient(scriptedClient());
+    const owner = await signUp();
+    const stranger = await signUp();
+    const id = conversationIdOf(await eventsOf(turn(owner, { message: "Poistettava" })));
+
+    expect(statusOf(() => chat.deleteConversation(stranger, id))).toBe(404);
+
+    chat.deleteConversation(owner, id);
+    expect(statusOf(() => chat.conversationMessages(owner, id))).toBe(404);
+  });
+});

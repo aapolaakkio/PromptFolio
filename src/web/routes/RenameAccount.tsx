@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { editAccount } from "../server/accounts.ts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
@@ -45,18 +46,19 @@ export const RenameAccount = ({
 
   const rename = useMutation({
     mutationFn: () =>
-      apiPatch(
-        `/api/accounts/${accountId}`,
-        { name: name.trim(), accountType: accountType === "" ? null : accountType },
-        UpdatedSchema,
-      ),
+      editAccount({
+        data: {
+          id: accountId,
+          changes: { name: name.trim(), accountType: accountType === "" ? null : accountType },
+        },
+      }),
     onSuccess: () => {
       setError(null);
       setOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "Nimen muutos epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Nimen muutos epäonnistui");
     },
   });
 

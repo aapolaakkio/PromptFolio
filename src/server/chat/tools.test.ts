@@ -1,4 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
+import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
+import { getDb } from "../db/index.ts";
+import { addInstrument } from "../instruments/store.ts";
 
 import { EUR } from "../../core/money.ts";
 
@@ -9,12 +12,9 @@ import { EUR } from "../../core/money.ts";
 // good for, and whether any price behind it is stale.
 
 let auth: (typeof import("../auth.ts"))["auth"];
-let accountRoutes: (typeof import("../api/accounts.ts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("../api/instruments.ts"))["instrumentRoutes"];
-let rebalanceRoutes: (typeof import("../api/rebalance.ts"))["rebalanceRoutes"];
+let saveTargets: (typeof import("../rebalance.ts"))["saveTargets"];
 let addRules: (typeof import("../spending/rules.ts"))["addRules"];
 let buildChatTools: (typeof import("./tools.ts"))["buildChatTools"];
-let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
 let transactions: (typeof import("../db/schema.ts"))["transactions"];
 let prices: (typeof import("../db/schema.ts"))["prices"];
 let snapshots: (typeof import("../db/schema.ts"))["snapshots"];
@@ -22,12 +22,9 @@ let snapshotRows: (typeof import("../db/schema.ts"))["snapshotRows"];
 
 beforeAll(async () => {
   auth = (await import("../auth.ts")).auth;
-  accountRoutes = (await import("../api/accounts.ts")).accountRoutes;
-  instrumentRoutes = (await import("../api/instruments.ts")).instrumentRoutes;
-  rebalanceRoutes = (await import("../api/rebalance.ts")).rebalanceRoutes;
+  saveTargets = (await import("../rebalance.ts")).saveTargets;
   addRules = (await import("../spending/rules.ts")).addRules;
   buildChatTools = (await import("./tools.ts")).buildChatTools;
-  db = (await import("../db/index.ts")).getDb().db;
   transactions = (await import("../db/schema.ts")).transactions;
   prices = (await import("../db/schema.ts")).prices;
   snapshots = (await import("../db/schema.ts")).snapshots;
@@ -59,61 +56,38 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
 const randomIsin = (): string =>
   `FI${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
-const createAccount = async (cookie: string, name = "Nordnet"): Promise<number> => {
-  const response = await accountRoutes["/api/accounts"].POST(
-    new Request("http://x/api/accounts", {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ name, broker: "nordnet" }),
-    }),
-  );
-  expect(response.status).toBe(201);
-  // SAFETY: a 201 from POST /api/accounts always returns the inserted row.
-  return ((await response.json()) as { id: number }).id;
-};
+const createAccount = (userId: string, name = "Nordnet"): number =>
+  openAccountRow(getDb().db, userId, CreateAccount.parse({ name, broker: "nordnet" })).id;
 
 /** A bank account, the only kind a statement's spending may land on. */
-const createBankAccount = async (cookie: string): Promise<number> => {
-  const response = await accountRoutes["/api/accounts"].POST(
-    new Request("http://x/api/accounts", {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({
-        name: "OP käyttötili",
-        broker: "op",
-        kind: "bank",
-        accountType: "current",
-      }),
+const createBankAccount = (userId: string): number =>
+  openAccountRow(
+    getDb().db,
+    userId,
+    CreateAccount.parse({
+      name: "OP käyttötili",
+      broker: "op",
+      kind: "bank",
+      accountType: "current",
     }),
-  );
-  expect(response.status).toBe(201);
-  // SAFETY: a 201 from POST /api/accounts always returns the inserted row.
-  return ((await response.json()) as { id: number }).id;
-};
+  ).id;
 
 const createInstrument = async (cookie: string, name: string): Promise<number> => {
-  const response = await instrumentRoutes["/api/instruments"].POST(
-    new Request("http://x/api/instruments", {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({
-        isin: randomIsin(),
-        ticker: null,
-        name,
-        kind: "fund",
-        currency: "EUR",
-        priceSource: "manual",
-      }),
-    }),
-  );
-  expect(response.status).toBe(201);
-  // SAFETY: as above.
-  return ((await response.json()) as { id: number }).id;
+  const response = addInstrument(getDb().db, {
+    isin: randomIsin(),
+    ticker: null,
+    name,
+    kind: "fund",
+    currency: EUR,
+    priceSource: "manual",
+  });
+  return response.id;
 };
 
 /** 10 units at 10,00 EUR, so a later price of 12,00 makes the maths checkable by eye. */
 const buy = (accountId: number, instrumentId: number, date: string): void => {
-  db.insert(transactions)
+  getDb()
+    .db.insert(transactions)
     .values({
       accountId,
       instrumentId,
@@ -132,7 +106,8 @@ const buy = (accountId: number, instrumentId: number, date: string): void => {
 };
 
 const deposit = (accountId: number, date: string, minor: number): void => {
-  db.insert(transactions)
+  getDb()
+    .db.insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -152,7 +127,8 @@ const deposit = (accountId: number, date: string, minor: number): void => {
 
 /** One card payment on a bank account, as a statement import would write it. */
 const spend = (accountId: number, note: string, minor: number, date: string): void => {
-  db.insert(transactions)
+  getDb()
+    .db.insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -173,7 +149,8 @@ const spend = (accountId: number, note: string, minor: number, date: string): vo
 
 /** Money arriving on a bank account, with the text a statement would carry. */
 const receive = (accountId: number, note: string, minor: number, date: string): void => {
-  db.insert(transactions)
+  getDb()
+    .db.insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -193,7 +170,8 @@ const receive = (accountId: number, note: string, minor: number, date: string): 
 };
 
 const price = (instrumentId: number, date: string, minor: number): void => {
-  db.insert(prices)
+  getDb()
+    .db.insert(prices)
     .values({
       instrumentId,
       date,
@@ -207,13 +185,14 @@ const price = (instrumentId: number, date: string, minor: number): void => {
 
 /** A broker's holdings statement, as an import would have written it. */
 const statement = (accountId: number, instrumentId: number, units: number, asOf: string): void => {
-  const snapshot = db
-    .insert(snapshots)
+  const snapshot = getDb()
+    .db.insert(snapshots)
     .values({ accountId, asOf, source: "manual" })
     .returning({ id: snapshots.id })
     .all()[0];
   if (!snapshot) throw new Error("snapshot insert returned nothing");
-  db.insert(snapshotRows)
+  getDb()
+    .db.insert(snapshotRows)
     .values({
       snapshotId: snapshot.id,
       instrumentId,
@@ -243,15 +222,15 @@ const seed = async (): Promise<{
   userId: string;
 }> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
-  const accountId = await createAccount(cookie);
-  const bankAccountId = await createBankAccount(cookie);
+  const accountId = createAccount(userId);
+  const bankAccountId = createBankAccount(userId);
   const instrumentId = await createInstrument(cookie, "Testirahasto");
   deposit(accountId, "2026-01-01", 100_000);
   buy(accountId, instrumentId, "2026-01-02");
   price(instrumentId, "2026-01-02", 1000);
   price(instrumentId, "2026-06-01", 1200);
   return {
-    tools: buildChatTools(db, userId),
+    tools: buildChatTools(getDb().db, userId),
     instrumentId,
     accountId,
     bankAccountId,
@@ -335,7 +314,7 @@ describe("get_cash", () => {
     expect(result.asOf).toBe("2026-06-01");
     expect(result.totalEur).toBe("900.00");
     expect(result.balances).toEqual([
-      expect.objectContaining({ account: "Nordnet", currency: "EUR", amount: "900.00" }),
+      expect.objectContaining({ account: "Nordnet", currency: EUR, amount: "900.00" }),
     ]);
   });
 
@@ -733,18 +712,10 @@ describe("get_deposit_plan", () => {
   });
 
   test("splits the money toward the target once one is set", async () => {
-    const { tools, cookie } = await seed();
-    const saved = await rebalanceRoutes["/api/targets"].PUT(
-      new Request("http://x/api/targets", {
-        method: "PUT",
-        headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({
-          dimension: "kind",
-          targets: [{ key: "fund", weightPercent: "100.00" }],
-        }),
-      }),
-    );
-    expect(saved.status).toBe(200);
+    const { tools, userId } = await seed();
+    // 100 % of one slice, in basis points, as the server function stores it.
+    const saved = saveTargets(getDb().db, userId, "kind", [{ key: "fund", weightBp: 10_000 }]);
+    expect(saved.ok).toBe(true);
 
     // SAFETY: as above.
     const result = toolNamed(tools, "get_deposit_plan").run({ amountEur: "500.00" }) as {
@@ -890,7 +861,7 @@ describe("update_spending_rule and remove_spending_rule", () => {
     const { tools, bankAccountId, userId } = await seed();
     spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
     // The user's own decision, stored the way the Kulutus page stores it.
-    addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
+    addRules(getDb().db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
 
     // SAFETY: as above.
     // SAFETY: as above.
@@ -938,7 +909,7 @@ describe("update_spending_rule and remove_spending_rule", () => {
 describe("get_spending_rules", () => {
   test("lists the rules and says which ones are the user's own", async () => {
     const { tools, userId } = await seed();
-    addRules(db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
+    addRules(getDb().db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
 
     // SAFETY: as above.
     const result = toolNamed(tools, "get_spending_rules").run({ search: "OMA SÄÄNTÖ" }) as {

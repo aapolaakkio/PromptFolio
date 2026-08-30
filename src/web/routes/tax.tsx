@@ -5,6 +5,7 @@ import { apiGet } from "../lib/api.ts";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
 import { eur, fiDate, qty } from "../lib/format.ts";
 import { methodLabel, TaxYearSchema, TaxYearsSchema, type TaxYearView } from "./tax-view.ts";
+import { getTaxYear, getTaxYears } from "../server/tax.ts";
 
 const Badge = ({ children, title }: { children: string; title?: string }) => (
   <span
@@ -276,14 +277,16 @@ const Dividends = ({ report }: { report: TaxYearView }) => {
 export const TaxPage = () => {
   const years = useQuery({
     queryKey: ["tax-years"],
-    queryFn: () => apiGet("/api/tax/years", TaxYearsSchema),
+    queryFn: () => getTaxYears(),
   });
   const [year, setYear] = useState<number | null>(null);
   const selected = year ?? years.data?.[0] ?? null;
 
   const report = useQuery({
     queryKey: ["tax", selected],
-    queryFn: () => apiGet(`/api/tax?year=${selected}`, TaxYearSchema),
+    // `enabled` keeps this from running while `selected` is null; the ?? 0 is
+    // for the type, since the validator takes a year rather than a maybe-year.
+    queryFn: () => getTaxYear({ data: { year: selected ?? 0 } }),
     enabled: selected !== null,
   });
 
