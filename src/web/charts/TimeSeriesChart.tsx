@@ -77,55 +77,41 @@ const RANGES = [
 
 export type PlotRow = { at: number; value: number };
 
+/** Every point, as the chart plots them. */
+export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
+  points.map((point) => ({ at: asMillis(point.date), value: point.value }));
+
 /**
- * The points inside the chosen window, ending at the most recent one.
+ * The span a preset button selects: `months` back from the most recent point,
+ * or everything.
  *
- * The window is applied by filtering the data rather than by narrowing the x
- * domain, so the y axis rescales to what is actually on screen. Narrowing x
- * alone drew an early window as a flat line along the foot of a scale still
- * sized for years of later growth -- technically a zoom, and unreadable.
+ * Measured from the last point rather than from today, so a ledger whose last
+ * price is a month old still shows something for "1 v".
  */
-export const windowed = (points: readonly SeriesPoint[], months: number | null): PlotRow[] => {
-  const all = points.map((point) => ({ at: asMillis(point.date), value: point.value }));
-  if (months === null || all.length === 0) return all;
-  const from = new Date(all[all.length - 1]!.at);
+export const presetWindow = (
+  rows: readonly PlotRow[],
+  months: number | null,
+): BrushRange<number> => {
+  const first = rows[0]?.at ?? 0;
+  const last = rows[rows.length - 1]?.at ?? 0;
+  if (months === null) return { start: first, end: last };
+  const from = new Date(last);
   from.setUTCMonth(from.getUTCMonth() - months);
-  return all.filter((row) => row.at >= from.getTime());
+  return { start: Math.max(first, from.getTime()), end: last };
 };
+
+/** The rows inside a window, endpoints included. */
+export const within = (rows: readonly PlotRow[], window: BrushRange<number>): PlotRow[] =>
+  rows.filter((row) => row.at >= window.start && row.at <= window.end);
 
 export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; label: string }) => {
   const [months, setMonths] = useState<number | null>(null);
-  /** A range dragged on the chart itself, which beats any preset button. */
-  const [dragged, setDragged] = useState<BrushRange<number> | null>(null);
-  /**
-   * Whether a drag is in progress right now.
-   *
-   * The brush's chrome is painted only while it is: a selection rectangle and
-   * two handles sitting on the plot when nobody is dragging is a control
-   * shouting for attention while doing nothing, and once a range is committed
-   * the narrowed chart already says what was chosen.
-   */
-  const [dragging, setDragging] = useState(false);
+  /** A span dragged on the chart itself, which overrides whichever preset is lit. */
+  const [zoom, setZoom] = useState<BrushRange<number> | null>(null);
 
-  const byMonths = useMemo(() => windowed(points, months), [points, months]);
-  const rows = useMemo(
-    () =>
-      dragged === null
-        ? byMonths
-        : byMonths.filter((row) => row.at >= dragged.start && row.at <= dragged.end),
-    [byMonths, dragged],
-  );
-  const full = useMemo(() => windowed(points, null), [points]);
-  /**
-   * With nothing selected the brush sits on a zero-width range, so the plot is
-   * clean until the reader drags. Handing it the full extent instead drew a
-   * selection across the whole chart with a handle at each edge -- a control
-   * shouting for attention while doing nothing.
-   */
-  const empty = useMemo(
-    (): BrushRange<number> => ({ start: full[0]?.at ?? 0, end: full[0]?.at ?? 0 }),
-    [full],
-  );
+  const all = useMemo(() => plotRows(points), [points]);
+  const window = useMemo(() => zoom ?? presetWindow(all, months), [all, months, zoom]);
+  const rows = useMemo(() => within(all, window), [all, window]);
 
   const definition = useMemo(
     () =>
@@ -142,8 +128,14 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           crosshair({ x: { label: { format: asDate } }, y: false }),
         ],
         scales: {
+          // Pinned to the window rather than left to the data, so the brush and
+          // the axis always describe the same span. With the domain free, a
+          // second drag inside an already-narrowed chart mapped the pointer
+          // against one range while the axis showed another, and selecting
+          // anything became impossible.
           x: {
             scale: scaleLinear,
+            domain: [window.start, window.end],
             axis: { ticks: { count: 6, format: asDate } },
           },
           y: {
@@ -153,39 +145,40 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
             axis: { ticks: { count: 5, format: compactEur } },
           },
         },
-        // Drag across the plot to keep exactly that span. The application owns
-        // the accepted range; the control only proposes one.
         controls: [
           brushX<number>({
-            range: controlledSignal(dragged ?? empty, (next, context) => {
-              setDragging(context.reason.type === "preview");
+            // Always a zero-width span at the window's start, so nothing is
+            // painted until a drag begins and nothing lingers after one ends.
+            // The committed range is consumed into `zoom` immediately, and the
+            // narrowed chart is what says which span was chosen.
+            range: controlledSignal({ start: window.start, end: window.start }, (next, context) => {
               const accepted = acceptedRange(next, context.reason.type);
-              if (accepted !== undefined) setDragged(accepted);
+              if (accepted !== undefined) setZoom(accepted);
             }),
-            selectionStyle: {
-              fill: "var(--color-accent)",
-              fillOpacity: dragging ? 0.14 : 0,
-              stroke: "none",
-            },
-            handleStyle: { fill: "var(--color-accent)", fillOpacity: dragging ? 0.5 : 0 },
-            // Constant: the control rejects a non-positive size, so the handles
-            // are hidden by opacity rather than by shrinking them away.
-            handleSize: 6,
             keyboard: false,
             ariaLabel: "Valitse aikaväli",
             format: asDate,
+            selectionStyle: { fill: "var(--color-accent)", fillOpacity: 0.14, stroke: "none" },
+            // Invisible, but still a real grab target: the selection rectangle
+            // is the feedback a drag needs, and two handles parked on an idle
+            // plot are a control shouting for attention while doing nothing.
+            handleStyle: { fillOpacity: 0 },
+            handleSize: 6,
           }),
         ],
         ...TIME_FOCUS,
         tooltip: { use: tooltip, format: pointTip },
       }),
-    [rows, dragged, dragging, empty],
+    // Deliberately not dependent on any drag-in-progress state: rebuilding the
+    // definition mid-drag destroys the gesture, which is why the first drag
+    // used to do nothing and only the second appeared to work.
+    [rows, window],
   );
 
-  /** A preset range replaces whatever was dragged, rather than compounding with it. */
+  /** A preset replaces a dragged span rather than compounding with it. */
   const show = (next: number | null): void => {
     setMonths(next);
-    setDragged(null);
+    setZoom(null);
   };
 
   if (points.length === 0) return <p className="text-muted">Ei vielä dataa.</p>;
@@ -199,9 +192,9 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           <button
             key={range.label}
             type="button"
-            aria-pressed={dragged === null && months === range.months}
+            aria-pressed={zoom === null && months === range.months}
             className={`border border-line px-2 py-0.5 ${
-              dragged === null && months === range.months ? "bg-line" : ""
+              zoom === null && months === range.months ? "bg-line" : ""
             }`}
             onClick={() => show(range.months)}
           >

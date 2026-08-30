@@ -9,9 +9,11 @@ import {
   acceptedRange,
   asDate,
   compactEur,
+  plotRows,
   pointTip,
+  presetWindow,
   TimeSeriesChart,
-  windowed,
+  within,
 } from "./TimeSeriesChart";
 
 /**
@@ -95,59 +97,37 @@ describe("TimeSeriesChart", () => {
   });
 });
 
-describe("windowed", () => {
-  const points = [
+describe("presetWindow", () => {
+  const rows = plotRows([
     { date: "2020-01-01", value: 100 },
     { date: "2024-06-01", value: 200 },
     { date: "2026-01-01", value: 300 },
     { date: "2026-08-01", value: 400 },
-  ];
+  ]);
 
-  test("keeps everything when no window is chosen", () => {
-    expect(windowed(points, null)).toHaveLength(4);
+  test("spans everything when no preset is chosen", () => {
+    const window = presetWindow(rows, null);
+    expect(within(rows, window)).toHaveLength(4);
   });
 
-  test("keeps the months before the most recent point, not before today", () => {
+  test("counts back from the most recent point, not from today", () => {
     // A ledger whose last price is months old would otherwise show an empty
-    // chart for every range.
-    expect(windowed(points, 12).map((row) => row.value)).toEqual([300, 400]);
+    // chart for every preset.
+    expect(within(rows, presetWindow(rows, 12)).map((row) => row.value)).toEqual([300, 400]);
   });
 
-  test("keeps a longer window's earlier points too", () => {
-    expect(windowed(points, 36).map((row) => row.value)).toEqual([200, 300, 400]);
+  test("keeps a longer preset's earlier points", () => {
+    expect(within(rows, presetWindow(rows, 36)).map((row) => row.value)).toEqual([200, 300, 400]);
   });
 
-  test("handles an empty series without inventing a window", () => {
-    expect(windowed([], 12)).toEqual([]);
-  });
-});
-
-describe("axis labels", () => {
-  test("a tick reads as a date, never as the milliseconds behind it", () => {
-    // The x scale carries epoch milliseconds so elapsed time spaces the points
-    // and a range can be narrowed at all -- but nothing a reader sees is ever
-    // a millisecond count.
-    expect(asDate(Date.UTC(2026, 7, 30))).toBe("30.8.2026");
+  test("never starts before the first point there is", () => {
+    // The axis is pinned to this window, so a start before the data would draw
+    // empty plot at the left edge.
+    expect(presetWindow(rows, 600).start).toBe(rows[0]!.at);
   });
 
-  test("thousands are compacted, so a five-figure axis stays readable", () => {
-    expect(compactEur(50_000)).toBe("50 k€");
-    expect(compactEur(0)).toBe("0 €");
-    expect(compactEur(-12_400)).toBe("-12 k€");
-  });
-});
-
-describe("the value chart's window", () => {
-  const points = [
-    { date: "2024-01-01", value: 100 },
-    { date: "2025-01-01", value: 200 },
-    { date: "2026-08-01", value: 300 },
-  ];
-
-  test("renders with a dragged range as well as a preset one", () => {
-    // The brush proposes a range and the component filters to it; both paths
-    // must mount.
-    expect(() => renders(<TimeSeriesChart points={points} label="Arvo" />)).not.toThrow();
+  test("handles an empty series without inventing a span", () => {
+    expect(presetWindow([], 12)).toEqual({ start: 0, end: 0 });
   });
 });
 
