@@ -2,30 +2,21 @@ import { ZodError } from "zod";
 import { HttpError } from "./errors.ts";
 
 /**
- * Re-exported so route modules can `import { HttpError } from "./http.ts"`
- * alongside `handle`/`json` without a second import line. This module must
- * stay free of any dependency on auth.ts (directly or transitively via
- * auth-guard.ts) — auth.ts opens a database connection and throws at
- * import time when BETTER_AUTH_SECRET is missing, and http.ts is meant to
- * be importable on its own. See accounts.test.ts's
- * "importing http.ts alone..." test, which proves this in a real child
- * process.
+ * Re-exported so a caller needs one import line. This module must stay free of
+ * any dependency on auth.ts, which opens a database and throws at import time
+ * without a secret -- proved by a test in a real child process.
  */
 export { HttpError };
 
 export const json = <T>(data: T, status = 200): Response => Response.json(data, { status });
 
 /**
- * Wraps a route handler so every error it can throw becomes a well-formed
- * JSON response instead of an unhandled rejection:
- *  - `HttpError` maps to its own status and message (both are safe to show
- *    the caller — every throw site chose that message deliberately).
- *  - `ZodError` (thrown by `Schema.parse(...)` on untrusted request bodies)
- *    maps to 400 with per-field detail.
- *  - anything else is logged in full on the server and reported to the
- *    client as a generic, detail-free 500. This is a security boundary:
- *    an unexpected error's message can contain SQL, file paths, or other
- *    internal detail that must never reach the client.
+ * Turns anything a handler throws into a well-formed JSON response: an HttpError
+ * into its own status and message, a ZodError into a 400 with field detail, and
+ * anything else into a detail-free 500, logged in full server-side.
+ *
+ * That last one is a security boundary: an unexpected error's message can carry
+ * SQL or file paths that must never reach a client.
  */
 export const handle =
   (fn: (request: Request) => Promise<Response>) =>

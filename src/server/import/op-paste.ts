@@ -3,61 +3,27 @@ import { normaliseDate } from "./map.ts";
 import type { CsvProblem, RawRow } from "./types.ts";
 
 /**
- * OP's web transaction view has no export button; the only way to get
- * transactions out of it is to select the table and paste. A browser copy
- * of an HTML table yields **one value per line, with no delimiter at
- * all** -- not the tab- or semicolon-separated text `parseCsv` expects.
- * Two further things break a delimiter-based parse outright, confirmed
- * against real pastes the user supplied (not guessed):
+ * OP's web transaction view has no export button, and copying its table yields
+ * one value per line with no delimiter at all. Two things break a delimited parse
+ * outright: a missing fee omits its line rather than leaving an empty cell, so a
+ * row is six lines or seven and no field sits at a fixed position; and the header
+ * wraps onto two lines, so there is no single row for a signature to match.
  *
- *  - **A missing fee omits the line entirely**, it does not leave an empty
- *    cell. A row is six lines (no fee) or seven (fee present), so which
- *    field is at which line position is not fixed -- reading by position
- *    would book a purchase's own total as its fee on a six-line row.
- *  - The two-line-wrapping header ("Tapahtuma-" + "päivämäärä", "Kulut /
- *    Korot /" + "Verot") means there is no single header row for
- *    `detectBroker`'s signature match to run against either.
+ * Hence its own parser. Blocks are read by shape, not position or count: the line
+ * shaped like a date anchors the row, the type sits before it and the name before
+ * that, the quantity after it, and the remaining currency-shaped values end with
+ * the total -- with a fee in the middle when three remain. A block matching none
+ * of this becomes a problem naming it, never a guess at which value goes where.
  *
- * This file is therefore its own parser, not a `BrokerCsvConfig` fed
- * through `parseCsv` -- forcing a newline-separated, variable-length
- * format into a delimiter-shaped config is exactly the kind of "pretend
- * it fits" move that produced the original duplicate-`Valuutta` bug this
- * whole correction pass exists to fix.
- *
- * **Parse strategy: anchor on shape, not position or count.** A row block
- * (the lines between two blank/single-space separator lines) is parsed by
- * finding the one line that is shaped like a `dd.mm.yyyy` date -- the line
- * immediately before it is always the transaction type, every line before
- * that (back to the block's start) is the name, and the line immediately
- * after it is always the quantity ("N   kpl"). Everything remaining is a
- * run of currency-shaped values ("N   EUR"): the *last* of those is always
- * `Yhteensä`; if three remain, the middle one is the fee, if two remain
- * there is no fee. This survives a fee being entirely absent (a count-based
- * "row is always N lines" rule does not -- an earlier version of this
- * parser assumed exactly that and was wrong). A block whose shape doesn't
- * match any of this becomes a `CsvProblem` naming the block, never a guess
- * at which value goes where.
- *
- * **Unverified, flagged rather than assumed:**
- *  - A fund name wrapping onto more than one physical line is possible in
- *    principle (this parser handles it -- every line between the block's
- *    start and the type line is joined into the name) but has not been
- *    observed in a real paste; the user separately confirmed a visually
- *    wrapped cell still copies onto a single line, so this may never
- *    actually occur.
- *  - Whether OP's web view ever emits a transaction type beyond
- *    OSTO/MYYNTI/OSINKO in this view.
- *  - Whether a MYYNTI row ever appears without a fee (every MYYNTI example
- *    seen so far has one).
+ * Unverified rather than assumed: a name wrapping across lines is handled but has
+ * never been seen, and whether the view emits other transaction types, or a sale
+ * without a fee, is unknown.
  */
 
 /**
- * The real header block, exactly as it copies: ten physical lines for
- * eight logical columns, because "Tapahtumapäivämäärä" and "Kulut / Korot
- * / Verot" each wrap onto two lines in OP's table. Matched verbatim
- * (trimmed per line) rather than reconstructed from a wrap-detection rule,
- * since the wrapped text is a fixed, known constant, not something a
- * generic algorithm needs to infer.
+ * The header exactly as it copies: ten physical lines for eight columns, because
+ * two labels wrap. Matched verbatim rather than reconstructed by a wrap rule,
+ * the text being a fixed constant.
  */
 const HEADER_LINES = [
   "Laji",
@@ -156,13 +122,9 @@ const problemResult = (
 ): BlockResult => ({ kind: "problem", problem: { line, message, raw: blockLines.join("\n") } });
 
 /**
- * Parses one row block (the lines between two separators) by shape, per
- * the module comment's strategy. Never recomputes or cross-checks
- * `Yhteensä` against quantity × price: OP's displayed `Kurssi` is rounded
- * for display, so `quantity * Kurssi` does not reconcile with the real
- * `Yhteensä` on most real sell rows (confirmed against real MYYNTI rows: the
- * two disagree by a few cents, because the displayed unit price has already been
- * rounded) -- `Yhteensä` is authoritative and is never derived.
+ * One row block, by shape. The total is never recomputed from quantity and price:
+ * the displayed unit price is already rounded, so the two disagree by cents on
+ * most real sales. The printed total is authoritative.
  */
 const parseBlock = (lines: readonly string[], startLine: number): BlockResult => {
   const dateIndices = lines

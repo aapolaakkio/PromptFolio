@@ -8,23 +8,17 @@ const WINDOW_DAYS = 5;
 const dayNumber = (date: string): number => Date.parse(`${date}T00:00:00Z`) / 86_400_000;
 
 /**
- * Transactions that are the owner moving their own money between their own
- * accounts, matched as pairs rather than recognised by their text.
+ * The owner moving their own money between their own accounts, matched as pairs.
  *
- * Text cannot do this job. A transfer to a savings account is labelled with the
- * owner's own name, an account opening says "Tilinavaus", and a rule matching
- * either would also catch genuine payments to a person of that name. Worse, the
- * assistant's own classification can out-match a transfer rule and quietly turn
- * moved savings into income -- which is exactly what it did.
+ * Text cannot do this: a transfer to savings is labelled with the owner's own
+ * name, and a rule matching that would catch genuine payments to a person of
+ * that name -- and the assistant's classification can out-match a transfer rule
+ * and turn moved savings into income, which it did.
  *
- * A pair is one row out of one owned account and one row into another, for the
- * same amount, within a few days. Matched greedily, nearest first, and each row
- * used once: two identical transfers on the same day pair with each other,
- * which is the right answer whichever way round they are taken.
- *
- * Deliberately conservative. A transfer whose other half is not in the ledger --
- * to an account this app does not know -- stays income or spending, because
- * from the ledger's point of view that is what it is.
+ * A pair is one row out and one in, same amount, within days, matched nearest
+ * first and each row used once. Conservative: a transfer whose other half is on
+ * an account this app does not know stays income or spending, because from the
+ * ledger's point of view that is what it is.
  */
 export const internalTransferIds = (txns: readonly Txn[]): ReadonlySet<number> => {
   const paired = new Set<number>();
@@ -61,18 +55,14 @@ export const internalTransferIds = (txns: readonly Txn[]): ReadonlySet<number> =
 };
 
 /**
- * Bank payments that funded a securities purchase, and so are investing rather
- * than spending.
+ * Bank payments that funded a purchase, and so are investing, not spending.
  *
- * A regular fund saving leaves the current account as an ordinary payment and
- * arrives at the broker as a BUY -- never as a deposit, because a broker whose
- * export lists securities only (OP's does) never records the cash arriving.
- * Both halves are therefore negative, so `internalTransferIds` cannot pair
- * them: it looks for opposite signs.
+ * A fund saving leaves as an ordinary payment and arrives as a purchase, never
+ * as a deposit, because a broker listing securities only never records the cash.
+ * Both halves are negative, so the pairing above cannot see them.
  *
- * Matched on the amount within the same window, against purchases on accounts
- * that keep no cash record of their own. Where a broker does record its cash,
- * the deposit is the better half to count and this does not apply.
+ * Matched on amount and window, against purchases on accounts keeping no cash
+ * record. Where a broker does keep one, its deposit is the better half.
  */
 export const investmentPaymentIds = (
   txns: readonly Txn[],
@@ -123,15 +113,12 @@ export const cashlessAccountIds = (
 /**
  * Every row that is a movement rather than a cost.
  *
- * One definition, because there was more than one and they disagreed. The
- * Sankey and the monthly totals excluded transfers between the owner's own
- * accounts and payments that funded an investment; the by-category and
- * by-payee lists excluded neither, so the same period read differently
- * depending on which view you opened -- and a credit card bill, being a
- * transfer to the card, sat among the shops as one of the year's largest lines.
+ * One definition, because there were several and they disagreed: the same period
+ * read differently depending on which view you opened, and a credit card bill
+ * sat among the shops as one of the year's largest lines.
  *
- * Needs the whole ledger, not just the bank rows: an internal transfer is only
- * recognisable by its other half, which is on another account.
+ * Needs the whole ledger: an internal transfer is only recognisable by its other
+ * half, which is on another account.
  */
 export const notSpendingIds = (
   txns: readonly Txn[],

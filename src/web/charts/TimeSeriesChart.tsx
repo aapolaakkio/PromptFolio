@@ -24,15 +24,10 @@ export type SeriesPoint = {
 };
 
 /**
- * `@tanstack/react-charts@0.16` is a grammar-of-graphics library:
- * `defineChart({ marks, scales })` builds a definition and `<Chart definition>`
- * mounts it. There is no flat `options` prop.
- *
- * The x axis carries epoch milliseconds on a linear scale, but nothing a reader
- * sees is ever a millisecond: the ticks, the crosshair label and the tooltip all
- * format back to a Finnish date. The numbers exist so elapsed time spaces the
- * points -- a gap in the series then reads as a gap -- and because a
- * categorical axis cannot be narrowed to a range at all.
+ * The x axis carries epoch milliseconds, but nothing a reader sees is ever one:
+ * every tick, label and tooltip formats back to a Finnish date. The numbers exist
+ * so elapsed time spaces the points, and because a categorical axis cannot be
+ * narrowed to a range at all.
  */
 const asMillis = (iso: string): number => new Date(`${iso}T00:00:00Z`).getTime();
 const isoOf = (millis: number): string => new Date(millis).toISOString().slice(0, 10);
@@ -51,24 +46,17 @@ export const compactEur = (value: number): string => {
 };
 
 /**
- * What a hovered point says.
- *
- * `xValue`/`yValue`, never `x`/`y`: the latter are pixel coordinates on the
- * painted scene. Reading those printed a position on screen as if it were a
- * date and a euro amount -- plausible-looking numbers that were wrong in both,
- * which is the worst way for a chart to be wrong.
+ * What a hovered point says. `xValue`/`yValue`, never `x`/`y`: those are pixel
+ * coordinates, and reading them printed a position on screen as a date and a
+ * euro amount -- plausible numbers wrong in both.
  */
 export const pointTip = (point: { xValue: unknown; yValue: unknown }): string =>
   `${asDate(Number(point.xValue))}: ${eur(String(point.yValue))}`;
 
 /**
- * What a brush change means for the window, or `undefined` to ignore it.
- *
- * Only a committed range counts. Accepting previews re-filtered the data on
- * every pointer move, so the chart redrew underneath the drag and the selection
- * could never settle -- which is what made zooming feel broken rather than
- * merely imprecise. A click, which commits a zero-width range, clears the
- * window instead of selecting nothing.
+ * What a brush change means, or undefined to ignore it. Only a committed range
+ * counts: accepting previews redrew the chart under the drag, so a selection
+ * could never settle. A click commits a zero-width range, which clears.
  */
 export const acceptedRange = (
   next: BrushRange<number>,

@@ -46,67 +46,24 @@ export const hasAnyUser = (): boolean =>
   db.select({ id: user.id }).from(user).limit(1).get() != null;
 
 /**
- * Creates the instance's very first user account, replacing the
- * `ALLOW_SIGNUP=true` + `curl` dance the README used to document. This
- * deliberately does NOT call Better Auth's `/sign-up/email` handler (or
- * its programmatic `auth.api.signUpEmail` twin) -- both read
- * `emailAndPassword.disableSignUp` from `auth.ts`'s config, which is
- * `true` unless `ALLOW_SIGNUP=true` is set, and stays that way for the
- * lifetime of the process (see `auth.ts`'s `resolveDisableSignUp`, read
- * once at module load). Reusing that handler here would mean first-run
- * account creation only worked when the owner ALSO set `ALLOW_SIGNUP`,
- * i.e. it wouldn't actually replace the manual env-var dance -- it would
- * just move it one step earlier. So this route writes the `user` and
- * `account` rows itself, in the exact shape Better Auth's own sign-up
- * handler writes them (verified directly against
- * node_modules/better-auth/dist/api/routes/sign-up.mjs and
- * .../core/src/db/schema/account.ts's `createLocalAccountIssuer`): a
- * `user` row plus an `account` row with `providerId: "credential"`,
- * `issuer: "local:credential"`, and `accountId` equal to the new user's
- * id. Hashing goes through this project's own `hashPassword`
- * (argon2id -- password.ts), the same function Better
- * Auth's own config points `emailAndPassword.password.hash` at, so a
- * normal `POST /api/auth/sign-in/email` afterwards verifies it exactly as
- * it would any other account. See setup.test.ts's child-process test,
- * which proves this end-to-end by creating an account here and then
- * signing in with it through the real `auth.handler`.
+ * Creates the instance's first account, replacing an ALLOW_SIGNUP-and-curl dance.
  *
- * --- Race safety, and what this does and does not guarantee ---
+ * Deliberately not Better Auth's own sign-up handler: that reads the same
+ * disable-signup config, so reusing it would move the manual env-var step one
+ * place earlier rather than remove it. The user and account rows are written here
+ * in exactly the shape that handler writes them, hashed by the same function its
+ * config points at, so an ordinary sign-in afterwards verifies them normally.
  *
- * Two requests can arrive "at the same time" whenever zero users exist.
- * `hashPassword` is genuinely asynchronous (argon2id hashing happens off
- * the main thread), so it is NOT safe to check `hasAnyUser()` before
- * hashing and trust that result by the time the insert runs -- a second
- * request's check could read the database in the gap while the first
- * request is still hashing. So the check happens again, synchronously,
- * immediately before the insert: `node:sqlite` (via drizzle-orm's
- * node-sqlite driver) is a synchronous API -- `.get()`/`.run()` return
- * immediately, not a Promise -- so the count-then-insert below is one
- * uninterrupted block of synchronous JavaScript with no `await` inside
- * it. Bun's single-threaded event loop can only switch to another
- * request's handler at an `await`/microtask boundary; it cannot pause
- * synchronous code partway through to run something else. So whichever of
- * two concurrent requests' synchronous blocks the engine happens to run
- * first completes in full (count reads 0, both rows are inserted) before
- * the other's synchronous block can even start -- and that second block
- * then reads count 1 and refuses. This is a real, checked guarantee (see
- * setup.test.ts's concurrent-request test), not a probabilistic one --
- * but it is a guarantee about THIS process, not about the deployment. It
- * holds because PromptFolio runs as exactly one server process with
- * one SQLite connection (see index.ts, compose.yaml -- no clustering, no
- * multiple workers sharing the database file). It would NOT hold if this
- * server were ever run as more than one process against the same
- * database.
+ * Race safety: hashing is asynchronous, so a check before it cannot be trusted by
+ * the time the insert runs. The check happens again immediately before the
+ * insert, and the driver is synchronous, so count-then-insert is one uninterrupted
+ * block -- the second concurrent request reads a count of one and refuses. That
+ * holds for this process, which is the whole deployment; it would not hold across
+ * several processes against one database.
  *
- * What this is NOT a guarantee of: that the request which wins the race
- * is the owner's. There is no credential to check yet -- that is the
- * entire problem a first-run flow exists to solve -- so "first request
- * after zero users" and "the owner" are not provably the same thing. If
- * the instance is reachable on the network before the owner visits it,
- * anyone who gets there first can become its only account. The fix for
- * that is operational, not code: don't expose a fresh instance publicly
- * before completing this step, same as you would not leave any other
- * unconfigured admin panel open to the internet.
+ * What it does not guarantee is that the request winning the race is the owner's:
+ * there is no credential to check yet. Do not expose a fresh instance publicly
+ * before completing this step.
  */
 export const createFirstUser = async (
   input: z.infer<typeof CreateFirstUser>,
@@ -120,20 +77,11 @@ export const createFirstUser = async (
 };
 
 /**
- * Writes the `user` + `account` row pair for a new email/password account,
- * in the exact shape described in `createFirstUser`'s comment above. Split
- * out on its own so its correctness -- does the resulting row pair
- * actually authenticate through Better Auth's real, unmodified sign-in
- * flow? -- is directly testable (setup.test.ts calls this and then signs
- * in with the result) without needing an empty database first, unlike
- * `createFirstUser` itself, whose whole point is refusing to run this
- * once a user already exists.
+ * The user and account row pair for a new email/password account. Split out so a
+ * test can prove the pair really authenticates, without needing an empty database.
  *
- * Deliberately NOT exported: it carries no guard of its own, so the only
- * caller allowed to reach it is `createFirstUser`, immediately after that
- * guard passes, as one synchronous block. setup.test.ts reaches it through
- * a same-file re-export for exactly that reason -- see this file's test
- * for the full explanation.
+ * Not exported: it carries no guard, so its only caller is the one above,
+ * immediately after that guard passes, in the same synchronous block.
  */
 const insertCredentialUser = (
   input: z.infer<typeof CreateFirstUser>,

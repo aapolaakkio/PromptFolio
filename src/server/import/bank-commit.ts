@@ -13,40 +13,30 @@ export type BankCommitResult = {
   /** Rows the account already had, matched on the bank's own archive id. */
   readonly skipped: number;
   /**
-   * Rows that were already stored but gained a payee from this file.
-   *
-   * OP's CSV leaves the payee column empty for some card payments while its PDF
-   * names the shop, and both carry the same archive id. A second import in the
-   * other format therefore knows something the first did not, and dropping it
-   * as a duplicate would throw that away.
+   * Stored rows that gained a payee from this file. The CSV leaves the column
+   * empty where the PDF names the shop, and both carry the same archive id, so
+   * dropping the second as a duplicate would throw that away.
    */
   readonly enriched: number;
 };
 
 /**
- * A row's identity for deduplication.
+ * A row's identity for deduplication: the bank's archive id, which makes an
+ * overlapping re-import safe, or the row's own material where a bank prints none.
  *
- * The bank's archive id when there is one, which is what makes re-importing an
- * overlapping date range safe. When a bank prints none, the fallback is the
- * material of the row itself -- date, amount, note -- so importing the same
- * file twice still cannot double a balance. Two genuinely identical payments on
- * the same day (two coffees at the same shop) collapse into one under that
- * fallback; that is a real limitation, and it is the conservative direction to
- * err in: an overstated balance nobody can explain is worse than a missing
- * duplicate the statement can be re-checked against.
+ * Under the fallback two identical payments on one day collapse into one. A real
+ * limitation, and the safer direction: an overstated balance nobody can explain
+ * is worse than a missing duplicate the statement can be re-checked against.
  */
 const identityOf = (accountId: number, row: BankRow): string =>
   row.externalId ?? `bank:${accountId}:${row.date}:${row.amount}:${row.note}`;
 
 /**
- * Writes a parsed statement into the ledger under one import record, so the
- * whole file can be undone as a unit through the existing
- * `POST /api/imports/:id/undo`.
+ * Writes a statement under one import record, so the whole file undoes as a unit.
  *
- * Bank rows carry no instrument, so none of the securities machinery
- * (cost basis, position dependencies) applies. What does apply is the ledger's
- * own unique index on (account, content hash), which this respects by checking
- * first and reporting a skip rather than letting the insert throw.
+ * Bank rows carry no instrument, so none of the securities machinery applies. The
+ * ledger's unique index still does, and is checked first so a duplicate is
+ * reported as a skip rather than thrown by the insert.
  */
 export const commitBankStatement = (
   db: Db,

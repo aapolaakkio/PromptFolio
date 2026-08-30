@@ -59,28 +59,22 @@ export type TurnParams = {
 /**
  * Where the cache of the request's stable head ends.
  *
- * A turn re-sends everything: the whole system prompt, every tool's schema, and
- * the entire conversation including each tool result already in it. Only the
- * tail differs from the last turn, so without a breakpoint the same thousands
- * of tokens are read, and billed, from scratch on every question and again on
- * every step of a tool loop.
+ * A turn re-sends the whole prompt, every schema and the entire conversation,
+ * and only the tail differs -- so without a breakpoint the same thousands of
+ * tokens are billed again on every question and every step of a tool loop.
  *
- * The breakpoint goes on the system block because the prefix is ordered tools,
- * then system, then messages -- marking system caches the tool schemas with it.
- * The schemas are identical for every user, so this half of the cache is shared
- * rather than per-household.
+ * It goes on the system block because the prefix is tools, then system, then
+ * messages: marking system caches the schemas with it, and those are identical
+ * for every user.
  */
 const CACHE = { cache_control: { type: "ephemeral" } } as const;
 
 const cachedSystem = (): BetaTextBlockParam[] => [{ type: "text", text: SYSTEM_PROMPT, ...CACHE }];
 
 /**
- * The conversation, with its tail marked so the next turn can reuse it.
- *
- * The second breakpoint, on the newest message: this turn's messages are a
- * prefix of the next turn's, so marking the end here is what the follow-up
- * question hits. It matters most in exactly the conversations that cost the
- * most -- the long ones, where a dozen tool results are being carried forward.
+ * The conversation with its tail marked, so the follow-up question hits it. This
+ * turn's messages are a prefix of the next turn's, and it matters most in the
+ * long threads carrying a dozen tool results forward.
  */
 const cachedMessages = (
   messages: readonly { role: "user" | "assistant"; content: string }[],
@@ -116,14 +110,9 @@ const textOf = (message: BetaMessage): string =>
     .trim();
 
 /**
- * Runs one turn of the conversation, yielding a `tool` event as each tool is
- * dispatched and one `answer` event at the end.
- *
- * The loop is the SDK's: `toolRunner` calls the tools, feeds their results back
- * and iterates until the model stops asking for them. We watch the messages go
- * past to report which tools ran, so an answer can be traced to the data behind
- * it -- and so the user sees progress instead of a blank screen while several
- * tool round-trips happen.
+ * One turn, yielding an event per tool dispatched and one answer at the end. The
+ * loop is the SDK's; the events exist so an answer can be traced to the data
+ * behind it, and so a reader sees progress rather than a blank screen.
  */
 export async function* runTurn(
   client: ToolRunnerClient,

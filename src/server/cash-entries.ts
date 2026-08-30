@@ -19,16 +19,12 @@ const IsoDateSchema = z
 /**
  * The only cash movements a person may write by hand.
  *
- * BUY and SELL are absent deliberately: a trade carries an instrument, a
- * quantity and a cost basis, and inventing one through this route would put a
- * position in the ledger that no broker record backs. Trades arrive through the
- * import pipeline, which is the app's one source for them.
+ * Trades are absent: one carries an instrument, a quantity and a cost basis, and
+ * inventing it here would put a position in the ledger no broker record backs.
  *
- * These are what an account produces when no export covers it: money in, money
- * out, interest paid, and the balance it already held when its recorded history
- * begins. A bank statement reaches back a year or two, not to the account's
- * opening, so without that last one every balance derived from it is short by
- * whatever came before -- silently.
+ * What is here is what an account produces when no export covers it, opening
+ * balance included -- without which every balance derived from a statement is
+ * silently short by whatever came before it.
  */
 export const CashEntry = z
   .object({
@@ -43,12 +39,9 @@ export const CashEntry = z
   .strict();
 
 /**
- * The stored sign, derived from the type rather than taken from the caller.
- *
- * A withdrawal is money leaving, so it is stored negative; a deposit and an
- * interest payment are money arriving. Asking the caller for a signed amount
- * would make "-100" mean two different things depending on which type it was
- * paired with, and the ledger would carry whichever the form happened to send.
+ * The sign comes from the type, not the caller: asking for a signed amount makes
+ * "-100" mean two things depending on the type beside it, and the ledger would
+ * carry whichever the form happened to send.
  */
 const signedMinor = (type: z.infer<typeof CashEntry>["type"], amount: bigint): bigint =>
   type === "WITHDRAWAL" ? -amount : amount;

@@ -1,22 +1,15 @@
 import { parseMoney, parseQuantity, EUR } from "../../core/money.ts";
 
 /**
- * One row of a broker's on-screen holdings table, pasted in.
- *
- * Nordnet publishes no holdings export, but its portfolio table copies as
- * tab-separated text with a header row -- the same route OP's transaction view
- * already takes (§10a A3). That is a far better source than the year-end PDF:
- * no embedded fonts to decode, no yearly document to wait for, and the figures
- * are whatever the broker is showing right now.
+ * One row of a broker's on-screen holdings table, pasted in. Nordnet publishes no
+ * holdings export but its table copies as tab-separated text -- a better source
+ * than the year-end PDF: no fonts to decode, and the figures are current.
  */
 
 /**
- * Decodes a broker's holdings export to text.
- *
- * Nordnet writes UTF-16LE with a byte-order mark -- the same encoding as its
- * transaction export (§10a A2), and the reason reading one as UTF-8 yields a
- * file of null bytes. Sniffed from the mark rather than configured, so a
- * broker that exports plain UTF-8 needs no special case.
+ * Decodes a holdings export. Nordnet writes UTF-16LE with a byte-order mark, which
+ * read as UTF-8 yields a file of null bytes. Sniffed from the mark, so a broker
+ * exporting plain UTF-8 needs no special case.
  */
 export const decodeHoldingsFile = (bytes: Uint8Array): string => {
   const utf16le = bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe;
@@ -65,12 +58,9 @@ export type PastedHoldings = {
 };
 
 /**
- * Parses a pasted holdings table.
- *
- * A row that does not parse becomes a problem carrying its own text, never an
- * exception and never a silent skip: one unreadable line must not discard the
- * rest, and a holding that vanished without a word would read as one the user
- * does not own.
+ * Parses a pasted holdings table. An unreadable row becomes a problem carrying its
+ * own text, never an exception and never a silent skip: a holding that vanished
+ * without a word would read as one the user does not own.
  */
 export const parseHoldingsPaste = (text: string): PastedHoldings => {
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");

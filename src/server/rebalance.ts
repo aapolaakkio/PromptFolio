@@ -96,13 +96,9 @@ const storedTargets = (db: Db, userId: string, dimension: Dimension): Target[] =
     .map((row) => ({ key: row.key, weightBp: row.weightBp }));
 
 /**
- * Replaces a user's targets for one dimension, in one transaction.
- *
- * Wholesale, never added to: a set is a statement about the whole portfolio, and
- * inserting into an existing one leaves a set summing to something other than
- * 100 % -- which the check would refuse on the next read, after the write had
- * already happened. Returns the error rather than throwing it, so the route can
- * render the total it actually sums to.
+ * Replaces a dimension's targets in one transaction. Wholesale, never added to: a
+ * set is a statement about the whole portfolio, and inserting into one leaves it
+ * summing to something other than 100 %, refused only on the next read.
  */
 export const saveTargets = (
   db: Db,
@@ -247,14 +243,10 @@ export const rebalancePlanFor = (
   const bySlice = holdingsBySlice(db, userId, dimension, on);
 
   /**
-   * What a slice-level sale would realise.
-   *
-   * A slice names no instrument, so the sale is attributed across what the slice
-   * holds, largest first, and each part realises its share of that holding's
-   * unrealised gain -- selling half a holding realises half of what it gained.
-   * Unknown, rather than zero, as soon as one holding's cost basis is unknown:
-   * a partial total presented as a whole one is the error this view exists to
-   * avoid.
+   * What a slice-level sale would realise. A slice names no instrument, so the
+   * sale spreads across what it holds, largest first, each part realising its
+   * share of that holding's gain. Unknown rather than zero as soon as one cost
+   * basis is: a partial total shown as a whole one is what this view avoids.
    */
   const gainOnSale = (key: string, amountEur: Money): Money | null => {
     const holdings = bySlice.get(key);

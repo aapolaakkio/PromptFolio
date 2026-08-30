@@ -3,31 +3,19 @@ import { z } from "zod";
 import { ACCOUNT_TYPES, type AccountType } from "./account-type.ts";
 
 /**
- * Pure types/schemas/logic for the imports screen, split out of
- * `imports.tsx` so they can be tested without rendering (this project has
- * no DOM test harness, by deliberate choice -- see `holdings-sort.ts` for
- * the same split applied to the holdings table, and `charts/palette.ts` for
- * chart colouring). `imports.test.ts` imports only this module;
- * `imports.tsx` (and `UnknownInstrumentForm.tsx`, which it renders) never
- * get loaded by a test, so neither stays out of Bun's per-file coverage
- * gate (vitest.config.ts's line threshold) instead of failing it
- * for JSX a unit test cannot exercise.
+ * The imports screen's logic, split out of the page so it can be tested without
+ * rendering -- this project has no DOM test harness, by choice.
  */
 
 /**
- * Matches `POST /api/imports/preview`/`commit` and the OP-paste
- * equivalents' shared response shape (`{ broker, filename, sha256,
- * ...Draft }`, Task 11's `Draft`/`DraftTxn`/`DraftProblem`, Task 20's
- * `POST /api/imports/op-paste/*`). `txns[].amount`/`quantity` are raw
- * minor-unit integers (money at scale 2, quantity at scale 6 -- see
- * core/money.ts), never decimal strings like `holdings.tsx`'s `Holding` --
- * the imports screen never does money arithmetic, only the one division
- * `minorToEur` does for display. `problems[].rawLine` is present only for a
- * structurally broken line that never parsed into fields at all; a
- * consumer renders it instead of `raw`'s entries when present (never both --
- * see map.ts's `DraftProblem` comment). `unknownIsins[].isin` is `null` for
- * a broker whose export carries no ISIN at all (OP's web-paste view) --
- * such a row is identified by `name` alone, never an invented ISIN.
+ * What a preview or a commit answers with.
+ *
+ * Amounts and quantities are raw minor-unit integers rather than decimal strings:
+ * this screen does no money arithmetic beyond the one division for display.
+ *
+ * `rawLine` is present only for a line that never parsed into fields, and a
+ * consumer renders it instead of the fields, never both. A null ISIN means a
+ * broker whose export carries none -- identified by name, never an invented one.
  */
 export type DraftResponse = {
   broker: string;
@@ -105,14 +93,9 @@ export type Account = {
 };
 
 /**
- * The types this schema accepts, taken from the one list that defines them
- * rather than written out again.
- *
- * They were written out again, and drifted: adding a credit card to the app
- * left this enum listing the six older types, so `/api/accounts` returned an
- * account zod then rejected -- and every screen that reads accounts, which is
- * both Käteinen and Täsmäytys, failed at once rather than showing one odd row.
- * A duplicated list of valid values is a list that will disagree eventually.
+ * Taken from the one list that defines them rather than written out again. They
+ * were written out again and drifted: a new account type left this enum listing
+ * the older six, and every screen reading accounts failed at once.
  */
 // SAFETY: `z.enum` needs a non-empty tuple, and `ACCOUNT_TYPES` is a literal
 // array with entries for both kinds -- it cannot be empty without the app

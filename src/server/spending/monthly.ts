@@ -14,14 +14,10 @@ export type MonthlyFlow = {
 };
 
 /**
- * Income and spending per calendar month.
- *
- * Transfers between the owner's own accounts are left out of both sides: money
- * moved from a current account to a brokerage one is neither earned nor spent,
- * and counting it would make a month look both richer and poorer than it was.
- *
- * Months with no movement at all are still returned, so a chart shows the gap
- * rather than closing it and implying continuous activity.
+ * Income and spending per month. Transfers between the owner's own accounts are
+ * out of both sides -- neither earned nor spent, and counting them makes a month
+ * look richer and poorer at once. Empty months are still returned, so a chart
+ * shows the gap rather than closing it.
  */
 /**
  * How many months one report may cover: fifty years, which is longer than any
@@ -30,16 +26,10 @@ export type MonthlyFlow = {
 const MAX_MONTHS = 600;
 
 /**
- * The months to report, newest last, capped.
- *
- * A date field being typed into passes through partial values -- "0006-08-06"
- * on the way to "2006-08-06" -- and obeying that literally asks for twenty-four
- * thousand months of nothing: unreadable, unplottable, and every label
- * repeating. The cap keeps the end of the range, which is the part anyone
- * typing a date is looking at.
- *
- * Months with no movement are still returned inside the range, so a chart shows
- * the gap rather than closing it and implying continuous activity.
+ * The months to report, newest last and capped. A date field being typed into
+ * passes through partial values -- "0006-08-06" on the way to "2006-08-06" --
+ * and obeying one asks for twenty-four thousand empty months. The cap keeps the
+ * end of the range, which is what anyone typing a date is looking at.
  */
 const monthsToReport = (from: IsoDate, to: IsoDate): string[] => {
   const months: string[] = [];
@@ -110,18 +100,11 @@ export type MonthlyCategories = {
 };
 
 /**
- * Spending per category per month.
+ * Spending per category per month -- whether a category is creeping upward,
+ * which one period cannot say however well it is drawn.
  *
- * The Sankey shows one period's shape; this shows whether a category is
- * creeping upward, which a single period cannot say however well it is drawn.
- *
- * Categories are ordered by their total across the whole period rather than by
- * this month's, so a category keeps its colour as the months change -- a
- * palette that reshuffles when the reader scrolls is a palette that has to be
- * re-learned each time.
- *
- * The same exclusions as `monthlyFlows`: internal transfers, opening balances
- * and anything the rules class as a transfer are not spending.
+ * Ordered by the whole period's total rather than this month's, so a category
+ * keeps its colour as the months change. Same exclusions as the flow view.
  */
 export const monthlyByCategory = (args: {
   txns: readonly Txn[];
