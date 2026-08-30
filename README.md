@@ -21,16 +21,23 @@ holds everything. No external database, no message queue, nothing else to run.
 | **Omistukset** | Every holding: quantity, cost basis, market value, gain, weight, price staleness             |
 | **Täsmäytys**  | A broker's holdings statement compared against what the ledger derives for the same day      |
 | **Käteinen**   | Bank accounts, balances per currency, statement import, manual entries                       |
-| **Kulutus**    | Spending by category or payee, a Sankey of the year's money, monthly income against spending |
+| **Kulutus**    | Spending by category or payee, a Sankey of the year's money, monthly income against spending, category by month, and every transaction with the class it was given |
 | **Verot**      | Per tax year: realised gains both permitted ways, dividends, OST withdrawals                  |
 | **Tasapaino**  | Target allocation, drift against it, where to put new money, and fees per year                |
 | **Avustaja**   | A chat assistant that answers from the same figures the screens show                         |
 | **Tuonnit**    | Import history, with undo                                                                    |
 
+Every chart is interactive: hover for a crosshair and exact figures, drag across the value chart to
+zoom to any period, and pick a preset window. Colours come from one palette checked for
+colour-vision separation and contrast against both the light and dark background, so a series keeps
+its colour when a filter changes which series are shown.
+
 Two kinds of account, kept apart deliberately:
 
 - **Brokerage** — arvo-osuustili, osakesäästötili. Holds instruments; drives the return figures.
-- **Bank** — current, savings, fixed-term deposit. Holds cash; never touches the return figures.
+- **Bank** — current, savings, fixed-term deposit, credit card. Holds cash; never touches the
+  return figures. A credit card is the exception that holds none: its balance is what you owe, so
+  it is excluded from cash and from reconciliation.
 
 ## Requirements
 
@@ -141,6 +148,14 @@ Both formats identify rows by the bank's archive id, so re-importing an overlapp
 what is already stored. Importing the same period in _both_ formats is useful: the PDF fills in
 payees the CSV left blank, without duplicating anything.
 
+**Credit cards.** OP's card log is a third format, detected by its own header, and it changes what
+a bill means. Without it, the lump sum leaving your current account each month is all the ledger
+knows, and it lands in *Lainat ja luotot* — a large line that says nothing about what you bought.
+Import the card log and the bill is recognised as what it is: money moved to the card, cancelled
+against the card's own settlement row, with the individual purchases taking its place in the
+categories. The card's own charges — interest, an account fee — are ordinary spending, and a refund
+offsets the category it belongs to.
+
 For an account no bank exports (or one whose statements you don't have), enter deposits,
 withdrawals and interest by hand on **Käteinen**.
 
@@ -190,7 +205,9 @@ get wrong:
   fund's Thursday NAV is too. Only a price older than that shows _vanha_, with its date. A gap in
   a price feed with bars on both sides is read as a market holiday rather than a missing price.
 - **Spending totals exclude what is not spending**: opening balances, investment funding, internal
-  transfers.
+  transfers, and the lump sum that settles a credit card. One definition serves every view — the
+  category list, the payee list, the Sankey, the monthly totals and the assistant's tools — because
+  two views of the same month disagreeing is worse than either being wrong alone.
 
 ## The assistant
 
@@ -378,7 +395,8 @@ translates between stored integers and the domain's `Money`/`Quantity`/`FxRate`.
 - **OP's securities export records no cash**, so those accounts show no balance and their
   money-weighted return is measured from purchases instead of deposits.
 - **A transfer whose other half is not imported** counts as income or spending. Importing both
-  accounts fixes it.
+  accounts fixes it. A credit card bill is one of these: until the card's own log is imported, the
+  bill is the only record of that money, so it is reported as spending rather than hidden.
 - **Spending classification is substring rules**, not understanding. Unmatched payees land in _Muu_
   and are always reported as a share, so a total is never quietly missing a third of the money.
 - **A sale's realised gain is a gain, not a tax.** What tax it attracts depends on your other
