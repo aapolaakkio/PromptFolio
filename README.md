@@ -215,10 +215,18 @@ Ask questions in Finnish on **Avustaja**. It reads through the same functions th
 chat and dashboard cannot disagree. It is read-only: no tool writes to the ledger.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
-uncategorised spending, the tax year, drift against target, and an exact decimal calculator. Every
-result carries the date it was computed for and whether any price behind it is stale. The assistant
-reports the gap to a target but never recommends a trade, and where it mentions a sale it reports
-the gain that sale would realise.
+uncategorised spending, the money flow of a period, spending month by month, a single
+transaction's classification, the tax year, drift against target, where to put new money, and an
+exact decimal calculator. Every result carries the date it was computed for and whether any price
+behind it is stale. The assistant reports the gap to a target but never recommends a trade, and
+where it mentions a sale it reports the gain that sale would realise.
+
+Two of those are there to stop it doing arithmetic it would get wrong: **spending month by month**,
+because the alternative was twelve calls and a sum in prose, and **a transaction's classification**,
+which answers "why isn't my rent in the figures?" with the reason the row carries — an internal
+transfer, investment funding, a card settlement — rather than a guess. **Where to put new money**
+allocates a deposit you name against your target; it suggests buys only, never a sale, which keeps
+it inside the rule above.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
 monthly rates) but is told to use the calculator rather than mental arithmetic, and to say when a

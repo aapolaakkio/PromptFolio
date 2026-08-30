@@ -11,6 +11,7 @@ import { EUR } from "../../core/money";
 let auth: (typeof import("../auth"))["auth"];
 let accountRoutes: (typeof import("../api/accounts"))["accountRoutes"];
 let instrumentRoutes: (typeof import("../api/instruments"))["instrumentRoutes"];
+let rebalanceRoutes: (typeof import("../api/rebalance"))["rebalanceRoutes"];
 let buildChatTools: (typeof import("./tools"))["buildChatTools"];
 let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
 let transactions: (typeof import("../db/schema"))["transactions"];
@@ -20,6 +21,7 @@ beforeAll(async () => {
   auth = (await import("../auth")).auth;
   accountRoutes = (await import("../api/accounts")).accountRoutes;
   instrumentRoutes = (await import("../api/instruments")).instrumentRoutes;
+  rebalanceRoutes = (await import("../api/rebalance")).rebalanceRoutes;
   buildChatTools = (await import("./tools")).buildChatTools;
   db = (await import("../db")).getDb().db;
   transactions = (await import("../db/schema")).transactions;
@@ -163,6 +165,27 @@ const spend = (accountId: number, note: string, minor: number, date: string): vo
     .run();
 };
 
+/** Money arriving on a bank account, with the text a statement would carry. */
+const receive = (accountId: number, note: string, minor: number, date: string): void => {
+  db.insert(transactions)
+    .values({
+      accountId,
+      instrumentId: null,
+      type: "DEPOSIT",
+      tradeDate: date,
+      quantity: 0,
+      unitPrice: null,
+      amount: minor,
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: crypto.randomUUID(),
+      note,
+    })
+    .run();
+};
+
 const price = (instrumentId: number, date: string, minor: number): void => {
   db.insert(prices)
     .values({
@@ -189,6 +212,7 @@ const seed = async (): Promise<{
   instrumentId: number;
   accountId: number;
   bankAccountId: number;
+  cookie: string;
 }> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
   const accountId = await createAccount(cookie);
@@ -198,7 +222,7 @@ const seed = async (): Promise<{
   buy(accountId, instrumentId, "2026-01-02");
   price(instrumentId, "2026-01-02", 1000);
   price(instrumentId, "2026-06-01", 1200);
-  return { tools: buildChatTools(db, userId), instrumentId, accountId, bankAccountId };
+  return { tools: buildChatTools(db, userId), instrumentId, accountId, bankAccountId, cookie };
 };
 
 describe("get_holdings", () => {
@@ -565,5 +589,192 @@ describe("get_drift", () => {
     // The two are different things and the tool must not let an answer add
     // them together, so each year carries them as separate fields.
     expect(result.fees).toEqual([]);
+  });
+});
+
+describe("get_cash_flow", () => {
+  test("splits a period into what came in, what went out, and what was left", async () => {
+    const { tools, bankAccountId } = await seed();
+    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-01");
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-03-02");
+
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
+    // tools-money.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "get_cash_flow").run({
+      from: "2026-03-01",
+      to: "2026-03-31",
+    }) as {
+      incomeEur: string;
+      spendingEur: string;
+      leftoverEur: string;
+      spentMoreThanEarned: boolean;
+      byCategory: readonly { label: string; totalEur: string }[];
+    };
+
+    expect(result.incomeEur).toBe("3000.00");
+    expect(result.spendingEur).toBe("200.00");
+    expect(result.leftoverEur).toBe("2800.00");
+    expect(result.spentMoreThanEarned).toBe(false);
+    expect(result.byCategory[0]?.label).toBe("Ruokakauppa");
+  });
+
+  test("says so when the period spent more than it earned", async () => {
+    const { tools, bankAccountId } = await seed();
+    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 10_000, "2026-04-01");
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -30_000, "2026-04-02");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_cash_flow").run({
+      from: "2026-04-01",
+      to: "2026-04-30",
+    }) as { leftoverEur: string; spentMoreThanEarned: boolean };
+
+    // Reported as a positive figure with a flag, never as a negative "left
+    // over", which reads as money in the account.
+    expect(result.leftoverEur).toBe("200.00");
+    expect(result.spentMoreThanEarned).toBe(true);
+  });
+});
+
+describe("get_spending_trend", () => {
+  test("gives a month per row so a trend can be seen without twelve calls", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-02-10");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_spending_trend").run({
+      from: "2026-01-01",
+      to: "2026-02-28",
+    }) as { months: readonly { month: string; expensesEur: string }[] };
+
+    expect(result.months.map((month) => month.month)).toEqual(["2026-01", "2026-02"]);
+    // Expenses are reported as a positive magnitude, as `monthlyFlows` states.
+    expect(result.months[0]?.expensesEur).toBe("100.00");
+    expect(result.months[1]?.expensesEur).toBe("200.00");
+  });
+
+  test("follows one category when asked for one", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
+    spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -5_000, "2026-01-11");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_spending_trend").run({
+      from: "2026-01-01",
+      to: "2026-01-31",
+      category: "ruoka",
+    }) as { category: string; label: string; months: readonly { totalEur: string }[] };
+
+    expect(result.label).toBe("Ruokakauppa");
+    expect(result.months[0]?.totalEur).toBe("100.00");
+  });
+
+  test("refuses a category that does not exist, naming the ones that do", async () => {
+    const { tools } = await seed();
+
+    expect(() =>
+      toolNamed(tools, "get_spending_trend").schema.parse({ category: "kryptovaluutta" }),
+    ).toThrow();
+  });
+});
+
+describe("get_deposit_plan", () => {
+  test("says where new money goes and never mentions selling", async () => {
+    const { tools } = await seed();
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_deposit_plan").run({ amountEur: "1000.00" }) as {
+      depositEur: string;
+      allocations: readonly { label: string; amountEur: string }[];
+      note: string;
+    };
+
+    expect(result.depositEur).toBe("1000.00");
+    // No targets are set in the seed, so there is nothing to allocate toward --
+    // and an empty plan must read as "no target set", not as "put in nothing".
+    expect(result.allocations).toEqual([]);
+    expect(result.note).toContain("tavoite");
+  });
+
+  test("splits the money toward the target once one is set", async () => {
+    const { tools, cookie } = await seed();
+    const saved = await rebalanceRoutes["/api/targets"].PUT(
+      new Request("http://x/api/targets", {
+        method: "PUT",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          dimension: "kind",
+          targets: [{ key: "fund", weightPercent: "100.00" }],
+        }),
+      }),
+    );
+    expect(saved.status).toBe(200);
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_deposit_plan").run({ amountEur: "500.00" }) as {
+      allocations: readonly { label: string; amountEur: string }[];
+      note: string;
+    };
+
+    // One slice, targeted at everything, so the whole deposit goes there.
+    expect(result.allocations).toHaveLength(1);
+    expect(result.allocations[0]?.amountEur).toBe("500.00");
+    // The rule the whole tool exists inside: it may say where to buy, never
+    // what to sell.
+    expect(result.note).toContain("Et anna sijoitusneuvoja");
+  });
+
+  test("rejects an amount that is not money", async () => {
+    const { tools } = await seed();
+    const plan = toolNamed(tools, "get_deposit_plan");
+
+    expect(() => plan.schema.parse({ amountEur: "tuhat euroa" })).toThrow();
+    expect(() => plan.schema.parse({ amountEur: "-500.00" })).toThrow();
+  });
+});
+
+describe("get_transaction_class", () => {
+  test("shows the class a row was given and why it was left out", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
+    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-05-02");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_transaction_class").run({
+      from: "2026-05-01",
+      to: "2026-05-31",
+    }) as {
+      transactions: readonly {
+        text: string;
+        categoryLabel: string;
+        counted: boolean;
+        excludedReason: string | null;
+      }[];
+    };
+
+    const groceries = result.transactions.find((txn) => txn.text.includes("K-MARKET"));
+    expect(groceries?.categoryLabel).toBe("Ruokakauppa");
+    expect(groceries?.counted).toBe(true);
+
+    const salary = result.transactions.find((txn) => txn.text.includes("PALKKA"));
+    expect(salary?.counted).toBe(false);
+    expect(salary?.excludedReason).toBe("income");
+  });
+
+  test("searches the text, so one payee can be asked about by name", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
+    spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3_120, "2026-05-02");
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "get_transaction_class").run({
+      from: "2026-05-01",
+      to: "2026-05-31",
+      search: "lidl",
+    }) as { count: number; transactions: readonly { text: string }[] };
+
+    expect(result.count).toBe(1);
+    expect(result.transactions[0]?.text).toContain("LIDL");
   });
 });

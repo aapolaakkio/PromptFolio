@@ -401,3 +401,16 @@ const SEED: readonly Rule[] = [
 export const SEED_RULES: readonly { pattern: string; category: Category }[] = SEED.flatMap((rule) =>
   rule.patterns.map((pattern) => ({ pattern, category: rule.category })),
 );
+
+/**
+ * The Finnish name for a category key.
+ *
+ * Written once because three call sites needed the same type assertion and the
+ * same fallback: the key always comes from `categoriseWith`, which returns a
+ * declared `Category`, and the fallback covers a rule stored before a category
+ * was renamed -- showing the raw key rather than nothing at all.
+ */
+export const labelForCategory = (category: string): string =>
+  // SAFETY: `categoriseWith` only ever returns a `Category`, which is exactly
+  // the set of keys `CATEGORY_LABELS` is declared over.
+  CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category;

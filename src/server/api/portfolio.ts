@@ -9,7 +9,7 @@ import {
 } from "../../core/ledger";
 import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money";
 import { investedSeries, twr, valueSeries, xirr } from "../../core/returns";
-import type { IsoDate, Txn } from "../../core/types";
+import type { IsoDate } from "../../core/types";
 import { requireUser } from "../auth-guard";
 import { getDb } from "../db";
 import { accounts } from "../db/schema";
@@ -23,8 +23,8 @@ import {
   valueCash,
 } from "../../core/cash";
 import { cashFlowFor } from "../spending/cashflow";
-import { cashlessAccountIds, investmentPaymentIds, notSpendingIds } from "../spending/internal";
-import { CATEGORY_LABELS } from "../spending/categories";
+import { cashlessAccountIds, notSpendingIds } from "../spending/internal";
+import { CATEGORY_LABELS, labelForCategory } from "../spending/categories";
 import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
 import { classifiedTransactions } from "../spending/transactions";
 import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules";
@@ -140,12 +140,7 @@ export const portfolioRoutes = {
         // one is creeping upward -- which a single period's Sankey cannot say.
         byCategory: monthlyByCategory({
           ...shared,
-          // SAFETY: the key comes from `categoriseWith`, which only ever
-          // returns a `Category` -- exactly the keys `CATEGORY_LABELS` is
-          // declared over. The fallback covers a rule stored before a category
-          // was renamed, which shows the raw key rather than nothing.
-          labelFor: (category) =>
-            CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category,
+          labelFor: labelForCategory,
         }),
       });
     }),
@@ -168,10 +163,7 @@ export const portfolioRoutes = {
           rules: rulesFor(db, userId),
           bankAccountIds: bank,
           cashlessAccountIds: cashlessAccountIds(txns, bank),
-          // SAFETY: as in the monthly route -- the key comes from
-          // `categoriseWith`, which only returns a declared `Category`.
-          labelFor: (category) =>
-            CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category,
+          labelFor: labelForCategory,
           from,
           to,
         }),
