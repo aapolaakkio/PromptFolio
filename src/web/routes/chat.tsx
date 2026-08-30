@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { apiDelete, apiGet } from "../lib/api";
@@ -15,6 +15,13 @@ const MessagesSchema = z.object({
 
 type Turn = { readonly role: "user" | "assistant"; readonly content: string };
 
+/**
+ * What each tool is called in the "Haettu:" line.
+ *
+ * Complete on purpose: a name with no entry here was shown to the reader raw,
+ * as `get_uncategorised_spending`, which is the internal name of a thing they
+ * never asked about in those words.
+ */
 const TOOL_LABELS = new Map<string, string>([
   ["get_holdings", "omistukset"],
   ["get_allocation", "jakauma"],
@@ -22,13 +29,27 @@ const TOOL_LABELS = new Map<string, string>([
   ["get_value_series", "arvon kehitys"],
   ["get_transactions", "tapahtumat"],
   ["get_instruments", "arvopaperit"],
+  ["get_cash", "käteinen"],
+  ["get_spending", "kulutus"],
+  ["get_uncategorised_spending", "luokittelemattomat"],
+  ["get_cash_flow", "rahavirta"],
+  ["get_spending_trend", "kulutuksen kehitys"],
+  ["get_transaction_class", "tapahtuman luokka"],
+  ["get_tax_year", "verovuosi"],
+  ["get_drift", "tavoite-ero"],
+  ["get_deposit_plan", "uuden rahan jako"],
+  ["calculate", "laskin"],
+  ["save_spending_rules", "sääntöjen tallennus"],
+  ["update_spending_rule", "säännön korjaus"],
+  ["remove_spending_rule", "säännön poisto"],
 ]);
 
 /**
  * Asks questions about the portfolio. The assistant reads the same figures the
- * rest of the app shows -- it has no way to write anything, and no arithmetic of
- * its own: every number it states came back from one of the tools named under
- * "Haettu:". That is what makes the answers checkable against the other screens.
+ * rest of the app shows and does no arithmetic of its own: every number it
+ * states came back from one of the tools named under "Haettu:". That is what
+ * makes the answers checkable against the other screens. The only thing it can
+ * write is a classification rule, which shows up on Kulutus marked `ai`.
  */
 export const ChatPage = () => {
   const queryClient = useQueryClient();
@@ -46,11 +67,24 @@ export const ChatPage = () => {
 
   const history = useQuery({
     queryKey: ["conversation", conversationId],
-    enabled: conversationId !== null,
+    // Not while a turn is running. The server stores the question before the
+    // model starts, and the id of a new conversation arrives mid-stream -- so a
+    // fetch here would return that stored question while `pending` is still
+    // showing its own optimistic copy, and the first message of every new
+    // conversation appeared twice until the turn ended.
+    enabled: conversationId !== null && !busy,
     queryFn: () => apiGet(`/api/chat/conversations/${conversationId}`, MessagesSchema),
   });
 
   const turns: Turn[] = [...(history.data?.messages ?? []), ...pending];
+
+  // A long answer used to push the question box off the bottom of the page. The
+  // transcript scrolls instead, and follows the newest turn -- otherwise a
+  // reply arriving below the fold reads as nothing having happened.
+  const transcript = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    transcript.current?.scrollTo({ top: transcript.current.scrollHeight });
+  }, [turns.length, busy]);
 
   const send = async () => {
     const message = draft.trim();
@@ -97,33 +131,41 @@ export const ChatPage = () => {
 
   return (
     <section className="grid gap-6 md:grid-cols-[14rem_1fr]">
-      <aside className="grid content-start gap-2">
+      <aside className="grid content-start gap-3">
         <button type="button" onClick={startNew}>
           Uusi keskustelu
         </button>
-        {(conversations.data?.conversations ?? []).map((conversation) => (
-          <div key={conversation.id} className="flex items-center gap-2">
-            <button
-              type="button"
-              className={conversation.id === conversationId ? "font-semibold" : "text-muted"}
-              onClick={() => {
-                setConversationId(conversation.id);
-                setPending([]);
-                setTools([]);
-              }}
-            >
-              {conversation.title}
-            </button>
-            <button
-              type="button"
-              className="text-muted"
-              aria-label={`Poista keskustelu ${conversation.title}`}
-              onClick={() => void remove(conversation.id)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        <ul className="grid max-h-[60vh] content-start gap-0.5 overflow-y-auto">
+          {(conversations.data?.conversations ?? []).map((conversation) => (
+            <li key={conversation.id} className="group flex min-w-0 items-center">
+              <button
+                type="button"
+                aria-current={conversation.id === conversationId ? "true" : undefined}
+                className={
+                  conversation.id === conversationId
+                    ? "chat-row chat-row-current"
+                    : "chat-row text-muted"
+                }
+                title={conversation.title}
+                onClick={() => {
+                  setConversationId(conversation.id);
+                  setPending([]);
+                  setTools([]);
+                }}
+              >
+                {conversation.title}
+              </button>
+              <button
+                type="button"
+                className="chat-remove"
+                aria-label={`Poista keskustelu ${conversation.title}`}
+                onClick={() => void remove(conversation.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
       </aside>
 
       <div className="grid content-start gap-4">
@@ -134,14 +176,20 @@ export const ChatPage = () => {
           </p>
         </div>
 
-        <ol className="grid gap-3">
+        <ol ref={transcript} className="grid max-h-[55vh] content-start gap-3 overflow-y-auto pr-1">
+          {turns.length === 0 && (
+            <li className="text-muted text-sm">
+              Kysy esimerkiksi mihin rahat kuluivat viime kuussa, tai pyydä luokittelemaan
+              tuntemattomat maksunsaajat.
+            </li>
+          )}
           {turns.map((turn, index) => (
             <li
               key={`${turn.role}-${index}`}
               className={
                 turn.role === "user"
-                  ? "justify-self-end rounded border border-line px-3 py-2"
-                  : "whitespace-pre-wrap rounded bg-surface px-3 py-2"
+                  ? "justify-self-end max-w-[80%] rounded border border-line px-3 py-2"
+                  : "max-w-[80%] whitespace-pre-wrap rounded bg-surface px-3 py-2"
               }
             >
               {turn.content}

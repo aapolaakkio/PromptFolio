@@ -119,3 +119,27 @@
 @utility header-button {
   @apply bg-transparent text-inherit p-0 font-medium;
 }
+
+/*
+ * One conversation in the assistant's sidebar.
+ *
+ * Undoes the base button styling: a list of twenty conversations rendered as
+ * twenty filled accent buttons, each wrapping its title over four lines, is a
+ * wall rather than a list. One line, truncated, and the accent kept for the
+ * action that starts a new one.
+ */
+@utility chat-row {
+  @apply bg-transparent text-inherit text-left w-full min-w-0 truncate
+         rounded-md px-2 py-1.5 text-sm font-normal hover:bg-surface;
+}
+
+/* The conversation being read, marked without moving anything. */
+@utility chat-row-current {
+  @apply bg-surface font-medium;
+}
+
+/* The small × beside a conversation, kept quiet until the row is reached. */
+@utility chat-remove {
+  @apply bg-transparent text-muted px-2 py-1 text-sm leading-none opacity-0
+         hover:text-ink focus-visible:opacity-100 group-hover:opacity-100;
+}
