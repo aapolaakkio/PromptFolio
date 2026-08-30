@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ACCOUNT_TYPES, type AccountType } from "./account-type";
+
 /**
  * Pure types/schemas/logic for the imports screen, split out of
  * `imports.tsx` so they can be tested without rendering (this project has
@@ -99,15 +101,30 @@ export type Account = {
   /** Whether the account holds investments or money -- fixed at creation. */
   kind: "brokerage" | "bank";
   /** null until the owner classifies it -- see routes/account-type.ts. */
-  accountType: "aot" | "ost" | "current" | "savings" | "fixed_term" | "other" | null;
+  accountType: AccountType | null;
 };
+
+/**
+ * The types this schema accepts, taken from the one list that defines them
+ * rather than written out again.
+ *
+ * They were written out again, and drifted: adding a credit card to the app
+ * left this enum listing the six older types, so `/api/accounts` returned an
+ * account zod then rejected -- and every screen that reads accounts, which is
+ * both Käteinen and Täsmäytys, failed at once rather than showing one odd row.
+ * A duplicated list of valid values is a list that will disagree eventually.
+ */
+// SAFETY: `z.enum` needs a non-empty tuple, and `ACCOUNT_TYPES` is a literal
+// array with entries for both kinds -- it cannot be empty without the app
+// having no account types at all.
+const ACCOUNT_TYPE_IDS = ACCOUNT_TYPES.map((type) => type.id) as [AccountType, ...AccountType[]];
 
 export const AccountSchema: z.ZodType<Account> = z.object({
   id: z.number(),
   name: z.string(),
   broker: z.string(),
   kind: z.enum(["brokerage", "bank"]),
-  accountType: z.enum(["aot", "ost", "current", "savings", "fixed_term", "other"]).nullable(),
+  accountType: z.enum(ACCOUNT_TYPE_IDS).nullable(),
 });
 
 export const AccountsSchema = z.array(AccountSchema);

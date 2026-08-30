@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  ACCOUNT_TYPES,
   accountTypeLabel,
   HOLDS_CASH,
   isAccountKind,
@@ -67,4 +68,24 @@ test("a credit card holds no cash, every other bank account does", () => {
   expect(HOLDS_CASH("credit")).toBe(false);
   expect(HOLDS_CASH("current")).toBe(true);
   expect(HOLDS_CASH(null)).toBe(true);
+});
+
+test("the account schema accepts every type the app can offer", async () => {
+  // These were two lists that had to agree and did not: adding a credit card
+  // left the wire schema listing the older types, so /api/accounts returned an
+  // account zod rejected -- and every screen that reads accounts failed at
+  // once, showing "no bank accounts" rather than one odd row.
+  const { AccountSchema } = await import("./imports-draft");
+
+  for (const type of ACCOUNT_TYPES) {
+    expect(() =>
+      AccountSchema.parse({
+        id: 1,
+        name: "Tili",
+        broker: "op",
+        kind: type.id === "aot" || type.id === "ost" ? "brokerage" : "bank",
+        accountType: type.id,
+      }),
+    ).not.toThrow();
+  }
 });
