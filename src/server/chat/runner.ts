@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import type { BetaMessage, BetaMessageParam } from "@anthropic-ai/sdk/resources/beta";
+import type {
+  BetaMessage,
+  BetaMessageParam,
+  BetaTextBlockParam,
+} from "@anthropic-ai/sdk/resources/beta";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
 import type { ChatTool, ToolArgs } from "./tools";
@@ -45,12 +49,49 @@ export type ChatEvent =
 export type TurnParams = {
   model: string;
   max_tokens: number;
-  system: string;
+  system: string | BetaTextBlockParam[];
   messages: BetaMessageParam[];
   tools: BetaRunnableTool<ToolArgs>[];
   /** Adaptive for a conversation; disabled for a classification, which is a lookup. */
   thinking: { type: "adaptive" } | { type: "disabled" };
 };
+
+/**
+ * Where the cache of the request's stable head ends.
+ *
+ * A turn re-sends everything: the whole system prompt, every tool's schema, and
+ * the entire conversation including each tool result already in it. Only the
+ * tail differs from the last turn, so without a breakpoint the same thousands
+ * of tokens are read, and billed, from scratch on every question and again on
+ * every step of a tool loop.
+ *
+ * The breakpoint goes on the system block because the prefix is ordered tools,
+ * then system, then messages -- marking system caches the tool schemas with it.
+ * The schemas are identical for every user, so this half of the cache is shared
+ * rather than per-household.
+ */
+const CACHE = { cache_control: { type: "ephemeral" } } as const;
+
+const cachedSystem = (): BetaTextBlockParam[] => [{ type: "text", text: SYSTEM_PROMPT, ...CACHE }];
+
+/**
+ * The conversation, with its tail marked so the next turn can reuse it.
+ *
+ * The second breakpoint, on the newest message: this turn's messages are a
+ * prefix of the next turn's, so marking the end here is what the follow-up
+ * question hits. It matters most in exactly the conversations that cost the
+ * most -- the long ones, where a dozen tool results are being carried forward.
+ */
+const cachedMessages = (
+  messages: readonly { role: "user" | "assistant"; content: string }[],
+): BetaMessageParam[] =>
+  messages.map((message, index) => ({
+    role: message.role,
+    content:
+      index === messages.length - 1
+        ? [{ type: "text" as const, text: message.content, ...CACHE }]
+        : message.content,
+  }));
 
 export type TurnOptions = { signal?: AbortSignal };
 
@@ -120,8 +161,8 @@ export async function* runTurn(
     {
       model: CHAT_MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
-      messages: messages.map((message) => ({ role: message.role, content: message.content })),
+      system: cachedSystem(),
+      messages: cachedMessages(messages),
       tools: runnable,
       thinking: { type: "adaptive" },
     },

@@ -110,9 +110,41 @@ describe("runTurn", () => {
 
     await drain(runTurn(client, [], [{ role: "user", content: "moi" }]));
 
-    expect(seen.params?.system).toBe(SYSTEM_PROMPT);
+    expect(seen.params?.system).toEqual([
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ]);
     expect(seen.params?.model).toBe("claude-sonnet-5");
     expect(seen.params?.thinking).toEqual({ type: "adaptive" });
+  });
+
+  test("marks the head and the tail of the request as cacheable", async () => {
+    const seen: Seen = { params: null };
+    const client = clientYielding([message([{ type: "text", text: "ok", citations: null }])], seen);
+
+    await drain(
+      runTurn(
+        client,
+        [],
+        [
+          { role: "user", content: "eka" },
+          { role: "assistant", content: "vastaus" },
+          { role: "user", content: "toka" },
+        ],
+      ),
+    );
+
+    // The head: system carries the breakpoint, and the prefix is ordered tools
+    // then system, so the tool schemas are cached with it.
+    expect(seen.params?.system).toEqual([
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ]);
+    // The tail: only the newest message is marked. Marking an earlier one would
+    // cache a prefix the next turn no longer ends at.
+    expect(seen.params?.messages[0]?.content).toBe("eka");
+    expect(seen.params?.messages[1]?.content).toBe("vastaus");
+    expect(seen.params?.messages[2]?.content).toEqual([
+      { type: "text", text: "toka", cache_control: { type: "ephemeral" } },
+    ]);
   });
 
   test("keeps the last text when the model speaks before and after a tool call", async () => {
