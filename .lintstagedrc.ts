@@ -7,7 +7,7 @@ const relative = (filenames: string[]): string =>
 // that caused it, and `tsc` has no useful single-file mode under `paths`.
 const typecheck = () => "tsc --noEmit";
 
-const lint = (filenames: string[]) => `oxlint --fix ${relative(filenames)}`;
+const lint = (filenames: string[]) => `oxlint --fix --fix-suggestions ${relative(filenames)}`;
 
 const format = (filenames: string[]) =>
   `oxfmt --no-error-on-unmatched-pattern ${relative(filenames)}`;

@@ -3,7 +3,6 @@ import { editAccount } from "../server/accounts.ts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiPatch } from "../lib/api.ts";
 import {
   isAccountType,
   toSelection,

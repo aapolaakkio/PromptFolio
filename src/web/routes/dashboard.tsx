@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { apiGet } from "../lib/api.ts";
 import { eur, pct, fiDate } from "../lib/format.ts";
 import { TimeSeriesChart } from "../charts/TimeSeriesChart.tsx";
 import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart.tsx";

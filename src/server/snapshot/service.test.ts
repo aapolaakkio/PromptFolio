@@ -39,7 +39,10 @@ const answer = async <T>(run: () => T | Promise<T>): Promise<Answer<T>> => {
   } catch (cause) {
     if (cause instanceof HttpError) return { status: cause.status, body: { error: cause.message } };
     if (cause instanceof ZodError) {
-      return { status: 400, body: { error: cause.issues[0]?.message ?? "Virheellinen pyyntö" } };
+      return {
+        status: 400,
+        body: { error: cause.issues[0]?.message ?? "Virheellinen pyyntö" },
+      };
     }
     throw cause;
   }
@@ -58,7 +61,11 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
     new Request("http://localhost/api/auth/sign-up/email", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Test User", email, password: "correct horse battery staple" }),
+      body: JSON.stringify({
+        name: "Test User",
+        email,
+        password: "correct horse battery staple",
+      }),
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
@@ -112,7 +119,12 @@ type SnapshotRequest = {
   accountId: number;
   asOf: string;
   source: "pdf" | "vision" | "manual";
-  rows: Array<{ instrumentId: number; quantity: string; nav?: string; marketValue?: string }>;
+  rows: Array<{
+    instrumentId: number;
+    quantity: string;
+    nav?: string;
+    marketValue?: string;
+  }>;
 };
 
 const postSnapshot = (userId: string, body: SnapshotRequest) =>
@@ -139,7 +151,7 @@ describe("POST /api/snapshots", () => {
   });
 
   test("refuses a row naming an instrument that does not exist", async () => {
-    const { userId, cookie } = await signUp(`snap-unknown-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`snap-unknown-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const response = await postSnapshot(userId, {
       accountId,
@@ -152,7 +164,7 @@ describe("POST /api/snapshots", () => {
   });
 
   test("refuses a statement with no rows at all", async () => {
-    const { userId, cookie } = await signUp(`snap-empty-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`snap-empty-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const response = await postSnapshot(userId, {
       accountId,
@@ -164,7 +176,7 @@ describe("POST /api/snapshots", () => {
   });
 
   test("stores a fractional quantity without losing precision", async () => {
-    const { userId, cookie } = await signUp(`snap-frac-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`snap-frac-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
 
@@ -172,7 +184,14 @@ describe("POST /api/snapshots", () => {
       accountId,
       asOf: "2026-06-30",
       source: "pdf",
-      rows: [{ instrumentId, quantity: "12.595200", nav: "170.64", marketValue: "2149.44" }],
+      rows: [
+        {
+          instrumentId,
+          quantity: "12.595200",
+          nav: "170.64",
+          marketValue: "2149.44",
+        },
+      ],
     });
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
@@ -187,7 +206,7 @@ describe("POST /api/snapshots", () => {
 
 describe("GET /api/snapshots/:id/reconcile", () => {
   test("reports no differences when the ledger agrees with the statement", async () => {
-    const { userId, cookie } = await signUp(`rec-agree-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rec-agree-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
     buy(accountId, instrumentId, "10000000", "2026-01-05"); // 10 units, scaled 1e6
@@ -206,7 +225,11 @@ describe("GET /api/snapshots/:id/reconcile", () => {
     // SAFETY: as above.
     const body = response.body as {
       differences: number;
-      rows: Array<{ delta: string; withinTolerance: boolean; name: string | null }>;
+      rows: Array<{
+        delta: string;
+        withinTolerance: boolean;
+        name: string | null;
+      }>;
     };
     expect(body.differences).toBe(0);
     expect(body.rows[0]!.delta).toBe("0.000000");
@@ -214,7 +237,7 @@ describe("GET /api/snapshots/:id/reconcile", () => {
   });
 
   test("reports the difference, and changes nothing in the ledger", async () => {
-    const { userId, cookie } = await signUp(`rec-diff-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rec-diff-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
     buy(accountId, instrumentId, "10000000", "2026-01-05");
@@ -232,7 +255,10 @@ describe("GET /api/snapshots/:id/reconcile", () => {
 
     const response = await reconcileOf(userId, snapshot.id);
     // SAFETY: as above.
-    const body = response.body as { differences: number; rows: Array<{ delta: string }> };
+    const body = response.body as {
+      differences: number;
+      rows: Array<{ delta: string }>;
+    };
     expect(body.differences).toBe(1);
     expect(body.rows[0]!.delta).toBe("5.000000");
     // The whole point: reconciling reports, it never writes.
@@ -322,7 +348,10 @@ describe("POST /api/snapshots/:id/adjust", () => {
 
   test("adding units writes a marked, identifiable transaction", async () => {
     const { userId, instrumentId, snapshotId } = await setup("15", "10000000");
-    const response = await adjust(userId, snapshotId, { instrumentId, costEur: "500.00" });
+    const response = await adjust(userId, snapshotId, {
+      instrumentId,
+      costEur: "500.00",
+    });
     // SAFETY: a successful adjustment returns the transaction it wrote.
     const txn = response.body as {
       type: string;
@@ -377,7 +406,12 @@ describe("POST /api/snapshots/:id/adjust", () => {
     const { instrumentId, snapshotId } = await setup("15", "10000000");
     const stranger = await signUp(`adj-stranger-${crypto.randomUUID()}@example.com`);
     expect(
-      (await adjust(stranger.userId, snapshotId, { instrumentId, costEur: "500" })).status,
+      (
+        await adjust(stranger.userId, snapshotId, {
+          instrumentId,
+          costEur: "500",
+        })
+      ).status,
     ).toBe(404);
   });
 });
@@ -418,7 +452,10 @@ describe("DELETE /api/snapshots/:id", () => {
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
     await answer(() =>
-      service.adjustSnapshotRow(userId, snapshot.id, { instrumentId, costEur: "500" }),
+      service.adjustSnapshotRow(userId, snapshot.id, {
+        instrumentId,
+        costEur: "500",
+      }),
     );
 
     const before = getDb().db.select().from(transactions).all().length;
@@ -455,7 +492,7 @@ describe("POST /api/snapshots/paste", () => {
     answer(() => service.proposeFromPaste(userId, body));
 
   test("proposes the pasted rows without storing anything", async () => {
-    const { userId, cookie } = await signUp(`paste-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`paste-${crypto.randomUUID()}@example.com`);
     const before = getDb().db.select().from(transactions).all().length;
 
     const response = await paste(userId, {
@@ -473,7 +510,7 @@ describe("POST /api/snapshots/paste", () => {
   });
 
   test("suggests an instrument matching by name", async () => {
-    const { userId, cookie } = await signUp(`paste-match-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`paste-match-${crypto.randomUUID()}@example.com`);
     const created = addInstrument(getDb().db, {
       isin: randomIsin(),
       ticker: null,
@@ -489,12 +526,14 @@ describe("POST /api/snapshots/paste", () => {
       text: [HEADER, "Paste Match Fund\tEUR\t10\t100,00"].join("\n"),
     });
     // SAFETY: as above.
-    const body = response.body as { rows: Array<{ instrumentId: number | null }> };
+    const body = response.body as {
+      rows: Array<{ instrumentId: number | null }>;
+    };
     expect(body.rows[0]!.instrumentId).toBe(instrument.id);
   });
 
   test("reports an unreadable row without losing the readable ones", async () => {
-    const { userId, cookie } = await signUp(`paste-bad-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`paste-bad-${crypto.randomUUID()}@example.com`);
     const response = await paste(userId, {
       asOf: "2026-06-30",
       text: [HEADER, "Hyvä\tEUR\t10\t100,00", "Huono\tEUR\tei-luku\t50,00"].join("\n"),
@@ -505,7 +544,7 @@ describe("POST /api/snapshots/paste", () => {
   });
 
   test("refuses a paste whose header is missing a needed column", async () => {
-    const { userId, cookie } = await signUp(`paste-hdr-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`paste-hdr-${crypto.randomUUID()}@example.com`);
     const response = await paste(userId, {
       asOf: "2026-06-30",
       text: ["Nimi\tArvo EUR", "Esimerkki\t10,00"].join("\n"),
@@ -542,7 +581,7 @@ describe("POST /api/snapshots/csv", () => {
 
   // Nordnet writes UTF-16LE; read as UTF-8 the file is a run of null bytes.
   test("reads a UTF-16 export and proposes its rows", async () => {
-    const { userId, cookie } = await signUp(`csv-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`csv-${crypto.randomUUID()}@example.com`);
     const before = getDb().db.select().from(transactions).all().length;
 
     const response = await upload(userId, utf16le(CSV));
@@ -560,7 +599,7 @@ describe("POST /api/snapshots/csv", () => {
   });
 
   test("reads a plain UTF-8 export too, since not every broker writes UTF-16", async () => {
-    const { userId, cookie } = await signUp(`csv-utf8-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`csv-utf8-${crypto.randomUUID()}@example.com`);
     const bytes = new TextEncoder().encode(CSV);
     // SAFETY: TextEncoder always allocates a plain ArrayBuffer, never a shared one.
     const response = await upload(userId, bytes.buffer as ArrayBuffer);
@@ -568,7 +607,7 @@ describe("POST /api/snapshots/csv", () => {
   });
 
   test("refuses a file whose header lacks a needed column", async () => {
-    const { userId, cookie } = await signUp(`csv-bad-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`csv-bad-${crypto.randomUUID()}@example.com`);
     const response = await upload(userId, utf16le("Nimi\tArvo EUR\nEsimerkki\t10,00"));
     expect(response.status).toBe(400);
   });

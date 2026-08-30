@@ -1,7 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { EUR } from "../core/money.ts";
-import { requireUser } from "./auth-guard.ts";
 import { currencyField } from "./currency-field.ts";
 import { getDb } from "./db/index.ts";
 import { accounts } from "./db/schema.ts";

@@ -1,16 +1,14 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
-import { addRules, removeRule, rulesFor } from "../spending/rules.ts";
+import { addRules } from "../spending/rules.ts";
 import { AllocationInput } from "../../web/server/portfolio.ts";
 import { Range } from "../../web/server/portfolio.ts";
 import { getDb } from "../db/index.ts";
 import { holdingsFor } from "../valuation.ts";
 import {
   allocationView,
-  cashFlowView,
   cashView,
   classifiedView,
-  monthlyView,
   returnsView,
   uncategorisedView,
   valueSeriesView,

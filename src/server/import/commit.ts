@@ -15,60 +15,32 @@ export type CommitResult = {
   readonly inserted: number;
   readonly skipped: number;
   /**
-   * Rows already stored that this import filled a blank field on -- today the
-   * broker's own row text. Counted apart from `skipped` because a re-import
-   * that corrected something is not the same event as one that did nothing,
-   * and the import history should not describe it as nothing.
+   * Stored rows this import filled a blank on. Counted apart from `skipped`: a
+   * re-import that corrected something is not an import that did nothing.
    */
   readonly enriched: number;
 };
 export type UndoResult = { readonly deleted: number };
 
-/**
- * The shared handle's type, taken from `getDb()` (never `openDb()` at
- * module scope -- see src/server/db/index.ts) so a caller building `args`
- * for `commitDraft`/`undoImport` from a route module lines up with the
- * type this file expects. This is a type-only reference: it never calls
- * `getDb()` itself, so importing this module has no side effect.
- */
+// Type-only, so importing this module never opens a database.
 type Db = ReturnType<typeof getDb>["db"];
 
-/**
- * The minimal query surface this file's transaction-scoped helpers
- * actually call. `Db` (the shared handle's own type, `SQLiteBunDatabase &
- * { $client: Database }`) is *not* the type `db.transaction()` hands its
- * callback -- that callback's `tx` is a `SQLiteAsyncTransaction`, which
- * extends the same base class `Db` does but has no `$client`, so `tx` is
- * not assignable to `Db` itself (confirmed by `tsc`; that mismatch is
- * exactly why the task brief reached for `tx as unknown as Db`). `tx` and
- * `Db` *do* share every query method's signature, inherited from that
- * common base, so picking only the methods actually used here --
- * `select`/`insert`/`update`/`delete` -- gives every helper a type that
- * both a real `Db` and a transaction handle satisfy structurally, with no
- * assertion anywhere in this file.
- */
+// A transaction callback's `tx` is not assignable to `Db`, but shares every
+// query method, so picking the ones used here gives a type both satisfy --
+// which is what keeps an assertion out of this file.
 type TxDb = Pick<Db, "select" | "insert" | "update" | "delete">;
 
 type TxnType = (typeof transactions.$inferInsert)["type"];
 
-/**
- * `DraftTxn.type` (Task 11) is a plain `string` -- mapRows reads it out of
- * a broker's free-text column and only the broker's own `typeMap` values
- * ever land there, so nothing upstream can guarantee it matches the
- * ledger's stricter `type` enum at the type level. Checked here, against
- * the schema's own `enumValues` (never a hand-duplicated list that could
- * drift from schema.ts), immediately before the value is trusted as
- * `TxnType`.
- */
+/** A draft's type comes out of a broker's free-text column, so it is checked
+ * against the schema's own enum values rather than a list that could drift. */
 const isTxnType = (value: string): value is TxnType =>
   transactions.type.enumValues.some((candidate) => candidate === value);
 
 /**
- * Resolves the fx rate to store for one draft row. EUR rows already carry
- * a real rate (100_000_000, i.e. 1.0) from mapRows. A non-EUR row's
- * `fxRateEur: 0` is Task 11's marker for "unresolved" -- it must never
- * reach the ledger as-is, so this either replaces it with a real rate
- * looked up on or before the row's trade date, or throws.
+ * The rate to store for one row. A non-EUR row arrives at zero, meaning
+ * unresolved, which must never reach the ledger: this replaces it with a real
+ * rate on or before the trade date, or throws.
  */
 const resolveFxRate = (tx: TxDb, row: DraftTxn): number => {
   if (row.currency === EUR || row.fxRateEur !== 0) return row.fxRateEur;
@@ -124,24 +96,13 @@ const enrichNote = (
 };
 
 /**
- * The value actually written to the `content_hash` column. For a row with
- * no external id (an OP-style export never has one), this is exactly
- * `contentHash(row)` -- Task 11's material-only hash -- since that value
- * is that row's only stable identity, and the schema's `(accountId,
- * content_hash)` unique index exists precisely to catch a re-import of it.
+ * What goes in the `content_hash` column.
  *
- * For a row that *does* carry an external id, `(accountId, externalId)`
- * is already that row's authoritative identity (rule 2's dedupe order
- * checks externalId first and never falls through to contentHash for such
- * a row). Folding the external id into what gets stored here too avoids a
- * real collision on the schema's separate `(accountId, content_hash)`
- * unique index: two genuinely different transactions that happen to share
- * every material field -- e.g. two same-day, same-amount deposits with
- * distinct broker ids, which is exactly what a real Nordnet export can
- * contain -- would otherwise fail the insert with a raw SQLite constraint
- * error, even though neither the broker nor this file's own dedupe logic
- * considers them duplicates. `contentHash` itself (Task 11, tested to
- * ignore `externalId`) is left untouched; only the stored value differs.
+ * Without an external id it is the material hash, which is the row's only stable
+ * identity. With one, the id is folded in as well: two same-day, same-amount
+ * deposits carrying distinct broker ids are genuinely different transactions,
+ * and a real Nordnet export contains them -- sharing a hash they would fail the
+ * unique index even though nothing here considers them duplicates.
  */
 const storedContentHash = (row: DraftTxn, accountId: number): string => {
   const material = contentHash({ ...row, accountId });
@@ -187,18 +148,10 @@ const insertRow = (
 };
 
 /**
- * Ensures every unresolved (non-EUR, `fxRateEur: 0`) currency in `draft` has at least a
- * chance to resolve before the real transaction opens, by attempting one on-demand ECB
- * fetch per currency still missing a rate (C1b -- see `fx.ts`'s `ensureFxRate`). Runs
- * *before* `db.transaction()` deliberately: the fetch is a network call, and drizzle's
- * `node:sqlite` transaction callback is synchronous, so an `await` cannot live inside it.
- *
- * At most one fetch per distinct currency, no matter how many rows need it: `ensureFxRate`
- * always fetches the same thing (ECB's current daily file has no date parameter), so a
- * currency already attempted this call either just got a fresh rate (further rows recheck
- * it for free inside `resolveFxRate`) or genuinely can't be resolved today (retrying it
- * per-row would just repeat the same failed network call). Rows still unresolved after this
- * runs get the informative, unchanged `resolveFxRate` refusal message.
+ * One ECB fetch per still-unresolved currency, before the transaction opens --
+ * the fetch is a network call and the transaction callback is synchronous, so an
+ * await cannot live inside it. One per currency, not per row: the daily file
+ * takes no date, so a second attempt would repeat the same call.
  */
 const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): Promise<void> => {
   const attempted = new Set<Currency>();
@@ -212,16 +165,11 @@ const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): P
 };
 
 /**
- * Commits a parsed import into the append-only ledger. Every insert (the
- * `imports` row and every `transactions` row) happens inside one SQLite
- * transaction: if any row fails -- an unresolved fx rate, an unknown
- * transaction type -- the thrown error propagates out of the
- * `db.transaction()` callback uncaught, which is what makes drizzle roll
- * the whole transaction back. Nothing in this function may catch that
- * error before it leaves the callback.
+ * Commits a parsed import into the append-only ledger.
  *
- * Async since C1b: `ensureDraftFxRates` above may need one on-demand network fetch per
- * unresolved currency before the (still fully synchronous) transaction opens.
+ * Every insert happens in one SQLite transaction, and a row that fails throws out
+ * of the callback uncaught, which is what rolls the whole thing back. Nothing
+ * here may catch that error before it leaves the callback.
  */
 export const commitDraft = async (
   db: Db,
@@ -238,11 +186,8 @@ export const commitDraft = async (
 ): Promise<CommitResult> => {
   const { draft } = args;
   if (draft.unknownIsins.length > 0) {
-    // `isin` is null for a broker whose export carries no ISIN at all
-    // (OP's web-paste view -- see brokers.ts). Falling back to `name`
-    // there is required, not cosmetic: `Array.prototype.join` renders a
-    // null entry as an empty string, so without this fallback every real
-    // OP commit refusal would read as a bare ", " with nothing named.
+    // Required, not cosmetic: `join` renders a null as an empty string, so
+    // without the name every OP refusal would read as a bare ", ".
     const label = (u: Draft["unknownIsins"][number]): string => u.isin ?? u.name;
     throw new HttpError(
       400,
@@ -279,13 +224,9 @@ export const commitDraft = async (
       else skipped++;
     }
 
-    // Written back onto the just-created row rather than known up front: `inserted`/
-    // `skipped` are the *outcome* of the insert loop above (a duplicate content hash
-    // or external id can only be detected by actually attempting each row), not
-    // something derivable from `draft` alone before it runs. `/api/imports` (the
-    // history listing) reads these back -- they cannot be recovered later from
-    // `transactions` alone once an import is undone (its rows are deleted) or for a
-    // skipped row (which was never inserted at all) -- see schema.ts's own comment.
+    // The outcome of the loop above, not derivable from the draft: a duplicate is
+    // only found by attempting the row. Stored because neither an undone import's
+    // rows nor a skipped row survives to be counted later.
     tx.update(imports)
       .set({ insertedCount: inserted, skippedCount: skipped })
       .where(eq(imports.id, importId))
@@ -296,14 +237,10 @@ export const commitDraft = async (
 };
 
 /**
- * True when some transaction dated after `row` still needs the units this
- * import introduced -- i.e. any other transaction on the same account and
- * instrument, dated later, that does not itself belong to this import.
- * Deliberately not narrowed to only SELL/TRANSFER_OUT rows: this is the
- * one place an under-approximation (allowing an undo that turns out to be
- * unsafe) is worse than an over-approximation (refusing an undo that
- * would, in fact, have been safe) -- the ledger is append-only, so a wrong
- * undo cannot be corrected the way a merely-annoying refusal can.
+ * Whether a later transaction still needs the units this import introduced.
+ *
+ * Not narrowed to disposals on purpose: the ledger is append-only, so an undo
+ * that turns out to be unsafe cannot be corrected the way a refusal can.
  */
 const hasLaterDependent = (
   tx: TxDb,
@@ -318,12 +255,8 @@ const hasLaterDependent = (
         eq(transactions.accountId, row.accountId),
         eq(transactions.instrumentId, row.instrumentId),
         gt(transactions.tradeDate, row.tradeDate),
-        // SQLite's IS NOT is a NULL-safe inequality: `x IS NOT y` is true
-        // whenever x and y differ, including when one side is NULL --
-        // verified directly against sqlite (see task-12-report.md) and
-        // pinned down by the "no import id at all" test in
-        // commit.test.ts. That is exactly "belongs to a different
-        // import", including a manually entered row with a NULL importId.
+        // SQLite's IS NOT is NULL-safe, so this covers a manually entered row
+        // whose import id is NULL.
         sql`${transactions.importId} IS NOT ${importId}`,
       ),
     )
@@ -332,13 +265,9 @@ const hasLaterDependent = (
 };
 
 /**
- * Undoes a committed import: deletes exactly the transaction rows carrying
- * its `importId`, and only that import's own rows (the append-only ledger
- * is otherwise immutable). Refuses if any later transaction on the same
- * account/instrument might depend on the units this import introduced --
- * see `hasLaterDependent`. Scoped to `args.userId` so one user can never
- * undo another user's import, and refuses an import that has already been
- * undone.
+ * Deletes exactly the rows one import wrote, and nothing else. Refuses when a
+ * later transaction might depend on the units it introduced, when the import
+ * belongs to another user, or when it has already been undone.
  */
 export const undoImport = (db: Db, args: { userId: string; importId: number }): UndoResult => {
   const record = db

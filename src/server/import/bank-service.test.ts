@@ -7,7 +7,7 @@ import {
 } from "../accounts.ts";
 import { cashView, spendingView } from "../views/portfolio.ts";
 import { getDb } from "../db/index.ts";
-import { addRules, removeRule, rulesFor } from "../spending/rules.ts";
+import { removeRule, rulesFor } from "../spending/rules.ts";
 import { beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";

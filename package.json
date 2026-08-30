@@ -11,6 +11,7 @@
     "test:cov": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
+    "lint:fix": "oxlint --fix --fix-suggestions",
     "fmt": "oxfmt src e2e '!src/web/routeTree.gen.ts'",
     "fmt:check": "oxfmt --check src e2e '!src/web/routeTree.gen.ts'",
     "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov",

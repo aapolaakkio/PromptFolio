@@ -155,7 +155,7 @@ const labelOf = (tail: string): string => {
   for (const token of tail.trim().split(/\s+/)) {
     // A word is letters, with the dots and hyphens OP puts in "TALLETUSAUTOM."
     // and "PÄÄOMIT YLIT.KORKO". Anything with a digit is a reference.
-    if (!/^[A-ZÄÖÅ][A-ZÄÖÅ.\-]*$/.test(token)) break;
+    if (!/^[A-ZÄÖÅ][A-ZÄÖÅ.-]*$/.test(token)) break;
     words.push(token);
   }
   return words.join(" ");

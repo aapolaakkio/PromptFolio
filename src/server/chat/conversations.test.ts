@@ -26,14 +26,6 @@ beforeAll(async () => {
   setChatClient = chat._setChatClient;
 });
 
-const sessionCookieFrom = (response: Response): string => {
-  const setCookie = response.headers.getSetCookie().find((c) => c.includes("session_token"));
-  if (!setCookie) throw new Error("Response carried no session_token cookie");
-  const nameValue = setCookie.split(";")[0];
-  if (!nameValue) throw new Error("Malformed Set-Cookie header");
-  return nameValue;
-};
-
 const signUp = async (): Promise<string> => {
   const response = await auth.handler(
     new Request("http://localhost/api/auth/sign-up/email", {

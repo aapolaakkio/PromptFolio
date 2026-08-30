@@ -11,7 +11,7 @@ import {
   type AccountKind,
   type AccountType,
 } from "./account-type.ts";
-import { apiPost, ApiError } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
 
 /**
  * Closing the "a fresh install cannot create its first account without

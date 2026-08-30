@@ -15,21 +15,8 @@ import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { accountTypeLabel } from "./account-type.ts";
 import { RenameAccount } from "./RenameAccount.tsx";
 import { ImportHistory } from "./ImportHistory.tsx";
-import {
-  AccountsSchema,
-  CommitResultSchema,
-  type CommitResult,
-  DraftResponseSchema,
-  minorToEur,
-  summarise,
-  type DraftResponse,
-} from "./imports-draft.ts";
-import {
-  ImportHistorySchema,
-  undoConfirmMessage,
-  UndoResultSchema,
-  type ImportRecord,
-} from "./imports-history.ts";
+import { type CommitResult, minorToEur, summarise, type DraftResponse } from "./imports-draft.ts";
+import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 
 /** Which upload path produced the current `draft`, so resolving an unknown instrument re-previews the right one. */

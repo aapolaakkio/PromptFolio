@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
 import { ApiError } from "../lib/api.ts";
 import { adjustSnapshot } from "../server/snapshots.ts";
 import type { ReconcileRow } from "./reconcile-view.ts";
-
-const AdjustedSchema = z.object({ id: z.number() });
 
 /**
  * Turns one accepted difference into a transaction. Deliberately per row and

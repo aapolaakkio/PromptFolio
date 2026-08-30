@@ -11,17 +11,7 @@ import {
   saveTargetAllocation,
 } from "../server/rebalance.ts";
 import { eur } from "../lib/format.ts";
-import {
-  DepositSchema,
-  DriftSchema,
-  FeesSchema,
-  PlanSchema,
-  SaveResultSchema,
-  TargetsSchema,
-  targetTotal,
-  type DriftRowView,
-  type TargetView,
-} from "./rebalance-view.ts";
+import { targetTotal, type DriftRowView, type TargetView } from "./rebalance-view.ts";
 
 const DIMENSIONS = [
   { value: "kind", label: "Lajeittain" },

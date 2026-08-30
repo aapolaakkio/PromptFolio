@@ -1,6 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { z } from "zod";
 
 import { Markdown } from "../markdown/Markdown.tsx";
 import { getConversationMessages, getConversations, removeConversation } from "../server/chat.ts";

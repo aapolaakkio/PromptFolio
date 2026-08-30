@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { apiGet, apiPost, ApiError } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
 /** The four sources a price can come from, as the instrument store defines them. */

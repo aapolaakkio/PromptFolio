@@ -32,18 +32,12 @@ import { accounts, fxRates, instruments, prices, transactions } from "./db/schem
 type Db = ReturnType<typeof getDb>["db"];
 
 /**
- * Reconstructs a `Money`/`FxRate` amount from a stored row's minor-unit
- * integer and currency text. `db/schema.ts`'s `.$type<Currency>()` gives a
- * row's `currency` column a free, UNVALIDATED cast to the branded
- * `Currency` type at compile time -- a value can sit in the column without
- * ever having passed `parseCurrency` (e.g. a hand-edited row, or one
- * written by a future migration this code predates). `loadPortfolio`
- * below is the one place `core` money gets rebuilt from a database row, so
- * it is also the one place that cast is not simply trusted: both helpers
- * take the raw column as a plain `string` and run it through
- * `parseCurrency` for real, so a malformed stored code fails loudly here
- * rather than silently entering a `Money`/`FxRate` that every downstream
- * `core` computation then treats as pre-validated.
+ * Rebuilds core money from a stored row.
+ *
+ * The schema's `.$type<Currency>()` is a free, unvalidated cast: a code can sit
+ * in the column having never passed `parseCurrency`. This is the one place core
+ * money comes out of the database, so it is the one place that cast is checked
+ * for real rather than trusted onward.
  */
 const asMoney = (minor: number, currency: string): Money => ({
   minor: BigInt(minor),
@@ -121,12 +115,10 @@ export type Portfolio = {
 };
 
 /**
- * Loads every transaction the given user owns (via their accounts), every
- * instrument (shared reference data, not user-scoped -- mirrors
- * `instruments.ts`'s `/api/instruments` GET), and a `PriceLookup` closed
- * over that user's prices and FX rates. `core` never sees a database row;
- * this is the one module that translates between storage integers and
- * `core`'s `Money`/`Quantity`/`FxRate`.
+ * Every transaction the user owns, every instrument, and a price lookup.
+ *
+ * `core` never sees a database row: this is the one module that translates
+ * between storage integers and `Money`/`Quantity`/`FxRate`.
  */
 export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   const ownedAccountIds = db
@@ -163,11 +155,10 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     type: row.type,
     tradeDate: row.tradeDate,
     quantity: { scaled: BigInt(row.quantity) },
-    // `transactions.currency` is the CASH side of the row -- what the account
-    // was debited in -- while the broker prints the unit price in the security's
-    // own currency. A real Nordnet row proves they differ: 0,6043 units at
-    // 471,67 with amount -28,00, which is 285 SEK, i.e. 28 EUR. Tagging the
-    // price with the cash currency would state a SEK figure as euros.
+    // `transactions.currency` is the cash side -- what the account was debited
+    // in -- while the unit price is in the security's own currency. A real
+    // Nordnet row proves they differ, and tagging the price with the cash
+    // currency states a SEK figure as euros.
     unitPrice:
       row.unitPrice === null
         ? null
@@ -206,8 +197,8 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   const fxByCurrency = groupBy(fxRows, (row) => row.currency);
 
   const nextPriceDateAfter = (instrumentId: number, date: IsoDate): IsoDate | null =>
-    // `priceRows` is ordered by date, and `groupBy` preserves that order, so
-    // the first row past `date` is the nearest one.
+    // Ordered by date, and groupBy preserves it, so the first row past `date`
+    // is the nearest one.
     pricesByInstrument.get(instrumentId)?.find((row) => row.date > date)?.date ?? null;
 
   const priceLookup: PriceLookup = {
@@ -221,12 +212,9 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
       if (currency === EUR) return asRate(100_000_000, EUR);
       const row = latestOnOrBefore(fxByCurrency.get(currency), date);
       if (!row) return null;
-      // A rate is carried forward from the last day ECB published one, which is
-      // right across a weekend or a holiday and wrong across years. Nothing
-      // used to bound that: a rate dated 2010 converted a 2026 holding without
-      // a murmur, and because the arithmetic was sound the result looked like a
-      // real number. Beyond the bound the holding is reported unvaluable, which
-      // the caller already renders as an explained gap rather than a figure.
+      // Carrying a rate forward is right across a weekend and wrong across
+      // years: a 2010 rate converted a 2026 holding into a sound-looking wrong
+      // number. Past the bound the holding is reported unvaluable instead.
       return daysBetween(row.date, date) > MAX_FX_AGE_DAYS
         ? null
         : asRate(row.rateEur, row.currency);
@@ -286,76 +274,37 @@ export type HoldingView = {
   readonly currency: Currency;
   readonly quantity: string;
   /**
-   * `null` exactly when `costBasisError` is non-null: a SELL/TRANSFER_OUT with no
-   * matching earlier BUY (e.g. one page of a multi-page OP import pasted out of order)
-   * makes this instrument's cost basis genuinely unknown. When that happens, `valueEur`
-   * and `unrealisedEur` are nulled too rather than left as a lone price-times-quantity
-   * figure: `quantity` for this instrument is the ledger's raw signed total (see
-   * `positionsAt`), and can itself be negative in exactly this situation -- reporting a
-   * "market value" computed from a nonsensical negative holding would be the same class
-   * of wrong-but-plausible number this whole type exists to avoid. The row is still
-   * returned, with `quantity` shown as-is (that is the honest ledger fact) and
-   * `costBasisError` explaining why the money fields are missing, instead of one bad
-   * position taking down every other holding's response (see `costBasisPerInstrument`
-   * in `core/costbasis.ts`). `costEur` itself does NOT depend on whether this holding
-   * can be *valued* (see `valueEur`'s own doc just below) -- cost basis and market value
-   * are independent failure modes, and only cost basis failing here nulls this field.
+   * Null exactly when `costBasisError` is set: a disposal with no matching
+   * earlier purchase makes the cost genuinely unknown, and `quantity` can then
+   * be negative, so a market value derived from it would be nonsense. The row
+   * still comes back with the quantity as-is and the error explaining the gap,
+   * rather than one bad position taking the whole response down.
    */
   readonly costEur: string | null;
   /**
-   * `valueEur` and `unrealisedEur` are `null` together, exactly when `valuationError` is
-   * non-null: no price is known for `on`, or (for a non-EUR instrument) no fx rate is
-   * known for `on`. C1: this used to fall back to a fabricated `0,00 €` market value --
-   * with `stale` computed only from `priceDate !== on`, which can itself be `false` when
-   * a real price row exists dated exactly `on` and only the *fx rate* is missing (the
-   * real, reproduced case: a EUR-booked, SEK-quoted fund whose SEK rate was never
-   * fetched -- see `fx.ts`). That combination rendered a clean-looking, confidently
-   * wrong `0,00 €` loss with no badge at all. Follows the same null-plus-explanation
-   * pattern as `costBasisError` below rather than inventing a fourth shape (see
-   * `core/allocation.ts`'s and `core/returns.ts`'s `excludedInstrumentIds`, the other two
-   * places this same "cannot value" condition is now surfaced).
+   * Null together with `unrealisedEur`, exactly when `valuationError` is set: no
+   * price for `on`, or no fx rate for it. This used to fall back to a fabricated
+   * 0,00 EUR with no staleness badge -- a real price dated `on` and a missing
+   * rate rendered a confident, wrong loss.
    */
   readonly valueEur: string | null;
   readonly unrealisedEur: string | null;
   /**
-   * This holding's market value as a fraction of the portfolio, e.g. `0.1523` for
-   * 15.23%. A ratio, not an amount -- like `core/allocation.ts`'s `Slice.weight` and
-   * `/api/returns`'s `twr`/`mwr`, this is legitimately a `number` on the wire, never a
-   * decimal string, and it is computed here, server-side, exactly once -- never
-   * re-derived in the frontend from `valueEur` strings (spec §9.2: no money arithmetic
-   * in the UI).
+   * Share of the portfolio, e.g. `0.1523`. A ratio, so a number on the wire, and
+   * computed here rather than re-derived from strings in the UI.
    *
-   * `null` exactly when `valueEur` is `null`: a holding that cannot be valued (no
-   * price, no fx rate, or an unmatched-disposal cost basis -- see `valueEur`'s own doc)
-   * has no meaningful share of the portfolio either. `null`, not `0` -- `0` would read
-   * as "this position is worth nothing", which is a different, false claim from "this
-   * position's worth is unknown" (the same reasoning `valueEur`/`unrealisedEur`
-   * themselves already follow).
-   *
-   * The denominator is the sum of every OTHER holding's `valueEur` in this same
-   * response -- i.e. only holdings that could themselves be valued. This is a
-   * deliberate choice, not the only defensible one: summing against the full ledger
-   * (treating an unvaluable holding as contributing 0 to the total) would silently
-   * shrink every other holding's weight whenever one holding's price feed breaks, with
-   * no visible signal that the total is incomplete. Excluding it from the denominator
-   * instead keeps "weights sum to 1 across valued holdings" true and legible, and the
-   * omission is NOT silent: the excluded holding still appears in this same response
-   * with `valuationError`/`costBasisError` explaining why, exactly the precedent
-   * `core/allocation.ts`'s `allocateBy` already set for slice totals (its own
-   * `excludedInstrumentIds`, merged into `/api/allocation`'s response). A caller wanting
-   * "share of everything, valued or not" can always recompute it from `excludedInstrumentIds`
-   * (returned by `/api/allocation`) plus this array -- but that is not the default a
-   * plain holdings table should silently assume.
+   * Null, never 0, when the holding cannot be valued: "worth nothing" is a
+   * different claim from "worth unknown". The denominator counts only holdings
+   * that could themselves be valued, so weights still sum to 1 across those
+   * rather than every weight quietly shrinking when one price feed breaks.
    */
   readonly weight: number | null;
   readonly priceDate: IsoDate | null;
   /**
-   * `true` whenever the number shown must carry a staleness badge rather than read as
-   * current: the price is later than this instrument could freshly be (see
-   * `core/staleness.ts` -- a weekend has no closes, and a fund's NAV publishes a day
-   * behind), was missing entirely, or (C1) `valuationError` is set for any other reason
-   * (e.g. price present but fx rate missing) -- the date comparison alone is not a
-   * sufficient check, since a same-day price row can still leave the holding unvaluable.
+   * Whether the figure needs a staleness badge: the price is older than this
+   * instrument could freshly be, missing, or the holding is unvaluable for some
+   * other reason. The date comparison alone is not enough -- a same-day price
+   * row can still leave a holding unvaluable.
    */
   readonly stale: boolean;
   readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
@@ -363,24 +312,13 @@ export type HoldingView = {
   readonly valuationError: string | null;
 };
 
-/**
- * The same Finnish wording this project has shown for this condition since it was
- * first caught (originally as a whole-request 400 -- see git history on this file):
- * names the instrument by its user-facing ISIN/name (never the internal numeric
- * `instrumentId`), names the trade date, and tells the user what to do about it.
- * Reuses `UnmatchedDisposalError.tradeDate` rather than re-deriving it.
- */
+/** Names the instrument by ISIN and name, never the internal id, and the date. */
 const explainUnmatchedDisposal = (instrument: Instrument, tradeDate: IsoDate): string =>
   `Myyntiä ${instrument.name} (${instrument.isin}) päivältä ${tradeDate} ei voi käsitellä, ` +
   `koska instrumentille ei ole kirjattu ostotapahtumaa ennen tätä myyntiä: tuo puuttuvat ` +
   `ostotapahtumat tai poista myyntirivi.`;
 
-/**
- * Explains why a holding could not be valued -- no price for `on`, or (for a non-EUR
- * instrument) no fx rate for `on`. Follows `explainUnmatchedDisposal`'s own wording
- * convention (names the instrument by ISIN/name, names the date, Finnish, user-facing).
- * C1: this is what used to fall through to a silent, fabricated `0,00 €` instead.
- */
+/** Why a holding could not be valued: no price for `on`, or no fx rate for it. */
 const explainValuationFailure = (
   instrument: Instrument,
   on: IsoDate,
@@ -393,28 +331,20 @@ const explainValuationFailure = (
       `${instrument.name} (${instrument.isin}) markkina-arvoa ei voi laskea.`;
 
 /**
- * Current holdings, valued as of `on`. `stale` is `true` whenever the price
- * actually used is older than this instrument could freshly be (`isPriceStale`),
- * was missing entirely, or (C1) `valuationError` is set for any other reason --
- * either way the UI must show the staleness badge rather than a number that
- * looks as current, or as complete, as it is not.
+ * Current holdings, valued as of `on`.
  *
- * Cost basis is resolved per instrument (`costBasisPerInstrument`), so one
- * instrument's `UnmatchedDisposalError` marks only that row's money fields
- * unknown via `costBasisError` -- it never 400s the whole response. Rejecting the
- * sale at commit time is deliberately not done instead: the ledger is append-only
- * and the user pages OP imports in newest-first order, so a page legitimately
- * contains a sale whose purchase is on a page not yet imported, and the state is
- * correct again once every page has landed.
+ * Cost basis is resolved per instrument, so one unmatched disposal marks only
+ * that row's money fields unknown rather than refusing the whole response.
+ * Refusing the sale at import time instead would be wrong: OP pages import
+ * newest first, so a page legitimately holds a sale whose purchase has not
+ * landed yet, and the state is right again once every page has.
  */
 export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] => {
   const { txns, instruments: all, prices: lookup } = loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
   const costs = costBasisPerInstrument(txns, on);
 
-  // First pass: everything EXCEPT `weight`, which needs the total across every other
-  // row in this same result and so cannot be computed per-row in a single flatMap the
-  // way the rest of this function's fields can.
+  // Everything but `weight`, which needs the total across every other row.
   const rows = [...positionsAt(txns, on)].flatMap((entry) => {
     const [instrumentId, quantity] = entry;
     const instrument = byId.get(instrumentId);
@@ -424,9 +354,7 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
     const priceDate = lookup.priceDateOn(instrumentId, on);
     const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
 
-    // C1: no fabricated `zeroMoney(EUR)` fallback -- a holding this function cannot
-    // honestly price or convert reports `null`, with `valuationError` saying why,
-    // exactly like `costBasisError` already does for an unmatched disposal.
+    // No zero fallback: a holding this cannot price reports null and says why.
     const nativeValueEur: Money | null =
       price === null
         ? null
@@ -450,20 +378,12 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
             message: explainUnmatchedDisposal(instrument, outcome.error.tradeDate),
           }
         : null;
-    // `outcome` is only ever absent for an instrument `positionsAt` did not
-    // itself derive from `costBasisPerInstrument`'s own txn scan -- both walk
-    // the same set of instrumentId-bearing transactions, so this defaults to
-    // zero purely as a defensive fallback, matching this function's prior
-    // behaviour for that case.
+    // Both walk the same transactions, so an absent outcome is defensive only.
     const costEur = costBasisError ? null : outcome?.ok ? outcome.costEur : zeroMoney(EUR);
 
-    // The single source of truth for "can this holding's market value be trusted at
-    // all": null whenever `costBasisError` is set (see `HoldingView.costEur`'s doc --
-    // an unmatched disposal can leave `quantity` negative, so a "market value" derived
-    // from it would be nonsense) OR the price/fx lookup itself failed
-    // (`nativeValueEur === null`). `valueEur`, `unrealisedEur` and `weight` all key off
-    // this exact same value, so the three fields stay null/non-null in lockstep by
-    // construction rather than three independently-written conditions drifting apart.
+    // One source of truth for "can this value be trusted": valueEur,
+    // unrealisedEur and weight all key off it, so the three stay in lockstep
+    // rather than three separate conditions drifting apart.
     const valuedEur: Money | null = costBasisError === null ? nativeValueEur : null;
 
     return [
@@ -480,10 +400,7 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
     ];
   });
 
-  // The weight denominator: the sum of every holding that COULD be valued (see
-  // `HoldingView.weight`'s own doc for why an unvaluable holding is excluded from the
-  // total rather than counted as a 0 contribution -- the same choice
-  // `core/allocation.ts`'s `allocateBy` already made for slice totals).
+  // The denominator: every holding that could be valued -- see weight's own doc.
   const totalValuedEur = rows.reduce(
     (sum, row) => (row.valuedEur === null ? sum : addMoney(sum, row.valuedEur)),
     zeroMoney(EUR),
@@ -503,9 +420,7 @@ export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] 
         row.costEur === null || row.valuedEur === null
           ? null
           : formatMoney(subMoney(row.valuedEur, row.costEur)),
-      // `totalValuedEur.minor === 0n` guards a division that would otherwise be 0/0
-      // (every valuable holding happens to be worth exactly zero, or there are none) --
-      // an undefined ratio must not surface as a fabricated `NaN` or `0`.
+      // Guards 0/0: an undefined ratio must not surface as NaN or a fake 0.
       weight:
         row.valuedEur === null || totalValuedEur.minor === 0n
           ? null
