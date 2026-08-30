@@ -211,7 +211,10 @@ get wrong:
 
 ## The assistant
 
-Ask questions in Finnish on **Avustaja**. It reads through the same functions the screens call, so
+Ask questions in Finnish on **Avustaja**. Answers are written in Markdown and rendered as such —
+lists, tables of figures, headings and emphasis. The renderer builds React elements and never an
+HTML string, because an answer can quote a payee's own text, and that text came out of an imported
+statement rather than from this app. It reads through the same functions the screens call, so
 chat and dashboard cannot disagree. **No tool writes to the ledger** — not a transaction, not an
 account, not a price. Three tools do write, and what they write is the classification: you can ask
 it to sort the payees no rule recognises, correct a category that came out wrong, or drop a rule

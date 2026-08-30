@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { apiDelete, apiGet } from "../lib/api";
+import { Markdown } from "../markdown/Markdown";
 import { askChat } from "./chat-stream";
 
 const ConversationsSchema = z.object({
@@ -81,6 +82,12 @@ export const ChatPage = () => {
   });
 
   const turns: Turn[] = [...(history.data?.messages ?? []), ...pending];
+  // The sidebar truncates to one line, so the only place the whole title exists
+  // is here. A conversation is titled after its first question, which is
+  // usually the one thing that says what the thread is about.
+  const title =
+    conversations.data?.conversations.find((conversation) => conversation.id === conversationId)
+      ?.title ?? null;
 
   // A long answer used to push the question box off the bottom of the page. The
   // transcript scrolls instead, and follows the newest turn -- otherwise a
@@ -174,9 +181,11 @@ export const ChatPage = () => {
 
       <div className="grid content-start gap-4">
         <div>
-          <h1>Avustaja</h1>
+          <h1>{title ?? "Avustaja"}</h1>
           <p className="text-muted">
-            Vastaa vain oman salkkusi luvuilla. Ei sijoitusneuvoja eikä ennusteita.
+            {title === null
+              ? "Vastaa vain oman salkkusi luvuilla. Ei sijoitusneuvoja eikä ennusteita."
+              : "Avustaja — vastaa vain oman salkkusi luvuilla."}
           </p>
         </div>
 
@@ -192,11 +201,11 @@ export const ChatPage = () => {
               key={`${turn.role}-${index}`}
               className={
                 turn.role === "user"
-                  ? "justify-self-end max-w-[80%] rounded border border-line px-3 py-2"
-                  : "max-w-[80%] whitespace-pre-wrap rounded bg-surface px-3 py-2"
+                  ? "justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2"
+                  : "max-w-[90%] rounded bg-surface px-3 py-2"
               }
             >
-              {turn.content}
+              {turn.role === "user" ? turn.content : <Markdown text={turn.content} />}
             </li>
           ))}
         </ol>
