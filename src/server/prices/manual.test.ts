@@ -83,18 +83,6 @@ const createInstrument = async (
   return { id: created.id };
 };
 
-/**
- * The wire shape POST /api/prices accepts -- kept intentionally permissive
- * (plain strings, not `instrumentId: number`'s own narrower guarantees on
- * `date`/`price`) so the malformed-input tests below can send a bad date or
- * a non-numeric price through the same helper as every valid-input test.
- */
-type RecordPriceBody = {
-  readonly instrumentId: number;
-  readonly date: string;
-  readonly price: string;
-};
-
 const recordPrice = (body: { instrumentId: number; date: string; price: string }) =>
   recordManualPrice(getDb().db, PriceInput.parse(body));
 
@@ -118,7 +106,7 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-comma-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    const response = recordPrice({
+    recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-27",
       price: "283,60",
@@ -133,7 +121,7 @@ describe("recordManualPrice", () => {
   });
 
   test("rejects an unknown instrument id with 404", async () => {
-    const { cookie } = await signUp(`price-unknown-${crypto.randomUUID()}@example.com`);
+    await signUp(`price-unknown-${crypto.randomUUID()}@example.com`);
     expect(() =>
       recordPrice({
         instrumentId: 999_999_999,
@@ -204,7 +192,7 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-implausible-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    const first = recordPrice({
+    recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-26",
       price: "10",
@@ -251,7 +239,7 @@ describe("recordManualPrice", () => {
   test("accepts 2024-02-29, a real leap day", async () => {
     const { cookie } = await signUp(`price-leap-day-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    const response = recordPrice({
+    recordPrice({
       instrumentId: instrument.id,
       date: "2024-02-29",
       price: "10",
@@ -301,8 +289,8 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-overwrite-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    await recordPrice({ instrumentId: instrument.id, date: "2026-08-27", price: "10" });
-    const second = recordPrice({
+    recordPrice({ instrumentId: instrument.id, date: "2026-08-27", price: "10" });
+    recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-27",
       price: "20",

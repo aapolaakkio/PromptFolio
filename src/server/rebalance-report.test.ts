@@ -2,7 +2,6 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
 import { getDb } from "./db/index.ts";
 import { addInstrument } from "./instruments/store.ts";
-import { z } from "zod";
 
 import { EUR } from "../core/money.ts";
 
@@ -67,8 +66,6 @@ const putTargets = (userId: string, body: TargetsBody) =>
       weightBp: toBasisPoints(target.weightPercent),
     })),
   );
-
-const TargetsSchema = z.array(z.object({ key: z.string(), weightPercent: z.string() }));
 
 describe("PUT /api/targets", () => {
   test("refuses a set that does not sum to 100 %, naming the total", async () => {
@@ -136,8 +133,8 @@ describe("PUT /api/targets", () => {
 
 describe("the read routes", () => {
   /** A portfolio holding one instrument, so drift has something to be about. */
-  const seed = async (): Promise<{ userId: string; cookie: string }> => {
-    const { userId, cookie } = await signUp();
+  const seed = async (): Promise<{ userId: string }> => {
+    const { userId } = await signUp();
     const { prices, transactions } = await import("./db/schema.ts");
 
     const { id: accountId } = openAccountRow(
@@ -187,7 +184,7 @@ describe("the read routes", () => {
         fetchedAt: new Date("2025-06-02T00:00:00Z"),
       })
       .run();
-    return { userId, cookie };
+    return { userId };
   };
 
   test("drift reports decimal strings and names each slice", async () => {

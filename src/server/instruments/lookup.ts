@@ -6,12 +6,9 @@ import { resolveOpSlug } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
 
 /**
- * Yahoo's search, verified 2026-08-28 (fixtures/yahoo-search-*.json):
- * `FI0009000681 -> NOKIA.HE` and `IE00B4L5Y983 -> IWDA.L`, and -- checked
- * live against four real OP funds -- Finnish non-listed funds too, under
- * synthetic `0P...` symbols (`FI4000261128 -> 0P0001BP5K.F`, whose chart
- * endpoint returns daily NAV in EUR, roughly a day behind op.fi's own page).
- * An ISIN it has never seen returns an empty `quotes` array.
+ * Yahoo's search. Finnish non-listed funds resolve too, under synthetic `0P...`
+ * symbols whose chart endpoint serves daily NAV about a day behind the
+ * provider's own page. An unknown ISIN returns an empty array.
  */
 const SearchResponse = z.object({
   quotes: z.array(
@@ -37,13 +34,10 @@ const ChartMeta = z.object({
 });
 
 /**
- * Yahoo returns a placeholder quote for a venue it has no real ticker on: the
- * "symbol" is the ISIN itself with an exchange suffix, e.g. `IE0002Y8CX98.SG`
- * alongside the genuine `EUDF.DE`. It carries no information, and treating it
- * as a candidate made every ETF that has one look ambiguous and fall through
- * to the manual form -- which is what happened to IE0002Y8CX98 and
- * IE000W8WMSL2. Matched by shape rather than by suffix, since nothing says
- * Stuttgart is the only venue Yahoo does this for.
+ * A placeholder quote for a venue Yahoo has no real ticker on: the symbol is the
+ * ISIN plus an exchange suffix. It carries nothing, and counting it as a
+ * candidate made every ETF that has one look ambiguous. Matched by shape, since
+ * nothing says one venue is the only one this happens for.
  */
 const isIsinPlaceholder = (symbol: string, isin: string): boolean => symbol.startsWith(isin);
 
@@ -87,21 +81,16 @@ const NOTHING: InstrumentLookup = {
 };
 
 /**
- * Fills in what the unknown-instrument form would otherwise make the user
- * type. Resolution has two halves, because no single free source covers both:
- * OpenFIGI answers *what* the security is and *where it lists*, and Yahoo
- * answers *what its price is* under a symbol per venue.
+ * Fills in what the unknown-instrument form would otherwise make the user type.
  *
- * `currency` is the holding's own currency, taken from the broker rows this
- * instrument appeared in. It is the deciding input, not a hint: one ISIN
- * trades on several venues in different currencies (IE00B4L5Y983 is USD in
- * London and EUR in Amsterdam), so the listing whose currency matches the
- * holding is the correct source and every other listing is the wrong one.
+ * Two halves, because no free source covers both: OpenFIGI says what the security
+ * is and where it lists, Yahoo says what it costs under a symbol per venue.
  *
- * Every leg fails soft. A lookup that resolves nothing returns nulls and the
- * form falls back to being typed in by hand -- an unresolved instrument is a
- * mild inconvenience, a wrongly resolved one silently prices the wrong
- * security.
+ * `currency` decides rather than hints. One ISIN trades on several venues in
+ * different currencies, so the listing matching the holding is the only right one.
+ *
+ * Every leg fails soft: an unresolved instrument is an inconvenience, a wrongly
+ * resolved one silently prices the wrong security.
  */
 export const lookupInstrument = async (
   isin: string | null,
@@ -183,14 +172,9 @@ const viaOpFundPage = async (
 type Listing = { readonly symbol: string; readonly currency: Currency };
 
 /**
- * The listing to price this holding from: the first candidate quoted in the
- * holding's own currency, or -- when none is -- the first candidate that
- * exists at all, so the form can offer something and flag the mismatch rather
- * than showing an error and an empty form.
- *
- * Candidates are probed in order and the search stops at the first currency
- * match, so the common case (the home listing, first in the list) costs one
- * request.
+ * The first candidate quoted in the holding's currency, or the first that exists
+ * at all, so the form can offer something and flag the mismatch. Probed in order
+ * and stopped at the first match, so the home listing costs one request.
  */
 const pickListing = async (
   candidates: readonly string[],

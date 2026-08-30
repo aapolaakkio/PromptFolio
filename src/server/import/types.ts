@@ -1,12 +1,7 @@
 /**
- * `values` maps header name -> cell text, built by `Object.fromEntries`, so
- * a header name that repeats keeps only its last occurrence -- harmless for
- * a uniquely-named column, but silent data loss for one that doesn't (the
- * Nordnet transaction export has five columns named `Valuutta`). `cells`
- * is the same row's every value, positionally, in header order, so a
- * `BrokerCsvConfig.columnPositions` entry can address one specific
- * occurrence of a repeated header by its 1-based column number instead of
- * going through the lossy `values` map.
+ * `values` keys cells by header name and so keeps only the last of a repeated
+ * one -- five columns named `Valuutta` in a real export. `cells` is the same row
+ * positionally, so a config can address one occurrence by column number.
  */
 export type RawRow = {
   readonly line: number;
@@ -15,12 +10,9 @@ export type RawRow = {
 };
 
 /**
- * A structural problem on one CSV line (wrong column count, malformed
- * quoting) that stops that line from becoming a `RawRow`, without aborting
- * the rest of the file. Shape matches Task 11's `DraftProblem` (`{ line,
- * message, raw }`) so the two problem lists can be merged directly; `raw`
- * here is the unparsed line text, not a field map, since at this layer we
- * may not have been able to split the line into fields at all.
+ * A line that could not become a row, without aborting the file. Shaped like a
+ * `DraftProblem` so the two lists merge, but `raw` is the unparsed line text:
+ * at this layer the fields may never have been split at all.
  */
 export type CsvProblem = { readonly line: number; readonly message: string; readonly raw: string };
 
@@ -44,28 +36,20 @@ export type CanonicalField =
    */
   | "costBasis"
   /**
-   * The broker's own text for the row (Nordnet's `Tapahtumateksti`).
+   * The broker's own text for the row.
    *
-   * Kept because the transaction type alone cannot say what a cash movement
-   * was: a withdrawal to another of the owner's own accounts, the cash leg of
-   * a share subscription that returns days later, and money genuinely leaving
-   * all arrive as the same label and amount. The text distinguishes them --
-   * "Internal to <account>" on the first two -- and without it the equity
-   * savings account's tax figures rest on structural guesswork. Never parsed
-   * for meaning by `core`; it is evidence for a reader and for the rules that
-   * classify cash movements.
+   * The type alone cannot say what a cash movement was: a transfer to the owner's
+   * own account, a subscription's cash leg that returns days later, and money
+   * genuinely leaving all arrive as the same label and amount. Never parsed for
+   * meaning by core -- evidence for a reader and for the classification rules.
    */
   | "note"
   /**
-   * The currency the row's `unitPrice` is quoted in, when the broker states it
-   * separately from the currency the cash settled in.
+   * What the unit price is quoted in, when the broker states it separately.
    *
-   * These differ whenever a holding trades abroad: a US share bought through a
-   * Finnish broker is priced in USD and paid for in EUR. Reading one currency
-   * for both made the price EUR, and instrument resolution -- which picks a
-   * listing by the holding's own currency -- then chose a European listing of a
-   * US share, priced it from the wrong exchange, and carried no history from
-   * before that listing existed.
+   * They differ whenever a holding trades abroad. Reading one currency for both
+   * put a US share on a European listing, priced from the wrong exchange and
+   * carrying no history from before that listing existed.
    */
   | "priceCurrency"
   /**
@@ -76,47 +60,30 @@ export type CanonicalField =
   | "portfolio";
 
 /**
- * The part of a broker's configuration `mapRows` actually consumes:
- * how to find each canonical field's cell, and how to turn its raw text
- * into a `DraftTxn`. Deliberately has no opinion on *how the bytes reached
- * `RawRow[]`* -- that is `BrokerCsvConfig`'s job for a genuinely delimited
- * export (Nordnet). OP's web-paste view is not delimited at all (see
- * `op-paste.ts`), so `OpPasteConfig` carries a `FieldMapping` without ever
- * claiming an `encoding`/`delimiter`/`signature` that wouldn't mean
- * anything for it.
+ * How to find each field's cell and turn its text into a draft row. No opinion on
+ * how the bytes became rows, so a config for a format with no delimiter at all
+ * can carry this without claiming an encoding it has no use for.
  */
 export type FieldMapping = {
   readonly dateFormat: "iso" | "fi";
   /** Canonical field -> the broker's column header. Missing entries mean the broker omits it. */
   readonly columns: Partial<Record<CanonicalField, string>>;
   /**
-   * Type labels that are real, understood, and deliberately not imported,
-   * mapped to the reason shown on the review screen. These are the second
-   * leg of a two-row event whose first leg already carries the whole event:
-   * importing both would double a cash balance or a position. Distinct from
-   * a label missing from `typeMap`, which means "nobody has decided what
-   * this is yet".
+   * Labels understood and deliberately not imported, with the reason shown on the
+   * review screen: the second leg of an event whose first leg already carries it.
+   * Distinct from a label nobody has decided about yet.
    */
   readonly ignoredTypes?: Readonly<Record<string, string>>;
   /**
-   * Canonical field -> 1-based column position, for a header that repeats
-   * (Nordnet's transaction export has five columns named `Valuutta`, at
-   * positions 13, 15, 17, 19 and 28 -- only position 13 is the transaction
-   * currency). When a field has an entry here, it wins over `columns` for
-   * that field: the value is read from `RawRow.cells` by position, never
-   * from the name-keyed (and therefore last-wins) `values` map.
+   * Field to 1-based column, for a header that repeats. An entry here wins over
+   * the name lookup, which would keep only the last occurrence.
    */
   readonly columnPositions?: Partial<Record<CanonicalField, number>>;
   /** The broker's transaction labels, lowercased, mapped to our types. */
   readonly typeMap: Record<string, string>;
   /**
-   * Set when the broker's `amount` cell is an unsigned magnitude rather
-   * than a signed cash flow (OP's web-paste `Yhteensä`: a 300 EUR buy and
-   * a 300 EUR sell render identically). Maps the row's type label
-   * (lowercased, matching `typeMap`'s keys) to the sign the parsed
-   * magnitude must be given. A label with no entry here defaults to +1.
-   * Omitted entirely for a broker whose amount already carries its own
-   * sign (Nordnet's `Summa`).
+   * Set when the amount cell is an unsigned magnitude: a 300 EUR buy and a 300 EUR
+   * sell print identically, so the sign comes from the type label instead.
    */
   readonly amountSign?: Record<string, 1 | -1>;
   /**

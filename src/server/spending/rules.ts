@@ -23,12 +23,8 @@ export const isCategory = (value: string): value is Category =>
   Object.hasOwn(CATEGORY_LABELS, value);
 
 /**
- * The rules this user's spending is read through.
- *
- * Seeded from the built-in Finnish merchants the first time an account needs
- * them, and owned by the user afterwards: a rule they delete stays deleted, and
- * one they or the assistant adds sits beside the originals. Re-seeding on every
- * call would undo both.
+ * The rules this user's spending is read through. Seeded once, then theirs: a
+ * deleted rule stays deleted, and re-seeding on every call would undo that.
  */
 export const rulesFor = (db: Db, userId: string): SpendingRule[] => {
   const stored = db
@@ -61,12 +57,8 @@ export const rulesFor = (db: Db, userId: string): SpendingRule[] => {
 };
 
 /**
- * Which rule a payment falls under, or null when none does.
- *
- * The longest matching pattern wins rather than the first one stored. With rules
- * arriving from three sources in no particular order, "first match" would make
- * the answer depend on insertion order -- and a specific rule ("RAVINTOLA
- * PRISMA") must beat a general one ("PRISMA") whichever was added first.
+ * Which rule a payment falls under. The longest pattern wins, not the first
+ * stored: a specific rule must beat a general one whichever was added first.
  */
 export const matchRule = (note: string, rules: readonly SpendingRule[]): SpendingRule | null => {
   const text = note.toUpperCase();
@@ -82,12 +74,9 @@ export const categoriseWith = (note: string, rules: readonly SpendingRule[]): Ca
   matchRule(note, rules)?.category ?? "muu";
 
 /**
- * Stores rules, skipping any that name an unknown category or a pattern the
- * user already has.
- *
- * Both skips matter for the assistant's proposals: a model asked to classify
- * merchants will occasionally invent a category name, and it must not be able
- * to overwrite a rule a person wrote by proposing the same pattern.
+ * Stores rules, skipping an unknown category or a pattern the user already has.
+ * Both matter for the assistant: a model will occasionally invent a category,
+ * and it must not overwrite a person's rule by proposing the same pattern.
  */
 export type RuleAdditions = { readonly added: SpendingRule[]; readonly rejected: string[] };
 
@@ -120,13 +109,9 @@ export const addRules = (
 };
 
 /**
- * Which rules the assistant may change, and which are the owner's alone.
- *
- * A rule the person wrote themselves is a decision, not a guess: the assistant
- * may add to it and may revise its own work or a built-in seed, but it can
- * never overwrite what its owner decided. That asymmetry is the whole safety
- * property of giving it write access at all -- everything it can touch, it can
- * be asked to put back.
+ * A rule the person wrote is a decision, not a guess: the assistant may revise
+ * its own work or a seed, never that. Everything it can touch, it can be asked
+ * to put back, which is the whole safety property of its write access.
  */
 const ASSISTANT_MAY_CHANGE: ReadonlySet<string> = new Set(["seed", "ai"]);
 
@@ -152,13 +137,9 @@ const storedRule = (
 };
 
 /**
- * Points an existing rule at a different category.
- *
- * `addRules` deliberately never overwrites, which leaves a wrong rule
- * unfixable; this is the one way to correct one, and it refuses a rule whose
- * source is `user`. The corrected rule becomes `ai`, because that is now who
- * decided it -- provenance a person can see is what makes the change
- * reviewable.
+ * Points a rule at a different category -- the one way to fix a wrong one, since
+ * adding never overwrites. Refuses a rule a person wrote, and marks what it does
+ * change as the assistant's, so the change stays reviewable.
  */
 export const recategoriseRule = (
   db: Db,
@@ -206,13 +187,9 @@ export const removeRule = (db: Db, userId: string, pattern: string): boolean => 
 };
 
 /**
- * What a bank or card calls money coming back from a shop.
- *
- * A refund is not income: nobody earned it, and counting it as income both
- * inflates what came in and leaves the original purchase standing at full
- * price. It belongs against the category it came from, which is what
- * `categoriseWith` gives it -- the payee is on the row exactly as it was on the
- * purchase.
+ * What a bank calls money coming back from a shop. Not income: counting it as
+ * income inflates what came in and leaves the purchase at full price, so it goes
+ * against the category it came from.
  */
 const REFUND_LABELS = ["HYVITYS", "PALAUTUS"];
 

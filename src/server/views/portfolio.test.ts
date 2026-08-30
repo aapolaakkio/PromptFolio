@@ -14,7 +14,6 @@ import {
   valueSeriesView,
 } from "./portfolio.ts";
 import { addInstrument } from "../instruments/store.ts";
-import { z } from "zod";
 import { EUR, parseMoney } from "../../core/money.ts";
 import { xirr } from "../../core/returns.ts";
 
@@ -92,38 +91,6 @@ const createInstrument = (isin: string): number => {
 // them for these route-level tests therefore goes straight through the
 // shared getDb() handle, exactly like valuation.test.ts's lower-level seed.
 /** The two response shapes the cash tests read, parsed rather than cast. */
-const CashSchema = z.object({
-  rows: z.array(
-    z.object({
-      accountId: z.number(),
-      accountName: z.string(),
-      currency: z.string(),
-      amount: z.string(),
-      valueEur: z.string().nullable(),
-      locked: z.boolean(),
-      availableFrom: z.string().nullable(),
-    }),
-  ),
-  totalEur: z.string(),
-  availableEur: z.string(),
-  lockedEur: z.string(),
-});
-
-const AccountIdSchema = z.object({ id: z.number() });
-
-const ReturnsBankSchema = z.object({
-  valueEur: z.string(),
-  cashEur: z.string(),
-  valueWithCashEur: z.string(),
-  twr: z.number().nullable(),
-  mwr: z.number().nullable(),
-});
-
-const ReturnsCashSchema = z.object({
-  valueEur: z.string(),
-  cashEur: z.string(),
-  valueWithCashEur: z.string(),
-});
 
 const seedHolding = async (
   userId: string,
@@ -138,7 +105,6 @@ const seedHolding = async (
 ): Promise<{ accountId: number; instrumentId: number }> => {
   const { getDb } = await import("../db/index.ts");
   const { prices, transactions } = await import("../db/schema.ts");
-  const { db } = getDb();
 
   const accountId = createAccount(userId);
   const instrumentId = createInstrument(randomIsin());
@@ -196,7 +162,7 @@ const seedHolding = async (
 
 describe("GET /api/holdings", () => {
   test("returns quantity, cost, value and gain as decimal strings, and flags staleness", async () => {
-    const { userId, cookie } = await signUp(`holdings-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`holdings-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-10",
       quantity: 100_000_000,
@@ -256,12 +222,10 @@ describe("GET /api/holdings", () => {
   // "what to do about it" wording this app has shown for this condition
   // since it was first caught.
   test("degrades the affected position instead of 400ing the whole request when a sale has no matching purchase", async () => {
-    const { userId, cookie } = await signUp(
-      `holdings-unmatched-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     const accountId = createAccount(userId);
     const isin = randomIsin();
     const instrumentId = createInstrument(isin);
@@ -311,12 +275,9 @@ describe("GET /api/holdings", () => {
   });
 
   test("an unmatched sale on one instrument does not affect another instrument's holding", async () => {
-    const { userId, cookie } = await signUp(
-      `holdings-unmatched-other-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`holdings-unmatched-other-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
 
     // A perfectly ordinary holding...
     const { accountId } = await seedHolding(userId, {
@@ -364,7 +325,7 @@ describe("GET /api/holdings", () => {
 
 describe("GET /api/value-series", () => {
   test("returns a daily EUR value and staleness flag as decimal strings", async () => {
-    const { userId, cookie } = await signUp(`series-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`series-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -416,7 +377,7 @@ describe("GET /api/value-series", () => {
   });
 
   test("defaults to a long since-inception range without error", async () => {
-    const { userId, cookie } = await signUp(`series-default-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`series-default-${crypto.randomUUID()}@example.com`);
     const body = valueSeriesView(getDb().db, userId, "2015-01-01", today());
     expect(body[0]!.date).toBe("2015-01-01");
     expect(body.length).toBeGreaterThan(2000);
@@ -471,10 +432,10 @@ describe("GET /api/value-series", () => {
   // must not silently disappear from the total either, so the instrument is named
   // in excludedInstrumentIds instead.
   test("a negative (unmatched-disposal) position never makes the daily value negative", async () => {
-    const { userId, cookie } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     const accountId = createAccount(userId);
     const instrumentId = createInstrument(randomIsin());
 
@@ -510,7 +471,7 @@ describe("GET /api/value-series", () => {
 
 describe("GET /api/allocation", () => {
   test("defaults to allocation by kind and reports weight as a ratio", async () => {
-    const { userId, cookie } = await signUp(`alloc-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`alloc-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -528,7 +489,7 @@ describe("GET /api/allocation", () => {
   });
 
   test("accepts by=currency", async () => {
-    const { userId, cookie } = await signUp(`alloc-currency-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`alloc-currency-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -547,10 +508,9 @@ describe("GET /api/allocation", () => {
   // instrument must not just vanish from the response either, which would be
   // just as misleading as a fabricated negative amount.
   test("a negative (unmatched-disposal) position never contributes a negative amount, and is named in excludedInstruments instead", async () => {
-    const { userId, cookie } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
 
     // One ordinary holding...
     await seedHolding(userId, {
@@ -627,10 +587,9 @@ describe("GET /api/allocation", () => {
 
 describe("GET /api/returns", () => {
   test("reports value, TWR (a ratio) and MWR as a number, given a deposit, a withdrawal and growth", async () => {
-    const { userId, cookie } = await signUp(`returns-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`returns-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
 
     const { accountId } = await seedHolding(userId, {
       buyDate: "2024-01-01",
@@ -718,10 +677,10 @@ describe("GET /api/returns", () => {
   });
 
   test("returns mwr: null (not a fabricated rate) when contributions have no offsetting sign", async () => {
-    const { userId, cookie } = await signUp(`returns-nullmwr-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`returns-nullmwr-${crypto.randomUUID()}@example.com`);
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     const accountId = createAccount(userId);
 
     // A deposit that is never invested: valueSeries only prices tracked
@@ -753,7 +712,7 @@ describe("GET /api/returns", () => {
   });
 
   test("returns mwr: null rather than throwing for a user with no transactions at all", async () => {
-    const { userId, cookie } = await signUp(`returns-empty-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`returns-empty-${crypto.randomUUID()}@example.com`);
     const body = returnsView(getDb().db, userId, "2024-01-01", "2024-12-31");
     expect(body.mwr).toBeNull();
     expect(body.twr).toBe(0);
@@ -764,7 +723,7 @@ describe("GET /api/returns", () => {
   // fabricated rate, and the caller must be able to see *why* (see core/returns.ts's
   // `twr` doc and this route's own `excludedInstruments` comment).
   test("reports twr: null and names the holding in excludedInstruments when a second instrument has no price at all", async () => {
-    const { userId, cookie } = await signUp(`returns-excluded-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`returns-excluded-${crypto.randomUUID()}@example.com`);
     const { accountId } = await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 100_000_000,
@@ -775,7 +734,7 @@ describe("GET /api/returns", () => {
 
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     const unpricedInstrumentId = createInstrument(randomIsin());
     // A second holding bought the same day, in the same account -- but deliberately
     // never given a `prices` row at all, e.g. an S-Pankki/Danske manual fund set to
@@ -845,7 +804,7 @@ describe("GET /api/returns", () => {
   // assertion must pin the actual number -- not merely check it is non-null,
   // which the pre-fix code could also produce by coincidence.
   test("MWR over a window starting after inception accounts for the value already there", async () => {
-    const { userId, cookie } = await signUp(`returns-windowed-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`returns-windowed-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 100_000_000, // 100 units
@@ -891,7 +850,7 @@ describe("GET /api/cash", () => {
   // redirects -- there is no path into one that skips it.
 
   test("reports what a deposit left uninvested, and adds it to the portfolio value", async () => {
-    const { userId, cookie } = await signUp(`cash-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`cash-${crypto.randomUUID()}@example.com`);
     const { accountId } = await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -902,7 +861,7 @@ describe("GET /api/cash", () => {
 
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     // 500,00 in, 100,00 spent on the holding above: 400,00 left as cash.
     getDb()
       .db.insert(transactions)
@@ -937,7 +896,7 @@ describe("GET /api/cash", () => {
   });
 
   test("reports no cash for an account whose export never recorded any", async () => {
-    const { userId, cookie } = await signUp(`cash-none-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`cash-none-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -956,7 +915,7 @@ describe("GET /api/cash", () => {
 
 describe("bank accounts", () => {
   test("their movements never reach the return figures, but their cash reaches the value", async () => {
-    const { userId, cookie } = await signUp(`bank-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`bank-${crypto.randomUUID()}@example.com`);
     const { accountId } = await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -970,7 +929,7 @@ describe("bank accounts", () => {
 
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     const cashRow = (
       target: number,
       type: "DEPOSIT" | "WITHDRAWAL",
@@ -1049,7 +1008,7 @@ describe("a fixed-term deposit's cash", () => {
   const deposit = async (accountId: number, amount: number, tradeDate: string) => {
     const { getDb } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    const { db } = getDb();
+
     getDb()
       .db.insert(transactions)
       .values([
@@ -1072,7 +1031,7 @@ describe("a fixed-term deposit's cash", () => {
   };
 
   test("counts toward the total but not toward what can be spent today", async () => {
-    const { userId, cookie } = await signUp(`locked-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`locked-${crypto.randomUUID()}@example.com`);
     const depositId = openDeposit(userId, "2027-06-22");
     await deposit(depositId, 1_000_000, "2026-06-22");
 
@@ -1087,7 +1046,7 @@ describe("a fixed-term deposit's cash", () => {
   });
 
   test("becomes spendable once the term has run", async () => {
-    const { userId, cookie } = await signUp(`matured-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`matured-${crypto.randomUUID()}@example.com`);
     const depositId = openDeposit(userId, "2027-06-22");
     await deposit(depositId, 1_000_000, "2026-06-22");
 
@@ -1098,7 +1057,7 @@ describe("a fixed-term deposit's cash", () => {
   });
 
   test("a deposit with no maturity recorded stays locked rather than counted as spendable", async () => {
-    const { userId, cookie } = await signUp(`unknown-term-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`unknown-term-${crypto.randomUUID()}@example.com`);
     const depositId = openDeposit(userId, null);
     await deposit(depositId, 500_000, "2026-06-22");
 
@@ -1110,7 +1069,7 @@ describe("a fixed-term deposit's cash", () => {
   });
 
   test("gets its own allocation slice, separate from spendable cash", async () => {
-    const { userId, cookie } = await signUp(`slice-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`slice-${crypto.randomUUID()}@example.com`);
     const currentId = openAccountRow(
       getDb().db,
       userId,
@@ -1133,19 +1092,6 @@ describe("a fixed-term deposit's cash", () => {
 });
 
 describe("GET /api/spending/uncategorised", () => {
-  const UncategorisedSchema = z.object({
-    totalEur: z.string(),
-    merchants: z.array(
-      z.object({
-        name: z.string(),
-        totalEur: z.string(),
-        count: z.number(),
-        payeeKnown: z.boolean(),
-      }),
-    ),
-    categories: z.array(z.object({ id: z.string(), label: z.string() })),
-  });
-
   const bankAccount = (userId: string): number =>
     openAccountRow(
       getDb().db,
@@ -1190,7 +1136,7 @@ describe("GET /api/spending/uncategorised", () => {
   test("GET /api/spending/transactions lists every movement with the class it was given", async () => {
     // The categorised totals are summaries, and a summary nobody can open is
     // one they have to take on trust. This is the ledger behind them.
-    const { userId, cookie } = await signUp(`ledger-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`ledger-${crypto.randomUUID()}@example.com`);
     const accountId = bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
     await spend(accountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-02");
@@ -1210,7 +1156,7 @@ describe("GET /api/spending/uncategorised", () => {
   // The anonymous-caller case is the middleware's, as above.
 
   test("lists what no rule matched, summed per payee, and nothing else", async () => {
-    const { userId, cookie } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
     const accountId = bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
@@ -1227,7 +1173,7 @@ describe("GET /api/spending/uncategorised", () => {
   });
 
   test("a payee disappears from the list once it has a rule", async () => {
-    const { userId, cookie } = await signUp(`uncat-rule-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`uncat-rule-${crypto.randomUUID()}@example.com`);
     const accountId = bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
     expect(ask(userId).merchants).toHaveLength(1);
@@ -1239,7 +1185,7 @@ describe("GET /api/spending/uncategorised", () => {
   });
 
   test("marks a bare payment label as having no payee, so no rule is offered for it", async () => {
-    const { userId, cookie } = await signUp(`uncat-label-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`uncat-label-${crypto.randomUUID()}@example.com`);
     const accountId = bankAccount(userId);
     // A statement that carried no payee leaves the note as the label alone.
     await spend(accountId, "MAKSUPALVELU", -45_297, "2026-03-01");
@@ -1253,7 +1199,7 @@ describe("GET /api/spending/uncategorised", () => {
   });
 
   test("leaves out a payment that funded an investment", async () => {
-    const { userId, cookie } = await signUp(`uncat-inv-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`uncat-inv-${crypto.randomUUID()}@example.com`);
     const accountId = bankAccount(userId);
     const brokerage = createAccount(userId);
     const instrumentId = createInstrument(randomIsin());

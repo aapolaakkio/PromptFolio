@@ -3,15 +3,10 @@ import type { IsoDate } from "../../core/types.ts";
 import type { BankRow } from "./bank-statement.ts";
 
 /**
- * OP's PDF statement, which carries what the CSV export does not: the balance
- * at the start of the period and the balance at the end.
- *
- * Those two make the import self-checking. Opening balance plus every parsed row
- * must equal the printed closing balance; when it does not, the parse is wrong
- * and the import is refused rather than written. A PDF's layout is a far more
- * fragile thing to read than a CSV's columns, and this is what makes reading it
- * acceptable anyway: a mis-parse cannot pass silently, because mangled rows do
- * not add up to a number the bank printed.
+ * OP's PDF statement, which carries what the CSV does not: the balances at each
+ * end of the period. Those make the import self-checking -- opening plus every
+ * parsed row must equal the printed closing, and a mis-parse cannot pass
+ * silently because mangled rows do not add up to a number the bank printed.
  */
 export type PdfStatement = {
   readonly from: IsoDate;
@@ -45,12 +40,9 @@ const normaliseAmount = (text: string): string =>
     .replace(",", ".");
 
 /**
- * `29.8.2025` as OP prints it, to `2025-08-29`.
- *
- * The result is checked back against the calendar rather than merely
- * reformatted: text extraction can join two fragments into something that still
- * matches the date pattern, and "2026-13-32" stored as a trade date would sort
- * and filter wrongly everywhere downstream without ever looking malformed.
+ * `29.8.2025` as OP prints it, to ISO. Checked against the calendar, not merely
+ * reformatted: extraction can join two fragments into something that still
+ * matches the pattern, and a stored 2026-13-32 sorts wrongly everywhere.
  */
 const toIsoDate = (text: string): IsoDate => {
   const [day, month, year] = text.split(".");
@@ -96,13 +88,9 @@ const IBAN_LINE = /^[A-Z]{2}\d{2}(\s\d{4})+(\s\d{1,4})?$/;
 const IBAN_INSIDE = /[A-Z]{2}\d{2}(\s\d{4})+(\s\d{1,4})?/;
 
 /**
- * The period the statement covers, printed under "Ajalta" and repeated on every
- * page: `29.8.2025 - 28.8.2026`.
- *
- * It sits directly below a page's repeated header, which is exactly where a row
- * continued across the page break looks for its counterparty -- so seventeen
- * payments in a real statement were filed under a date range as though it were
- * a shop.
+ * The period the statement covers, repeated on every page. It sits where a row
+ * continued across a page break looks for its counterparty, so seventeen real
+ * payments were filed under a date range as though it were a shop.
  */
 const PERIOD_LINE = new RegExp(`^${DATE}\\s*-\\s*${DATE}$`);
 
@@ -118,14 +106,9 @@ const TERMINAL_NOISE = /^(\d{6}\*+\d{4}|MF NRO|VARMENTAJA|OSTOPVM)/;
 const MATURITY = new RegExp(`^Eräpäivä$`);
 
 /**
- * The bank's archive id for a row.
- *
- * The line ends with a single-letter flag, before which sits the archive id --
- * twenty characters, digits with an occasional letter run (`...EQEO...`,
- * `...UTZ...`). A row may also carry a payment reference before that, which is
- * not unique and is deliberately not used: two payments of the same rent carry
- * the same reference, and treating it as an identity would make the second one
- * vanish as a duplicate.
+ * The bank's archive id, sitting before the line's trailing flag. A row may also
+ * carry a payment reference, which is deliberately not used: two payments of the
+ * same rent share one, and as an identity it would swallow the second.
  */
 const ARCHIVE_ID = /^[0-9A-Z]{16,}$/;
 
@@ -143,12 +126,9 @@ const archiveIdOf = (tail: string, following: readonly string[]): string | null 
 };
 
 /**
- * The label, which is the leading run of words before the references and ids.
- *
- * Taking only the first token truncated every label a bank writes as more than
- * one word: "LUOTON MAKSU" became "LUOTON", and no rule written against the
- * real label matched it -- so credit repayments sat unclassified while a rule
- * for them existed.
+ * The leading run of words before the references and ids. Taking one token
+ * truncated every multi-word label, so credit repayments sat unclassified while
+ * a rule for them existed.
  */
 const labelOf = (tail: string): string => {
   const words: string[] = [];
@@ -182,14 +162,10 @@ export const parseOpStatementText = (text: string): PdfStatement => {
   const problems: Array<{ line: number; message: string }> = [];
 
   /**
-   * The account this statement is for, printed in the header block that repeats
-   * on every page. Recognised so it is not read as a payee: a transaction
-   * continued across a page break has that whole block between it and its own
-   * counterparty, and the first line through it that looked like a name was the
-   * account's own number.
-   *
-   * Only this account's number is furniture. An IBAN in a payee's place is a
-   * real payee -- a transfer to someone whose name the bank did not print.
+   * The account this statement is for, recognised so it is not read as a payee:
+   * a row continued across a page break has the repeated header between it and
+   * its counterparty. Only this number is furniture -- an IBAN elsewhere is a
+   * real payee whose name the bank did not print.
    */
   const ownAccount = ((): string => {
     const labelled = lines.findIndex((line) => line.startsWith("Tilinumero"));
@@ -230,14 +206,9 @@ export const parseOpStatementText = (text: string): PdfStatement => {
       const amount = parseMoney(normaliseAmount(amountText), EUR).minor;
       const label = labelOf(tail);
 
-      // The counterparty is the first line after the header that is not the
-      // statement's own furniture and not the start of the message block. A row
-      // with none (interest, a cash deposit) simply has no counterparty.
-      //
-      // Scanned as far as the next transaction rather than a fixed few lines: a
-      // row broken across a page break has the whole repeated header between it
-      // and its counterparty, and a window that stopped short took the period
-      // line instead.
+      // The first line after the header that is neither furniture nor the
+      // message block. Scanned as far as the next transaction, not a fixed few
+      // lines: a page break puts the whole header in between.
       const following: string[] = [];
       for (let ahead = index + 1; ahead < lines.length; ahead++) {
         const candidate = lines[ahead] ?? "";
@@ -303,12 +274,9 @@ export const parseOpStatementText = (text: string): PdfStatement => {
 };
 
 /**
- * Whether the parsed rows account for the balance the statement itself prints.
- *
- * This is the check the whole PDF path rests on. A layout the parser reads
- * wrongly -- a missed row, a doubled one, an amount split across two lines --
- * changes the sum, and the difference is reported instead of being written to
- * the ledger as fact.
+ * Whether the parsed rows account for the balance the statement prints. The check
+ * the whole PDF path rests on: a missed row, a doubled one or a split amount all
+ * change the sum, and the difference is reported rather than written as fact.
  */
 export type StatementCheck = {
   readonly ok: boolean;

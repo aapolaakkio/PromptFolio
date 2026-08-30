@@ -20,8 +20,6 @@ export type FirstRunFormProps = {
   readonly onAlreadySetUp: () => void;
 };
 
-type SetupErrorBody = { error: string; fields?: ReadonlyArray<{ path: string; message: string }> };
-
 /**
  * The instance's first-run account creation form -- shown by `login.tsx`
  * in place of the sign-in form only while getSetupState reports no

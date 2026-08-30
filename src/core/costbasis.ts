@@ -34,12 +34,10 @@ export type Disposal = {
   /** Net of the sale's fee, which `Txn.amount` has already deducted. */
   readonly proceedsEur: Money;
   /**
-   * This lot's share of the sale's fee, pro-rated exactly as `proceedsEur` is.
-   * Carried because Finnish tax needs the *gross* sale price (`proceedsEur +
-   * feeEur`): the hankintameno-olettama is a percentage of what the shares sold
-   * for, with selling costs not separately deductible on top, while the
-   * actual-cost method does deduct them. The two methods therefore do not share
-   * a base -- see `core/tax/disposals.ts`.
+   * This lot's share of the sale's fee, pro-rated like the proceeds. Carried
+   * because the two Finnish methods do not share a base: the deemed cost is a
+   * percentage of the gross price with selling costs not deductible on top,
+   * while the actual-cost method does deduct them.
    */
   readonly feeEur: Money;
   readonly costEur: Money;
@@ -47,22 +45,12 @@ export type Disposal = {
 };
 
 /**
- * Thrown by `buildLots` when a SELL or TRANSFER_OUT disposes of more units
- * than the ledger has recorded as acquired for that instrument -- i.e. the
- * ledger given to it is missing an earlier BUY/TRANSFER_IN. This is a
- * *domain* condition (incomplete or out-of-order import data), not a bug in
- * this module, so it gets its own identifiable subclass rather than a bare
- * `Error`: callers can `instanceof`-check it instead of string-matching
- * `.message`, which would silently break the moment this message's wording
- * changes.
+ * A disposal of more units than the ledger records as acquired: incomplete or
+ * out-of-order import data, not a bug here. Its own subclass so a caller can
+ * check the type rather than match on wording that will change.
  *
- * `core` stays HTTP-ignorant on purpose (it has no concept of a status code
- * or a client-facing message), so this only carries `instrumentId` and
- * `tradeDate` as structured, non-sensitive fields -- exactly what the
- * server layer needs to look up the instrument's ISIN/name and point the
- * user at the offending row. `.message` itself still carries the full
- * quantity detail for server-side logs; it is never sent to a client
- * as-is (see `server/http.ts`'s `handle`).
+ * Carries only the instrument and the date -- what the server needs to name the
+ * offending row. The message keeps the quantities for a log, never for a client.
  */
 export class UnmatchedDisposalError extends Error {
   // Assigned in the body rather than declared as a parameter property: that
@@ -88,12 +76,9 @@ export class UnmatchedDisposalError extends Error {
 }
 
 /**
- * A share swap's two legs share a trade date, and which one a broker lists
- * first is arbitrary -- OP prints the arriving leg above the departing one,
- * Nordnet the other way round. The departing leg has to be seen first, because
- * it is what releases the cost basis the arriving leg inherits (see
- * `carriedBasis` in `buildLots`). Every other pair keeps its original order,
- * so this reorders nothing but the two transfer types relative to each other.
+ * A swap's two legs share a date and brokers disagree on which they print first.
+ * The departing leg must be seen first: it releases the basis the arriving leg
+ * inherits. Nothing else is reordered.
  */
 const transferRank = (type: Txn["type"]): number =>
   type === "TRANSFER_OUT" ? 0 : type === "TRANSFER_IN" ? 2 : 1;
@@ -153,25 +138,16 @@ export const buildLots = (txns: readonly Txn[]) => {
   const openByAccountInstrument = new Map<string, Lot[]>();
   const disposals: Disposal[] = [];
   /**
-   * The lots a TRANSFER_OUT gave up, waiting for the TRANSFER_IN that receives
-   * the same shares, keyed by trade date and consumed in order.
+   * The lots a departing leg gave up, waiting for the arriving one, by date.
    *
-   * A share swap moves a holding between two instruments with no money changing
-   * hands, so the arriving leg's `amount` is zero -- and cost derived from a
-   * zero amount would price the new holding at nothing and report its entire
-   * value as gain. Nordnet's export states the acquisition value on the
-   * arriving row (`Hankinta-arvo`, read by the importer); OP's paste states
-   * nothing at all. Rather than leaving OP's swaps to lose the cost, the basis
-   * the departing leg gives up is carried to the arriving leg here, which is
-   * what a swap means: the shares change form, not value.
+   * A swap moves a holding with no money changing hands, so the arriving leg's
+   * amount is zero and cost derived from it would report the whole value as gain.
+   * The basis is carried across instead, which is what a swap means: the shares
+   * change form, not value.
    *
-   * The whole lots are carried, not one merged total, because a swap does not
-   * restart ownership. Merging them lost two things that decide tax: each lot's
-   * acquisition date, which sets the deemed-acquisition-cost percentage, and
-   * the per-lot cost that FIFO consumes on a later partial sale. A real
-   * fractional cash-out days after a swap took its cost pro-rata across the
-   * whole position instead of from the oldest lot, leaving every remaining
-   * share's basis short of what the broker reported until they were sold.
+   * Whole lots, not one merged total, because a swap does not restart ownership.
+   * Merging lost each lot's acquisition date and its own cost, so a fractional
+   * cash-out days later took cost pro-rata instead of from the oldest lot.
    */
   const carriedLots = new Map<IsoDate, Lot[][]>();
 
@@ -347,23 +323,11 @@ export type CostBasisOutcome =
   | { readonly ok: false; readonly error: UnmatchedDisposalError };
 
 /**
- * Like `costBasisAt`, but resolves each instrument's lots independently, so one
- * instrument's `UnmatchedDisposalError` (e.g. one page of a multi-page OP import
- * pasted newest-first, landing a SELL before the BUY it disposes of, which is on a
- * page not yet imported) does not prevent every OTHER instrument's cost basis from
- * being computed. This is safe because `buildLots`'s per-transaction step only ever
- * reads/writes `openByInstrument.get(t.instrumentId)` -- no instrument's lot-building
- * ever consults another instrument's transactions or lots -- so re-running it on one
- * instrument's own transactions in isolation produces exactly the same lots and
- * disposals (and the same error, if any) as running it on the whole ledger together.
+ * Each instrument's lots resolved independently, so one unmatched disposal marks
+ * only its own holding unknown instead of taking the whole request down.
  *
- * The caller (`server/valuation.ts`'s `holdingsFor`) uses this to degrade per
- * position: every OTHER holding still gets a real cost basis and gain, and only the
- * instrument with the incomplete ledger is marked unknown, instead of one bad row
- * taking the whole request down (see `UnmatchedDisposalError`'s own docs for why that
- * used to happen, and why rejecting the sale at commit time is deliberately not the
- * fix -- the ledger is append-only and paged imports are expected to be temporarily
- * incomplete).
+ * Safe because lot-building never consults another instrument's transactions, so
+ * one instrument in isolation produces exactly the lots it would in the whole.
  */
 export const costBasisPerInstrument = (
   txns: readonly Txn[],

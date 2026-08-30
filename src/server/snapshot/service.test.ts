@@ -266,7 +266,7 @@ describe("GET /api/snapshots/:id/reconcile", () => {
   });
 
   test("compares only the statement's own account", async () => {
-    const { userId, cookie } = await signUp(`rec-scope-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rec-scope-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const otherAccountId = createAccount(userId);
     const instrumentId = createInstrument();
@@ -310,7 +310,7 @@ describe("GET /api/snapshots/:id/reconcile", () => {
   });
 
   test("404s for a snapshot that does not exist", async () => {
-    const { userId, cookie } = await signUp(`rec-missing-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rec-missing-${crypto.randomUUID()}@example.com`);
     expect((await reconcileOf(userId, 999_999)).status).toBe(404);
   });
 });
@@ -323,7 +323,7 @@ describe("POST /api/snapshots/:id/adjust", () => {
     answer(() => service.adjustSnapshotRow(userId, id, body));
 
   const setup = async (statementQty: string, ledgerQty: string | null) => {
-    const { userId, cookie } = await signUp(`adj-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`adj-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
     if (ledgerQty !== null) buy(accountId, instrumentId, ledgerQty, "2026-01-05");
@@ -420,7 +420,7 @@ describe("DELETE /api/snapshots/:id", () => {
   const remove = (userId: string, id: number) => answer(() => service.deleteSnapshot(userId, id));
 
   test("removes the statement and its rows", async () => {
-    const { userId, cookie } = await signUp(`del-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`del-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
     const created = await postSnapshot(userId, {
@@ -438,7 +438,7 @@ describe("DELETE /api/snapshots/:id", () => {
   });
 
   test("an adjustment the statement produced survives its deletion", async () => {
-    const { userId, cookie } = await signUp(`del-adj-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`del-adj-${crypto.randomUUID()}@example.com`);
     const accountId = createAccount(userId);
     const instrumentId = createInstrument();
     buy(accountId, instrumentId, "10000000", "2026-01-05");

@@ -174,7 +174,7 @@ describe("openAccount", () => {
   // that touches the ledger. It cannot be skipped by calling one.
 
   test("creates an account owned by the caller and defaults baseCurrency to EUR", async () => {
-    const { cookie, userId } = await signUp(`creator-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`creator-${crypto.randomUUID()}@example.com`);
     const body = openAccountRow(
       getDb().db,
       userId,
@@ -198,7 +198,7 @@ describe("openAccount", () => {
   // §10a A1: the real portfolio holds SEK, never USD -- an account's base
   // currency must accept any real ISO 4217 code, not just EUR/USD.
   test("creates an account with an explicit non-EUR/USD ISO base currency (SEK)", async () => {
-    const { userId, cookie } = await signUp(`sek-account-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`sek-account-${crypto.randomUUID()}@example.com`);
     const body = openAccountRow(
       getDb().db,
       userId,
@@ -218,7 +218,7 @@ describe("openAccount", () => {
 
 describe("assertAccountOwned", () => {
   test("does not throw for an account owned by the given user", async () => {
-    const { cookie, userId } = await signUp(`assert-owned-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`assert-owned-${crypto.randomUUID()}@example.com`);
     const created = openAccountRow(
       getDb().db,
       userId,
@@ -260,7 +260,7 @@ describe("updateAccount", () => {
   // that touches the ledger. It cannot be skipped by calling one.
 
   test("renames an account the caller owns", async () => {
-    const { userId, cookie } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
     const id = createAccount(userId, { name: "Vanha nimi", broker: "nordnet" });
 
     expect(rename(userId, id, "Nordnet OST").name).toBe("Nordnet OST");
@@ -281,7 +281,7 @@ describe("updateAccount", () => {
   });
 
   test("refuses an empty name", async () => {
-    const { userId, cookie } = await signUp(`rename-empty-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rename-empty-${crypto.randomUUID()}@example.com`);
     createAccount(userId, { name: "Tili", broker: "op" });
 
     expect(UpdateAccount.safeParse({ name: "   " }).success).toBe(false);
@@ -290,7 +290,7 @@ describe("updateAccount", () => {
   // The broker and base currency are facts the stored transactions were already
   // interpreted under; changing either after rows exist would reinterpret them.
   test("cannot change the broker or the base currency", async () => {
-    const { userId, cookie } = await signUp(`rename-fixed-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`rename-fixed-${crypto.randomUUID()}@example.com`);
     const id = createAccount(userId, { name: "Tili", broker: "op" });
 
     // The schema drops them: broker and base currency are facts the stored
@@ -309,16 +309,9 @@ describe("updateAccount", () => {
 });
 
 /** The row shape /api/accounts returns, parsed rather than cast. */
-const AccountSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  broker: z.string(),
-  kind: z.enum(["brokerage", "bank"]),
-  accountType: z.enum(["aot", "ost", "current", "savings", "fixed_term", "other"]).nullable(),
-});
 
 test("stores an account type at creation, and leaves it null when unstated", async () => {
-  const { userId, cookie } = await signUp(`type-create-${crypto.randomUUID()}@example.com`);
+  const { userId } = await signUp(`type-create-${crypto.randomUUID()}@example.com`);
 
   const withType = openAccountRow(
     getDb().db,
@@ -341,7 +334,7 @@ test("stores an account type at creation, and leaves it null when unstated", asy
 });
 
 test("changes the account type without touching the name, and can clear it", async () => {
-  const { userId, cookie } = await signUp(`type-patch-${crypto.randomUUID()}@example.com`);
+  const { userId } = await signUp(`type-patch-${crypto.randomUUID()}@example.com`);
   const created = openAccountRow(
     getDb().db,
     userId,
@@ -368,7 +361,7 @@ test("changes the account type without touching the name, and can clear it", asy
 });
 
 test("refuses a bank account type on a brokerage account, and the reverse", async () => {
-  const { userId, cookie } = await signUp(`kind-mismatch-${crypto.randomUUID()}@example.com`);
+  const { userId } = await signUp(`kind-mismatch-${crypto.randomUUID()}@example.com`);
 
   // "A brokerage account that is a savings account" is not a typo with an
   // obvious fix, so it is refused rather than corrected.
@@ -399,7 +392,7 @@ test("refuses a bank account type on a brokerage account, and the reverse", asyn
 });
 
 test("defaults an account to brokerage, which is what every earlier one was", async () => {
-  const { userId, cookie } = await signUp(`kind-default-${crypto.randomUUID()}@example.com`);
+  const { userId } = await signUp(`kind-default-${crypto.randomUUID()}@example.com`);
 
   const created = openAccountRow(
     getDb().db,
@@ -411,7 +404,7 @@ test("defaults an account to brokerage, which is what every earlier one was", as
 });
 
 test("refuses to move an account's type to the other kind's set after creation", async () => {
-  const { userId, cookie } = await signUp(`kind-patch-${crypto.randomUUID()}@example.com`);
+  const { userId } = await signUp(`kind-patch-${crypto.randomUUID()}@example.com`);
   const id = openAccountRow(
     getDb().db,
     userId,

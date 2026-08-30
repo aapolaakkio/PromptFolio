@@ -265,7 +265,7 @@ describe("detectBrokerConfig", () => {
 
 describe("POST /api/imports/preview", () => {
   test("refuses a file covering two accounts, naming them, instead of merging them", async () => {
-    const { userId, cookie } = await signUp(`imp-multi-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`imp-multi-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
 
     const response = await answer(() =>
@@ -306,9 +306,7 @@ describe("POST /api/imports/preview", () => {
   });
 
   test("rejects a request with no file", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-preview-nofile-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-preview-nofile-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(undefined, accountId)),
@@ -317,9 +315,7 @@ describe("POST /api/imports/preview", () => {
   });
 
   test("rejects a request with a missing account id", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-preview-noaccount-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-preview-noaccount-${crypto.randomUUID()}@example.com`);
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(csvFile(`${NORDNET_HEADER}\n`), undefined)),
     );
@@ -327,7 +323,7 @@ describe("POST /api/imports/preview", () => {
   });
 
   test("rejects an oversized file with 413", async () => {
-    const { userId, cookie } = await signUp(`imp-preview-huge-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`imp-preview-huge-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     const huge = csvFile(`${NORDNET_HEADER}\n${"x".repeat(6 * 1024 * 1024)}`);
     const response = await answer(() => service.previewUpload(userId, uploadForm(huge, accountId)));
@@ -335,9 +331,7 @@ describe("POST /api/imports/preview", () => {
   });
 
   test("rejects a CSV whose broker cannot be identified", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-preview-unknown-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-preview-unknown-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(csvFile("Date;Amount\n2025-01-01;5\n"), accountId)),
@@ -350,7 +344,7 @@ describe("POST /api/imports/preview", () => {
   });
 
   test("previews a real Nordnet export and reports the unresolved isins", async () => {
-    const { userId, cookie } = await signUp(`imp-preview-ok-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`imp-preview-ok-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await answer(() =>
@@ -391,9 +385,7 @@ describe("POST /api/imports/commit", () => {
   });
 
   test("refuses to commit a draft with an unresolved isin", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-commit-unknown-isin-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-commit-unknown-isin-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await answer(() =>
@@ -407,7 +399,7 @@ describe("POST /api/imports/commit", () => {
   });
 
   test("commits a clean EUR-only export and undoes it", async () => {
-    const { userId, cookie } = await signUp(`imp-commit-ok-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`imp-commit-ok-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
     registerNokia();
     const row = nordnetRow({
@@ -448,7 +440,7 @@ describe("POST /api/imports/commit", () => {
     // which src/server/test-network-guard.ts replaces with one that always throws. This proves
     // the constraint end to end: a commit whose own rows are all perfectly valid must not be
     // reported as failed just because the price source its backfill needs is unreachable.
-    const { userId, cookie } = await signUp(
+    const { userId } = await signUp(
       `imp-commit-backfill-isolated-${crypto.randomUUID()}@example.com`,
     );
     const accountId = openAccount(userId);
@@ -582,22 +574,18 @@ describe("POST /api/imports/op-paste/preview", () => {
   });
 
   test("rejects a request with no text", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-paste-preview-notext-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-paste-preview-notext-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId, "op");
     expect(PasteBody.safeParse({ accountId }).success).toBe(false);
   });
 
   test("rejects a request with a missing account id", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-paste-preview-noaccount-${crypto.randomUUID()}@example.com`,
-    );
+    await signUp(`imp-paste-preview-noaccount-${crypto.randomUUID()}@example.com`);
     expect(PasteBody.safeParse({ text: await opPasteText() }).success).toBe(false);
   });
 
   test("rejects text whose header block isn't a real OP paste", async () => {
-    const { userId, cookie } = await signUp(
+    const { userId } = await signUp(
       `imp-paste-preview-badheader-${crypto.randomUUID()}@example.com`,
     );
     const accountId = openAccount(userId, "op");
@@ -612,9 +600,7 @@ describe("POST /api/imports/op-paste/preview", () => {
   });
 
   test("previews the real OP paste fixture and reports both name-only unresolved instruments", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-paste-preview-ok-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-paste-preview-ok-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId, "op");
     const text = await opPasteText();
     const response = await answer(() =>
@@ -643,9 +629,7 @@ describe("POST /api/imports/op-paste/preview", () => {
 
 describe("POST /api/imports/op-paste/commit", () => {
   test("refuses to commit while an OP instrument is still unresolved", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-paste-commit-unknown-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-paste-commit-unknown-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId, "op");
     const text = await opPasteText();
     const response = await answer(() =>
@@ -660,9 +644,7 @@ describe("POST /api/imports/op-paste/commit", () => {
   });
 
   test("resolving both instruments by name clears them from a fresh preview, then commit and undo both work", async () => {
-    const { userId, cookie } = await signUp(
-      `imp-paste-commit-ok-${crypto.randomUUID()}@example.com`,
-    );
+    const { userId } = await signUp(`imp-paste-commit-ok-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId, "op");
     const text = await opPasteText();
 
@@ -710,9 +692,7 @@ describe("GET /api/imports", () => {
     const stranger = await signUp(`imp-list-stranger-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(owner.userId);
     const row = nordnetRow({ id: "4001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
-    const commitResponse = await answer(() =>
-      service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
-    );
+    await answer(() => service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)));
     const ownerList = await answer(() => service.listImports(owner.userId));
     const strangerList = await answer(() => service.listImports(stranger.userId));
     expect(ownerList.status).toBe(200);
@@ -727,7 +707,7 @@ describe("GET /api/imports", () => {
   });
 
   test("reports broker kind, filename, insert/skip counts, undone status and newest-first order", async () => {
-    const { userId, cookie } = await signUp(`imp-list-ok-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`imp-list-ok-${crypto.randomUUID()}@example.com`);
     const accountId = openAccount(userId);
 
     const first = nordnetRow({

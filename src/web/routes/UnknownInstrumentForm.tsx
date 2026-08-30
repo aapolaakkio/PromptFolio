@@ -27,9 +27,6 @@ const FALLBACK_SOURCES = new Map<string, string>([
   ["nordnet_fund", "Nordnet-rahasto (haettu automaattisesti)"],
 ]);
 
-/** Only the fields this form actually reads out of POST /api/instruments's response. */
-const CreatedInstrumentSchema = z.object({ id: z.number() });
-
 const ISIN_PATTERN = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
 
 const KIND_VALUES = ["stock", "etf", "fund"] as const;

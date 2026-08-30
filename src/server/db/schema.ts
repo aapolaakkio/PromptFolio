@@ -34,10 +34,7 @@ export const account = sqliteTable("account", {
     .references(() => user.id, { onDelete: "cascade" }),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
-  // Better Auth 1.7.2's account model requires `issuer` (the stable
-  // provider-side key, e.g. "local:credential" for email/password) - the
-  // installed @better-auth/drizzle-adapter throws at query time without it.
-  // Not present in an older Better Auth generation; see task-8-report.md.
+  // Better Auth's adapter throws at query time without this.
   issuer: text("issuer").notNull(),
   password: text("password"),
   accessToken: text("access_token"),
@@ -70,32 +67,21 @@ export const accounts = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     broker: text("broker", { enum: ["nordnet", "op", "spankki", "danske", "other"] }).notNull(),
+
     /**
-     * What kind of account this is: a brokerage one (arvo-osuustili,
-     * osakesäästötili) or a bank one (current, savings, fixed-term deposit).
+     * Whether this account holds investments or money -- different kinds of
+     * thing, not two flavours of one, and neither's types mean anything applied
+     * to the other.
      *
-     * The distinction is the owner's to make, not the importer's: a bank
-     * statement looks identical whether the account behind it is a current
-     * account or a savings account, so nothing in the file could tell them
-     * apart. It matters because the three bank kinds hold cash that counts
-     * toward what the portfolio is worth but is not invested capital -- their
-     * movements must never reach the return figures, or a grocery payment would
-     * read as money pulled out of the portfolio.
+     * The owner's call, never the importer's: a bank statement looks identical
+     * whichever kind is behind it. It matters because a bank account's cash
+     * counts toward what the portfolio is worth without being invested capital,
+     * and its movements must never reach the return figures.
      *
-     * Nullable because it is genuinely unknown for an account
-     * created before this column existed, and a wrong answer here is worse than
-     * no answer: inside an OST, trades and dividends are untaxed and tax falls
-     * only on withdrawal, so phase 4 must refuse to report on an account whose
-     * type nobody has confirmed rather than assume the ordinary case. Set by the
-     * owner, never inferred from the broker's numbering (spec §10c/C7).
-     */
-    /**
-     * Whether this account holds investments or money. The two are different
-     * kinds of thing, not two flavours of one: a brokerage account has an
-     * arvo-osuustili or osakesäästötili nature that decides its tax treatment,
-     * a bank account has a current/savings/fixed-term nature that decides
-     * nothing about tax and everything about whether the money is reachable.
-     * Neither one's types mean anything applied to the other.
+     * Nullable because it is genuinely unknown for an account created before the
+     * column existed, and no answer beats a wrong one: inside an OST tax falls
+     * only on withdrawal, so a report must refuse an unconfirmed account rather
+     * than assume the ordinary case.
      */
     kind: text("kind", { enum: ["brokerage", "bank"] })
       .notNull()
@@ -104,23 +90,18 @@ export const accounts = sqliteTable(
       enum: ["aot", "ost", "current", "savings", "fixed_term", "credit", "other"],
     }),
     /**
-     * When a fixed-term deposit (määräaikaistili) comes free. Null on every
-     * other kind of account, including an ordinary savings account, whose money
-     * is available at any time -- that is the whole difference between them.
+     * When a fixed-term deposit comes free. Null everywhere else, including an
+     * ordinary savings account, whose money is available at any time.
      */
     maturityDate: text("maturity_date"),
     /**
-     * The account's interest rate in basis points -- 3,25 % is 325 -- for the
-     * same reason money is stored in minor units: a rate that round-trips
-     * through a float eventually prints wrong. Optional on both savings kinds
-     * (an ordinary account's rate is variable, so a stored one is a note about
-     * today, not a promise), null everywhere else.
+     * Basis points -- 3,25 % is 325 -- for the same reason money is in minor
+     * units. Optional on a savings account, whose variable rate makes a stored
+     * one a note about today rather than a promise.
      */
     interestRateBp: integer("interest_rate_bp"),
-    // Any ISO 4217 code, not a closed enum -- see core/money.ts's `Currency`.
-    // This column has no runtime CHECK constraint; the guarantee comes from
-    // every write going through `parseCurrency` first (import/map.ts,
-    // the api/* zod schemas), not from SQLite.
+    // Any ISO 4217 code. No CHECK constraint: the guarantee is that every write
+    // goes through `parseCurrency` first, not anything SQLite enforces.
     baseCurrency: text("base_currency").$type<Currency>().notNull().default(EUR),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -132,13 +113,10 @@ export const accounts = sqliteTable(
 export const instruments = sqliteTable("instruments", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   /**
-   * Null only for an instrument no registry carries and nothing can price: a
-   * delisted share, or a temporary line from a corporate action (a rights issue's
-   * 2023 interim shares). Such a holding is matched by name instead, which is
-   * how OP's ISIN-less paste already resolves everything. SQLite treats NULLs
-   * as distinct, so the unique index still ties every real ISIN to one
-   * instrument -- absence is recorded honestly rather than filled with an
-   * invented identifier, which would silently merge or split positions.
+   * Null only for an instrument no registry carries: a delisted share, or a
+   * temporary line from a corporate action. Matched by name instead. SQLite
+   * treats NULLs as distinct, so the unique index still ties every real ISIN to
+   * one instrument, and an invented one would silently merge positions.
    */
   isin: text("isin").unique(),
   ticker: text("ticker"),
@@ -169,13 +147,8 @@ export const imports = sqliteTable("imports", {
     .notNull()
     .default("draft"),
   rowCount: integer("row_count").notNull().default(0),
-  // Set once, at commit time (commit.ts's commitDraft), from the exact counts its own
-  // insert loop produced. Not derivable later from `transactions` alone: after an
-  // undo, every row this import inserted is gone (see commit.ts's undoImport), and a
-  // skipped/duplicate row was never inserted at all, so there is never a `transactions`
-  // row to count it from in the first place. `/api/imports`'s history listing (the
-  // gap this closes -- an import id used to appear once in a success toast and then be
-  // lost) is what actually reads these back.
+  // Set once at commit time and not derivable later: an undone import's rows are
+  // gone, and a skipped one was never inserted at all.
   insertedCount: integer("inserted_count").notNull().default(0),
   skippedCount: integer("skipped_count").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -346,12 +319,8 @@ export const fxRates = sqliteTable(
   "fx_rates",
   {
     date: text("date").notNull(),
-    // Any non-EUR ISO 4217 code -- previously hardcoded to `['USD']`, which
-    // is exactly the widening this task exists to remove (§10a A1: the
-    // real portfolio holds SEK, never USD). Nothing at the type level
-    // excludes EUR itself; that a fx_rates row is never written for EUR is
-    // an application-level invariant (EUR converts to itself at rate 1,
-    // never looked up here), not one this column enforces.
+    // Any ISO 4217 code. That EUR never gets a row -- it converts to itself at
+    // rate 1 -- is an application invariant, not one this column enforces.
     currency: text("currency").$type<Currency>().notNull(),
     rateEur: integer("rate_eur").notNull(), // scaled 1e8
   },
@@ -374,19 +343,10 @@ export const priceFetchLog = sqliteTable(
 );
 
 /**
- * At most one row per instrument, tracking a price the plausibility check
- * (`src/server/prices/write.ts`) has rejected as an implausible jump but
- * has not yet confirmed as a real, permanent re-baseline (a stock split,
- * a reverse split, a fund NAV re-denomination). Reviewer finding on Task
- * 15: comparing every new point only against the last *stored* price
- * means a genuine permanent change would be rejected forever -- every
- * later real price also fails against the same frozen stale baseline,
- * and there is no price-correction UI anywhere in this app to unstick it
- * by hand. This table is what lets `writePrices` tell a transient glitch
- * apart from a real, permanent change: a glitch does not repeat at a
- * consistent new scale across several separate refreshes; a real split
- * or re-denomination does. See `write.ts`'s `RE_BASELINE_CONFIRMATIONS`
- * comment for the exact rule and its justification.
+ * One row per instrument whose price the plausibility check refused but has not
+ * yet confirmed as a real permanent change. What lets `writePrices` tell a
+ * transient glitch from a split: a glitch does not repeat at the same new scale
+ * across refreshes, a split does.
  */
 export const pendingPriceRejections = sqliteTable("pending_price_rejections", {
   instrumentId: integer("instrument_id")
@@ -397,30 +357,20 @@ export const pendingPriceRejections = sqliteTable("pending_price_rejections", {
   close: integer("close").notNull(),
   // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
   currency: text("currency").$type<Currency>().notNull(),
-  // How many consecutive refreshes have now reported a value consistent
-  // with this pending candidate (not necessarily identical -- see
-  // write.ts). Reset to 1 whenever a genuinely new, unrelated anomaly
-  // starts; the row is deleted entirely once either resolved (streak
-  // reaches the confirmation threshold and the candidate is accepted) or
-  // abandoned (a later point turns out plausible against the real stored
-  // baseline again, i.e. the anomaly was transient after all).
+  // Consecutive refreshes reporting a value consistent with this candidate --
+  // not necessarily identical. The row goes once it is accepted or abandoned.
   streak: integer("streak").notNull(),
 });
 
 /**
- * A target allocation: what share of the portfolio the owner wants one slice of
- * one dimension to hold.
+ * What share of the portfolio the owner wants one slice to hold.
  *
- * The weight is basis points as an integer (6 000 = 60 %), not a percentage as
- * a float. §4.1's rule that nothing quantitative is a float applies here too,
- * and it makes "this set sums to exactly 100 %" a check on integers rather than
- * an epsilon comparison that is wrong twice a year.
+ * Basis points as an integer, so "sums to exactly 100 %" is a check on integers
+ * rather than an epsilon comparison that is wrong twice a year.
  *
- * A set is bound to one `dimension`. Targets across two dimensions can
- * contradict each other -- 60 % equities and 50 % at one broker are each
- * reasonable and jointly unsatisfiable -- and no useful drift figure comes out
- * of a contradiction, so the unique index is on the dimension too rather than
- * on the key alone.
+ * Bound to one dimension: 60 % equities and 50 % at one broker are each
+ * reasonable and jointly unsatisfiable, and no useful drift comes out of a
+ * contradiction.
  */
 export const allocationTargets = sqliteTable(
   "allocation_targets",

@@ -1,26 +1,5 @@
 import { useState } from "react";
 import { savePrice } from "../server/prices.ts";
-import { z } from "zod";
-
-/**
- * Closing the "manual price source has no way to enter a price" gap
- * (Phase 1 review): `manual` has been selectable as a price source since
- * Task 14, and `MANUAL.fetch()` has always correctly returned nothing, but
- * no route or screen ever wrote a price -- so a `manual` instrument, or any
- * holding no price source covers, could never actually be valued. `POST /api/prices`
- * (src/server/api/prices.ts) is the route; this form is how the holdings
- * screen reaches it, mirroring `UnknownInstrumentForm.tsx`/
- * `CreateAccountForm.tsx`'s own shape (local state, one `apiPost`, a
- * response schema narrowed to only the field this form reads).
- *
- * The price is sent as the raw text the user typed, untouched -- never
- * `Number()`-parsed here. Money crossing the API boundary is always a
- * decimal string (spec §9.2), and a human-typed price doubly so: it is
- * untrusted input, parsed server-side by `core/money`'s own decimal-string
- * parser (`parseMoney`), never by a JS float step this form could
- * introduce on the way there.
- */
-const RecordPriceResponseSchema = z.object({ written: z.number() });
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 

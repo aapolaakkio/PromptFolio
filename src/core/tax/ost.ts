@@ -12,27 +12,18 @@ import type { IsoDate, Txn } from "../types.ts";
 import { OST_DEPOSIT_CAP_EUR } from "./rates.ts";
 
 /**
- * The account's fair market value on a date, or the instrument that has no
- * price for it.
- *
- * A failure is a named instrument rather than a null: the withdrawal's tax is
- * unknowable without the value, and the owner can act on "this holding has no
- * price on this date" -- they can record one -- in a way they cannot act on a
- * blank.
+ * The account's value on a date, or the instrument with no price for it. A named
+ * instrument rather than a null, because the owner can record a missing price
+ * and cannot act on a blank.
  */
 export type OstValuation =
   | {
       readonly ok: true;
       readonly valueEur: Money;
       /**
-       * The oldest price date the valuation actually leaned on, when some
-       * holding had no price for the day itself and a carried-forward one was
-       * used instead. Null when every price was dated the day.
-       *
-       * Carried because the difference is invisible in the figure and decisive
-       * in the result: one recorded price is enough to make every later date
-       * compute, silently valuing a share at what it was worth months earlier.
-       * A figure resting on that must say so, exactly as a holding does.
+       * The oldest price the valuation leaned on, when one was carried forward.
+       * Invisible in the figure and decisive in the result: a single recorded
+       * price makes every later date compute, at months-old worth.
        */
       readonly pricedFrom: IsoDate | null;
       /** Which holding's price was carried forward, for the screen to offer a fix. */
@@ -57,14 +48,10 @@ export type OstWithdrawalOutcome =
       readonly instrumentId: number;
     }
   /**
-   * An earlier withdrawal could not be valued, so how much of it was profit and
-   * how much was capital returned is unknown -- and with it the deposits every
-   * later withdrawal is measured against.
-   *
-   * This is reported rather than computed anyway. Carrying on regardless is what
-   * produced a 0,00 € taxable figure for a withdrawal the broker had actually
-   * withheld tax on: the deposits were too high, so the account looked like it
-   * held no profit. A wrong figure that looks certain is worse than a gap.
+   * An earlier withdrawal could not be valued, so its split between profit and
+   * returned capital is unknown -- and with it the deposits every later
+   * withdrawal is measured against. Carrying on regardless reported 0,00 EUR
+   * taxable for a withdrawal the broker had withheld tax on.
    */
   | {
       readonly ok: false;
@@ -99,14 +86,10 @@ export type OstReport = {
 /**
  * An equity savings account's withdrawals and deposit room.
  *
- * One pass serves both, because vero.fi ties them together: "the part of
- * withdrawn funds that is not counted as profit reduces the total amount of
- * cash payments made to the account". That reduced total is both the base for
- * the next withdrawal's profit share and the figure the 100 000 € cap is
- * measured against, so computing them separately would let them disagree.
- *
- * The profit share of a withdrawal is proportional: profit over value, applied
- * to the amount withdrawn.
+ * One pass serves both: the part of a withdrawal that is not profit reduces the
+ * deposits, which are both the base for the next withdrawal's profit share and
+ * the figure the lifetime cap is measured against. The profit share is
+ * proportional -- profit over value, applied to what was withdrawn.
  */
 /** How far apart a reservation and its refund may sit and still be one event. */
 const RESERVATION_DAYS = 8;
@@ -117,38 +100,23 @@ const daysBetween = (from: IsoDate, to: IsoDate): number =>
   );
 
 /**
- * What the broker calls the two legs of a share subscription: the money
- * committed to it, and the money returned when the allotment is settled.
- *
- * Matched on the broker's own words rather than inferred from shape, wherever
- * the ledger has them. A row that says `MERKINTÄSITOUMUS` is a commitment and a
- * row that says `MERK.MAKSUN PALAUTUS` is its refund; no amount-and-window
- * guess can be as sure as that, and a real subscription paired with an
- * unrelated deposit of the same size would be an invented tax event.
+ * What the broker calls a subscription's two legs. Matched on its own words
+ * where the ledger has them: no amount-and-window guess is as sure, and a real
+ * subscription paired with an unrelated deposit invents a tax event.
  */
 const SUBSCRIPTION_COMMITMENT = /merkint(äsitoumus|ämaksu)/i;
 const SUBSCRIPTION_REFUND = /palautus/i;
 
 /**
- * The transaction ids of withdrawal/deposit pairs that cancel each other out.
+ * Withdrawal and deposit pairs that cancel each other out.
  *
- * A share subscription on an equity savings account is booked by the broker as
- * money leaving to pay for it and returning days later, with the allotment
- * itself recorded separately as the purchase. Both legs are ordinary
- * TALLETUS/NOSTO rows -- nothing in the export marks them as belonging to a
- * subscription -- so a real IPO produced a withdrawal of the full subscription
- * amount that never left the owner's hands.
+ * A subscription is booked as money leaving to pay for it and returning days
+ * later, both as ordinary rows nothing marks as belonging together -- so a real
+ * IPO produced a withdrawal that never left the owner's hands, inventing a
+ * taxable event and removing deposits that still count against the cap.
  *
- * Counting that as a withdrawal is wrong twice: it invents a taxable event out
- * of money that stayed on the account, and it removes deposits that still
- * count against the lifetime cap.
- *
- * Matched structurally, the same way `spending/internal.ts` pairs transfers
- * between the owner's own accounts: an outflow and an inflow of exactly equal
- * size, within days, each used at most once. Deliberately conservative --
- * requiring an exact amount match means a genuine withdrawal followed by an
- * unrelated deposit of a different size is untouched, which is the direction
- * to err in: a missed pair overstates tax, an invented pair hides it.
+ * Matched on an exact amount within days, each row used once. Conservative on
+ * purpose: a missed pair overstates tax, an invented one hides it.
  */
 export const reservationPairIds = (txns: readonly Txn[]): ReadonlySet<number> => {
   const paired = new Set<number>();
@@ -189,15 +157,11 @@ export const reservationPairIds = (txns: readonly Txn[]): ReadonlySet<number> =>
 };
 
 /**
- * Capital income tax withheld, by date.
- *
- * On an equity savings account the broker books this as a fee row of its own
- * ("PÄÄOMATULOVERO OST"), which the importer maps to `FEE` -- deliberately, so
- * that money leaving permanently without reaching the investor does not read as
- * a withdrawal they enjoyed. Every `FEE` on such an account is that tax; no
- * other charge has been observed on one. If a broker ever books another kind of
- * fee here, it would be read as withholding, which is why the figure is
- * reported beside our own rather than silently folded into it.
+ * Capital income tax withheld, by date. The broker books it as a fee row, which
+ * the importer keeps as a fee so money leaving permanently without reaching the
+ * investor does not read as a withdrawal they enjoyed. Every fee on such an
+ * account is that tax -- which is why the figure is reported beside our own
+ * rather than folded into it.
  */
 const withheldTaxByDate = (txns: readonly Txn[]): Map<IsoDate, Money> => {
   const byDate = new Map<IsoDate, Money>();
@@ -239,11 +203,8 @@ export const ostReport = (args: {
   /** This account's transactions, every year -- earlier ones set up the state. */
   readonly txns: readonly Txn[];
   /**
-   * The account's value immediately before the transaction `beforeTxnId`.
-   *
-   * Before, not on: a withdrawal reduces the account's cash, and valuing the
-   * account after it has left would divide the profit by a total the
-   * withdrawal itself shrank -- understating the value, and so overstating the
+   * The value immediately before a transaction. Before, not on: valuing after the
+   * withdrawal has left divides profit by a total it shrank, overstating the
    * profit share of every euro taken out.
    */
   readonly valueAt: (on: IsoDate, beforeTxnId: number) => OstValuation;

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { editAccount } from "../server/accounts.ts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
 import {
   isAccountType,
@@ -11,12 +10,6 @@ import {
   type AccountKind,
   type AccountType,
 } from "./account-type.ts";
-
-const UpdatedSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  accountType: z.enum(["aot", "ost", "other"]).nullable(),
-});
 
 /**
  * Edits an account's name and its type. Not its broker or base currency: those

@@ -37,20 +37,12 @@ const describeFailure = (cause: unknown): string =>
   cause instanceof Error ? cause.message : "Tuntematon virhe";
 
 /**
- * Fetches today's price for every non-manual instrument and writes it,
- * isolating each instrument's attempt from every other's: one failing or
- * unimplemented source never stops the rest of the loop, and every
- * attempt -- success, failure, or not-yet-implemented -- writes exactly
- * one `price_fetch_log` row. `manual` instruments are the one exception:
- * they are skipped without a log row at all, since "manual" means a
- * human owns this instrument's price, not that a fetch was attempted and
- * found nothing.
+ * Today's price for every non-manual instrument, each attempt isolated from the
+ * rest and each logged. A manual instrument is skipped without a log row: a
+ * human owns its price, so no fetch was attempted.
  *
- * A point that fails Task 15's large-jump plausibility check
- * (`write.ts`) is reported as a failure here too, not folded silently
- * into a clean "ok": the fetch itself succeeded, but the data it
- * returned was not trusted, and that is exactly the kind of outcome this
- * project's `price_fetch_log` exists to surface rather than bury.
+ * A point the plausibility check refuses is reported as a failure, not folded
+ * into a clean "ok" -- the fetch worked, the data was not trusted.
  */
 export const refreshPrices = async (
   db: Db,
@@ -79,12 +71,8 @@ export const refreshPrices = async (
       );
 
       if (reBaselined > 0) {
-        // Loud on purpose: this means a price that looked implausible was
-        // just confirmed, `RE_BASELINE_CONFIRMATIONS` times in a row, as a
-        // real, permanent change (a split, a re-denomination) -- worth a
-        // human's attention even though the fetch itself succeeded and the
-        // instrument is no longer stuck. See write.ts's
-        // RE_BASELINE_CONFIRMATIONS doc comment.
+        // Loud on purpose: an implausible price was just confirmed as a real
+        // permanent change, which is worth a human's attention.
         const message =
           `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
           `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
@@ -127,12 +115,9 @@ export const refreshPrices = async (
 };
 
 /**
- * How many calendar days a real trading source may legitimately skip
- * (weekends, public holidays) between the requested start date and the
- * earliest price it actually returns, before that gap is treated as
- * "this source could not backfill the requested range" rather than
- * ordinary non-trading days. A week comfortably covers any single
- * holiday-adjacent weekend without needing a real trading calendar.
+ * How far a source's earliest point may sit past the requested start before the
+ * gap means it could not cover the range. A week covers any holiday weekend
+ * without needing a real trading calendar.
  */
 const BACKFILL_GAP_TOLERANCE_DAYS = 7;
 
@@ -142,19 +127,10 @@ const daysBetween = (isoA: string, isoB: string): number =>
 export type BackfillResult = {
   readonly inserted: number;
   /**
-   * True when the source did not actually cover the requested range --
-   * either it returned nothing, or its earliest point is more than
-   * `BACKFILL_GAP_TOLERANCE_DAYS` after the requested start. Point 3:
-   * `nordnet_fund`'s public page carries only two NAV points (see
-   * funds.ts's `NORDNET_FUND` comment) and can never backfill years of
-   * history through this endpoint -- this flag is what makes that
-   * limitation observable to a caller instead of a silently-successful
-   * `{ inserted: 2 }` that looks the same as a real, complete backfill.
-   * Detected generically (by comparing dates), not by special-casing
-   * `nordnet_fund`'s id, so it also catches any future source with the
-   * same limitation. A matching `price_fetch_log` row is written
-   * whenever this is true, so the limitation is visible operationally
-   * too, not only in this return value.
+   * Whether the source failed to cover the requested range. A fund page carrying
+   * two NAV points can never backfill years of history, and this is what keeps
+   * that from looking like a complete backfill of two rows. Detected by
+   * comparing dates, so it catches any source with the same limitation.
    */
   readonly incomplete: boolean;
 };
@@ -239,10 +215,8 @@ export const backfillInstrument = async (
     parts.push(`taustatäyttö jäi vajaaksi: pyydetty alkaen ${from}, ${coverage}${knownReason}`);
   }
 
-  // A re-baseline (see writePrices) takes priority over stray rejections:
-  // the points that got folded into confirming it are an expected, safe
-  // part of that process, not an unrelated failure -- mirrors the same
-  // precedence refreshPrices gives it above.
+  // A re-baseline outranks stray rejections: the points confirming it are part
+  // of the process, not an unrelated failure.
   const ok = reBaselined > 0 ? !incomplete : !incomplete && rejectedImplausible === 0;
 
   logAttempt(db, { source: source.id, instrumentId, ok, message: parts.join("; ") });
@@ -251,31 +225,17 @@ export const backfillInstrument = async (
 };
 
 /**
- * `priceSource`s excluded from `needsBackfill`/`backfillMany` even though `backfillInstrument`
- * itself would happily attempt them: both genuinely cannot return history through their public,
- * unauthenticated page, no matter how many times they're asked. `nordnet_fund`'s page carries
- * only `latestNav`/`previousNav` -- two points (see funds.ts's `NORDNET_FUND` comment, and
- * `BackfillResult.incomplete`'s doc above). `op_fund`'s page carries exactly one NAV, the
- * current one (`OP_FUND`'s fetch returns at most a single `FetchedPrice`) -- the identical
- * shape of limitation, discovered while wiring this sweep up, not something `op_fund`'s own
- * source code claims anywhere in a comment. Neither will ever stop looking "incomplete" no
- * matter how many times a nightly catch-up sweep re-fetches it, so excluding them here is what
- * keeps that sweep from burning a request against each one, forever, for zero gain -- exactly
- * the "do not retry it pointlessly on every trigger" a real fix for this gap has to avoid.
- * `backfillInstrument` called directly (the import-commit trigger's one-off attempt, or a
- * manual `node -e` call) is unaffected -- this exclusion only governs the sweep's own selection.
+ * Sources whose public page carries one or two NAV points and so can never
+ * complete a backfill. They would look incomplete forever, and the nightly sweep
+ * would spend a request on each one every night for nothing. Only the sweep's
+ * selection is affected; a direct call still attempts them.
  */
 const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund"]);
 
 /**
- * True when `instrumentId` has a real earliest transaction but its stored price history does
- * not yet reach it -- either no price row exists for it at all, or the earliest one is dated
- * more than `BACKFILL_GAP_TOLERANCE_DAYS` after that transaction. This is the selection this
- * task's nightly catch-up sweep (`backfillMany`, called from `runScheduledRefresh`) needs and
- * the existing daily `refreshPrices` sweep does not: `refreshPrices` always re-fetches
- * "today" for every instrument regardless of history, but re-running a full-range backfill
- * for an instrument that already has one would be a wasted request against Yahoo (or whichever
- * source) every single night, for an instrument that needs nothing further.
+ * Whether an instrument's stored history still falls short of its earliest
+ * transaction. Re-running a full backfill for one that already reaches back
+ * would be a wasted request every night.
  */
 const needsBackfill = (db: Db, instrumentId: number): boolean => {
   const instrument = db.select().from(instruments).where(eq(instruments.id, instrumentId)).get();
@@ -316,24 +276,13 @@ export type BackfillManyResult = {
 };
 
 /**
- * Runs `backfillInstrument` for every id in `instrumentIds` that `needsBackfill` says actually
- * needs it, isolating each attempt from every other's exactly like `refreshPrices` does for the
- * daily fetch: `backfillInstrument` itself already catches and logs a source's own fetch
- * failure, but the surrounding `try/catch` here is a second, independent layer in case
- * something it did not anticipate (an unexpected database error, say) still throws -- this
- * function must never propagate a rejection, since both of its callers (the import-commit
- * route, and `runScheduledRefresh`'s nightly catch-up sweep below) rely on that to keep
- * backfill fully isolated from the operation that triggered it.
+ * Backfills every instrument that needs it, each attempt isolated. This must
+ * never reject: both callers rely on that to keep backfill separate from
+ * whatever triggered it.
  *
- * Sequential, deliberately not concurrent: a handful of years-long histories fetched one at a
- * time is already gentle on a public endpoint like Yahoo's, and firing them all at once would
- * be exactly the unnecessary burst this task's own review called out as worth thinking about.
- * No further throttling (delays between requests, a request budget) is added on top of that --
- * this is a single-user instance backfilling at most a handful of instruments, not a fleet, and
- * inventing a rate limit with no evidence Yahoo's public endpoint actually needs one would be
- * exactly the kind of unverified guess this project's other `prices/` code already declines to
- * make (see `types.ts`'s `requirePositiveMinor` comment for the same principle applied to a
- * different check).
+ * Sequential rather than concurrent -- a handful of histories one at a time is
+ * already gentle on a public endpoint, and a rate limit invented with no
+ * evidence one is needed would be a guess.
  */
 export const backfillMany = async (
   db: Db,
@@ -369,18 +318,12 @@ const SCHEDULE = "30 19 * * 1-5";
 const SCHEDULE_TZ = "Europe/Helsinki";
 
 /**
- * The scheduled job's actual body, exported separately from
- * `startScheduler` so it can be called and asserted on directly in tests
- * without waiting on a real scheduled fire (the earliest this schedule
- * can trigger is the next weekday evening). croner mirrors
- * `setTimeout`'s error semantics: a handler that rejects with no
- * `unhandledRejection` listener on `process` takes the whole process
- * down. This function never lets a rejection escape -- `refreshFxRates`,
- * `refreshPrices`, `backfillFxRates` and the price backfill sweep below are each wrapped in
- * their own try/catch, so one evening's ECB outage or an unexpected database error cannot
- * stop the next evening's run. `src/server/index.ts` additionally registers a
- * process-wide `unhandledRejection` listener as a second, independent
- * layer of defense in case something here still escapes.
+ * The job's body, exported so a test can call it rather than wait for the next
+ * weekday evening.
+ *
+ * croner mirrors setTimeout: a handler that rejects with no listener takes the
+ * process down. Each phase has its own try/catch, so one evening's ECB outage
+ * cannot stop the next evening's run.
  */
 export const runScheduledRefresh = async (db: Db): Promise<void> => {
   try {
@@ -395,10 +338,7 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.error("Hintapäivitys epäonnistui", cause);
   }
   try {
-    // Catches every held currency's fx_rates history up to the earliest date the ledger
-    // actually needs it (see fx.ts's `backfillFxRates` -- the historical-file counterpart
-    // to the daily fetch above). `needsFxBackfill`'s own check is what keeps this cheap on
-    // every ordinary night once a currency's history has already been caught up once.
+    // Every held currency's history back to the earliest date the ledger needs.
     const fxResult = await backfillFxRates(db);
     if (fxResult.currencies > 0) {
       console.log(
@@ -409,13 +349,8 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.error("FX-historian täydennys epäonnistui", cause);
   }
   try {
-    // Catches up any instrument whose stored history still doesn't reach its earliest
-    // transaction -- an instrument imported before this catch-up sweep existed, or one whose
-    // one-off backfill on import (see src/server/import/backfill-on-commit.ts) failed or was
-    // never triggered at all. `backfillMany`'s own `needsBackfill` filter is what keeps this
-    // cheap on every ordinary night: an instrument already fully backfilled, `manual`, or a
-    // source that can never complete one (`nordnet_fund`/`op_fund`) is skipped without a
-    // network call.
+    // Any instrument whose history still falls short: one imported before this
+    // sweep existed, or whose backfill on import failed or never ran.
     const allInstrumentIds = db
       .select({ id: instruments.id })
       .from(instruments)
@@ -434,18 +369,10 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
 };
 
 /**
- * Registers the in-process daily refresh job. `schedule`/`tz` default to
- * the real weekday-evening Helsinki schedule; overridable only so a test
- * can exercise the validation below against a deliberately invalid
- * expression without touching the production constants.
- *
- * The expression is parsed up front so a typo fails loudly, with a clear
- * message, at startup rather than at the job's first (much later)
- * scheduled fire. A bad expression arrives two different ways, both
- * normalized into the one thrown error below: the constructor throws for
- * a syntactically invalid expression (e.g. "not a cron expression"), and
- * `nextRun()` answers `null` -- without throwing -- for a syntactically
- * valid one that never occurs at all (e.g. "0 0 30 2 *", February 30th).
+ * Registers the daily refresh job. The expression is parsed up front so a typo
+ * fails at startup rather than at the first scheduled fire -- which arrives two
+ * ways: the constructor throws on invalid syntax, and `nextRun()` answers null,
+ * without throwing, for valid syntax that never occurs.
  */
 export const startScheduler = (db: Db, opts: { schedule?: string; tz?: string } = {}): Cron => {
   const schedule = opts.schedule ?? SCHEDULE;

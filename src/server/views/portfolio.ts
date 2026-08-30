@@ -264,7 +264,7 @@ export const spendingView = (
 };
 
 export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { txns, cashTxns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
+  const { cashTxns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
   // Invested transactions only: a bank account's rows are spending and
   // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving

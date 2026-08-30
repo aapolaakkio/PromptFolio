@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
 import { ApiError } from "../lib/api.ts";
 import {
@@ -10,22 +9,6 @@ import {
 } from "../server/snapshots.ts";
 import { eur, qty } from "../lib/format.ts";
 import { getInstruments } from "../server/instruments.ts";
-
-const CreatedSnapshotSchema = z.object({ id: z.number() });
-
-const PreviewSchema = z.object({
-  asOf: z.string(),
-  rows: z.array(
-    z.object({
-      name: z.string(),
-      quantity: z.string(),
-      costEur: z.string(),
-      marketValueEur: z.string(),
-      instrumentId: z.number().nullable(),
-    }),
-  ),
-  problems: z.array(z.object({ line: z.number(), message: z.string(), raw: z.string() })),
-});
 
 /**
  * Takes a broker's holdings table as pasted text and proposes the snapshot it

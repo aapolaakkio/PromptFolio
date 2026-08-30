@@ -72,7 +72,6 @@ const signUp = async (): Promise<{ userId: string; cookie: string }> => {
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
 
-const IdSchema = z.object({ id: z.number() });
 const ErrorSchema = z.object({ error: z.string() });
 const CommitSchema = z.object({
   importId: z.number(),
@@ -113,7 +112,6 @@ const BalanceSchema = z.object({
   openingBalanceEur: z.string(),
   openingBalanceDate: z.string(),
 });
-const CashSchema = z.object({ totalEur: z.string() });
 
 const BANK_TYPES = new Set(["current", "savings", "fixed_term"]);
 
@@ -156,7 +154,7 @@ const cashTotal = (userId: string, on: string): string => cashView(getDb().db, u
 
 describe("POST /api/imports/bank/preview", () => {
   test("summarises the file without writing anything", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     const body = PreviewSchema.parse((await preview(userId, accountId)).body);
@@ -173,7 +171,7 @@ describe("POST /api/imports/bank/preview", () => {
   });
 
   test("refuses a brokerage account, where spending would corrupt the returns", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const brokerage = openAccount(userId, "aot");
 
     const response = await preview(userId, brokerage);
@@ -182,14 +180,14 @@ describe("POST /api/imports/bank/preview", () => {
   });
 
   test("refuses an unclassified account rather than guessing it is a bank one", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const unclassified = openAccount(userId, null);
 
     expect((await preview(userId, unclassified)).status).toBe(400);
   });
 
   test("refuses a file that is not a statement it knows", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     const bytes = bytesOf("a;b\n1;2\n");
 
@@ -201,7 +199,7 @@ describe("POST /api/imports/bank/preview", () => {
 
 describe("POST /api/imports/bank/commit", () => {
   test("writes every row, and skips them all on a second import of the same file", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     const first = CommitSchema.parse((await commit(userId, accountId)).body);
@@ -218,7 +216,7 @@ describe("POST /api/imports/bank/commit", () => {
   });
 
   test("the whole file can be undone as one import", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     const committed = CommitSchema.parse((await commit(userId, accountId)).body);
 
@@ -228,7 +226,7 @@ describe("POST /api/imports/bank/commit", () => {
   });
 
   test("imports the readable rows and reports the one it could not read", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     const text = new TextDecoder().decode(await statement());
     const broken = text.replace('"2026-01-02";"2026-01-02"', '"2.1.2026";"2026-01-02"');
@@ -245,7 +243,7 @@ describe("POST /api/accounts/:id/balance", () => {
     answer(() => bank.setAccountBalance(userId, { accountId, on, balance }));
 
   test("derives the balance the statements do not reach back to", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     await commit(userId, accountId);
 
@@ -262,7 +260,7 @@ describe("POST /api/accounts/:id/balance", () => {
   });
 
   test("re-running it replaces the opening balance instead of stacking corrections", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     await commit(userId, accountId);
 
@@ -273,7 +271,7 @@ describe("POST /api/accounts/:id/balance", () => {
   });
 
   test("reports agreement as a zero difference, which is the check", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     await commit(userId, accountId);
 
@@ -299,7 +297,7 @@ describe("a PDF statement", () => {
     readBytes(`${import.meta.dirname}/../import/fixtures/op-statement-sample.pdf`);
 
   test("is read, and says it was checked against its own printed balances", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     const body = PreviewSchema.parse((await preview(userId, accountId, await pdf())).body);
@@ -311,7 +309,7 @@ describe("a PDF statement", () => {
   });
 
   test("brings its own opening balance, so nothing has to be typed in", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await pdf())).body);
@@ -323,7 +321,7 @@ describe("a PDF statement", () => {
   });
 
   test("re-importing it leaves the balance where it was", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     await commit(userId, accountId, await pdf());
 
@@ -354,7 +352,7 @@ describe("a PDF statement", () => {
 
 describe("a PDF this app cannot read", () => {
   test("is refused with the reason, not as a generic server error", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     // A valid PDF that is not a statement: the parser's complaint has to reach
     // the owner, since "Palvelinvirhe" tells them nothing about what to do.
@@ -389,7 +387,7 @@ describe("importing several statements for one account", () => {
   const earlier = () => statementPdf("op-statement-earlier.pdf");
 
   test("a later statement does not overwrite an opening balance that reaches further back", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     await commit(userId, accountId, await earlier());
@@ -403,7 +401,7 @@ describe("importing several statements for one account", () => {
   });
 
   test("a statement reaching further back does replace it", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     await commit(userId, accountId, await later());
@@ -416,7 +414,7 @@ describe("importing several statements for one account", () => {
   });
 
   test("re-importing the same statement leaves the balance untouched", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     await commit(userId, accountId, await earlier());
@@ -438,7 +436,7 @@ describe("a fixed-term deposit's maturity date", () => {
   };
 
   test("is taken from the statement onto an account that has none", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "fixed_term");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
@@ -449,7 +447,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("never overwrites one the owner already recorded, and reports the disagreement", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "fixed_term");
     updateAccount(
       getDb().db,
@@ -468,7 +466,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("is not written onto a current account, where it would mean nothing", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
@@ -478,7 +476,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("makes the deposit's cash read as locked without any further input", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "fixed_term");
     await commit(userId, accountId, await depositPdf());
 
@@ -548,7 +546,7 @@ describe("classifying an import's new merchants", () => {
     setClassifierClient(
       replying('{"rules":[{"pattern":"ESIMERKKI VAKUUTUS","category":"vakuutukset"}]}'),
     );
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     // Reading the rules is what seeds them for a new account; deleting before
@@ -585,7 +583,7 @@ describe("classifying an import's new merchants", () => {
         },
       },
     } as Parameters<typeof setClassifierClient>[0]);
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     rulesFor(getDb().db, userId);
     removeRule(getDb().db, userId, "VAKUUTUS");
@@ -616,7 +614,7 @@ describe("a statement that knows more than the one already imported", () => {
   };
 
   test("fills in a payee the first file left blank, without doubling the row", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
 
     // OP's CSV leaves the payee column empty for some card payments; its PDF
@@ -650,7 +648,7 @@ describe("a statement that knows more than the one already imported", () => {
   });
 
   test("never overwrites a payee that is already there", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openAccount(userId, "current");
     await commit(userId, accountId);
 

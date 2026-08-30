@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
 import { ApiError } from "../lib/api.ts";
 import { saveSnapshot } from "../server/snapshots.ts";
 import { getInstruments } from "../server/instruments.ts";
-
-const CreatedSnapshotSchema = z.object({ id: z.number() });
 
 /**
  * Records what a broker's statement says was held on a date. Typed in by hand

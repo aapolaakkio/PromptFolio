@@ -2,7 +2,6 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
 import { getDb } from "./db/index.ts";
 import { addInstrument } from "./instruments/store.ts";
-import { z } from "zod";
 
 import { EUR } from "../core/money.ts";
 
@@ -101,29 +100,12 @@ const seedSale = async (
     .run();
 };
 
-const TaxYearSchema = z.object({
-  year: z.number(),
-  disposals: z.array(
-    z.object({
-      instrument: z.string(),
-      accountName: z.string(),
-      gainEur: z.string(),
-      method: z.enum(["actual", "deemed"]),
-      deemedPercent: z.number(),
-      quantity: z.string(),
-    }),
-  ),
-  exempt: z.boolean(),
-  netEur: z.string(),
-  source: z.object({ transactions: z.number(), earliest: z.string().nullable() }),
-});
-
 describe("taxYearFor", () => {
   test("reports the year's disposals as decimal strings, naming the instrument", () => {
     // A numeric instrument id is an internal detail; every user-facing message
     // in this codebase names the instrument instead.
     return (async () => {
-      const { userId, cookie } = await signUp(`tax-${crypto.randomUUID()}@example.com`);
+      const { userId } = await signUp(`tax-${crypto.randomUUID()}@example.com`);
       await seedSale(userId, {
         buyDate: "2020-01-10",
         sellDate: "2025-06-01",
@@ -149,7 +131,7 @@ describe("taxYearFor", () => {
   });
 
   test("says a small year is exempt rather than reporting a gain", async () => {
-    const { userId, cookie } = await signUp(`tax-small-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`tax-small-${crypto.randomUUID()}@example.com`);
     await seedSale(userId, {
       buyDate: "2020-01-10",
       sellDate: "2025-06-01",
@@ -187,7 +169,7 @@ describe("taxYearFor", () => {
 
 describe("taxYearsFor", () => {
   test("lists the years with a taxable event, newest first", async () => {
-    const { userId, cookie } = await signUp(`tax-years-${crypto.randomUUID()}@example.com`);
+    const { userId } = await signUp(`tax-years-${crypto.randomUUID()}@example.com`);
     await seedSale(userId, {
       buyDate: "2020-01-10",
       sellDate: "2023-06-01",

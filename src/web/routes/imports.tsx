@@ -329,7 +329,7 @@ export const ImportsPage = () => {
               ones a cut-off list hides. The header stays put while the body
               scrolls.
             */}
-            <div className="max-h-[28rem] overflow-auto rounded border border-line">
+            <div className="max-h-112 overflow-auto rounded border border-line">
               <table>
                 <thead className="sticky top-0 bg-surface">
                   <tr>

@@ -47,12 +47,8 @@ const insertFxRates = (db: Db, rows: readonly EcbRow[]): number => {
 };
 
 /**
- * The newest `fx_rates` row for `currency` dated on or before `date`, or `null` if none
- * exists yet. Exported so `import/commit.ts` shares this exact lookup (previously its own
- * private copy) rather than a second implementation that could drift. Takes only the
- * `select` method it needs -- both the shared `Db` handle and a transaction's `tx` handle
- * satisfy this structurally, so a caller inside `db.transaction()` can pass `tx` straight
- * through.
+ * The newest rate for `currency` on or before `date`, or null. Takes only the
+ * `select` method, so a caller inside a transaction can pass `tx` straight in.
  */
 export const fxRateOn = (
   db: Pick<Db, "select">,
@@ -70,27 +66,14 @@ export const fxRateOn = (
 };
 
 /**
- * Fetches the ECB daily reference rates and stores every non-EUR currency the ledger
- * actually holds, idempotently.
+ * ECB's daily rates for every non-EUR currency the ledger holds, idempotently.
  *
- * §10a A1 supersedes the original brief here: the real portfolio holds EUR and SEK, never
- * USD, so this fetches *exactly* the currencies the ledger holds and never falls back to a
- * guessed default.
+ * "Holds" means both a transaction's own currency and an instrument's quotation
+ * currency. A fund booked in EUR but quoted in SEK never puts SEK on a
+ * transaction, so reading transactions alone never fetched its rate and the
+ * holding fell back to a fabricated 0,00 EUR with no staleness badge.
  *
- * C1 fix (2026-08-27): the "currencies the ledger holds" set used to come from
- * `transactions.currency` alone. Verified against a real migrated database: per §10a A2/A5
- * a fund like the user's SEK holding is booked in EUR (the transaction's own `currency` is
- * EUR -- that is what actually changed hands) while its price/NAV is quoted in SEK. SEK
- * therefore never appeared in `transactions.currency`, so its rate was never fetched, and
- * `valuation.ts`'s `holdingsFor` silently fell back to a fabricated `0,00 €` market value
- * with no stale badge (the price row itself was dated today -- only the FX rate was
- * missing). Now sourced from `instruments.currency` too (the instrument's own quotation
- * currency), unioned with `transactions.currency`, so a EUR-booked, SEK-quoted holding's
- * rate is fetched regardless of which side ever recorded "SEK".
- *
- * An empty ledger -- nothing imported yet, or a ledger that only ever traded EUR
- * instruments -- means there is nothing to convert, so this returns without calling
- * `fetchImpl` at all: no network call, no placeholder row.
+ * A ledger with nothing to convert makes no network call at all.
  */
 export const refreshFxRates = async (
   db: Db,
@@ -130,17 +113,11 @@ const bumpEarliest = (map: Map<Currency, string>, currency: Currency, date: stri
 };
 
 /**
- * For every non-EUR currency the ledger needs a rate for -- the same union `refreshFxRates`
- * above already uses (a transaction's own `currency`, or an instrument's quotation
- * `currency`) -- the earliest trade date it must be convertible on.
+ * The earliest date each held currency must be convertible on.
  *
- * This is `core/returns.ts`'s `valueSeries` requirement made explicit: it looks up
- * `fxOn(instrument.currency, date)` for every date a position is held, starting at that
- * position's first transaction, so a currency's "earliest needed" date is the earliest
- * trade date of any transaction that either was itself booked in that currency, or that put
- * a non-EUR-quoted instrument into the ledger. A currency that only ever appears on an
- * instrument with zero transactions (never actually held) needs no backfill at all -- there
- * is no date range to value it over yet -- so it is correctly absent from the result.
+ * `valueSeries` looks up a rate for every date a position is held, so that is the
+ * position's first transaction. A currency appearing only on an instrument
+ * nobody holds has no range to value and is absent.
  */
 const earliestNeededDateByCurrency = (db: Db): Map<Currency, string> => {
   const byCurrency = new Map<Currency, string>();
@@ -190,28 +167,14 @@ const earliestOf = (dates: readonly string[]): string | null =>
 export type BackfillFxResult = { readonly inserted: number; readonly currencies: number };
 
 /**
- * The historical-file counterpart to `refreshFxRates`'s daily fetch: catches every held
- * currency's `fx_rates` history up to the earliest date the ledger actually needs it (§4.2 /
- * §10a A1's "no rate at all before the first refresh" gap, confirmed real for SE0002756973 --
- * see this file's `ECB_HIST_URL` comment for the source that closes it).
+ * Every held currency's history back to the earliest date the ledger needs.
  *
- * One combined fetch, not one per currency: ECB serves every currency's history in a single
- * response regardless of how many columns a caller actually wants, so every currency still
- * needing backfill (`needsFxBackfill`) is unioned into one `wanted` set and one `since` --
- * the oldest of their individual earliest-needed dates -- before the historical file is
- * fetched even once. A currency whose earliest-needed date is later than that shared `since`
- * simply receives a few extra, harmless rows it didn't strictly need (deduplicated by
- * `insertFxRates`' `onConflictDoNothing` like everything else here).
+ * One combined fetch: ECB serves every currency in a single response whatever a
+ * caller wants, so all of them are unioned into one request. A currency needing
+ * less gets a few harmless extra rows.
  *
- * Idempotent by construction, not just by the insert's own conflict handling: once a
- * currency's earliest stored row reaches its earliest-needed date, `needsFxBackfill` excludes
- * it from every later call, so a currency fully backfilled once is never re-fetched -- this
- * is the mechanism that keeps a nightly call to this function from re-downloading the whole
- * history every night, mirroring `prices/refresh.ts`'s `backfillMany`/`needsBackfill` pair for
- * price history.
- *
- * Nothing needing backfill (an empty ledger, or one whose every held currency's history
- * already reaches back far enough) means this returns without calling `fetchImpl` at all.
+ * Once a currency's history reaches back far enough it is excluded from every
+ * later call, which is what keeps a nightly run from re-downloading everything.
  */
 export const backfillFxRates = async (
   db: Db,
@@ -236,31 +199,17 @@ export const backfillFxRates = async (
 };
 
 /**
- * Resolves an fx rate for `currency` on or before `date`, fetching ECB's rates on demand if
- * `fx_rates` has nothing yet that satisfies it (C1b: breaks the "first non-EUR transaction"
- * deadlock; extended below to also break the "first *back-dated* non-EUR transaction"
- * deadlock).
+ * A rate for `currency` on or before `date`, fetching on demand when there is none.
  *
- * The deadlock this exists to break, verified directly: `refreshFxRates`/`backfillFxRates`
- * above only ever fetch currencies the ledger *already* holds -- but a currency's very first
- * transaction is exactly the row that would introduce it to the ledger, and
- * `import/commit.ts` rejected committing that row for having no `fx_rates` entry yet.
- * Neither side could move first.
+ * Breaks a deadlock: the sweeps above fetch only currencies the ledger already
+ * holds, but a currency's first transaction is the row that would introduce it,
+ * and a commit refused that row for having no rate.
  *
- * Tries the daily file first, cheaply satisfying the common case (an import of a recent
- * trade): `eurofxref.csv` publishes only the latest TARGET business day's rate, so this
- * alone can only satisfy a `date` on or before that day. When it can't -- a genuinely
- * back-dated transaction in a currency never held before, confirmed a real, committable-today
- * case rather than a hypothetical one -- this falls back to `eurofxref-hist.csv`, fetching
- * and storing that currency's history back through `date` (see `parseEcbHistCsv`'s `since`
- * semantics for the exact boundary) before trying the lookup again. A date older than the
- * historical file's own earliest row (1999-01-04) still returns `null`, exactly as before.
+ * The daily file first, which covers a recent trade; the historical file when the
+ * date is older than it publishes. Older than 1999 still returns null.
  *
- * A fetch failure at either step (ECB unreachable, non-200, a malformed file) is swallowed to
- * `null` rather than thrown: an external-source outage during an import must degrade to "rate
- * still unresolved" (the caller's existing, informative refusal), never surface a raw network
- * error out of a commit (§9.1's External-error handling). Whatever either fetch already
- * managed to store before the failure is kept -- only the return value degrades.
+ * A fetch failure degrades to null rather than throwing: an outage during an
+ * import must reach the caller as its own refusal, not a raw network error.
  */
 export const ensureFxRate = async (
   db: Db,

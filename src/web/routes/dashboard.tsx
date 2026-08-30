@@ -1,87 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { z } from "zod";
 import { eur, pct, fiDate } from "../lib/format.ts";
 import { TimeSeriesChart } from "../charts/TimeSeriesChart.tsx";
-import { AllocationChart, type AllocationSlice } from "../charts/AllocationChart.tsx";
+import { AllocationChart } from "../charts/AllocationChart.tsx";
 import { getAllocation, getReturns, getValueSeries } from "../server/portfolio.ts";
-
-/**
- * Response schemas for the three endpoints this page calls, parsed
- * instead of the `as T` cast `apiGet` otherwise falls back to (spec
- * §9.2's "validate at every boundary" -- a server response-shape change
- * now produces a loud, descriptive `ZodError` here instead of silently
- * wrong numbers on the dashboard). `apiGet`'s type parameter is inferred
- * FROM each schema (no separately declared `ValuePoint`/`Returns` type to
- * drift out of sync with it); `AllocationSlice` is imported from
- * AllocationChart.tsx (it also describes `<AllocationChart
- * slices={...} />`'s prop shape), so its schema instead carries an
- * explicit `z.ZodType<AllocationSlice>` annotation -- TypeScript rejects
- * this file if the two shapes disagree.
- */
-const ValuePointSchema = z.object({
-  date: z.string(),
-  valueEur: z.string(),
-  /** What had been put into holdings by that day; the value line's counterpart. */
-  investedEur: z.string(),
-  stale: z.boolean(),
-});
-
-const ReturnsSchema = z.object({
-  /** Positions only -- what twr and mwr below are computed from. */
-  valueEur: z.string(),
-  /** Uninvested cash, and the two added together (spec 10c/C2). */
-  cashEur: z.string(),
-  availableCashEur: z.string(),
-  lockedCashEur: z.string(),
-  valueWithCashEur: z.string(),
-  stale: z.boolean(),
-  // `null` (like `mwr`) is a real, distinct answer -- C5: at least half the value
-  // series' sub-periods were corrupted by an instrument `/api/value-series` could
-  // not honestly value (see core/returns.ts's `twr` doc for why that beats a
-  // confident wrong percentage). `excludedInstruments` below names which holding.
-  twr: z.number().nullable(),
-  mwr: z.number().nullable(),
-  from: z.string(),
-  to: z.string(),
-  excludedInstruments: z.array(
-    // Null for an instrument no registry carries -- a delisted share, or a
-    // temporary line from a corporate action (see instruments.isin). Rejecting
-    // it here failed the whole dashboard query, which the UI could only report
-    // as a generic "could not load".
-    z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
-  ),
-  /** Accounts whose contributions are inferred from purchases -- see the note below. */
-  accountsMissingCashRecord: z.array(z.object({ accountId: z.number(), name: z.string() })),
-});
-
-const AllocationSliceSchema: z.ZodType<AllocationSlice> = z.object({
-  key: z.string(),
-  label: z.string(),
-  valueEur: z.string(),
-  weight: z.number(),
-});
-
-/**
- * `/api/allocation` returns an envelope, not a bare array: `slices` is what
- * `AllocationChart` renders, and `excludedInstruments` names every instrument
- * left out of every slice's total, for either of two reasons: a SELL with no
- * matching earlier BUY drives a position negative (a negative position must
- * never be counted into an allocation total), or the holding could not be
- * priced/converted to EUR for the requested date (no price, or no fx rate --
- * see `core/allocation.ts`'s `allocateBy`). Neither is silently dropped with
- * no trace. Each entry's `instrumentId` is the same id `/api/holdings` reports
- * that same instrument's `costBasisError`/`valuationError` under.
- */
-const AllocationResponseSchema = z.object({
-  slices: z.array(AllocationSliceSchema),
-  excludedInstruments: z.array(
-    // Null for an instrument no registry carries -- a delisted share, or a
-    // temporary line from a corporate action (see instruments.isin). Rejecting
-    // it here failed the whole dashboard query, which the UI could only report
-    // as a generic "could not load".
-    z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
-  ),
-});
 
 const Stat = ({
   label,

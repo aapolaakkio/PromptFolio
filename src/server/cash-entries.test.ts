@@ -2,7 +2,6 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
 import { getDb } from "./db/index.ts";
 import { cashView } from "./views/portfolio.ts";
-import { z } from "zod";
 
 // The only route in the app that writes a transaction by hand. Everything else
 // arrives through the import pipeline, so these tests care about the two things
@@ -47,22 +46,6 @@ const signUp = async (): Promise<{ userId: string; cookie: string }> => {
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
 
-const IdSchema = z.object({ id: z.number() });
-const ErrorSchema = z.object({ error: z.string() });
-const EntriesSchema = z.object({
-  entries: z.array(
-    z.object({
-      id: z.number(),
-      type: z.string(),
-      tradeDate: z.string(),
-      amount: z.string(),
-      currency: z.string(),
-      note: z.string().nullable(),
-    }),
-  ),
-});
-const CashSchema = z.object({ totalEur: z.string() });
-
 const openBankAccount = (userId: string, accountType = "savings"): number =>
   openAccountRow(
     getDb().db,
@@ -106,7 +89,7 @@ describe("addCashEntry", () => {
   });
 
   test("refuses a trade: a position must never come from a hand-written row", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
 
     // A position must never come from a hand-written row: the schema does not
@@ -117,7 +100,7 @@ describe("addCashEntry", () => {
   });
 
   test("stores a withdrawal as money leaving, whatever sign the caller sent", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
 
     await post(userId, {
@@ -137,7 +120,7 @@ describe("addCashEntry", () => {
   });
 
   test("counts interest as money arriving", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId, "fixed_term");
 
     await post(userId, {
@@ -152,7 +135,7 @@ describe("addCashEntry", () => {
   });
 
   test("refuses the same movement twice rather than doubling a balance", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
     const entry: Entry = {
       accountId,
@@ -172,7 +155,7 @@ describe("addCashEntry", () => {
 
 describe("opening balance", () => {
   test("carries the money the account already held when its statements begin", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
 
     // What a two-year statement cannot tell you: the account did not start at
@@ -197,7 +180,7 @@ describe("opening balance", () => {
   });
 
   test("refuses a second one in the same currency, which would double the start", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
     const opening: Entry = {
       accountId,
@@ -214,7 +197,7 @@ describe("opening balance", () => {
   });
 
   test("allows one per currency, since an account can hold more than one", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
 
     post(userId, {
@@ -240,7 +223,7 @@ describe("opening balance", () => {
 
 describe("listCashEntries and removeCashEntry", () => {
   test("lists what was written by hand, newest first", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
     await post(userId, {
       accountId,
@@ -264,7 +247,7 @@ describe("listCashEntries and removeCashEntry", () => {
   });
 
   test("deleting a mistyped row removes it from the balance", async () => {
-    const { userId, cookie } = await signUp();
+    const { userId } = await signUp();
     const accountId = openBankAccount(userId);
     const created = post(userId, {
       accountId,

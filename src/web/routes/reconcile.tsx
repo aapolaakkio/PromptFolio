@@ -168,7 +168,7 @@ const Result = ({
           : `${attention.length} / ${rows.length} riviä eroaa ${fiDate(asOf)}.`}
       </p>
 
-      <div className="mt-3 max-h-[28rem] overflow-auto rounded border border-line">
+      <div className="mt-3 max-h-112 overflow-auto rounded border border-line">
         <table>
           <thead className="sticky top-0 bg-surface">
             <tr>
