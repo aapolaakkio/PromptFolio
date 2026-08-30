@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   accountTypeLabel,
+  HOLDS_CASH,
   isAccountKind,
   isAccountType,
   typesFor,
@@ -33,7 +34,7 @@ describe("accountTypeLabel", () => {
 describe("typesFor", () => {
   test("offers a bank account only bank types, never AOT or OST", () => {
     const ids = typesFor("bank").map((type) => type.id);
-    expect(ids).toEqual(["current", "savings", "fixed_term"]);
+    expect(ids).toEqual(["current", "savings", "fixed_term", "credit"]);
     expect(ids).not.toContain("ost");
   });
 
@@ -57,4 +58,13 @@ describe("accountTypeLabel", () => {
     expect(accountTypeLabel("fixed_term")).toBe("Määräaikaistili");
     expect(accountTypeLabel("current")).toBe("Käyttötili");
   });
+});
+
+test("a credit card holds no cash, every other bank account does", () => {
+  // Its balance is what is owed for purchases already counted as spending;
+  // counting it as cash would subtract the same money twice, and counting it
+  // as an asset would be worse.
+  expect(HOLDS_CASH("credit")).toBe(false);
+  expect(HOLDS_CASH("current")).toBe(true);
+  expect(HOLDS_CASH(null)).toBe(true);
 });

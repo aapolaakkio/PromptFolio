@@ -29,7 +29,20 @@ export const BANK_TYPES = [
   { id: "current", label: "Käyttötili" },
   { id: "savings", label: "Säästötili" },
   { id: "fixed_term", label: "Määräaikaistili" },
+  { id: "credit", label: "Luottokortti" },
 ] as const;
+
+/**
+ * A credit card holds no money, so its balance is not cash.
+ *
+ * It is a spending ledger: the purchases are real spending, and the bill that
+ * settles them is a transfer from an account that does hold money. Counting its
+ * balance as cash would subtract the same money twice -- once as the purchases
+ * and again as the debt they created -- and counting it as an asset would be
+ * worse. Debt as a thing the app models is still unbuilt (spec 10f/F8); this is
+ * the narrow decision that keeps the cash figures honest until it is.
+ */
+export const HOLDS_CASH = (accountType: string | null): boolean => accountType !== "credit";
 
 export const ACCOUNT_TYPES = [...BROKERAGE_TYPES, ...BANK_TYPES];
 

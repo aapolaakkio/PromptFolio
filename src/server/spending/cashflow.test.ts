@@ -382,3 +382,109 @@ test("a nonsense start date does not ask for twenty thousand months", () => {
   // looking at.
   expect(months.at(-1)?.month).toBe("2026-12");
 });
+
+describe("a credit card bill", () => {
+  // The card's purchases are the spending. The bill that settles them is money
+  // moving between two accounts the owner holds -- counting it too would count
+  // the same month twice.
+  const CARD = 3;
+
+  test("cancels against the payment from the current account", () => {
+    const settlement = row(CARD, "Suoritus", "456.11", "2026-06-25", "DEPOSIT");
+    const payment = row(1, "LUOTON MAKSU", "-456.11", "2026-06-24");
+
+    expect(internalTransferIds([settlement, payment]).size).toBe(2);
+  });
+
+  test("leaves the purchases themselves alone", () => {
+    const purchase = row(CARD, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-06-10");
+    const settlement = row(CARD, "Suoritus", "456.11", "2026-06-25", "DEPOSIT");
+    const payment = row(1, "LUOTON MAKSU", "-456.11", "2026-06-24");
+
+    const internal = internalTransferIds([purchase, settlement, payment]);
+    expect(internal.has(purchase.id)).toBe(false);
+  });
+
+  test("so the month's spending is the purchases, not the purchases plus the bill", () => {
+    const flow = cashFlowFor({
+      txns: [
+        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-06-01", "DEPOSIT"),
+        row(CARD, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-06-10"),
+        row(CARD, "Suoritus", "200.00", "2026-06-25", "DEPOSIT"),
+        row(1, "LUOTON MAKSU", "-200.00", "2026-06-24"),
+      ],
+      rules: RULES,
+      // The card is a bank-kind account: its rows are spending like any other.
+      bankAccountIds: new Set([1, 2, CARD]),
+      investedAccountIds: BROKERAGE,
+      ...YEAR,
+    });
+
+    // 200 spent once, in the category the shop belongs to -- not 400, and not
+    // 200 filed under whatever "LUOTON MAKSU" matches.
+    expect(flow.nodes.find((node) => node.id === "out:ruoka")?.totalEur).toBe("200.00");
+    expect(flow.nodes.find((node) => node.id === "expenses")?.totalEur).toBe("200.00");
+  });
+});
+
+describe("a card refund", () => {
+  const CARD = 3;
+  const BANKS = new Set([1, 2, CARD]);
+
+  test("comes off the category it was spent in, rather than counting as income", () => {
+    // Nobody earned it. Counting it as income would both inflate what came in
+    // and leave the purchase it reverses standing at full price.
+    const flow = cashFlowFor({
+      txns: [
+        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-02-01", "DEPOSIT"),
+        row(CARD, "PKORTTIMAKSU — RAVINTOLA", "-20.00", "2026-02-05"),
+        row(CARD, "Hyvitys — RAVINTOLA", "4.49", "2026-02-06", "DEPOSIT"),
+      ],
+      rules: RULES,
+      bankAccountIds: BANKS,
+      investedAccountIds: BROKERAGE,
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+
+    expect(flow.nodes.find((node) => node.id === "income")?.totalEur).toBe("3000.00");
+    expect(flow.nodes.find((node) => node.id === "out:ravintolat")?.totalEur).toBe("15.51");
+  });
+
+  test("lowers the month's spending instead of raising its income", () => {
+    const months = monthlyFlows({
+      txns: [
+        row(CARD, "PKORTTIMAKSU — RAVINTOLA", "-20.00", "2026-02-05"),
+        row(CARD, "Hyvitys — RAVINTOLA", "4.49", "2026-02-06", "DEPOSIT"),
+      ],
+      rules: RULES,
+      bankAccountIds: BANKS,
+      from: "2026-02-01",
+      to: "2026-02-28",
+    });
+
+    expect(months[0]).toEqual({
+      month: "2026-02",
+      incomeEur: "0.00",
+      expensesEur: "15.51",
+      netEur: "-15.51",
+    });
+  });
+
+  test("a card's own charges are spending like any other", () => {
+    // Interest and a maintenance fee arrive negative, so they are costs -- a
+    // card charges interest, it never pays it.
+    const months = monthlyFlows({
+      txns: [
+        row(CARD, "Korko", "-1.40", "2026-02-24"),
+        row(CARD, "Tilinhoitomaksu", "-3.50", "2026-02-24"),
+      ],
+      rules: RULES,
+      bankAccountIds: BANKS,
+      from: "2026-02-01",
+      to: "2026-02-28",
+    });
+
+    expect(months[0]?.expensesEur).toBe("4.90");
+  });
+});

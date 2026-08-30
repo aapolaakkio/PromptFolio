@@ -337,7 +337,7 @@ export const portfolioRoutes = {
       const url = new URL(request.url);
       const dimension = DimensionSchema.parse(url.searchParams.get("by") ?? "kind");
       const on = IsoDateSchema.parse(url.searchParams.get("on") ?? today());
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
+      const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
 
       // Cash is part of the allocation (spec 10c/C2): a portfolio holding a
@@ -346,7 +346,7 @@ export const portfolioRoutes = {
       const cash = withAvailability(
         db,
         userId,
-        valueCash(cashBalancesAt(txns, on), prices.fxOn, on),
+        valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),
         on,
       );
       const { slices, excludedInstrumentIds } = allocateBy(
@@ -389,7 +389,7 @@ export const portfolioRoutes = {
     GET: handle(async (request) => {
       const { userId } = await requireUser(request);
       const { from, to } = parseRange(new URL(request.url));
-      const { txns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      const { txns, cashTxns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
       const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
       // Invested transactions only: a bank account's rows are spending and
       // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving
@@ -505,7 +505,7 @@ export const portfolioRoutes = {
       const cashAtEnd = withAvailability(
         db,
         userId,
-        valueCash(cashBalancesAt(txns, to), prices.fxOn, to),
+        valueCash(cashBalancesAt(cashTxns, to), prices.fxOn, to),
         to,
       );
       const cashEur = totalCashEur(cashAtEnd);

@@ -192,8 +192,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     schema: Allocation,
     run: (input) => {
       const { on = today(), dimension = "kind" } = Allocation.parse(input);
-      const { txns, instruments, prices } = loadPortfolio(db, userId);
-      const cash = valueCash(cashBalancesAt(txns, on), prices.fxOn, on);
+      const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
+      const cash = valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on);
       const { slices, excludedInstrumentIds } = allocateBy(
         txns,
         instruments,

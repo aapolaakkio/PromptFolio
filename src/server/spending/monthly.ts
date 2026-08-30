@@ -1,7 +1,7 @@
 import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
 import type { IsoDate, Txn } from "../../core/types";
 import { internalTransferIds } from "./internal";
-import { categoriseWith, type SpendingRule } from "./rules";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules";
 
 export type MonthlyFlow = {
   /** `2026-03`, so the client can sort and label without parsing a date. */
@@ -71,7 +71,11 @@ export const monthlyFlows = (args: {
     if (categoriseWith(txn.note ?? "", args.rules) === "siirrot") continue;
 
     const month = txn.tradeDate.slice(0, 7);
-    if (txn.amount.minor > 0n) {
+    if (txn.amount.minor > 0n && isRefund(txn.note ?? "")) {
+      // Money back from a shop lowers the month's spending; it is not income.
+      const negative: Money = { minor: -txn.amount.minor, currency: EUR };
+      expenses.set(month, addMoney(expenses.get(month) ?? zeroMoney(EUR), negative));
+    } else if (txn.amount.minor > 0n) {
       income.set(month, addMoney(income.get(month) ?? zeroMoney(EUR), txn.amount));
     } else if (txn.amount.minor < 0n) {
       const positive: Money = { minor: -txn.amount.minor, currency: EUR };
@@ -137,12 +141,13 @@ export const monthlyByCategory = (args: {
     if (txn.tradeDate < args.from || txn.tradeDate > args.to) continue;
     if (txn.currency !== EUR) continue;
     if (txn.type === "OPENING_BALANCE") continue;
-    if (txn.amount.minor >= 0n) continue;
+    if (txn.amount.minor >= 0n && !isRefund(txn.note ?? "")) continue;
 
     const category = categoriseWith(txn.note ?? "", args.rules);
     if (category === "siirrot") continue;
 
     const month = txn.tradeDate.slice(0, 7);
+    // Negative for a refund, which is the point: it comes off the category.
     const spent: Money = { minor: -txn.amount.minor, currency: EUR };
     const row = perMonth.get(month) ?? new Map<string, Money>();
     row.set(category, addMoney(row.get(category) ?? zeroMoney(EUR), spent));

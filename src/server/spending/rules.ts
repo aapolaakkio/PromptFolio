@@ -129,3 +129,19 @@ export const removeRule = (db: Db, userId: string, pattern: string): boolean => 
     .all();
   return deleted.length > 0;
 };
+
+/**
+ * What a bank or card calls money coming back from a shop.
+ *
+ * A refund is not income: nobody earned it, and counting it as income both
+ * inflates what came in and leaves the original purchase standing at full
+ * price. It belongs against the category it came from, which is what
+ * `categoriseWith` gives it -- the payee is on the row exactly as it was on the
+ * purchase.
+ */
+const REFUND_LABELS = ["HYVITYS", "PALAUTUS"];
+
+export const isRefund = (note: string): boolean => {
+  const upper = note.toUpperCase();
+  return REFUND_LABELS.some((label) => upper.includes(label));
+};

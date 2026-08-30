@@ -101,7 +101,7 @@ export const accounts = sqliteTable(
       .notNull()
       .default("brokerage"),
     accountType: text("account_type", {
-      enum: ["aot", "ost", "current", "savings", "fixed_term", "other"],
+      enum: ["aot", "ost", "current", "savings", "fixed_term", "credit", "other"],
     }),
     /**
      * When a fixed-term deposit (määräaikaistili) comes free. Null on every

@@ -19,7 +19,11 @@ const accountKind = z.enum(["brokerage", "bank"]);
  * rather than offered as one list nobody can pick wrongly from by accident.
  */
 const BROKERAGE_TYPES = ["aot", "ost", "other"] as const;
-const BANK_TYPES = ["current", "savings", "fixed_term"] as const;
+// "credit" is a bank-kind account that holds no money of its own: its rows are
+// card purchases and the payments that settle them. Kept out of the cash
+// figures (see valuation.ts's `cashTxns`), and it carries no interest rate or
+// maturity, so it belongs here rather than among the savings kinds.
+const BANK_TYPES = ["current", "savings", "fixed_term", "credit"] as const;
 
 const accountType = z.enum([...BROKERAGE_TYPES, ...BANK_TYPES]);
 

@@ -80,6 +80,45 @@ export const OP_BANK: BankStatementConfig = {
   interestLabels: ["TALLETUSKORKO", "KORKO"],
 };
 
+/**
+ * OP's credit card transaction log.
+ *
+ * The same shape as the account statement with different header names, and one
+ * difference that matters: the amount uses a decimal point where the account
+ * statement uses a comma. `parseMoney` accepts both, so nothing else changes.
+ *
+ * `Kurssi` holds the currency code rather than a rate, which is OP's naming and
+ * not a mistake in this config. It is read as the row's currency; a card row in
+ * another currency is refused rather than silently treated as euros.
+ *
+ * The card's own settlement rows -- "Suoritus", "Tilisiirto" -- are imported
+ * like any other row. They are the credit side of a payment whose debit is on
+ * an ordinary account, and `spending/internal.ts` pairs the two structurally,
+ * which is what stops a month of card purchases and the bill that settles them
+ * both counting as spending.
+ */
+export const OP_CREDIT: BankStatementConfig = {
+  bank: "op",
+  encoding: "utf-8",
+  delimiter: ";",
+  currency: EUR,
+  columns: {
+    date: "Kirjauspäivä",
+    amount: "Määrä",
+    label: "Selite",
+    counterparty: "Saaja",
+    externalId: "Arkistointitunnus",
+  },
+  // `Kurssi` and `Maksaja` are what tell this apart from the account statement,
+  // which has neither.
+  signature: ["Kirjauspäivä", "Arvopäivä", "Määrä", "Kurssi", "Selite", "Arkistointitunnus"],
+  // None. A card charges interest, it never pays it: "Korko" on this statement
+  // is money owed, and it arrives negative, which `rowType` already books as a
+  // withdrawal. Listing it here would only matter if it could ever be
+  // positive, and it cannot.
+  interestLabels: [],
+};
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**

@@ -6,7 +6,7 @@ import { EUR, formatMoney, parseMoney, subMoney, zeroMoney } from "../../core/mo
 import { assertAccountOwned } from "./accounts";
 import { requireUser } from "../auth-guard";
 import { commitBankStatement } from "../import/bank-commit";
-import { matchesBank, OP_BANK, parseBankStatement } from "../import/bank-statement";
+import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "../import/bank-statement";
 import type { BankRow, BankStatementConfig } from "../import/bank-statement";
 import {
   extractStatementText,
@@ -29,7 +29,9 @@ const { db } = getDb();
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /** Every bank format the app can read. A file is matched against each in turn. */
-const BANK_CONFIGS: readonly BankStatementConfig[] = [OP_BANK];
+// The card log is tried first: its signature is the stricter of the two, and an
+// account statement can never match it.
+const BANK_CONFIGS: readonly BankStatementConfig[] = [OP_CREDIT, OP_BANK];
 
 const IsoDateSchema = z
   .string()

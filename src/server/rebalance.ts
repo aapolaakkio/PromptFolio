@@ -133,11 +133,11 @@ export const saveTargets = (
 
 /** What every read view needs: the allocation, the targets, and the drift between them. */
 const situation = (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
-  const { txns, instruments, prices } = loadPortfolio(db, userId);
+  const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
   const cash = withAvailability(
     db,
     userId,
-    valueCash(cashBalancesAt(txns, on), prices.fxOn, on),
+    valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),
     on,
   );
   const allocation = allocateBy(txns, instruments, prices, on, dimension, cash);

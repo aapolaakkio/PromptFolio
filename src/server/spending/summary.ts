@@ -1,7 +1,7 @@
 import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
 import type { IsoDate, Txn } from "../../core/types";
 import { CATEGORY_LABELS, type Category } from "./categories";
-import { categoriseWith, type SpendingRule } from "./rules";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules";
 
 export type SpendingGroup = {
   readonly key: string;
@@ -78,7 +78,11 @@ export const summariseSpending = (
     // negative one -- the ledger showing more outgoings than the bank's stated
     // balance explains -- was being reported as the year's largest expense.
     .filter((txn) => txn.type !== "OPENING_BALANCE")
-    .filter((txn) => txn.amount.minor < 0n && txn.currency === EUR)
+    // Refunds are kept even though they are positive: a shop giving money back
+    // reduces what was spent there rather than earning anything, so it belongs
+    // against its own category. Every other credit is income and is not
+    // spending at all.
+    .filter((txn) => txn.currency === EUR && (txn.amount.minor < 0n || isRefund(txn.note ?? "")))
     .map((txn) => ({ note: txn.note ?? "", amount: txn.amount, date: txn.tradeDate }));
 
   const totals = new Map<string, { label: string; total: Money; count: number }>();

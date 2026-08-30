@@ -2,7 +2,7 @@ import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/mo
 import type { IsoDate, Txn } from "../../core/types";
 import { CATEGORY_LABELS } from "./categories";
 import { internalTransferIds, investmentPaymentIds } from "./internal";
-import { categoriseWith, type SpendingRule } from "./rules";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules";
 
 /**
  * Where a period's money came from and where it went, as a flow graph.
@@ -81,6 +81,9 @@ export const cashFlowFor = (args: {
   for (const txn of bankRows) {
     if (txn.amount.minor <= 0n) continue;
     if (txn.type === "OPENING_BALANCE") continue;
+    // A refund was already taken off the category it came from; counting it
+    // here as well would show the same money arriving and never leaving.
+    if (isRefund(txn.note ?? "")) continue;
     const category = categoriseWith(txn.note ?? "", args.rules);
     // A transfer in is the owner's own money arriving, not income.
     if (category === "siirrot") continue;
@@ -92,7 +95,10 @@ export const cashFlowFor = (args: {
   const expenses = new Map<string, Money>();
   let taxes = zeroMoney(EUR);
   for (const txn of bankRows) {
-    if (txn.amount.minor >= 0n) continue;
+    // A refund is negative spending in its own category, not income: nobody
+    // earned it, and counting it as income would both inflate what came in and
+    // leave the purchase it reverses standing at full price.
+    if (txn.amount.minor >= 0n && !isRefund(txn.note ?? "")) continue;
     if (txn.type === "OPENING_BALANCE") continue;
     if (intoInvestments.has(txn.id)) continue;
     const category = categoriseWith(txn.note ?? "", args.rules);

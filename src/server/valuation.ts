@@ -98,6 +98,16 @@ export type Portfolio = {
   /** Account ids whose kind is a bank one, for callers that group by account. */
   readonly bankAccountIds: readonly number[];
   /**
+   * The same transactions, minus every credit account.
+   *
+   * A credit card holds no money: its purchases are spending and its balance is
+   * what is owed for them, so counting that balance as cash subtracts the same
+   * money twice -- once as the purchases, once as the debt they created. Cash
+   * figures read this; spending still reads `txns`, because the purchases are
+   * exactly what a spending report is about.
+   */
+  readonly cashTxns: readonly Txn[];
+  /**
    * The first price this instrument has strictly after `date`, or null if it
    * has none.
    *
@@ -223,6 +233,16 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     },
   };
 
+  const creditAccountIds = new Set(
+    db
+      .select({ id: accounts.id, accountType: accounts.accountType })
+      .from(accounts)
+      .where(eq(accounts.userId, userId))
+      .all()
+      .filter((row) => row.accountType === "credit")
+      .map((row) => row.id),
+  );
+
   const bankAccountIds = db
     .select({ id: accounts.id, kind: accounts.kind })
     .from(accounts)
@@ -238,6 +258,7 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     instruments: instrumentList,
     prices: priceLookup,
     bankAccountIds,
+    cashTxns: txns.filter((txn) => !creditAccountIds.has(txn.accountId)),
     nextPriceDateAfter,
   };
 };
@@ -576,7 +597,7 @@ export const withAvailability = (
 };
 
 export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
-  const { txns, prices } = loadPortfolio(db, userId);
+  const { cashTxns, prices } = loadPortfolio(db, userId);
   const names = new Map(
     db
       .select({ id: accounts.id, name: accounts.name })
@@ -589,7 +610,7 @@ export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
   const valued = withAvailability(
     db,
     userId,
-    valueCash(cashBalancesAt(txns, on), prices.fxOn, on),
+    valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),
     on,
   );
   return {
