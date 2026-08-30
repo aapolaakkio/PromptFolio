@@ -23,7 +23,7 @@ import {
   valueCash,
 } from "../../core/cash";
 import { cashFlowFor } from "../spending/cashflow";
-import { investmentPaymentIds } from "../spending/internal";
+import { cashlessAccountIds, investmentPaymentIds, notSpendingIds } from "../spending/internal";
 import { CATEGORY_LABELS } from "../spending/categories";
 import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
 import { classifiedTransactions } from "../spending/transactions";
@@ -50,18 +50,6 @@ const LABEL_ONLY: ReadonlySet<string> = new Set([
   "ETUUS",
   "NIMETÖN",
 ]);
-
-/**
- * Invested accounts whose own export never records cash arriving -- OP's
- * securities view is one. Their purchases stand in for the deposits that fund
- * them, which is how a regular fund saving is recognised as investing rather
- * than spending.
- */
-const cashlessAccountIds = (
-  txns: readonly Txn[],
-  bankAccountIds: ReadonlySet<number>,
-): ReadonlySet<number> =>
-  new Set(accountsMissingCashRecord(txns).filter((accountId) => !bankAccountIds.has(accountId)));
 
 const IsoDateSchema = z
   .string()
@@ -200,7 +188,7 @@ export const portfolioRoutes = {
 
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
-      const invested = investmentPaymentIds(txns, cashlessAccountIds(txns, bank), bank);
+      const moved = notSpendingIds(txns, bank);
       const rules = rulesFor(db, userId);
 
       // Only what no rule matched: this is the list a person works through to
@@ -208,7 +196,7 @@ export const portfolioRoutes = {
       const unmatched = txns.filter(
         (txn) =>
           bank.has(txn.accountId) &&
-          !invested.has(txn.id) &&
+          !moved.has(txn.id) &&
           categoriseWith(txn.note ?? "", rules) === "muu",
       );
 
@@ -286,12 +274,13 @@ export const portfolioRoutes = {
       // not spending.
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
-      // A payment that funded a fund purchase is investing, not spending, and
-      // would otherwise sit among the shops as one of the year's largest lines.
-      const invested = investmentPaymentIds(txns, cashlessAccountIds(txns, bank), bank);
+      // A payment that funded a fund purchase, moved money to the owner's own
+      // savings, or settled the credit card is not spending, and would
+      // otherwise sit among the shops as one of the year's largest lines.
+      const moved = notSpendingIds(txns, bank);
       return json(
         summariseSpending(
-          txns.filter((txn) => bank.has(txn.accountId) && !invested.has(txn.id)),
+          txns.filter((txn) => bank.has(txn.accountId) && !moved.has(txn.id)),
           { from, to, by, limit, rules: rulesFor(db, userId) },
         ),
       );

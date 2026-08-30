@@ -147,9 +147,15 @@ export const cashFlowFor = (args: {
 
   const nodes: FlowNode[] = [];
   const links: FlowLink[] = [];
-  const push = (id: string, label: string, amount: Money): void => {
-    if (amount.minor <= 0n) return;
+  // Reports whether the node now exists, so a link can be made conditional on
+  // its own endpoint. A link to a node that was never pushed does not degrade
+  // -- it throws, and the whole page goes down with the diagram. Nothing that
+  // is not positive becomes a node: a Sankey has no way to draw a flow of zero
+  // or of less than nothing.
+  const push = (id: string, label: string, amount: Money): boolean => {
+    if (amount.minor <= 0n) return false;
     nodes.push({ id, label, totalEur: formatMoney(amount) });
+    return true;
   };
 
   const INCOME_LABELS = {
@@ -165,23 +171,19 @@ export const cashFlowFor = (args: {
   };
 
   for (const [key, amount] of income) {
-    push(`in:${key}`, incomeLabelFor(key), amount);
-    if (amount.minor > 0n) {
+    if (push(`in:${key}`, incomeLabelFor(key), amount)) {
       links.push({ from: `in:${key}`, to: "income", amountEur: formatMoney(amount) });
     }
   }
   push("income", "Tulot", totalIn);
 
-  push("expenses", "Menot", totalSpent);
-  if (totalSpent.minor > 0n) {
+  if (push("expenses", "Menot", totalSpent)) {
     links.push({ from: "income", to: "expenses", amountEur: formatMoney(totalSpent) });
   }
-  push("taxes", CATEGORY_LABELS.verot, taxes);
-  if (taxes.minor > 0n) {
+  if (push("taxes", CATEGORY_LABELS.verot, taxes)) {
     links.push({ from: "income", to: "taxes", amountEur: formatMoney(taxes) });
   }
-  push("invested", "Sijoituksiin", investedTotal);
-  if (investedTotal.minor > 0n) {
+  if (push("invested", "Sijoituksiin", investedTotal)) {
     links.push({ from: "income", to: "invested", amountEur: formatMoney(investedTotal) });
   }
   // Named as what it is: the part the other flows do not explain. Negative means
@@ -204,8 +206,9 @@ export const cashFlowFor = (args: {
     // SAFETY: `expenses` is keyed by `categoriseWith`, whose return type is the
     // Category union that CATEGORY_LABELS is declared complete over.
     const label = CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category;
-    push(`out:${category}`, label, amount);
-    links.push({ from: "expenses", to: `out:${category}`, amountEur: formatMoney(amount) });
+    if (push(`out:${category}`, label, amount)) {
+      links.push({ from: "expenses", to: `out:${category}`, amountEur: formatMoney(amount) });
+    }
   }
 
   return {

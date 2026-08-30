@@ -4,7 +4,7 @@ import { EUR, parseMoney } from "../../core/money";
 import type { IsoDate, TransactionType, Txn } from "../../core/types";
 import { cashFlowFor } from "./cashflow";
 import { SEED_RULES } from "./categories";
-import { internalTransferIds, investmentPaymentIds } from "./internal";
+import { internalTransferIds, investmentPaymentIds, notSpendingIds } from "./internal";
 import { monthlyByCategory, monthlyFlows } from "./monthly";
 import type { SpendingRule } from "./rules";
 
@@ -96,6 +96,27 @@ describe("internalTransferIds", () => {
   });
 });
 
+describe("notSpendingIds", () => {
+  // The by-category and by-payee lists used to apply no exclusion at all, so a
+  // credit card bill -- a lump sum moved to the card, not money spent -- was
+  // reported as one of the year's largest expenses under "Lainat ja luotot",
+  // while the same period's Sankey left it out. One definition, so the two
+  // views cannot disagree again.
+  test("covers the owner's own transfers as well as investment payments", () => {
+    const txns = [
+      row(1, "LUOTON MAKSU — OP KORTTI", "-450.00", "2026-04-01"),
+      row(2, "MAKSU", "450.00", "2026-04-01", "DEPOSIT"),
+      row(1, "PKORTTIMAKSU — K-MARKET", "-30.00", "2026-04-02"),
+    ];
+
+    const moved = notSpendingIds(txns, BANK);
+
+    expect(moved.has(txns[0]!.id)).toBe(true);
+    expect(moved.has(txns[1]!.id)).toBe(true);
+    expect(moved.has(txns[2]!.id)).toBe(false);
+  });
+});
+
 describe("cashFlowFor", () => {
   const salary = row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT");
   const groceries = row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10");
@@ -107,6 +128,25 @@ describe("cashFlowFor", () => {
     expect(nodeOf([salary, groceries, restaurant], "income")?.totalEur).toBe("3000.00");
     expect(flow.nodes.find((node) => node.id === "out:ruoka")?.totalEur).toBe("200.00");
     expect(flow.nodes.find((node) => node.id === "out:ravintolat")?.totalEur).toBe("100.00");
+  });
+
+  test("never links to a category the refunds cancelled out", () => {
+    // A refund larger than the period's purchases in that category leaves a
+    // total of zero or less, which cannot be a node. The link used to be added
+    // anyway, and the diagram threw rather than dropped it: "target at link
+    // index 22 does not match a node key".
+    const flow = flowOf([
+      salary,
+      row(1, "PKORTTIMAKSU — RAVINTOLA", "-20.00", "2026-01-11"),
+      row(1, "HYVITYS — RAVINTOLA", "20.00", "2026-01-12", "DEPOSIT"),
+    ]);
+
+    const keys = new Set(flow.nodes.map((node) => node.id));
+    for (const link of flow.links) {
+      expect(keys.has(link.from)).toBe(true);
+      expect(keys.has(link.to)).toBe(true);
+    }
+    expect(keys.has("out:ravintolat")).toBe(false);
   });
 
   test("does not count the owner's own transfer as income", () => {

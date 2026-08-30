@@ -1,3 +1,4 @@
+import { accountsMissingCashRecord } from "../../core/ledger";
 import { EUR } from "../../core/money";
 import type { Txn } from "../../core/types";
 
@@ -105,4 +106,42 @@ export const investmentPaymentIds = (
   }
 
   return matched;
+};
+
+/**
+ * Invested accounts whose own export never records cash arriving -- OP's
+ * securities view is one. Their purchases stand in for the deposits that fund
+ * them, which is how a regular fund saving is recognised as investing rather
+ * than spending.
+ */
+export const cashlessAccountIds = (
+  txns: readonly Txn[],
+  bankAccountIds: ReadonlySet<number>,
+): ReadonlySet<number> =>
+  new Set(accountsMissingCashRecord(txns).filter((accountId) => !bankAccountIds.has(accountId)));
+
+/**
+ * Every row that is a movement rather than a cost.
+ *
+ * One definition, because there was more than one and they disagreed. The
+ * Sankey and the monthly totals excluded transfers between the owner's own
+ * accounts and payments that funded an investment; the by-category and
+ * by-payee lists excluded neither, so the same period read differently
+ * depending on which view you opened -- and a credit card bill, being a
+ * transfer to the card, sat among the shops as one of the year's largest lines.
+ *
+ * Needs the whole ledger, not just the bank rows: an internal transfer is only
+ * recognisable by its other half, which is on another account.
+ */
+export const notSpendingIds = (
+  txns: readonly Txn[],
+  bankAccountIds: ReadonlySet<number>,
+): ReadonlySet<number> => {
+  const internal = internalTransferIds(txns);
+  const invested = investmentPaymentIds(
+    txns,
+    cashlessAccountIds(txns, bankAccountIds),
+    bankAccountIds,
+  );
+  return new Set([...internal, ...invested]);
 };

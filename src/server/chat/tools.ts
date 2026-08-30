@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { allocateBy, type Dimension } from "../../core/allocation";
 import { cashBalancesAt, valueCash } from "../../core/cash";
+import { notSpendingIds } from "../spending/internal";
 import { categoriseWith, rulesFor } from "../spending/rules";
 import { summariseSpending } from "../spending/summary";
 import { calculate } from "./calculator";
@@ -334,12 +335,14 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         groupBy = "category",
         limit = 15,
       } = Spending.parse(input);
-      // Bank rows only: a share purchase is money leaving too, and counting it
-      // would report the year's biggest investment as its biggest expense.
+      // Bank rows only, minus the movements: a share purchase is money leaving
+      // too, and counting it -- or a transfer to savings, or the credit card
+      // bill -- would report the year's biggest movement as its biggest expense.
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
+      const moved = notSpendingIds(txns, bank);
       const summary = summariseSpending(
-        txns.filter((txn) => bank.has(txn.accountId)),
+        txns.filter((txn) => bank.has(txn.accountId) && !moved.has(txn.id)),
         { from, to, by: groupBy, limit, rules: rulesFor(db, userId) },
       );
       return {
@@ -371,9 +374,13 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       const { txns, bankAccountIds } = loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       const rules = rulesFor(db, userId);
+      const moved = notSpendingIds(txns, bank);
       const summary = summariseSpending(
         txns.filter(
-          (txn) => bank.has(txn.accountId) && categoriseWith(txn.note ?? "", rules) === "muu",
+          (txn) =>
+            bank.has(txn.accountId) &&
+            !moved.has(txn.id) &&
+            categoriseWith(txn.note ?? "", rules) === "muu",
         ),
         { from, to, by: "counterparty", limit, rules },
       );
