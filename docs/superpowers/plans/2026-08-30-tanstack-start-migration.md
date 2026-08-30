@@ -49,17 +49,25 @@ Each ends with the suite green and a commit. Nothing is half-migrated at a bound
 
 **1. pnpm.** Drop `bun.lock`, add `pnpm-lock.yaml` and `.npmrc`. Scripts still call Bun.
 
-**2. Vitest.** 84 test files move from `bun:test` to Vitest — the imports change, the
-assertions do not. The preload that makes `fetch` throw becomes `setupFiles`; the 80 %
-per-file coverage floor becomes a Vitest threshold. This is the largest mechanical step
-and it is independent of everything else, so it goes early where it can be verified alone.
-
-**3. Node runtime shims.** `Bun.env` → `process.env`, `Bun.file` → `node:fs/promises`,
+**2. Node runtime shims.** `Bun.env` → `process.env`, `Bun.file` → `node:fs/promises`,
 `Bun.CryptoHasher` → `node:crypto`, `Bun.spawn` → `node:child_process`, `Bun.password` →
 `@node-rs/argon2`. 98 files touch these; each change is local.
 
-**4. SQLite.** `bun:sqlite` → `node:sqlite`, `drizzle-orm/bun-sqlite` →
+**3. SQLite.** `bun:sqlite` → `node:sqlite`, `drizzle-orm/bun-sqlite` →
 `drizzle-orm/node-sqlite`. Five files, plus the migration runner.
+
+**4. Vitest.** 84 test files move from `bun:test` to Vitest — the imports change, the
+assertions do not; the suite uses no Bun-specific test API beyond `toMatchObject`, which
+Vitest has. The preload that makes `fetch` throw becomes `setupFiles`, and the 80 %
+per-file coverage floor becomes a Vitest threshold.
+
+*Ordering, corrected after stage 1:* Vitest was going to come first, as the biggest
+mechanical step and the one most easily verified alone. It cannot. Vitest runs tests under
+Node, so every Bun API the code under test imports has to be gone before the runner
+changes — otherwise nothing runs at all and there is no green suite to verify against.
+The shims and the SQLite driver therefore go first, and both are verifiable under
+`bun test` because Bun implements `node:sqlite` too. The runner changes last, when the
+code it runs no longer needs Bun.
 
 **5. Vite and Start.** `vite.config.ts` with `tanstackStart({ spa: { enabled: true } })`,
 `@vitejs/plugin-react`, `@tailwindcss/vite`. `build.ts` and `bun-plugin-tailwind` go.
