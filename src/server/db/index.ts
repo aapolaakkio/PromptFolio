@@ -1,13 +1,16 @@
 import { resolve } from "node:path";
 
-import { Database } from "bun:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate as runMigrations } from "drizzle-orm/bun-sqlite/migrator";
+import { drizzle } from "drizzle-orm/node-sqlite";
+import { migrate as runMigrations } from "drizzle-orm/node-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 
 export const openDb = (path: string = process.env.DATABASE_PATH ?? "./data/promptfolio.db") => {
-  const sqlite = new Database(path, { create: true, strict: true });
+  // node:sqlite creates the file by default and has no "strict" mode to ask
+  // for: its own binding already refuses the loose value coercions that flag
+  // turned off in bun:sqlite.
+  const sqlite = new DatabaseSync(path);
   sqlite.exec("PRAGMA journal_mode = WAL");
   sqlite.exec("PRAGMA foreign_keys = ON");
   sqlite.exec("PRAGMA busy_timeout = 5000");
@@ -79,7 +82,7 @@ export const testDb = () => {
 //
 // Five-plus later tasks (routers, services) each need a database handle.
 // Calling openDb() from each of their modules would open a separate
-// bun:sqlite connection per module for the same file, defeating WAL's
+// SQLite connection per module for the same file, defeating WAL's
 // single-writer assumptions. getDb() lazily opens ONE handle on first call
 // and hands out that same handle to every caller for the lifetime of the
 // process. Route modules should import and call getDb(), never openDb(),

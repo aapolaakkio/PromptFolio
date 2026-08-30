@@ -256,7 +256,7 @@ test("getDb memoizes a single shared handle across calls", () => {
     const first = getDb();
     const second = getDb();
     expect(second).toBe(first);
-    expect(first.sqlite.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    expect(first.sqlite.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   } finally {
     if (originalPath === undefined) delete process.env.DATABASE_PATH;
     else process.env.DATABASE_PATH = originalPath;
@@ -281,10 +281,12 @@ test("resetDbHandleForTests() forces the next getDb() call to open a new handle"
     resetDbHandleForTests();
     process.env.DATABASE_PATH = ":memory:";
     const second = getDb();
-    const hasMarker = second.sqlite
-      .query("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
+    const marker = second.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
       .get();
-    console.log(JSON.stringify({ sameHandle: second === first, hasMarker: hasMarker !== null }));
+    // node:sqlite answers "no such row" with undefined where bun:sqlite
+    // answered null, so this asks whether a row came back at all rather than
+    // which flavour of empty it is.
+    console.log(JSON.stringify({ sameHandle: second === first, hasMarker: marker != null }));
   `;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
     encoding: "utf-8",

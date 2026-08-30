@@ -226,19 +226,19 @@ test("weight is proportional to market value across multiple valued holdings, an
   // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
   // single row with an `id` column on success.
   const neste = sqlite
-    .query(
+    .prepare(
       "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .get("FI0009002377", "NESTE.HE", "Neste", "stock", "EUR", "yahoo", "NESTE.HE") as {
     id: number;
   };
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 50000000, 1000, -50000, 0, 0, 'EUR', 100000000, 'neste-buy')",
     )
     .run(accountId, neste.id);
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-06-02', 1000, 'EUR', 'yahoo', 0)",
     )
     .run(neste.id);
@@ -272,14 +272,14 @@ test("a position with no price at all reports no value, not a fabricated zero, a
   // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
   // single row with an `id` column on success.
   const nesteAnnual = sqlite
-    .query(
+    .prepare(
       "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .get("FI0009002377", "NESTE.HE", "Neste", "stock", "EUR", "yahoo", "NESTE.HE") as {
     id: number;
   };
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 50000000, 1000, -5000, 0, 0, 'EUR', 100000000, 'neste-buy')",
     )
     .run(accountId, nesteAnnual.id);
@@ -311,7 +311,7 @@ test("a position priced today in a currency with no fx rate for today reports no
   // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
   // single row with an `id` column on success.
   const sekFund = sqlite
-    .query(
+    .prepare(
       "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .get(
@@ -326,12 +326,12 @@ test("a position priced today in a currency with no fx rate for today reports no
     id: number;
   };
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 100000000, 1000, -100000, 0, 0, 'EUR', 100000000, 'sek-buy')",
     )
     .run(accountId, sekFund.id);
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-07-01', 1000, 'SEK', 'nordnet_fund', 0)",
     )
     .run(sekFund.id);
@@ -459,14 +459,14 @@ test("holdingsFor marks only the affected position's cost basis unknown when a s
   // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
   // single row with an `id` column on success.
   const broken = sqlite
-    .query(
+    .prepare(
       "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .get("FI0009009999", "BROKEN.HE", "Broken Co", "stock", "EUR", "yahoo", "BROKEN.HE") as {
     id: number;
   };
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'SELL', '2025-01-01', 5000000, 100, 500, 0, 0, 'EUR', 100000000, 'broken-sell')",
     )
     .run(accountId, broken.id);
@@ -514,7 +514,7 @@ test("holdings are empty for a user with no accounts", () => {
 test("throws when a stored transaction currency fails ISO 4217 validation", () => {
   const { db, sqlite, accountId, instrumentId } = seed();
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-03-01', 1000000, 100, -100, 0, 0, 'eur', 100000000, 'bad-currency')",
     )
     .run(accountId, instrumentId);
@@ -525,7 +525,7 @@ test("throws when a stored transaction currency fails ISO 4217 validation", () =
 test("throws when a stored instrument currency fails ISO 4217 validation", () => {
   const { db, sqlite } = seed();
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .run("US0000000001", "BAD", "Bad Co", "stock", "US$", "manual", "BAD");
@@ -536,7 +536,7 @@ test("throws when a stored instrument currency fails ISO 4217 validation", () =>
 test("throws when a stored price currency fails ISO 4217 validation", () => {
   const { db, sqlite, instrumentId } = seed();
   sqlite
-    .query(
+    .prepare(
       "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .run(instrumentId, "2025-08-01", 500, "not-a-currency", "yahoo", Date.now());
@@ -548,7 +548,7 @@ test("throws when a stored price currency fails ISO 4217 validation", () => {
 test("a malformed fx_rates currency is invisible to a validated lookup rather than corrupting a rate", () => {
   const { db, sqlite } = seed();
   sqlite
-    .query("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
+    .prepare("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
     .run("2025-08-01", "sek", 950_00000);
 
   // fxOn groups rows by currency to answer "latest rate for THIS currency
@@ -571,7 +571,7 @@ test("a malformed fx_rates currency is invisible to a validated lookup rather th
 test("an fx rate years out of date is refused rather than carried forward", () => {
   const { db, sqlite } = seed();
   sqlite
-    .query("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
+    .prepare("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
     .run("2010-02-14", "SEK", 50_000_000);
 
   const sek = parseCurrency("SEK");
@@ -582,7 +582,7 @@ test("an fx rate years out of date is refused rather than carried forward", () =
 test("a rate carried across a weekend or a holiday is still used", () => {
   const { db, sqlite } = seed();
   sqlite
-    .query("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
+    .prepare("INSERT INTO fx_rates (date, currency, rate_eur) VALUES (?, ?, ?)")
     .run("2026-08-21", "SEK", 9_000_000);
 
   const sek = parseCurrency("SEK");

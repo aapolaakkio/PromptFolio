@@ -18,3 +18,5 @@ minimumReleaseAgeExclude:
 # runs until stage 2 replaces it, and it resolves a hoisted tree without
 # surprises; keeping it afterwards costs nothing and suits native tooling.
 nodeLinker: hoisted
+
+engineStrict: true
