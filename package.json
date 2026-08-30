@@ -2,6 +2,10 @@
   "name": "promptfolio",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "bun --hot src/server/index.ts",
     "start": "NODE_ENV=production bun src/server/index.ts",
@@ -16,7 +20,6 @@
     "check": "bun run lint && bun run fmt:check && bun run typecheck && bun test"
   },
   "devDependencies": {
-    "@better-auth/cli": "1.5.0-beta.13",
     "@oxlint/plugins": "1.80.0",
     "@types/bun": "latest",
     "@types/react": "^19.2.18",

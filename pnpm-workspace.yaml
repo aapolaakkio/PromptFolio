@@ -1,0 +1,20 @@
+allowBuilds:
+  bun: false
+  esbuild: true
+
+# Supply-chain: refuse a package version published less than a day ago, so a
+# freshly-compromised release has time to be caught and pulled before this
+# project can pull it in. Bun counted seconds; pnpm counts minutes.
+minimumReleaseAge: 1440
+# The exact releases the ^9.2 / ^0.16 ranges resolve to were published inside
+# that window when they were first added. Revisit and drop these once an older
+# matching release exists.
+minimumReleaseAgeExclude:
+  - "@tanstack/react-table"
+  - "@tanstack/react-charts"
+  - "@tanstack/charts"
+
+# A real node_modules tree rather than pnpm's symlink farm. `bun test` still
+# runs until stage 2 replaces it, and it resolves a hoisted tree without
+# surprises; keeping it afterwards costs nothing and suits native tooling.
+nodeLinker: hoisted
