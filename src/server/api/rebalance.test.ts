@@ -1,7 +1,7 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 
-import { EUR } from "../../core/money";
+import { EUR } from "../../core/money.ts";
 
 // Exercises rebalanceRoutes against a real migrated database and a real Better
 // Auth session, following portfolio.test.ts's setup: the shared getDb() handle
@@ -10,16 +10,16 @@ import { EUR } from "../../core/money";
 // identity is derived from a fresh crypto.randomUUID(), because the database is
 // shared with every other test file in the process.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let rebalanceRoutes: (typeof import("./rebalance"))["rebalanceRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let rebalanceRoutes: (typeof import("./rebalance.ts"))["rebalanceRoutes"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("./accounts")).accountRoutes;
-  instrumentRoutes = (await import("./instruments")).instrumentRoutes;
-  rebalanceRoutes = (await import("./rebalance")).rebalanceRoutes;
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("./accounts.ts")).accountRoutes;
+  instrumentRoutes = (await import("./instruments.ts")).instrumentRoutes;
+  rebalanceRoutes = (await import("./rebalance.ts")).rebalanceRoutes;
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -112,7 +112,7 @@ describe("PUT /api/targets", () => {
     // indistinguishable from the save having failed: a successful write showed
     // "tallennus epäonnistui" until this test existed. Asserted against the
     // screen's own schema, so the two cannot drift apart.
-    const { SaveResultSchema } = await import("../../web/routes/rebalance-view");
+    const { SaveResultSchema } = await import("../../web/routes/rebalance-view.ts");
     const cookie = await signUp();
 
     const response = await putTargets(cookie, {
@@ -149,8 +149,8 @@ describe("the read routes", () => {
   /** A portfolio holding one instrument, so drift has something to be about. */
   const seed = async (): Promise<string> => {
     const cookie = await signUp();
-    const { getDb } = await import("../db");
-    const { prices, transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { prices, transactions } = await import("../db/schema.ts");
     const { db } = getDb();
 
     const accountResponse = await accountRoutes["/api/accounts"].POST(

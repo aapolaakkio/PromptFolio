@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import {
   ImportHistorySchema,
   IMPORT_KIND_LABELS,
@@ -6,7 +6,7 @@ import {
   undoConfirmMessage,
   UndoResultSchema,
   type ImportRecord,
-} from "./imports-history";
+} from "./imports-history.ts";
 
 const record = (over: Partial<ImportRecord> = {}): ImportRecord => ({
   id: 1,

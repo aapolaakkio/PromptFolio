@@ -1,5 +1,5 @@
 /**
- * Runs once, before any `*.test.ts` file loads, via `bunfig.toml`'s
+ * Runs once, before any `*.test.ts` file loads, via vitest.config.ts's
  * `[test] preload` -- the same mechanism `test-setup.ts` already uses to
  * pin the shared test database, extended with a second entry rather than
  * a second, different bootstrap mechanism.

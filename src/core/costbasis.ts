@@ -14,8 +14,8 @@ import {
   zeroMoney,
   type Money,
   type Quantity,
-} from "./money";
-import type { IsoDate, Txn } from "./types";
+} from "./money.ts";
+import type { IsoDate, Txn } from "./types.ts";
 
 export type Lot = {
   readonly accountId: number;
@@ -65,9 +65,15 @@ export type Disposal = {
  * as-is (see `server/http.ts`'s `handle`).
  */
 export class UnmatchedDisposalError extends Error {
+  // Assigned in the body rather than declared as a parameter property: that
+  // is TypeScript syntax Node cannot strip, only transform, and this runs
+  // under plain Node in test child processes.
+  readonly instrumentId: number;
+  readonly tradeDate: IsoDate;
+
   constructor(
-    readonly instrumentId: number,
-    readonly tradeDate: IsoDate,
+    instrumentId: number,
+    tradeDate: IsoDate,
     heldQuantity: Quantity,
     requestedQuantity: Quantity,
   ) {
@@ -75,6 +81,8 @@ export class UnmatchedDisposalError extends Error {
       `Cannot dispose ${formatQuantity(requestedQuantity)} units of instrument ${instrumentId} ` +
         `on ${tradeDate}: only ${formatQuantity(heldQuantity)} held`,
     );
+    this.instrumentId = instrumentId;
+    this.tradeDate = tradeDate;
     this.name = "UnmatchedDisposalError";
   }
 }

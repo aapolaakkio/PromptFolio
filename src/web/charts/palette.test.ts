@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 
-import { colourFor, needsGrouping, SERIES_COUNT, SERIES_DARK, SERIES_LIGHT } from "./palette";
+import { colourFor, needsGrouping, SERIES_COUNT, SERIES_DARK, SERIES_LIGHT } from "./palette.ts";
 
 import { readFile } from "node:fs/promises";
 

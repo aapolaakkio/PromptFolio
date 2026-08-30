@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { parseCurrency, parseMoney } from "../../core/money";
-import { requireUser } from "../auth-guard";
-import { getDb } from "../db";
-import { instruments } from "../db/schema";
-import { HttpError, handle, json } from "../http";
-import { requirePositiveMinor } from "../prices/types";
-import { writePrices } from "../prices/write";
+import { parseCurrency, parseMoney } from "../../core/money.ts";
+import { requireUser } from "../auth-guard.ts";
+import { getDb } from "../db/index.ts";
+import { instruments } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
+import { requirePositiveMinor } from "../prices/types.ts";
+import { writePrices } from "../prices/write.ts";
 
 const { db } = getDb();
 

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { EUR, type Currency } from "../../core/money";
+import { EUR, type Currency } from "../../core/money.ts";
 
 // --- Better Auth tables (Task 8 generates the migration; shape fixed by the adapter) ---
 

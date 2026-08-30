@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { hashPassword, verifyPassword } from "./password";
+import { hashPassword, verifyPassword } from "./password.ts";
 
 // The migration off Bun replaced `Bun.password` with @node-rs/argon2. Every
 // password already stored was hashed by the old one, so the only thing that

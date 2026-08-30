@@ -1,5 +1,5 @@
-import { fiDateTime } from "../lib/format";
-import { IMPORT_KIND_LABELS, undoClickHandler, type ImportRecord } from "./imports-history";
+import { fiDateTime } from "../lib/format.ts";
+import { IMPORT_KIND_LABELS, undoClickHandler, type ImportRecord } from "./imports-history.ts";
 
 export type ImportHistoryProps = {
   readonly records: readonly ImportRecord[];

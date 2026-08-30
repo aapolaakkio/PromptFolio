@@ -1,10 +1,10 @@
-import { readText } from "../files";
-import { expect, test } from "bun:test";
+import { readText } from "../files.ts";
+import { expect, test } from "vitest";
 
-import { parseCurrency } from "../../core/money";
-import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds";
+import { parseCurrency } from "../../core/money.ts";
+import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds.ts";
 
-const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
+const fixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
 
 const stubOk = (body: string) => async (): Promise<Response> => new Response(body, { status: 200 });
 

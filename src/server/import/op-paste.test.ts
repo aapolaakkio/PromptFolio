@@ -1,8 +1,8 @@
-import { readText } from "../files";
-import { test, expect } from "bun:test";
-import { parseOpPaste } from "./op-paste";
+import { readText } from "../files.ts";
+import { test, expect } from "vitest";
+import { parseOpPaste } from "./op-paste.ts";
 
-const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
+const fixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
 
 const HEADER = [
   "Laji",

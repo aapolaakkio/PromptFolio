@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ImportHistory } from "./ImportHistory";
-import type { ImportRecord } from "./imports-history";
+import { ImportHistory } from "./ImportHistory.tsx";
+import type { ImportRecord } from "./imports-history.ts";
 
 const record = (over: Partial<ImportRecord> = {}): ImportRecord => ({
   id: 1,

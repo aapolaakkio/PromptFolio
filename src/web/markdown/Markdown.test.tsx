@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { Markdown } from "./Markdown";
+import { Markdown } from "./Markdown.tsx";
 
 describe("Markdown", () => {
   test("renders the shapes an answer is written in", () => {

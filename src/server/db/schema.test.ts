@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { getTableConfig, type AnySQLiteTable } from "drizzle-orm/sqlite-core";
-import { EUR } from "../../core/money";
-import { getDb, testDb } from "./index";
+import { EUR } from "../../core/money.ts";
+import { getDb, testDb } from "./index.ts";
 import {
   account,
   accounts,
@@ -19,7 +19,7 @@ import {
   spendingRules,
   transactions,
   user,
-} from "./schema";
+} from "./schema.ts";
 
 const seedUser = (db: ReturnType<typeof testDb>["db"], id: string) => {
   db.insert(user)
@@ -264,7 +264,7 @@ test("getDb memoizes a single shared handle across calls", () => {
 });
 
 // resetDbHandleForTests() has no callers left in this suite: test-setup.ts
-// (a bunfig.toml `[test] preload` script) pins the one shared handle
+// (a vitest.config.ts `setupFiles` entry) pins the one shared handle
 // before any test file runs, and no file may reset it afterward without
 // desyncing auth.ts/accounts.ts/instruments.ts from each other again (see
 // test-setup.ts's comment and task-9-report.md's fix-up report for the bug
@@ -283,7 +283,7 @@ test("resetDbHandleForTests() forces the next getDb() call to open a new handle"
     const second = getDb();
     const marker = second.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
       .get();
-    // node:sqlite answers "no such row" with undefined where bun:sqlite
+    // node:sqlite answers "no such row" with undefined where node:sqlite
     // answered null, so this asks whether a row came back at all rather than
     // which flavour of empty it is.
     console.log(JSON.stringify({ sameHandle: second === first, hasMarker: marker != null }));

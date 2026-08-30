@@ -9,8 +9,8 @@ import {
   type Currency,
   type Money,
   type Quantity,
-} from "./money";
-import type { CashFlow, IsoDate, Txn } from "./types";
+} from "./money.ts";
+import type { CashFlow, IsoDate, Txn } from "./types.ts";
 
 /** Sign a transaction type applies to unit count. `null` means "not a unit movement". */
 const unitDirection = (type: Txn["type"]): 1 | -1 | null => {

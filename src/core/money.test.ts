@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import {
   parseMoney,
   formatMoney,
@@ -19,7 +19,7 @@ import {
   zeroMoney,
   money,
   EUR,
-} from "./money";
+} from "./money.ts";
 
 const USD = parseCurrency("USD");
 const SEK = parseCurrency("SEK");

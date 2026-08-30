@@ -2,19 +2,19 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiDelete, apiGet } from "../lib/api";
-import { fiDate, qty } from "../lib/format";
-import { AccountsSchema } from "./imports-draft";
-import { AdjustRow } from "./AdjustRow";
-import { SnapshotForm } from "./SnapshotForm";
-import { SnapshotPaste } from "./SnapshotPaste";
+import { apiDelete, apiGet } from "../lib/api.ts";
+import { fiDate, qty } from "../lib/format.ts";
+import { AccountsSchema } from "./imports-draft.ts";
+import { AdjustRow } from "./AdjustRow.tsx";
+import { SnapshotForm } from "./SnapshotForm.tsx";
+import { SnapshotPaste } from "./SnapshotPaste.tsx";
 import {
   explain,
   needsAttention,
   ReconcileSchema,
   SnapshotSchema,
   type ReconcileRow,
-} from "./reconcile-view";
+} from "./reconcile-view.ts";
 
 const SOURCE_LABELS = new Map<string, string>([
   ["pdf", "PDF-ote"],

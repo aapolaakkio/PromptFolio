@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money";
-import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types";
+import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money.ts";
+import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types.ts";
 
 export type DraftTxn = {
   readonly line: number;

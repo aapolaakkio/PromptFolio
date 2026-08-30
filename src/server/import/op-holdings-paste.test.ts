@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
-import { parseOpWebHoldings } from "./op-holdings-paste";
+import { parseOpWebHoldings } from "./op-holdings-paste.ts";
 
 // OP's web holdings view pastes one value per line, in sections, with column
 // labels that wrap across lines. Layout is the real one; names and figures are

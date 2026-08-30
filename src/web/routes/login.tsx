@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FirstRunForm } from "./first-run-form";
-import { SignInForm } from "./sign-in-form";
+import { FirstRunForm } from "./first-run-form.tsx";
+import { SignInForm } from "./sign-in-form.tsx";
 
 type Status = "checking" | "needs-setup" | "ready";
 

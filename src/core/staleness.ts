@@ -1,4 +1,4 @@
-import type { InstrumentKind, IsoDate } from "./types";
+import type { InstrumentKind, IsoDate } from "./types.ts";
 
 /**
  * Whether a holding's price is old enough to deserve the "vanha" badge.

@@ -1,19 +1,19 @@
 import { z } from "zod";
 
-import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash";
-import { addMoney, EUR, formatMoney, parseMoney } from "../../core/money";
-import { valueSeries } from "../../core/returns";
-import { cashFlowFor } from "../spending/cashflow";
-import { CATEGORY_LABELS, labelForCategory } from "../spending/categories";
-import { cashlessAccountIds } from "../spending/internal";
-import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
-import { rulesFor } from "../spending/rules";
-import { notSpendingIds } from "../spending/internal";
-import { recurringPayments } from "../spending/recurring";
-import { classifiedTransactions } from "../spending/transactions";
-import { depositPlanFor } from "../rebalance";
-import { reconciliationFor } from "../snapshots";
-import { loadPortfolio } from "../valuation";
+import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash.ts";
+import { addMoney, EUR, formatMoney, parseMoney } from "../../core/money.ts";
+import { valueSeries } from "../../core/returns.ts";
+import { cashFlowFor } from "../spending/cashflow.ts";
+import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
+import { cashlessAccountIds } from "../spending/internal.ts";
+import { monthlyByCategory, monthlyFlows } from "../spending/monthly.ts";
+import { rulesFor } from "../spending/rules.ts";
+import { notSpendingIds } from "../spending/internal.ts";
+import { recurringPayments } from "../spending/recurring.ts";
+import { classifiedTransactions } from "../spending/transactions.ts";
+import { depositPlanFor } from "../rebalance.ts";
+import { reconciliationFor } from "../snapshots.ts";
+import { loadPortfolio } from "../valuation.ts";
 import {
   type ChatTool,
   type Db,
@@ -22,7 +22,7 @@ import {
   MAX_SERIES_POINTS,
   today,
   type ToolResult,
-} from "./tool-types";
+} from "./tool-types.ts";
 
 /** The earliest date a question may reach back to, as the HTTP routes use. */
 const LEDGER_START = "1900-01-01";

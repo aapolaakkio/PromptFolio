@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { CATEGORY_LABELS, labelForCategory } from "../spending/categories";
-import { unknownMerchants } from "../spending/classify";
+import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
+import { unknownMerchants } from "../spending/classify.ts";
 import {
   addRules,
   categoriseWith,
@@ -9,9 +9,9 @@ import {
   recategoriseRule,
   retractRule,
   rulesFor,
-} from "../spending/rules";
-import { loadPortfolio } from "../valuation";
-import { type ChatTool, type Db, type ToolResult } from "./tool-types";
+} from "../spending/rules.ts";
+import { loadPortfolio } from "../valuation.ts";
+import { type ChatTool, type Db, type ToolResult } from "./tool-types.ts";
 
 /** How many rules one turn may write. A batch larger than this is a runaway. */
 const MAX_RULES_PER_CALL = 20;

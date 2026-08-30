@@ -1,7 +1,7 @@
-import type { PriceSourceId } from "../../core/types";
-import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds";
-import type { PriceSource } from "./types";
-import { YAHOO } from "./yahoo";
+import type { PriceSourceId } from "../../core/types.ts";
+import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds.ts";
+import type { PriceSource } from "./types.ts";
+import { YAHOO } from "./yahoo.ts";
 
 const SOURCES = {
   yahoo: YAHOO,

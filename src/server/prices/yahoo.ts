@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { parseCurrency } from "../../core/money";
+import { parseCurrency } from "../../core/money.ts";
 import {
   requireOk,
   requirePositiveMinor,
@@ -8,7 +8,7 @@ import {
   type FetchArgs,
   type FetchedPrice,
   type PriceSource,
-} from "./types";
+} from "./types.ts";
 
 /**
  * Verified 2026-08-27 by fetching

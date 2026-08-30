@@ -2,9 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
-import { apiDelete, apiGet } from "../lib/api";
-import { Markdown } from "../markdown/Markdown";
-import { askChat } from "./chat-stream";
+import { apiDelete, apiGet } from "../lib/api.ts";
+import { Markdown } from "../markdown/Markdown.tsx";
+import { askChat } from "./chat-stream.ts";
 
 const ConversationsSchema = z.object({
   conversations: z.array(z.object({ id: z.number(), title: z.string(), createdAt: z.string() })),

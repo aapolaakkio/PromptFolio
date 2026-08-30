@@ -1,5 +1,5 @@
-import { addMoney, money, toEur, zeroMoney, EUR, type Money } from "../money";
-import type { Txn } from "../types";
+import { addMoney, money, toEur, zeroMoney, EUR, type Money } from "../money.ts";
+import type { Txn } from "../types.ts";
 
 export type FeeYear = {
   readonly year: number;

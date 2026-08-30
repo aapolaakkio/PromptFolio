@@ -1,7 +1,7 @@
-import { readBytes } from "../files";
-import { describe, expect, test } from "bun:test";
+import { readBytes } from "../files.ts";
+import { describe, expect, test } from "vitest";
 
-import { matchesBank, OP_BANK, parseBankStatement } from "./bank-statement";
+import { matchesBank, OP_BANK, parseBankStatement } from "./bank-statement.ts";
 
 // The fixture is a synthetic OP export in the real format: semicolon-delimited,
 // quoted, UTF-8 with a BOM absent, ISO dates, Finnish decimal comma, and OP's
@@ -9,7 +9,7 @@ import { matchesBank, OP_BANK, parseBankStatement } from "./bank-statement";
 // which parsed with no problems and no duplicate archive ids.
 
 const fixture = (): Promise<ArrayBuffer> =>
-  readBytes(`${import.meta.dir}/fixtures/op-bank-sample.csv`);
+  readBytes(`${import.meta.dirname}/fixtures/op-bank-sample.csv`);
 
 /**
  * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` backed by a plain

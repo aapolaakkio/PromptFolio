@@ -1,8 +1,8 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
-import { getDb } from "./db";
-import { account, session, user, verification } from "./db/schema";
-import { hashPassword, verifyPassword } from "./password";
+import { getDb } from "./db/index.ts";
+import { account, session, user, verification } from "./db/schema.ts";
+import { hashPassword, verifyPassword } from "./password.ts";
 
 const MIN_SECRET_LENGTH = 32;
 

@@ -1,13 +1,13 @@
 /**
- * Runs once, before any `*.test.ts` file loads, via bunfig.toml's
- * `[test] preload`. This is the *only* place in the whole `bun test`
+ * Runs once, before any `*.test.ts` file loads, via vitest.config.ts's
+ * `[test] preload`. This is the *only* place in the whole `vitest`
  * process allowed to decide the shared database's identity.
  *
  * Why this has to exist: `getDb()` (src/server/db/index.ts) memoises a
  * single shared database handle for the lifetime of the process, and
  * auth.ts calls it at module scope while itself being an ES module
  * singleton — so whichever code path calls `getDb()` (directly, or by
- * importing auth.ts) *first* in a `bun test` run permanently decides which
+ * importing auth.ts) *first* in a `vitest` run permanently decides which
  * database every later `getDb()` caller gets, including every other test
  * file's dynamically-imported auth.ts / accounts.ts / instruments.ts.
  *
@@ -40,7 +40,7 @@
  * already points at a migrated in-memory database whose `auth.ts` (once
  * dynamically imported) will bind to that same handle.
  */
-import { getDb, migrate } from "./db";
+import { getDb, migrate } from "./db/index.ts";
 
 process.env.DATABASE_PATH = ":memory:";
 process.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-characters-long";

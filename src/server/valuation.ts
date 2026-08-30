@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from "drizzle-orm";
-import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis";
+import { costBasisPerInstrument, type CostBasisOutcome } from "../core/costbasis.ts";
 import {
   availableCashEur,
   cashBalancesAt,
@@ -7,8 +7,8 @@ import {
   totalCashEur,
   valueCash,
   type ValuedCash,
-} from "../core/cash";
-import { positionsAt } from "../core/ledger";
+} from "../core/cash.ts";
+import { positionsAt } from "../core/ledger.ts";
 import {
   addMoney,
   EUR,
@@ -22,12 +22,12 @@ import {
   type Currency,
   type FxRate,
   type Money,
-} from "../core/money";
-import type { PriceLookup } from "../core/returns";
-import { isPriceStale } from "../core/staleness";
-import type { Instrument, IsoDate, Txn } from "../core/types";
-import type { getDb } from "./db";
-import { accounts, fxRates, instruments, prices, transactions } from "./db/schema";
+} from "../core/money.ts";
+import type { PriceLookup } from "../core/returns.ts";
+import { isPriceStale } from "../core/staleness.ts";
+import type { Instrument, IsoDate, Txn } from "../core/types.ts";
+import type { getDb } from "./db/index.ts";
+import { accounts, fxRates, instruments, prices, transactions } from "./db/schema.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

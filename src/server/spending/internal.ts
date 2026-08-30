@@ -1,6 +1,6 @@
-import { accountsMissingCashRecord } from "../../core/ledger";
-import { EUR } from "../../core/money";
-import type { Txn } from "../../core/types";
+import { accountsMissingCashRecord } from "../../core/ledger.ts";
+import { EUR } from "../../core/money.ts";
+import type { Txn } from "../../core/types.ts";
 
 /** How far apart the two halves of one transfer may be booked. */
 const WINDOW_DAYS = 5;

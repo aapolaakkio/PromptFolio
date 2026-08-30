@@ -1,7 +1,7 @@
-import { EUR, parseMoney } from "../../core/money";
-import type { IsoDate } from "../../core/types";
-import type { BankRow } from "./bank-statement";
-import type { PdfStatement } from "./bank-pdf";
+import { EUR, parseMoney } from "../../core/money.ts";
+import type { IsoDate } from "../../core/types.ts";
+import type { BankRow } from "./bank-statement.ts";
+import type { PdfStatement } from "./bank-pdf.ts";
 
 /**
  * Ferratum / Multitude Bank's SweepBank statement.

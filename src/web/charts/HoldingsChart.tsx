@@ -5,8 +5,8 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
-import { eur } from "../lib/format";
-import { MARK_FOCUS } from "./interactions";
+import { eur } from "../lib/format.ts";
+import { MARK_FOCUS } from "./interactions.ts";
 
 /** Only what this chart draws, so it does not depend on the whole holdings row. */
 export type HoldingBar = {

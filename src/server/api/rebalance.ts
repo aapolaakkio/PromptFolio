@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-import type { Dimension } from "../../core/allocation";
-import { EUR, parseMoney } from "../../core/money";
-import { BASIS_POINTS } from "../../core/rebalance/targets";
-import { requireUser } from "../auth-guard";
-import { getDb } from "../db";
-import { handle, HttpError, json } from "../http";
+import type { Dimension } from "../../core/allocation.ts";
+import { EUR, parseMoney } from "../../core/money.ts";
+import { BASIS_POINTS } from "../../core/rebalance/targets.ts";
+import { requireUser } from "../auth-guard.ts";
+import { getDb } from "../db/index.ts";
+import { handle, HttpError, json } from "../http.ts";
 import {
   depositPlanFor,
   driftReportFor,
@@ -13,7 +13,7 @@ import {
   rebalancePlanFor,
   saveTargets,
   targetsFor,
-} from "../rebalance";
+} from "../rebalance.ts";
 
 const { db } = getDb();
 

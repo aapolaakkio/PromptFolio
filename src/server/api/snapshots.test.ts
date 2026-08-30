@@ -1,28 +1,28 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 
-import { EUR } from "../../core/money";
+import { EUR } from "../../core/money.ts";
 
 // Snapshots are compared against the ledger, never merged into it, so these
 // tests care about two things: that a statement round-trips intact, and that
 // the reconciliation reports differences without touching any transaction.
 // Mirrors portfolio.test.ts's setup, including its reliance on ../test-setup.ts
-// (a bunfig.toml `[test] preload`) having pinned the shared getDb() handle to a
+// (a vitest.config.ts `[test] preload`) having pinned the shared getDb() handle to a
 // migrated in-memory database before this file's own code runs.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let snapshotRoutes: (typeof import("./snapshots"))["snapshotRoutes"];
-let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
-let transactions: (typeof import("../db/schema"))["transactions"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let snapshotRoutes: (typeof import("./snapshots.ts"))["snapshotRoutes"];
+let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
+let transactions: (typeof import("../db/schema.ts"))["transactions"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("./accounts")).accountRoutes;
-  instrumentRoutes = (await import("./instruments")).instrumentRoutes;
-  snapshotRoutes = (await import("./snapshots")).snapshotRoutes;
-  db = (await import("../db")).getDb().db;
-  transactions = (await import("../db/schema")).transactions;
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("./accounts.ts")).accountRoutes;
+  instrumentRoutes = (await import("./instruments.ts")).instrumentRoutes;
+  snapshotRoutes = (await import("./snapshots.ts")).snapshotRoutes;
+  db = (await import("../db/index.ts")).getDb().db;
+  transactions = (await import("../db/schema.ts")).transactions;
 });
 
 const sessionCookieFrom = (response: Response): string => {

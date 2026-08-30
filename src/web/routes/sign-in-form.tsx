@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
-import { signIn } from "../lib/auth-client";
+import { signIn } from "../lib/auth-client.ts";
 
 /**
  * The normal sign-in form -- unchanged behaviour, just extracted out of

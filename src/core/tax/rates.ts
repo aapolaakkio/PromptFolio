@@ -1,4 +1,4 @@
-import { divMoney, EUR, money, type Money } from "../money";
+import { divMoney, EUR, money, type Money } from "../money.ts";
 
 /**
  * The Finnish rules this module applies, as constants with their provenance.

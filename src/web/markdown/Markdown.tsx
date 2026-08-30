@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 
-import { type Block, type Inline, parseMarkdown } from "./parse";
+import { type Block, type Inline, parseMarkdown } from "./parse.ts";
 
 const spanOf = (span: Inline, key: number): ReactNode => {
   if (span.type === "bold") return <strong key={key}>{span.text}</strong>;

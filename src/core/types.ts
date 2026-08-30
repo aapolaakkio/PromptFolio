@@ -1,4 +1,4 @@
-import type { Currency, FxRate, Money, Quantity } from "./money";
+import type { Currency, FxRate, Money, Quantity } from "./money.ts";
 
 export type IsoDate = string;
 

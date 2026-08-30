@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiPut } from "../lib/api";
-import { eur } from "../lib/format";
+import { apiGet, apiPut } from "../lib/api.ts";
+import { eur } from "../lib/format.ts";
 import {
   DepositSchema,
   DriftSchema,
@@ -13,7 +13,7 @@ import {
   targetTotal,
   type DriftRowView,
   type TargetView,
-} from "./rebalance-view";
+} from "./rebalance-view.ts";
 
 const DIMENSIONS = [
   { value: "kind", label: "Lajeittain" },

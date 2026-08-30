@@ -7,24 +7,24 @@ import {
   IsoDateSchema,
   MAX_SERIES_POINTS,
   today,
-} from "./tool-types";
-import { buildMoneyTools } from "./tools-money";
-import { buildRuleTools } from "./tools-rules";
+} from "./tool-types.ts";
+import { buildMoneyTools } from "./tools-money.ts";
+import { buildRuleTools } from "./tools-rules.ts";
 
-import { allocateBy } from "../../core/allocation";
-import { cashBalancesAt, valueCash } from "../../core/cash";
-import { notSpendingIds } from "../spending/internal";
-import { categoriseWith, rulesFor } from "../spending/rules";
-import { summariseSpending } from "../spending/summary";
-import { calculate } from "./calculator";
-import { fundingCashFlows, investedCashFlows } from "../../core/ledger";
-import { formatMoney, formatQuantity, negateMoney } from "../../core/money";
-import { twr, valueSeries, xirr } from "../../core/returns";
-import { driftReportFor, feeReportFor } from "../rebalance";
-import { taxYearFor, taxYearsFor } from "../tax";
-import { cashFor, holdingsFor, loadPortfolio } from "../valuation";
+import { allocateBy } from "../../core/allocation.ts";
+import { cashBalancesAt, valueCash } from "../../core/cash.ts";
+import { notSpendingIds } from "../spending/internal.ts";
+import { categoriseWith, rulesFor } from "../spending/rules.ts";
+import { summariseSpending } from "../spending/summary.ts";
+import { calculate } from "./calculator.ts";
+import { fundingCashFlows, investedCashFlows } from "../../core/ledger.ts";
+import { formatMoney, formatQuantity, negateMoney } from "../../core/money.ts";
+import { twr, valueSeries, xirr } from "../../core/returns.ts";
+import { driftReportFor, feeReportFor } from "../rebalance.ts";
+import { taxYearFor, taxYearsFor } from "../tax.ts";
+import { cashFor, holdingsFor, loadPortfolio } from "../valuation.ts";
 
-export { type ChatTool, type JsonValue, type ToolArgs, type ToolResult } from "./tool-types";
+export { type ChatTool, type JsonValue, type ToolArgs, type ToolResult } from "./tool-types.ts";
 
 const NoArgs = z.object({}).strict();
 const OnDate = z.object({ on: IsoDateSchema.optional() }).strict();

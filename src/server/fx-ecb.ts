@@ -1,5 +1,5 @@
-import { parseCurrency, parseFxRate, EUR, type Currency } from "../core/money";
-import type { FetchImpl } from "./prices/types";
+import { parseCurrency, parseFxRate, EUR, type Currency } from "../core/money.ts";
+import type { FetchImpl } from "./prices/types.ts";
 
 /**
  * ECB's SDMX data API, which replaced this project's use of the two flat CSV files at

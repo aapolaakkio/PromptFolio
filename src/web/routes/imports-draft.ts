@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ACCOUNT_TYPES, type AccountType } from "./account-type";
+import { ACCOUNT_TYPES, type AccountType } from "./account-type.ts";
 
 /**
  * Pure types/schemas/logic for the imports screen, split out of
@@ -10,7 +10,7 @@ import { ACCOUNT_TYPES, type AccountType } from "./account-type";
  * chart colouring). `imports.test.ts` imports only this module;
  * `imports.tsx` (and `UnknownInstrumentForm.tsx`, which it renders) never
  * get loaded by a test, so neither stays out of Bun's per-file coverage
- * gate (`bunfig.toml`'s `coverageThreshold = 0.8`) instead of failing it
+ * gate (vitest.config.ts's line threshold) instead of failing it
  * for JSX a unit test cannot exercise.
  */
 

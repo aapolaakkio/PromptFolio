@@ -1,20 +1,20 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 
-import { EUR } from "../core/money";
+import { EUR } from "../core/money.ts";
 
 // Covers what the routes do not reach: attributing a slice-level sale to the
 // instruments inside it, and the gain that sale would realise. Same setup rules
 // as every other server test -- the shared getDb() handle is already pinned to a
 // migrated in-memory database by ./test-setup.ts.
 
-let auth: (typeof import("./auth"))["auth"];
-let rebalancePlanFor: (typeof import("./rebalance"))["rebalancePlanFor"];
-let saveTargets: (typeof import("./rebalance"))["saveTargets"];
+let auth: (typeof import("./auth.ts"))["auth"];
+let rebalancePlanFor: (typeof import("./rebalance.ts"))["rebalancePlanFor"];
+let saveTargets: (typeof import("./rebalance.ts"))["saveTargets"];
 
 beforeAll(async () => {
-  auth = (await import("./auth")).auth;
-  rebalancePlanFor = (await import("./rebalance")).rebalancePlanFor;
-  saveTargets = (await import("./rebalance")).saveTargets;
+  auth = (await import("./auth.ts")).auth;
+  rebalancePlanFor = (await import("./rebalance.ts")).rebalancePlanFor;
+  saveTargets = (await import("./rebalance.ts")).saveTargets;
 });
 
 const signUp = async (): Promise<string> => {
@@ -41,8 +41,8 @@ const signUp = async (): Promise<string> => {
  * shares and buy fund.
  */
 const seed = async (o: { costKnown: boolean }): Promise<string> => {
-  const { getDb } = await import("./db");
-  const { accounts, instruments, prices, transactions } = await import("./db/schema");
+  const { getDb } = await import("./db/index.ts");
+  const { accounts, instruments, prices, transactions } = await import("./db/schema.ts");
   const { db } = getDb();
   const userId = await signUp();
 
@@ -135,7 +135,7 @@ const seed = async (o: { costKnown: boolean }): Promise<string> => {
 describe("rebalancePlanFor", () => {
   test("attributes a slice-level sale across the slice's holdings and totals the gain", async () => {
     const userId = await seed({ costKnown: true });
-    const { getDb } = await import("./db");
+    const { getDb } = await import("./db/index.ts");
 
     const plan = rebalancePlanFor(getDb().db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");
@@ -152,7 +152,7 @@ describe("rebalancePlanFor", () => {
 
   test("says the gain is unknown when a holding's cost basis is", async () => {
     const userId = await seed({ costKnown: false });
-    const { getDb } = await import("./db");
+    const { getDb } = await import("./db/index.ts");
 
     const plan = rebalancePlanFor(getDb().db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");

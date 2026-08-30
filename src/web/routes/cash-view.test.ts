@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import {
   availabilityLabel,
@@ -6,7 +6,7 @@ import {
   describeImport,
   describeMaturity,
   describeReconciliation,
-} from "./cash-view";
+} from "./cash-view.ts";
 
 describe("describeImport", () => {
   test("names both counts, so a re-import reads as intended rather than doubled", () => {

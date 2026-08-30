@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import {
   accountsMissingCashRecord,
   cashAt,
@@ -6,8 +6,8 @@ import {
   fundingCashFlows,
   negativePositionIds,
   positionsAt,
-} from "./ledger";
-import type { Txn, TransactionType } from "./types";
+} from "./ledger.ts";
+import type { Txn, TransactionType } from "./types.ts";
 import {
   parseMoney,
   parseQuantity,
@@ -17,7 +17,7 @@ import {
   formatQuantity,
   EUR,
   type Currency,
-} from "./money";
+} from "./money.ts";
 
 const USD = parseCurrency("USD");
 

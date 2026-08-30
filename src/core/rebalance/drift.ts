@@ -1,6 +1,6 @@
-import type { AllocationResult } from "../allocation";
-import { addMoney, divMoney, money, zeroMoney, EUR, type Money } from "../money";
-import { BASIS_POINTS, type Target } from "./targets";
+import type { AllocationResult } from "../allocation.ts";
+import { addMoney, divMoney, money, zeroMoney, EUR, type Money } from "../money.ts";
+import { BASIS_POINTS, type Target } from "./targets.ts";
 
 /**
  * How far a slice may sit from its target before the screen calls it drifted.

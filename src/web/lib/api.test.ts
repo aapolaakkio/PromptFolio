@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { z } from "zod";
-import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiUpload } from "./api";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiUpload } from "./api.ts";
 
 test("apiGet returns the parsed JSON body on a 2xx response (no schema, cast fallback)", async () => {
   const stub = async () => Response.json({ holdings: [] }, { status: 200 });

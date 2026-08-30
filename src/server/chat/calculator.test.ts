@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { calculate } from "./calculator";
+import { calculate } from "./calculator.ts";
 
 // The assistant may now do arithmetic, which it could not before. This is what
 // keeps that safe: the sums happen in integer hundredths, so a figure it states

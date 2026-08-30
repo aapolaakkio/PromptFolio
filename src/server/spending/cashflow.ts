@@ -1,8 +1,8 @@
-import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { CATEGORY_LABELS } from "./categories";
-import { internalTransferIds, investmentPaymentIds } from "./internal";
-import { categoriseWith, isRefund, type SpendingRule } from "./rules";
+import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { CATEGORY_LABELS } from "./categories.ts";
+import { internalTransferIds, investmentPaymentIds } from "./internal.ts";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
 
 /**
  * Where a period's money came from and where it went, as a flow graph.

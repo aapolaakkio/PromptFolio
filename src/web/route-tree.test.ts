@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { createRouter } from "@tanstack/react-router";
-import { buildRouteTree } from "./route-tree";
+import { buildRouteTree } from "./route-tree.ts";
 
 const Stub = () => null;
 const {

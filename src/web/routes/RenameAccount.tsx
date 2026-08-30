@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiPatch } from "../lib/api";
+import { ApiError, apiPatch } from "../lib/api.ts";
 import {
   isAccountType,
   toSelection,
@@ -10,7 +10,7 @@ import {
   UNSET_LABEL,
   type AccountKind,
   type AccountType,
-} from "./account-type";
+} from "./account-type.ts";
 
 const UpdatedSchema = z.object({
   id: z.number(),

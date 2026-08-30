@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, parseMoney } from "../../core/money";
-import type { IsoDate, TransactionType, Txn } from "../../core/types";
-import { cashFlowFor } from "./cashflow";
-import { SEED_RULES } from "./categories";
-import { internalTransferIds, investmentPaymentIds, notSpendingIds } from "./internal";
-import { monthlyByCategory, monthlyFlows } from "./monthly";
-import type { SpendingRule } from "./rules";
+import { EUR, parseMoney } from "../../core/money.ts";
+import type { IsoDate, TransactionType, Txn } from "../../core/types.ts";
+import { cashFlowFor } from "./cashflow.ts";
+import { SEED_RULES } from "./categories.ts";
+import { internalTransferIds, investmentPaymentIds, notSpendingIds } from "./internal.ts";
+import { monthlyByCategory, monthlyFlows } from "./monthly.ts";
+import type { SpendingRule } from "./rules.ts";
 
 // These three decide what a person is shown about their own year, so the tests
 // are about the two ways such a picture lies: counting the owner's own money

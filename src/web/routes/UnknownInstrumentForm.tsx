@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { apiGet, apiPost, ApiError } from "../lib/api";
+import { apiGet, apiPost, ApiError } from "../lib/api.ts";
 
 /**
  * The only two sources worth choosing by hand. Yahoo prices everything this

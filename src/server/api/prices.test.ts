@@ -1,12 +1,12 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
-import { getDb } from "../db";
-import { prices } from "../db/schema";
+import { getDb } from "../db/index.ts";
+import { prices } from "../db/schema.ts";
 
 // getDb() is safe to call statically here (unlike auth.ts/accounts.ts/
 // instruments.ts, imported dynamically below): it does not throw at import
 // time and does not decide the shared handle's identity on its own --
-// ../test-setup.ts (bunfig.toml's [test] preload) has already pinned that
+// ../test-setup.ts (a vitest.config.ts setupFiles entry) has already pinned that
 // handle to a migrated in-memory database before this file's own top-level
 // code runs, so this just retrieves the same handle every other route
 // module in this process shares.
@@ -21,14 +21,14 @@ const { db } = getDb();
 // comment and accounts.test.ts's comment for the real bug that duplicating
 // that setup caused.
 
-let auth: (typeof import("../auth"))["auth"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let priceRoutes: (typeof import("./prices"))["priceRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let priceRoutes: (typeof import("./prices.ts"))["priceRoutes"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const instrumentsModule = await import("./instruments");
-  const pricesModule = await import("./prices");
+  const authModule = await import("../auth.ts");
+  const instrumentsModule = await import("./instruments.ts");
+  const pricesModule = await import("./prices.ts");
   auth = authModule.auth;
   instrumentRoutes = instrumentsModule.instrumentRoutes;
   priceRoutes = pricesModule.priceRoutes;

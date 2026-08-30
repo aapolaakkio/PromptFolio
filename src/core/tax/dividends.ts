@@ -1,6 +1,6 @@
-import { addMoney, toEur, zeroMoney, EUR, type Money } from "../money";
-import type { IsoDate, Txn } from "../types";
-import { DIVIDEND_TAXABLE_PERCENT, percentOf } from "./rates";
+import { addMoney, toEur, zeroMoney, EUR, type Money } from "../money.ts";
+import type { IsoDate, Txn } from "../types.ts";
+import { DIVIDEND_TAXABLE_PERCENT, percentOf } from "./rates.ts";
 
 /**
  * One dividend as it appears on a tax return: 85 % of the gross is taxable

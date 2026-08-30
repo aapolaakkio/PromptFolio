@@ -1,9 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 
-import { EUR } from "../../core/money";
-import type { getDb } from "../db";
-import { imports, transactions } from "../db/schema";
-import type { BankRow } from "./bank-statement";
+import { EUR } from "../../core/money.ts";
+import type { getDb } from "../db/index.ts";
+import { imports, transactions } from "../db/schema.ts";
+import type { BankRow } from "./bank-statement.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

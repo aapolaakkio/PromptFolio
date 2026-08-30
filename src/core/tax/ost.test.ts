@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money";
-import type { IsoDate, TransactionType, Txn } from "../types";
-import { ostReport, reservationPairIds, type OstValuation } from "./ost";
+import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money.ts";
+import type { IsoDate, TransactionType, Txn } from "../types.ts";
+import { ostReport, reservationPairIds, type OstValuation } from "./ost.ts";
 
 let nextId = 1;
 const row = (

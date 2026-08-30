@@ -1,9 +1,9 @@
 import { and, desc, eq, lt } from "drizzle-orm";
 
-import type { Currency } from "../../core/money";
-import type { getDb } from "../db";
-import { pendingPriceRejections, prices } from "../db/schema";
-import type { FetchedPrice } from "./types";
+import type { Currency } from "../../core/money.ts";
+import type { getDb } from "../db/index.ts";
+import { pendingPriceRejections, prices } from "../db/schema.ts";
+import type { FetchedPrice } from "./types.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

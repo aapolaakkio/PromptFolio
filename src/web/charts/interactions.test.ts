@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 
-import { dateTip, moneyTip, shareTip } from "./interactions";
+import { dateTip, moneyTip, shareTip } from "./interactions.ts";
 
 test("a hovered figure reads exactly as the same figure in a table", () => {
   // Two formatting paths for one number is two chances to disagree, and the

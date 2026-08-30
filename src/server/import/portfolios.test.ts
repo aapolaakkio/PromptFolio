@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { NORDNET } from "./brokers";
-import { portfoliosNamed } from "./portfolios";
-import type { RawRow } from "./types";
+import { NORDNET } from "./brokers.ts";
+import { portfoliosNamed } from "./portfolios.ts";
+import type { RawRow } from "./types.ts";
 
 // Nordnet's export names the column `Salkku`, so the parser hands it over in
 // `values` under that heading; `cells` matters only for a config that addresses

@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import type { Txn } from "../../core/types";
-import type { getDb } from "../db";
-import type { ToolRunnerClient } from "../chat/runner";
-import { CATEGORY_LABELS } from "./categories";
-import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules";
+import type { Txn } from "../../core/types.ts";
+import type { getDb } from "../db/index.ts";
+import type { ToolRunnerClient } from "../chat/runner.ts";
+import { CATEGORY_LABELS } from "./categories.ts";
+import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

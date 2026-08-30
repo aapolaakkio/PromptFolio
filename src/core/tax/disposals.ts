@@ -1,12 +1,12 @@
-import type { Disposal } from "../costbasis";
-import { addMoney, subMoney, type Money, type Quantity } from "../money";
-import type { IsoDate } from "../types";
+import type { Disposal } from "../costbasis.ts";
+import { addMoney, subMoney, type Money, type Quantity } from "../money.ts";
+import type { IsoDate } from "../types.ts";
 import {
   DEEMED_COST_LONG_PERCENT,
   DEEMED_COST_LONG_YEARS,
   DEEMED_COST_SHORT_PERCENT,
   percentOf,
-} from "./rates";
+} from "./rates.ts";
 
 /** Which acquisition cost the disposal is reported with. */
 export type TaxMethod = "actual" | "deemed";

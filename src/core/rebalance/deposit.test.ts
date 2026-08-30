@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { addMoney, formatMoney, parseMoney, zeroMoney, EUR } from "../money";
-import { allocateDeposit, uncoveredAfterDeposit } from "./deposit";
-import type { DriftRow } from "./drift";
+import { addMoney, formatMoney, parseMoney, zeroMoney, EUR } from "../money.ts";
+import { allocateDeposit, uncoveredAfterDeposit } from "./deposit.ts";
+import type { DriftRow } from "./drift.ts";
 
 const row = (key: string, actualBp: number): DriftRow => ({
   key,

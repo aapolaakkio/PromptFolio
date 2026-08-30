@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
-import { buildLots } from "../core/costbasis";
-import { positionsAt } from "../core/ledger";
+import { buildLots } from "../core/costbasis.ts";
+import { positionsAt } from "../core/ledger.ts";
 import {
   addMoney,
   formatMoney,
@@ -11,15 +11,15 @@ import {
   zeroMoney,
   EUR,
   type Money,
-} from "../core/money";
-import { cashBalancesAt } from "../core/cash";
-import type { OstValuation } from "../core/tax/ost";
-import { isPriceStale } from "../core/staleness";
-import { taxYear } from "../core/tax/year";
-import type { Instrument, IsoDate } from "../core/types";
-import type { getDb } from "./db";
-import { accounts } from "./db/schema";
-import { loadPortfolio } from "./valuation";
+} from "../core/money.ts";
+import { cashBalancesAt } from "../core/cash.ts";
+import type { OstValuation } from "../core/tax/ost.ts";
+import { isPriceStale } from "../core/staleness.ts";
+import { taxYear } from "../core/tax/year.ts";
+import type { Instrument, IsoDate } from "../core/types.ts";
+import type { getDb } from "./db/index.ts";
+import { accounts } from "./db/schema.ts";
+import { loadPortfolio } from "./valuation.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

@@ -1,5 +1,5 @@
-import { auth } from "./auth";
-import { HttpError } from "./errors";
+import { auth } from "./auth.ts";
+import { HttpError } from "./errors.ts";
 
 /**
  * Resolves the authenticated user from a request's session cookie.

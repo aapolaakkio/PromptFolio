@@ -1,4 +1,4 @@
-import type { BrokerCsvConfig, OpPasteConfig } from "./types";
+import type { BrokerCsvConfig, OpPasteConfig } from "./types.ts";
 
 /**
  * Derived from a real Nordnet transaction export (288 rows, 30 columns),

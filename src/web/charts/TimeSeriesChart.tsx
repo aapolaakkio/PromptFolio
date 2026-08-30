@@ -6,9 +6,9 @@ import { controlledSignal } from "@tanstack/charts/interaction/signal";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
-import { eur, fiDate } from "../lib/format";
-import { TIME_FOCUS } from "./interactions";
-import { colourFor } from "./palette";
+import { eur, fiDate } from "../lib/format.ts";
+import { TIME_FOCUS } from "./interactions.ts";
+import { colourFor } from "./palette.ts";
 
 export type SeriesPoint = {
   date: string;

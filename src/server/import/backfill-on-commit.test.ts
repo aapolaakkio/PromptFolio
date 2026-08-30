@@ -1,13 +1,13 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 
-import { EUR } from "../../core/money";
-import { testDb } from "../db";
-import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema";
-import type { FetchImpl } from "../prices/types";
-import { backfillCommittedInstruments } from "./backfill-on-commit";
-import { commitDraft } from "./commit";
-import type { Draft, DraftTxn } from "./map";
+import { EUR } from "../../core/money.ts";
+import { testDb } from "../db/index.ts";
+import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
+import type { FetchImpl } from "../prices/types.ts";
+import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
+import { commitDraft } from "./commit.ts";
+import type { Draft, DraftTxn } from "./map.ts";
 
 /**
  * Mirrors commit.test.ts's own `seed`/`draftTxn`/`draftOf` helpers -- this file exercises the

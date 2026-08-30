@@ -1,10 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, parseFxRate, parseMoney, parseQuantity } from "../../core/money";
-import type { IsoDate, TransactionType, Txn } from "../../core/types";
-import { SEED_RULES } from "./categories";
-import type { SpendingRule } from "./rules";
-import { classifiedTransactions } from "./transactions";
+import { EUR, parseFxRate, parseMoney, parseQuantity } from "../../core/money.ts";
+import type { IsoDate, TransactionType, Txn } from "../../core/types.ts";
+import { SEED_RULES } from "./categories.ts";
+import type { SpendingRule } from "./rules.ts";
+import { classifiedTransactions } from "./transactions.ts";
 
 const RULES: SpendingRule[] = SEED_RULES.map((rule) => ({ ...rule, source: "seed" }));
 

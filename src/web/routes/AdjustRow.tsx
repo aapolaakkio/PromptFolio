@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiPost } from "../lib/api";
-import type { ReconcileRow } from "./reconcile-view";
+import { ApiError, apiPost } from "../lib/api.ts";
+import type { ReconcileRow } from "./reconcile-view.ts";
 
 const AdjustedSchema = z.object({ id: z.number() });
 

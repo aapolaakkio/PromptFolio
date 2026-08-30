@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { signOut, useSession } from "../lib/auth-client";
-import { SessionGate } from "./session-gate";
+import { signOut, useSession } from "../lib/auth-client.ts";
+import { SessionGate } from "./session-gate.tsx";
 
 /**
  * Session gate for the authenticated part of the app (dashboard, holdings,
@@ -24,7 +24,7 @@ import { SessionGate } from "./session-gate";
  * This file itself stays thin and untested on purpose: `useSession()` is
  * a real network-backed hook (better-auth's react client), and this
  * project has no way to stub the browser `fetch` it eventually calls
- * without touching `bunfig.toml`'s test network guard. All of the
+ * without touching vitest.config.ts's test network guard. All of the
  * actually-testable logic -- what to render for each of the three session
  * states -- lives in `./session-gate.tsx`'s `SessionGate`, exercised by
  * `session-gate.test.ts` with `react-dom/server`'s `renderToStaticMarkup`.

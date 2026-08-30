@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import {
   ACCOUNT_TYPES,
@@ -8,7 +8,7 @@ import {
   isAccountType,
   typesFor,
   UNSET_LABEL,
-} from "./account-type";
+} from "./account-type.ts";
 
 describe("isAccountType", () => {
   test("accepts the three stored values and nothing else", () => {
@@ -75,7 +75,7 @@ test("the account schema accepts every type the app can offer", async () => {
   // left the wire schema listing the older types, so /api/accounts returned an
   // account zod rejected -- and every screen that reads accounts failed at
   // once, showing "no bank accounts" rather than one odd row.
-  const { AccountSchema } = await import("./imports-draft");
+  const { AccountSchema } = await import("./imports-draft.ts");
 
   for (const type of ACCOUNT_TYPES) {
     expect(() =>

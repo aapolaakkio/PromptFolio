@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { EUR, parseMoney } from "../../core/money";
-import { assertAccountOwned } from "./accounts";
-import { requireUser } from "../auth-guard";
-import { currencyField } from "./currency-field";
-import { getDb } from "../db";
-import { accounts, transactions } from "../db/schema";
-import { HttpError, handle, json } from "../http";
-import { fxRateOn } from "../fx";
+import { EUR, parseMoney } from "../../core/money.ts";
+import { assertAccountOwned } from "./accounts.ts";
+import { requireUser } from "../auth-guard.ts";
+import { currencyField } from "./currency-field.ts";
+import { getDb } from "../db/index.ts";
+import { accounts, transactions } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
+import { fxRateOn } from "../fx.ts";
 
 const { db } = getDb();
 

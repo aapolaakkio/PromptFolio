@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { eur } from "../lib/format";
+import { eur } from "../lib/format.ts";
 
-import { AllocationChart } from "./AllocationChart";
-import { CategoryTrendChart, trendRows } from "./CategoryTrendChart";
-import { barsFor, HoldingsChart, holdingTip } from "./HoldingsChart";
-import { MonthlyFlowChart } from "./MonthlyFlowChart";
+import { AllocationChart } from "./AllocationChart.tsx";
+import { CategoryTrendChart, trendRows } from "./CategoryTrendChart.tsx";
+import { barsFor, HoldingsChart, holdingTip } from "./HoldingsChart.tsx";
+import { MonthlyFlowChart } from "./MonthlyFlowChart.tsx";
 import {
   acceptedRange,
   asDate,
@@ -16,7 +16,7 @@ import {
   presetWindow,
   TimeSeriesChart,
   within,
-} from "./TimeSeriesChart";
+} from "./TimeSeriesChart.tsx";
 
 /**
  * Rendered, not merely built.

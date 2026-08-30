@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { isPriceStale, previousWeekday } from "./staleness";
+import { isPriceStale, previousWeekday } from "./staleness.ts";
 
 // 2026-08-28 is a Friday, 2026-08-29 a Saturday, 2026-08-31 a Monday.
 const FRIDAY = "2026-08-28";

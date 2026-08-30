@@ -1,5 +1,5 @@
-import type { Currency } from "../../core/money";
-import type { PriceSourceId } from "../../core/types";
+import type { Currency } from "../../core/money.ts";
+import type { PriceSourceId } from "../../core/types.ts";
 
 /**
  * One dated close/NAV as a source actually reported it. `currency` is

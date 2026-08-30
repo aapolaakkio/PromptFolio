@@ -6,8 +6,8 @@ import { scalePoint } from "@tanstack/charts/scales/point";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
-import { eur } from "../lib/format";
-import { colourFor, SERIES_COUNT } from "./palette";
+import { eur } from "../lib/format.ts";
+import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 export type CategoryMonth = {
   readonly month: string;

@@ -2,26 +2,26 @@ import { createHash } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { cashBalancesAt } from "../../core/cash";
-import { EUR, formatMoney, parseMoney, subMoney, zeroMoney } from "../../core/money";
-import { assertAccountOwned } from "./accounts";
-import { requireUser } from "../auth-guard";
-import { commitBankStatement } from "../import/bank-commit";
-import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "../import/bank-statement";
-import type { BankRow, BankStatementConfig } from "../import/bank-statement";
+import { cashBalancesAt } from "../../core/cash.ts";
+import { EUR, formatMoney, parseMoney, subMoney, zeroMoney } from "../../core/money.ts";
+import { assertAccountOwned } from "./accounts.ts";
+import { requireUser } from "../auth-guard.ts";
+import { commitBankStatement } from "../import/bank-commit.ts";
+import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "../import/bank-statement.ts";
+import type { BankRow, BankStatementConfig } from "../import/bank-statement.ts";
 import {
   extractStatementText,
   parseOpStatementText,
   verifyStatement,
   type PdfStatement,
-} from "../import/bank-pdf";
-import { isSweepStatement, parseSweepStatementText } from "../import/bank-pdf-sweep";
-import { getDb } from "../db";
-import { accounts, transactions } from "../db/schema";
-import { HttpError, handle, json } from "../http";
-import { loadPortfolio } from "../valuation";
-import { CHAT_MODEL, createClient, type ToolRunnerClient } from "../chat/runner";
-import { classifyNewMerchants, type ClassifyResult } from "../spending/classify";
+} from "../import/bank-pdf.ts";
+import { isSweepStatement, parseSweepStatementText } from "../import/bank-pdf-sweep.ts";
+import { getDb } from "../db/index.ts";
+import { accounts, transactions } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
+import { loadPortfolio } from "../valuation.ts";
+import { CHAT_MODEL, createClient, type ToolRunnerClient } from "../chat/runner.ts";
+import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

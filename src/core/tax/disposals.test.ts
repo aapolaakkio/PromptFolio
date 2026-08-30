@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import type { Disposal } from "../costbasis";
-import { EUR, formatMoney, parseMoney, parseQuantity } from "../money";
-import type { IsoDate } from "../types";
-import { taxableDisposals } from "./disposals";
+import type { Disposal } from "../costbasis.ts";
+import { EUR, formatMoney, parseMoney, parseQuantity } from "../money.ts";
+import type { IsoDate } from "../types.ts";
+import { taxableDisposals } from "./disposals.ts";
 
 const disposal = (o: {
   acquiredOn: IsoDate;

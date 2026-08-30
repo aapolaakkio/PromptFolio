@@ -1,6 +1,6 @@
-import { EUR, parseMoney, parseQuantity } from "../../core/money";
-import { normaliseDate } from "./map";
-import type { CsvProblem, RawRow } from "./types";
+import { EUR, parseMoney, parseQuantity } from "../../core/money.ts";
+import { normaliseDate } from "./map.ts";
+import type { CsvProblem, RawRow } from "./types.ts";
 
 /**
  * OP's web transaction view has no export button; the only way to get

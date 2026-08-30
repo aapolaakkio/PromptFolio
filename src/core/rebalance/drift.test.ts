@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import type { AllocationResult, Slice } from "../allocation";
-import { EUR, formatMoney, parseMoney } from "../money";
-import { driftFor } from "./drift";
+import type { AllocationResult, Slice } from "../allocation.ts";
+import { EUR, formatMoney, parseMoney } from "../money.ts";
+import { driftFor } from "./drift.ts";
 
 const slice = (key: string, valueEur: string, weight: number): Slice => ({
   key,

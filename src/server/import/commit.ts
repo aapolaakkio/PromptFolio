@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
-import { EUR, type Currency } from "../../core/money";
-import type { getDb } from "../db";
-import { imports, transactions } from "../db/schema";
-import { HttpError } from "../errors";
-import { ensureFxRate, fxRateOn } from "../fx";
-import type { FetchImpl } from "../prices/types";
-import { contentHash, type Draft, type DraftTxn } from "./map";
+import { EUR, type Currency } from "../../core/money.ts";
+import type { getDb } from "../db/index.ts";
+import { imports, transactions } from "../db/schema.ts";
+import { HttpError } from "../errors.ts";
+import { ensureFxRate, fxRateOn } from "../fx.ts";
+import type { FetchImpl } from "../prices/types.ts";
+import { contentHash, type Draft, type DraftTxn } from "./map.ts";
 
 export type ImportKind = "csv_nordnet" | "csv_op" | "pdf" | "vision" | "manual";
 
@@ -191,7 +191,7 @@ const insertRow = (
  * chance to resolve before the real transaction opens, by attempting one on-demand ECB
  * fetch per currency still missing a rate (C1b -- see `fx.ts`'s `ensureFxRate`). Runs
  * *before* `db.transaction()` deliberately: the fetch is a network call, and drizzle's
- * `bun:sqlite` transaction callback is synchronous, so an `await` cannot live inside it.
+ * `node:sqlite` transaction callback is synchronous, so an `await` cannot live inside it.
  *
  * At most one fetch per distinct currency, no matter how many rows need it: `ensureFxRate`
  * always fetches the same thing (ECB's current daily file has no date parameter), so a

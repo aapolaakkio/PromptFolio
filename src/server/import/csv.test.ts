@@ -1,9 +1,9 @@
-import { readBytes } from "../files";
-import { test, expect } from "bun:test";
-import { parseCsv, detectBroker } from "./csv";
-import { NORDNET } from "./brokers";
+import { readBytes } from "../files.ts";
+import { test, expect } from "vitest";
+import { parseCsv, detectBroker } from "./csv.ts";
+import { NORDNET } from "./brokers.ts";
 
-const fixture = (name: string) => readBytes(`${import.meta.dir}/fixtures/${name}`);
+const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {

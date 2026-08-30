@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet } from "../lib/api";
-import { RecordPriceForm } from "./RecordPriceForm";
-import { eur, fiDate, qty } from "../lib/format";
-import { methodLabel, TaxYearSchema, TaxYearsSchema, type TaxYearView } from "./tax-view";
+import { apiGet } from "../lib/api.ts";
+import { RecordPriceForm } from "./RecordPriceForm.tsx";
+import { eur, fiDate, qty } from "../lib/format.ts";
+import { methodLabel, TaxYearSchema, TaxYearsSchema, type TaxYearView } from "./tax-view.ts";
 
 const Badge = ({ children, title }: { children: string; title?: string }) => (
   <span

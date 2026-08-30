@@ -1,12 +1,12 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { EUR, parseMoney } from "../../core/money";
-import { xirr } from "../../core/returns";
+import { EUR, parseMoney } from "../../core/money.ts";
+import { xirr } from "../../core/returns.ts";
 
 // Exercises portfolioRoutes (src/server/api/portfolio.ts) against a real,
 // migrated database and a real Better Auth session, mirroring
 // accounts.test.ts's and instruments.test.ts's setup -- including their
-// reliance on ../test-setup.ts (a bunfig.toml `[test] preload` script) to
+// reliance on ../test-setup.ts (a vitest.config.ts `setupFiles` entry) to
 // have already pinned the shared getDb() handle to a migrated in-memory
 // database before this file's own code runs. This file must NOT call
 // resetDbHandleForTests(), set DATABASE_PATH, or call getDb()/migrate()
@@ -18,16 +18,16 @@ import { xirr } from "../../core/returns";
 // than a hardcoded literal another file's fixtures already use (e.g.
 // instruments.test.ts's default "FI0009000681").
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let portfolioRoutes: (typeof import("./portfolio"))["portfolioRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let portfolioRoutes: (typeof import("./portfolio.ts"))["portfolioRoutes"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const accountsModule = await import("./accounts");
-  const instrumentsModule = await import("./instruments");
-  const portfolioModule = await import("./portfolio");
+  const authModule = await import("../auth.ts");
+  const accountsModule = await import("./accounts.ts");
+  const instrumentsModule = await import("./instruments.ts");
+  const portfolioModule = await import("./portfolio.ts");
   auth = authModule.auth;
   accountRoutes = accountsModule.accountRoutes;
   instrumentRoutes = instrumentsModule.instrumentRoutes;
@@ -149,8 +149,8 @@ const seedHolding = async (
     prices: Array<{ date: string; close: number }>;
   },
 ): Promise<{ accountId: number; instrumentId: number }> => {
-  const { getDb } = await import("../db");
-  const { prices, transactions } = await import("../db/schema");
+  const { getDb } = await import("../db/index.ts");
+  const { prices, transactions } = await import("../db/schema.ts");
   const { db } = getDb();
 
   const accountId = await createAccount(cookie);
@@ -300,8 +300,8 @@ describe("GET /api/holdings", () => {
   // since it was first caught.
   test("degrades the affected position instead of 400ing the whole request when a sale has no matching purchase", async () => {
     const { cookie } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     const accountId = await createAccount(cookie);
     const isin = randomIsin();
@@ -365,8 +365,8 @@ describe("GET /api/holdings", () => {
 
   test("an unmatched sale on one instrument does not affect another instrument's holding", async () => {
     const { cookie } = await signUp(`holdings-unmatched-other-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
 
     // A perfectly ordinary holding...
@@ -557,8 +557,8 @@ describe("GET /api/value-series", () => {
   // in excludedInstrumentIds instead.
   test("a negative (unmatched-disposal) position never makes the daily value negative", async () => {
     const { cookie } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     const accountId = await createAccount(cookie);
     const instrumentId = await createInstrument(cookie, randomIsin());
@@ -660,8 +660,8 @@ describe("GET /api/allocation", () => {
   // just as misleading as a fabricated negative amount.
   test("a negative (unmatched-disposal) position never contributes a negative amount, and is named in excludedInstruments instead", async () => {
     const { cookie } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
 
     // One ordinary holding...
@@ -753,8 +753,8 @@ describe("GET /api/allocation", () => {
 describe("GET /api/returns", () => {
   test("reports value, TWR (a ratio) and MWR as a number, given a deposit, a withdrawal and growth", async () => {
     const { cookie } = await signUp(`returns-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
 
     const { accountId } = await seedHolding(cookie, {
@@ -856,8 +856,8 @@ describe("GET /api/returns", () => {
 
   test("returns mwr: null (not a fabricated rate) when contributions have no offsetting sign", async () => {
     const { cookie } = await signUp(`returns-nullmwr-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     const accountId = await createAccount(cookie);
 
@@ -925,8 +925,8 @@ describe("GET /api/returns", () => {
       prices: [{ date: "2024-01-01", close: 8000 }],
     });
 
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     const unpricedInstrumentId = await createInstrument(cookie, randomIsin());
     // A second holding bought the same day, in the same account -- but deliberately
@@ -1075,8 +1075,8 @@ describe("GET /api/cash", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     // 500,00 in, 100,00 spent on the holding above: 400,00 left as cash.
     db.insert(transactions)
@@ -1151,8 +1151,8 @@ describe("bank accounts", () => {
       ],
     });
 
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     const cashRow = (
       target: number,
@@ -1244,8 +1244,8 @@ describe("a fixed-term deposit's cash", () => {
   };
 
   const deposit = async (accountId: number, amount: number, tradeDate: string) => {
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { db } = getDb();
     db.insert(transactions)
       .values([
@@ -1385,8 +1385,8 @@ describe("GET /api/spending/uncategorised", () => {
   };
 
   const spend = async (accountId: number, note: string, minor: number, tradeDate: string) => {
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     getDb()
       .db.insert(transactions)
       .values([
@@ -1528,8 +1528,8 @@ describe("GET /api/spending/uncategorised", () => {
     const instrumentId = await createInstrument(cookie, randomIsin());
     await spend(accountId, "SÄÄNN.SÄÄST. — RAHASTO", -25_000, "2026-03-01");
 
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     getDb()
       .db.insert(transactions)
       .values([

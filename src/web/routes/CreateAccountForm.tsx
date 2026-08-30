@@ -9,8 +9,8 @@ import {
   UNSET_LABEL,
   type AccountKind,
   type AccountType,
-} from "./account-type";
-import { apiPost, ApiError } from "../lib/api";
+} from "./account-type.ts";
+import { apiPost, ApiError } from "../lib/api.ts";
 
 /**
  * Closing the "a fresh install cannot create its first account without

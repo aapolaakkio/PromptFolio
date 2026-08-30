@@ -1,26 +1,26 @@
-import { readBytes } from "../files";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { readBytes } from "../files.ts";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 
 // Importing a statement writes several hundred cash rows at once, so these
 // tests care about the three ways that goes wrong: onto the wrong kind of
 // account, twice over, or without the balance that came before it.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let bankImportRoutes: (typeof import("./bank-imports"))["bankImportRoutes"];
-let setClassifierClient: (typeof import("./bank-imports"))["_setClassifierClient"];
-let importRoutes: (typeof import("./imports"))["importRoutes"];
-let portfolioRoutes: (typeof import("./portfolio"))["portfolioRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let bankImportRoutes: (typeof import("./bank-imports.ts"))["bankImportRoutes"];
+let setClassifierClient: (typeof import("./bank-imports.ts"))["_setClassifierClient"];
+let importRoutes: (typeof import("./imports.ts"))["importRoutes"];
+let portfolioRoutes: (typeof import("./portfolio.ts"))["portfolioRoutes"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("./accounts")).accountRoutes;
-  const bankImports = await import("./bank-imports");
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("./accounts.ts")).accountRoutes;
+  const bankImports = await import("./bank-imports.ts");
   bankImportRoutes = bankImports.bankImportRoutes;
   setClassifierClient = bankImports._setClassifierClient;
-  importRoutes = (await import("./imports")).importRoutes;
-  portfolioRoutes = (await import("./portfolio")).portfolioRoutes;
+  importRoutes = (await import("./imports.ts")).importRoutes;
+  portfolioRoutes = (await import("./portfolio.ts")).portfolioRoutes;
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -114,7 +114,7 @@ const openAccount = async (cookie: string, accountType: string | null): Promise<
 };
 
 const statement = async (): Promise<ArrayBuffer> =>
-  readBytes(`${import.meta.dir}/../import/fixtures/op-bank-sample.csv`);
+  readBytes(`${import.meta.dirname}/../import/fixtures/op-bank-sample.csv`);
 
 /**
  * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` over a plain
@@ -311,7 +311,7 @@ describe("POST /api/accounts/:id/balance", () => {
 
 describe("a PDF statement", () => {
   const pdf = (): Promise<ArrayBuffer> =>
-    readBytes(`${import.meta.dir}/../import/fixtures/op-statement-sample.pdf`);
+    readBytes(`${import.meta.dirname}/../import/fixtures/op-statement-sample.pdf`);
 
   test("is read, and says it was checked against its own printed balances", async () => {
     const cookie = await signUp();
@@ -366,7 +366,7 @@ describe("a PDF statement", () => {
       "+500,00 Saldo 31.1.2026",
     ].join("\n");
 
-    const { parseOpStatementText, verifyStatement } = await import("../import/bank-pdf");
+    const { parseOpStatementText, verifyStatement } = await import("../import/bank-pdf.ts");
     const check = verifyStatement(parseOpStatementText(text));
     expect(check.ok).toBe(false);
     expect(check.differenceEur).toBe(41_000n);
@@ -380,7 +380,7 @@ describe("a PDF this app cannot read", () => {
     // A valid PDF that is not a statement: the parser's complaint has to reach
     // the owner, since "Palvelinvirhe" tells them nothing about what to do.
     const notAStatement = await readBytes(
-      `${import.meta.dir}/../import/fixtures/scanned-no-text.pdf`,
+      `${import.meta.dirname}/../import/fixtures/scanned-no-text.pdf`,
     );
 
     const response = await upload("/api/imports/bank/preview", cookie, accountId, notAStatement);
@@ -390,7 +390,7 @@ describe("a PDF this app cannot read", () => {
   });
 
   test("a PDF with text but no balances says which is missing", async () => {
-    const { parseOpStatementText } = await import("../import/bank-pdf");
+    const { parseOpStatementText } = await import("../import/bank-pdf.ts");
 
     // The same path the route takes, on text that has rows but no balance line.
     expect(() =>
@@ -401,7 +401,7 @@ describe("a PDF this app cannot read", () => {
 
 describe("importing several statements for one account", () => {
   const statementPdf = (name: string): Promise<ArrayBuffer> =>
-    readBytes(`${import.meta.dir}/../import/fixtures/${name}`);
+    readBytes(`${import.meta.dirname}/../import/fixtures/${name}`);
 
   // op-statement-earlier.pdf covers 31.12.2024 - 28.8.2025, opening 0,00 and
   // closing 1 500,00; op-statement-sample.pdf picks up exactly there and ends
@@ -453,11 +453,11 @@ describe("importing several statements for one account", () => {
 
 describe("a fixed-term deposit's maturity date", () => {
   const depositPdf = (): Promise<ArrayBuffer> =>
-    readBytes(`${import.meta.dir}/../import/fixtures/op-fixed-term-sample.pdf`);
+    readBytes(`${import.meta.dirname}/../import/fixtures/op-fixed-term-sample.pdf`);
 
   const accountRow = async (accountId: number) => {
-    const { getDb } = await import("../db");
-    const { accounts } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { accounts } = await import("../db/schema.ts");
     const { eq } = await import("drizzle-orm");
     return getDb().db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   };
@@ -670,8 +670,8 @@ describe("classifying an import's new merchants", () => {
 
 describe("a statement that knows more than the one already imported", () => {
   const noteOf = async (externalId: string): Promise<string | null> => {
-    const { getDb } = await import("../db");
-    const { transactions } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { transactions } = await import("../db/schema.ts");
     const { eq } = await import("drizzle-orm");
     const row = getDb()
       .db.select({ note: transactions.note })

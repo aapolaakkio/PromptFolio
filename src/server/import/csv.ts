@@ -1,5 +1,5 @@
-import { BROKER_CONFIGS } from "./brokers";
-import type { BrokerCsvConfig, CsvProblem, RawRow } from "./types";
+import { BROKER_CONFIGS } from "./brokers.ts";
+import type { BrokerCsvConfig, CsvProblem, RawRow } from "./types.ts";
 
 /**
  * Split one CSV line, honouring double-quoted fields.

@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, lte } from "drizzle-orm";
 
-import { EUR, type Currency } from "../core/money";
-import type { getDb } from "./db";
-import { fxRates, instruments, transactions } from "./db/schema";
-import { fetchEcbRates, type EcbRow } from "./fx-ecb";
-import type { FetchImpl } from "./prices/types";
+import { EUR, type Currency } from "../core/money.ts";
+import type { getDb } from "./db/index.ts";
+import { fxRates, instruments, transactions } from "./db/schema.ts";
+import { fetchEcbRates, type EcbRow } from "./fx-ecb.ts";
+import type { FetchImpl } from "./prices/types.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

@@ -1,11 +1,11 @@
-import { readText } from "../files";
-import { describe, expect, test } from "bun:test";
+import { readText } from "../files.ts";
+import { describe, expect, test } from "vitest";
 
-import { parseCurrency } from "../../core/money";
-import { lookupInstrument } from "./lookup";
-import { figiLookup } from "./openfigi";
-import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug";
-import { candidateSymbols } from "./venues";
+import { parseCurrency } from "../../core/money.ts";
+import { lookupInstrument } from "./lookup.ts";
+import { figiLookup } from "./openfigi.ts";
+import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug.ts";
+import { candidateSymbols } from "./venues.ts";
 
 const EUR = parseCurrency("EUR");
 const USD = parseCurrency("USD");

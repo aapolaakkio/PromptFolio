@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { askChat, takeEvents } from "./chat-stream";
+import { askChat, takeEvents } from "./chat-stream.ts";
 
 describe("takeEvents", () => {
   test("returns whole events and keeps the unfinished tail", () => {

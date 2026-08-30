@@ -1,8 +1,11 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import type { Readable } from "node:stream";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
+import { afterAll, beforeAll, expect, test } from "vitest";
 import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { realFetch } from "../src/server/test-network-guard";
+import { realFetch } from "../src/server/test-network-guard.ts";
 
 import { readFile } from "node:fs/promises";
 
@@ -25,7 +28,7 @@ const readFileBytes = async (path: string | URL): Promise<ArrayBuffer> => {
  * deliverable) is what a same-process test *could* call directly. This
  * file deliberately does not, for two reasons that only became visible
  * once the rest of the server test suite (accounts.test.ts,
- * imports.test.ts, ...) and its `bunfig.toml` preload were read:
+ * imports.test.ts, ...) and its setup files were read:
  *
  *  1. `src/server/test-setup.ts` (a `[test] preload` script) calls
  *     `getDb()` before any `*.test.ts` file's own code runs, permanently
@@ -51,9 +54,9 @@ const readFileBytes = async (path: string | URL): Promise<ArrayBuffer> => {
  * A genuine child process (`bun src/server/index.ts`, spawned below) sidesteps
  * problem 1 entirely: it has its own module registry and its own `getDb()`
  * singleton, bound to the real temporary file this test creates, and never
- * touches the parent `bun test` process's shared in-memory handle. Problem 2
- * doesn't apply to the child either -- `bunfig.toml`'s `[test] preload` only
- * runs for `bun test`, not a plain `bun <script>` invocation -- but this
+ * touches the parent `vitest` process's shared in-memory handle. Problem 2
+ * doesn't apply to the child either -- vitest.config.ts's `setupFiles` only
+ * runs for `vitest`, not a plain `bun <script>` invocation -- but this
  * process (the one running this test file) still needs `realFetch` for the
  * HTTP calls it makes *to* that child.
  *
@@ -68,28 +71,30 @@ const readFileBytes = async (path: string | URL): Promise<ArrayBuffer> => {
  * writing that limitation down instead of leaving it implied.
  */
 
-const PROJECT_ROOT = join(import.meta.dir, "..");
+const PROJECT_ROOT = join(import.meta.dirname, "..");
 const STARTUP_TIMEOUT_MS = 15_000;
 
 /** Reads stdout up to its first newline and pulls the "http://host:port/" URL out of it. */
-const readStartupUrl = async (stdout: ReadableStream<Uint8Array>): Promise<string> => {
-  const reader = stdout.getReader();
+const readStartupUrl = async (stdout: Readable): Promise<string> => {
   const decoder = new TextDecoder();
   let buffer = "";
-  try {
-    while (!buffer.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) {
-        throw new Error(
-          `Palvelinprosessi sulkeutui ennen kuuntelu-osoitteen tulostamista (stdout tähän ` +
-            `mennessä: ${JSON.stringify(buffer)})`,
-        );
-      }
-      buffer += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    reader.releaseLock();
+
+  for await (const chunk of stdout) {
+    // SAFETY: a child's stdout stream with no encoding set yields Buffers,
+    // which are Uint8Arrays; nothing here calls setEncoding.
+    buffer += decoder.decode(chunk as Uint8Array, { stream: true });
+    if (buffer.includes("\n")) break;
   }
+
+  // The loop ends without a newline only when the stream closed first, which
+  // means the server exited before printing where it was listening.
+  if (!buffer.includes("\n")) {
+    throw new Error(
+      `Palvelinprosessi sulkeutui ennen kuuntelu-osoitteen tulostamista (stdout tähän ` +
+        `mennessä: ${JSON.stringify(buffer)})`,
+    );
+  }
+
   const match = /https?:\/\/\S+/.exec(buffer);
   if (!match) throw new Error(`Kuuntelu-osoitetta ei löytynyt palvelimen tulosteesta: ${buffer}`);
   return match[0];
@@ -100,11 +105,11 @@ const startTestServer = async (dbPath: string) => {
   // 64 hex-ish characters, well over betterAuth's 32-character minimum
   // (see auth.ts's resolveAuthSecret) -- unique per test run, never reused.
   const secret = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  // Still Bun's spawn, and still launching Bun: this starts the real server,
-  // which imports bun:sqlite until stage 3 of the migration replaces it. It
-  // moves to node:child_process with the rest of the server, not before.
-  const proc = Bun.spawn({
-    cmd: ["bun", "src/server/index.ts"],
+  // Spawned with node:child_process, but the child is still bun: it starts the
+  // real server, and that calls Bun.serve until the server itself moves to
+  // TanStack Start. The API on this side had to change regardless -- this file
+  // now runs under Node, where the Bun global does not exist.
+  const proc = spawn("bun", ["src/server/index.ts"], {
     cwd: PROJECT_ROOT,
     env: {
       ...process.env,
@@ -117,14 +122,12 @@ const startTestServer = async (dbPath: string) => {
       // has no business starting.
       NODE_ENV: "test",
     },
-    stdout: "pipe",
-    // Inherited rather than piped: this test never needs to read stderr
-    // programmatically, and piping it without ever draining it would risk
-    // filling the OS pipe buffer and stalling the child. Inheriting also
-    // means a real startup failure's stack trace shows up directly in this
-    // test's own output instead of being silently discarded.
-    stderr: "inherit",
-    stdin: "ignore",
+    // stdin ignored, stdout piped, stderr inherited: this test never needs to
+    // read stderr programmatically, and piping it without ever draining it
+    // would risk filling the OS pipe buffer and stalling the child. Inheriting
+    // also means a real startup failure's stack trace shows up directly in
+    // this test's own output instead of being silently discarded.
+    stdio: ["ignore", "pipe", "inherit"],
   });
   const url = await Promise.race([
     readStartupUrl(proc.stdout),
@@ -158,7 +161,7 @@ beforeAll(async () => {
   // handle test-setup.ts already pinned to :memory: for this same process.
   // Closed immediately after: the server subprocess opens its own
   // connection to the same file once it starts.
-  const { openDb, migrate } = await import("../src/server/db");
+  const { openDb, migrate } = await import("../src/server/db/index.ts");
   const handle = openDb(dbPath);
   migrate(handle.db);
   handle.sqlite.close();
@@ -169,7 +172,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (testServer) {
     testServer.proc.kill();
-    await testServer.proc.exited;
+    await once(testServer.proc, "exit");
   }
   for (const suffix of ["", "-wal", "-shm"]) {
     try {

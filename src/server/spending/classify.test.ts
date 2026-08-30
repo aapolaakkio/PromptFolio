@@ -1,27 +1,27 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 
-import { EUR, parseMoney } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import type { ToolRunnerClient } from "../chat/runner";
+import { EUR, parseMoney } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import type { ToolRunnerClient } from "../chat/runner.ts";
 
 // The model is allowed to teach the app new spending rules here, which makes
 // this the one place where a wrong answer becomes stored data. These tests are
 // therefore mostly about what is refused: an invented category, a pattern no
 // merchant carries, and a model that cannot be reached at all.
 
-let classifyNewMerchants: (typeof import("./classify"))["classifyNewMerchants"];
-let unknownMerchants: (typeof import("./classify"))["unknownMerchants"];
-let rulesFor: (typeof import("./rules"))["rulesFor"];
-let categoriseWith: (typeof import("./rules"))["categoriseWith"];
-let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
-let auth: (typeof import("../auth"))["auth"];
+let classifyNewMerchants: (typeof import("./classify.ts"))["classifyNewMerchants"];
+let unknownMerchants: (typeof import("./classify.ts"))["unknownMerchants"];
+let rulesFor: (typeof import("./rules.ts"))["rulesFor"];
+let categoriseWith: (typeof import("./rules.ts"))["categoriseWith"];
+let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
+let auth: (typeof import("../auth.ts"))["auth"];
 
 beforeAll(async () => {
-  ({ classifyNewMerchants, unknownMerchants } = await import("./classify"));
-  ({ rulesFor, categoriseWith } = await import("./rules"));
-  db = (await import("../db")).getDb().db;
-  auth = (await import("../auth")).auth;
+  ({ classifyNewMerchants, unknownMerchants } = await import("./classify.ts"));
+  ({ rulesFor, categoriseWith } = await import("./rules.ts"));
+  db = (await import("../db/index.ts")).getDb().db;
+  auth = (await import("../auth.ts")).auth;
 });
 
 let next = 0;
@@ -196,7 +196,7 @@ describe("classifyNewMerchants", () => {
 
   test("never overwrites a rule already stored", async () => {
     const userId = await makeUser();
-    const { addRules } = await import("./rules");
+    const { addRules } = await import("./rules.ts");
     addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
 
     await classifyNewMerchants(db, userId, {

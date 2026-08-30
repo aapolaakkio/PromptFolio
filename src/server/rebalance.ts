@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
 
-import { allocateBy, sliceKeyFor, type Dimension } from "../core/allocation";
-import { cashBalancesAt, valueCash } from "../core/cash";
-import { costBasisPerInstrument } from "../core/costbasis";
-import { positionsAt } from "../core/ledger";
+import { allocateBy, sliceKeyFor, type Dimension } from "../core/allocation.ts";
+import { cashBalancesAt, valueCash } from "../core/cash.ts";
+import { costBasisPerInstrument } from "../core/costbasis.ts";
+import { positionsAt } from "../core/ledger.ts";
 import {
   addMoney,
   formatMoney,
@@ -14,16 +14,16 @@ import {
   zeroMoney,
   EUR,
   type Money,
-} from "../core/money";
-import { allocateDeposit } from "../core/rebalance/deposit";
-import { driftFor, type DriftRow } from "../core/rebalance/drift";
-import { feesByYear } from "../core/rebalance/fees";
-import { attributeSale, rebalancePlan } from "../core/rebalance/plan";
-import { checkTargets, type Target } from "../core/rebalance/targets";
-import type { IsoDate } from "../core/types";
-import type { getDb } from "./db";
-import { accounts, allocationTargets } from "./db/schema";
-import { loadPortfolio, withAvailability } from "./valuation";
+} from "../core/money.ts";
+import { allocateDeposit } from "../core/rebalance/deposit.ts";
+import { driftFor, type DriftRow } from "../core/rebalance/drift.ts";
+import { feesByYear } from "../core/rebalance/fees.ts";
+import { attributeSale, rebalancePlan } from "../core/rebalance/plan.ts";
+import { checkTargets, type Target } from "../core/rebalance/targets.ts";
+import type { IsoDate } from "../core/types.ts";
+import type { getDb } from "./db/index.ts";
+import { accounts, allocationTargets } from "./db/schema.ts";
+import { loadPortfolio, withAvailability } from "./valuation.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

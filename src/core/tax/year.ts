@@ -1,11 +1,11 @@
-import type { Disposal } from "../costbasis";
-import { addMoney, negateMoney, subMoney, zeroMoney, EUR, type Money } from "../money";
-import type { IsoDate, Txn } from "../types";
-import { taxableDisposals, type TaxableDisposal } from "./disposals";
-import { taxableDividends, totalDividendTaxable, type TaxableDividend } from "./dividends";
-import type { OstReport, OstValuation } from "./ost";
-import { ostReport } from "./ost";
-import { LOSS_CARRY_YEARS, SMALL_SALE_LIMIT_EUR } from "./rates";
+import type { Disposal } from "../costbasis.ts";
+import { addMoney, negateMoney, subMoney, zeroMoney, EUR, type Money } from "../money.ts";
+import type { IsoDate, Txn } from "../types.ts";
+import { taxableDisposals, type TaxableDisposal } from "./disposals.ts";
+import { taxableDividends, totalDividendTaxable, type TaxableDividend } from "./dividends.ts";
+import type { OstReport, OstValuation } from "./ost.ts";
+import { ostReport } from "./ost.ts";
+import { LOSS_CARRY_YEARS, SMALL_SALE_LIMIT_EUR } from "./rates.ts";
 
 /** A loss from an earlier year, still deductible. */
 export type CarriedLoss = { readonly fromYear: number; readonly amountEur: Money };

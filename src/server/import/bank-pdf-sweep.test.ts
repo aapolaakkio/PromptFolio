@@ -1,8 +1,8 @@
-import { readText } from "../files";
-import { describe, expect, test } from "bun:test";
+import { readText } from "../files.ts";
+import { describe, expect, test } from "vitest";
 
-import { verifyStatement } from "./bank-pdf";
-import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep";
+import { verifyStatement } from "./bank-pdf.ts";
+import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep.ts";
 
 // SweepBank writes English and the English number format, where a comma groups
 // thousands and a dot separates cents -- the reverse of OP's. Reading
@@ -12,7 +12,7 @@ import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep";
 // reached exactly.
 
 const fixture = (): Promise<string> =>
-  readText(`${import.meta.dir}/fixtures/sweep-statement-sample.txt`);
+  readText(`${import.meta.dirname}/fixtures/sweep-statement-sample.txt`);
 
 describe("isSweepStatement", () => {
   test("recognises the document by its own words, not the file name", async () => {

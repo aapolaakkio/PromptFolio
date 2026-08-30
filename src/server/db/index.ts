@@ -9,7 +9,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 export const openDb = (path: string = process.env.DATABASE_PATH ?? "./data/promptfolio.db") => {
   // node:sqlite creates the file by default and has no "strict" mode to ask
   // for: its own binding already refuses the loose value coercions that flag
-  // turned off in bun:sqlite.
+  // turned off in node:sqlite.
   const sqlite = new DatabaseSync(path);
   sqlite.exec("PRAGMA journal_mode = WAL");
   sqlite.exec("PRAGMA foreign_keys = ON");
@@ -18,12 +18,12 @@ export const openDb = (path: string = process.env.DATABASE_PATH ?? "./data/promp
 };
 
 /**
- * Resolved against this module's own location (`import.meta.dir`), not
+ * Resolved against this module's own location (`import.meta.dirname`), not
  * `process.cwd()` -- a relative `"./drizzle"` would otherwise depend on
  * whatever directory the process happened to be started from, which a
  * container image or a different launcher can easily get wrong.
  */
-const MIGRATIONS_FOLDER = resolve(import.meta.dir, "../../../drizzle");
+const MIGRATIONS_FOLDER = resolve(import.meta.dirname, "../../../drizzle");
 
 /**
  * `runMigrations` can silently apply zero migrations and return
@@ -100,7 +100,7 @@ export const getDb = (): ReturnType<typeof openDb> => {
  * opens a fresh connection. `getDb()` memoises into a process-lifetime
  * module global, so once one test file seeds it (e.g. with an in-memory
  * database via DATABASE_PATH), that handle otherwise leaks into every
- * other test file for the rest of the `bun test` process. Call this before
+ * other test file for the rest of the `vitest` process. Call this before
  * a test needs its own isolated getDb() handle.
  */
 export const resetDbHandleForTests = (): void => {

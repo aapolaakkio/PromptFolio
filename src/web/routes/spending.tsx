@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
-import { eur, fiDate } from "../lib/format";
-import { CashFlowChart } from "../charts/CashFlowChart";
-import { CategoryTrendChart } from "../charts/CategoryTrendChart";
-import { MonthlyFlowChart } from "../charts/MonthlyFlowChart";
+import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api.ts";
+import { eur, fiDate } from "../lib/format.ts";
+import { CashFlowChart } from "../charts/CashFlowChart.tsx";
+import { CategoryTrendChart } from "../charts/CategoryTrendChart.tsx";
+import { MonthlyFlowChart } from "../charts/MonthlyFlowChart.tsx";
 import {
   CashFlowSchema,
   ClassifiedSchema,
@@ -14,7 +14,7 @@ import {
   RulesSchema,
   SpendingSchema,
   UncategorisedSchema,
-} from "./cash-view";
+} from "./cash-view.ts";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const yearAgo = (): string => {

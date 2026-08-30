@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { parseInline, parseMarkdown } from "./parse";
+import { parseInline, parseMarkdown } from "./parse.ts";
 
 describe("parseInline", () => {
   test("marks bold, italic and code, and keeps the rest as text", () => {

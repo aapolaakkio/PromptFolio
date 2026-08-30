@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
-import { explain, needsAttention, type ReconcileRow } from "./reconcile-view";
+import { explain, needsAttention, type ReconcileRow } from "./reconcile-view.ts";
 
 const row = (over: Partial<ReconcileRow> = {}): ReconcileRow => ({
   instrumentId: 1,

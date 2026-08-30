@@ -1,8 +1,8 @@
-import type { getDb } from "../db";
-import { backfillFxRates } from "../fx";
-import { backfillMany } from "../prices/refresh";
-import type { FetchImpl } from "../prices/types";
-import type { Draft } from "./map";
+import type { getDb } from "../db/index.ts";
+import { backfillFxRates } from "../fx.ts";
+import { backfillMany } from "../prices/refresh.ts";
+import type { FetchImpl } from "../prices/types.ts";
+import type { Draft } from "./map.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

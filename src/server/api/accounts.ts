@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { EUR } from "../../core/money";
-import { requireUser } from "../auth-guard";
-import { currencyField } from "./currency-field";
-import { getDb } from "../db";
-import { accounts } from "../db/schema";
-import { HttpError, handle, json } from "../http";
+import { EUR } from "../../core/money.ts";
+import { requireUser } from "../auth-guard.ts";
+import { currencyField } from "./currency-field.ts";
+import { getDb } from "../db/index.ts";
+import { accounts } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
 
 const { db } = getDb();
 

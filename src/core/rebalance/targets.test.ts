@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { BASIS_POINTS, checkTargets } from "./targets";
+import { BASIS_POINTS, checkTargets } from "./targets.ts";
 
 describe("checkTargets", () => {
   test("accepts a set summing to 100 %", () => {

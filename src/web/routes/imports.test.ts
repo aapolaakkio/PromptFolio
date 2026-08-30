@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { z } from "zod";
-import { minorToEur, summarise, type DraftResponse } from "./imports-draft";
+import { minorToEur, summarise, type DraftResponse } from "./imports-draft.ts";
 
 // Test rows carry only the fields `summarise` reads; a typed factory keeps the
 // assertion out of the tests (anti-slop/require-safety-comment-for-type-assertion).

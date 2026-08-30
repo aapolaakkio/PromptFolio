@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "./bank-statement";
+import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "./bank-statement.ts";
 
 /** OP's credit card log: the real header, and rows shaped like the real ones. */
 const CARD_CSV = [

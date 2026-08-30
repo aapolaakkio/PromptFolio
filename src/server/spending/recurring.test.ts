@@ -1,10 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, parseMoney } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { SEED_RULES } from "./categories";
-import { recurringPayments } from "./recurring";
-import type { SpendingRule } from "./rules";
+import { EUR, parseMoney } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { SEED_RULES } from "./categories.ts";
+import { recurringPayments } from "./recurring.ts";
+import type { SpendingRule } from "./rules.ts";
 
 // The question this answers is "what am I committed to every month", and the
 // two ways it lies are opposite: reporting the weekly shop as a subscription,

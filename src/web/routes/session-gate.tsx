@@ -11,7 +11,7 @@ export type SessionGateProps = {
  * shell -- props in, JSX out, no hooks, no imports of `../lib/auth-client`
  * at all (the caller supplies `onSignOut`). Deliberately split out of
  * `root.tsx` (which calls the real `useSession()` hook -- a network-backed
- * call this project has no way to stub without touching `bunfig.toml`'s
+ * call this project has no way to stub without touching vitest.config.ts's
  * test network guard) so `session-gate.test.ts` can render this component
  * directly with `react-dom/server`'s `renderToStaticMarkup` -- no DOM, no
  * network, no real session -- and assert that the two states a

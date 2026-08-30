@@ -1,4 +1,4 @@
-import type { Dimension } from "../allocation";
+import type { Dimension } from "../allocation.ts";
 
 /** One hundred per cent, in the integer unit weights are stored in. */
 export const BASIS_POINTS = 10_000;

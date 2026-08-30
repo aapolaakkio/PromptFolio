@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 
-import { EUR } from "../../core/money";
+import { EUR } from "../../core/money.ts";
 
 // The chat tools are the only thing standing between the model and a made-up
 // number: the system prompt forbids arithmetic in prose, so whatever these
@@ -8,30 +8,30 @@ import { EUR } from "../../core/money";
 // strings, and on the two properties every result must carry -- the date it is
 // good for, and whether any price behind it is stale.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("../api/accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("../api/instruments"))["instrumentRoutes"];
-let rebalanceRoutes: (typeof import("../api/rebalance"))["rebalanceRoutes"];
-let addRules: (typeof import("../spending/rules"))["addRules"];
-let buildChatTools: (typeof import("./tools"))["buildChatTools"];
-let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
-let transactions: (typeof import("../db/schema"))["transactions"];
-let prices: (typeof import("../db/schema"))["prices"];
-let snapshots: (typeof import("../db/schema"))["snapshots"];
-let snapshotRows: (typeof import("../db/schema"))["snapshotRows"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("../api/accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("../api/instruments.ts"))["instrumentRoutes"];
+let rebalanceRoutes: (typeof import("../api/rebalance.ts"))["rebalanceRoutes"];
+let addRules: (typeof import("../spending/rules.ts"))["addRules"];
+let buildChatTools: (typeof import("./tools.ts"))["buildChatTools"];
+let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
+let transactions: (typeof import("../db/schema.ts"))["transactions"];
+let prices: (typeof import("../db/schema.ts"))["prices"];
+let snapshots: (typeof import("../db/schema.ts"))["snapshots"];
+let snapshotRows: (typeof import("../db/schema.ts"))["snapshotRows"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("../api/accounts")).accountRoutes;
-  instrumentRoutes = (await import("../api/instruments")).instrumentRoutes;
-  rebalanceRoutes = (await import("../api/rebalance")).rebalanceRoutes;
-  addRules = (await import("../spending/rules")).addRules;
-  buildChatTools = (await import("./tools")).buildChatTools;
-  db = (await import("../db")).getDb().db;
-  transactions = (await import("../db/schema")).transactions;
-  prices = (await import("../db/schema")).prices;
-  snapshots = (await import("../db/schema")).snapshots;
-  snapshotRows = (await import("../db/schema")).snapshotRows;
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("../api/accounts.ts")).accountRoutes;
+  instrumentRoutes = (await import("../api/instruments.ts")).instrumentRoutes;
+  rebalanceRoutes = (await import("../api/rebalance.ts")).rebalanceRoutes;
+  addRules = (await import("../spending/rules.ts")).addRules;
+  buildChatTools = (await import("./tools.ts")).buildChatTools;
+  db = (await import("../db/index.ts")).getDb().db;
+  transactions = (await import("../db/schema.ts")).transactions;
+  prices = (await import("../db/schema.ts")).prices;
+  snapshots = (await import("../db/schema.ts")).snapshots;
+  snapshotRows = (await import("../db/schema.ts")).snapshotRows;
 });
 
 const sessionCookieFrom = (response: Response): string => {

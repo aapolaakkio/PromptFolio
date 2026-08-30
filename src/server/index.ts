@@ -1,19 +1,19 @@
 import index from "../web/index.html";
-import { auth } from "./auth";
-import { accountRoutes } from "./api/accounts";
-import { bankImportRoutes } from "./api/bank-imports";
-import { cashEntryRoutes } from "./api/cash-entries";
-import { rebalanceRoutes } from "./api/rebalance";
-import { taxRoutes } from "./api/tax";
-import { chatRoutes } from "./api/chat";
-import { importRoutes } from "./api/imports";
-import { instrumentRoutes } from "./api/instruments";
-import { portfolioRoutes } from "./api/portfolio";
-import { priceRoutes } from "./api/prices";
-import { snapshotRoutes } from "./api/snapshots";
-import { setupRoutes } from "./api/setup";
-import { getDb, migrate } from "./db";
-import { startScheduler } from "./prices/refresh";
+import { auth } from "./auth.ts";
+import { accountRoutes } from "./api/accounts.ts";
+import { bankImportRoutes } from "./api/bank-imports.ts";
+import { cashEntryRoutes } from "./api/cash-entries.ts";
+import { rebalanceRoutes } from "./api/rebalance.ts";
+import { taxRoutes } from "./api/tax.ts";
+import { chatRoutes } from "./api/chat.ts";
+import { importRoutes } from "./api/imports.ts";
+import { instrumentRoutes } from "./api/instruments.ts";
+import { portfolioRoutes } from "./api/portfolio.ts";
+import { priceRoutes } from "./api/prices.ts";
+import { snapshotRoutes } from "./api/snapshots.ts";
+import { setupRoutes } from "./api/setup.ts";
+import { getDb, migrate } from "./db/index.ts";
+import { startScheduler } from "./prices/refresh.ts";
 
 /**
  * Liveness check for the container's `HEALTHCHECK` (and any external
@@ -100,7 +100,7 @@ if (import.meta.main) {
   // The daily FX/price refresh only runs in production: a `bun --hot` dev
   // server would re-register the job on every save, and no *.test.ts file
   // imports this module (checked directly -- see task-15-report.md), so
-  // `bun test` never reaches this line either way. Guarding on NODE_ENV
+  // `vitest` never reaches this line either way. Guarding on NODE_ENV
   // explicitly, rather than relying on either of those incidental facts, is
   // what keeps a stray `bun run src/server/index.ts` outside `bun start`
   // from silently registering a real scheduled job too.
@@ -108,7 +108,7 @@ if (import.meta.main) {
     startScheduler(getDb().db);
   }
 
-  // Bun.cron mirrors setTimeout's error semantics: a handler whose returned
+  // croner mirrors setTimeout's error semantics: a handler whose returned
   // Promise rejects, with no `unhandledRejection` listener registered, exits
   // the whole process. `runScheduledRefresh` (prices/refresh.ts) already
   // wraps its own body in try/catch so it should never actually reject --

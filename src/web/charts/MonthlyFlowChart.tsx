@@ -5,9 +5,9 @@ import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
-import { eur } from "../lib/format";
-import { MARK_FOCUS } from "./interactions";
-import { colourFor } from "./palette";
+import { eur } from "../lib/format.ts";
+import { MARK_FOCUS } from "./interactions.ts";
+import { colourFor } from "./palette.ts";
 
 export type MonthlyPoint = { month: string; incomeEur: string; expensesEur: string };
 

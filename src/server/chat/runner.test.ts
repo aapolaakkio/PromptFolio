@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import { z } from "zod";
 
@@ -8,11 +8,11 @@ import {
   type ChatEvent,
   type ToolRunnerClient,
   type TurnParams,
-} from "./runner";
-import type { ChatTool, ToolArgs, ToolResult } from "./tools";
+} from "./runner.ts";
+import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
 
 // The whole loop is exercised against a scripted client: no API key, no
-// network, no cost. `test-network-guard.ts` (a bunfig preload) makes an
+// network, no cost. `test-network-guard.ts` (a vitest setup file) makes an
 // un-stubbed fetch throw, so a regression that reached the real API would fail
 // this file rather than quietly bill the user.
 

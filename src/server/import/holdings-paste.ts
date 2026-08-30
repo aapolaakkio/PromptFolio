@@ -1,4 +1,4 @@
-import { parseMoney, parseQuantity, EUR } from "../../core/money";
+import { parseMoney, parseQuantity, EUR } from "../../core/money.ts";
 
 /**
  * One row of a broker's on-screen holdings table, pasted in.

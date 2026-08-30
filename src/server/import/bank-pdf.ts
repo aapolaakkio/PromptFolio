@@ -1,6 +1,6 @@
-import { EUR, parseMoney, type Money } from "../../core/money";
-import type { IsoDate } from "../../core/types";
-import type { BankRow } from "./bank-statement";
+import { EUR, parseMoney, type Money } from "../../core/money.ts";
+import type { IsoDate } from "../../core/types.ts";
+import type { BankRow } from "./bank-statement.ts";
 
 /**
  * OP's PDF statement, which carries what the CSV export does not: the balance

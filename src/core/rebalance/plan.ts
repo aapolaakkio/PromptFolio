@@ -1,5 +1,5 @@
-import { addMoney, money, negateMoney, zeroMoney, EUR, type Money } from "../money";
-import type { DriftRow } from "./drift";
+import { addMoney, money, negateMoney, zeroMoney, EUR, type Money } from "../money.ts";
+import type { DriftRow } from "./drift.ts";
 
 /**
  * The smallest trade worth making, in minor units: 50,00 €.

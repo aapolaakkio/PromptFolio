@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import { z } from "zod";
 
@@ -6,19 +6,19 @@ import { z } from "zod";
 // who is allowed to read what. The model itself is scripted (see runner.test.ts
 // for why): no key, no network, no cost.
 
-type ToolRunnerClient = (typeof import("../chat/runner"))["createClient"] extends (
+type ToolRunnerClient = (typeof import("../chat/runner.ts"))["createClient"] extends (
   apiKey: string,
 ) => infer C
   ? C
   : never;
 
-let auth: (typeof import("../auth"))["auth"];
-let chatRoutes: (typeof import("./chat"))["chatRoutes"];
-let setChatClient: (typeof import("./chat"))["_setChatClient"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let chatRoutes: (typeof import("./chat.ts"))["chatRoutes"];
+let setChatClient: (typeof import("./chat.ts"))["_setChatClient"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  const chat = await import("./chat");
+  auth = (await import("../auth.ts")).auth;
+  const chat = await import("./chat.ts");
   chatRoutes = chat.chatRoutes;
   setChatClient = chat._setChatClient;
 });

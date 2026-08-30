@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   createMemoryHistory,
@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { SessionGate } from "./session-gate";
+import { SessionGate } from "./session-gate.tsx";
 
 const noop = () => {};
 

@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
-import { eur, fiDate } from "../lib/format";
-import { CreateAccountForm } from "./CreateAccountForm";
-import { accountTypeLabel } from "./account-type";
-import { RenameAccount } from "./RenameAccount";
-import { ImportHistory } from "./ImportHistory";
+import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { eur, fiDate } from "../lib/format.ts";
+import { CreateAccountForm } from "./CreateAccountForm.tsx";
+import { accountTypeLabel } from "./account-type.ts";
+import { RenameAccount } from "./RenameAccount.tsx";
+import { ImportHistory } from "./ImportHistory.tsx";
 import {
   AccountsSchema,
   CommitResultSchema,
@@ -14,14 +14,14 @@ import {
   minorToEur,
   summarise,
   type DraftResponse,
-} from "./imports-draft";
+} from "./imports-draft.ts";
 import {
   ImportHistorySchema,
   undoConfirmMessage,
   UndoResultSchema,
   type ImportRecord,
-} from "./imports-history";
-import { UnknownInstrumentForm } from "./UnknownInstrumentForm";
+} from "./imports-history.ts";
+import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 
 /** Which upload path produced the current `draft`, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";

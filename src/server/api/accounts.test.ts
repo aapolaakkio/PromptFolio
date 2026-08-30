@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { HttpError, handle, json } from "../http";
+import { HttpError, handle, json } from "../http.ts";
 
 // --- handle() / json() (src/server/http.ts) ---
 
@@ -90,7 +90,7 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
 // src/server/auth.test.ts.
 //
 // This file must NOT call resetDbHandleForTests(), set DATABASE_PATH, or
-// call getDb()/migrate() itself: ../test-setup.ts (a bunfig.toml
+// call getDb()/migrate() itself: ../test-setup.ts (a vitest.config.ts
 // `[test] preload` script, see its own comment for the full story) has
 // already done all of that, deterministically, before this file's own
 // code runs — regardless of file scheduling. auth.ts is a process-wide ES
@@ -104,13 +104,13 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
 // file's independent reset desynced it from this one — see
 // task-9-report.md's fix-up report.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let assertAccountOwned: (typeof import("./accounts"))["assertAccountOwned"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let assertAccountOwned: (typeof import("./accounts.ts"))["assertAccountOwned"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const accountsModule = await import("./accounts");
+  const authModule = await import("../auth.ts");
+  const accountsModule = await import("./accounts.ts");
   auth = authModule.auth;
   accountRoutes = accountsModule.accountRoutes;
   assertAccountOwned = accountsModule.assertAccountOwned;

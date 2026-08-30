@@ -1,10 +1,10 @@
-import { readText } from "../files";
-import { expect, test } from "bun:test";
+import { readText } from "../files.ts";
+import { expect, test } from "vitest";
 
-import { parseCurrency } from "../../core/money";
-import { YAHOO } from "./yahoo";
+import { parseCurrency } from "../../core/money.ts";
+import { YAHOO } from "./yahoo.ts";
 
-const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
+const fixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
 
 /** Recorded 2026-08-27 from `query1.finance.yahoo.com/v8/finance/chart/NOKIA.HE?range=5d&interval=1d`. */
 const stubFetch = async (): Promise<Response> =>

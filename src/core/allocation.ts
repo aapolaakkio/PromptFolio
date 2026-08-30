@@ -1,8 +1,8 @@
-import { addMoney, EUR, mulMoney, toEur, zeroMoney, type Money, type Quantity } from "./money";
-import { positionsAt } from "./ledger";
-import type { PriceLookup } from "./returns";
-import type { ValuedCash } from "./cash";
-import type { Instrument, IsoDate, Txn } from "./types";
+import { addMoney, EUR, mulMoney, toEur, zeroMoney, type Money, type Quantity } from "./money.ts";
+import { positionsAt } from "./ledger.ts";
+import type { PriceLookup } from "./returns.ts";
+import type { ValuedCash } from "./cash.ts";
+import type { Instrument, IsoDate, Txn } from "./types.ts";
 
 export type Dimension = "kind" | "currency" | "account" | "instrument";
 

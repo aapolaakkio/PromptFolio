@@ -1,7 +1,7 @@
-import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { CATEGORY_LABELS, type Category } from "./categories";
-import { categoriseWith, isRefund, type SpendingRule } from "./rules";
+import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { CATEGORY_LABELS, type Category } from "./categories.ts";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
 
 export type SpendingGroup = {
   readonly key: string;

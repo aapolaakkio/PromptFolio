@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { count } from "drizzle-orm";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { getDb } from "../db";
-import { user } from "../db/schema";
+import { beforeAll, describe, expect, test } from "vitest";
+import { getDb } from "../db/index.ts";
+import { user } from "../db/schema.ts";
 
 // This file exercises setupRoutes against the SAME shared, migrated
 // in-memory database every other server test file uses (see
@@ -22,13 +22,13 @@ import { user } from "../db/schema";
 // against its own fresh `:memory:` database instead, mirroring
 // auth.test.ts's two child-process tests for the same reason.
 
-let auth: (typeof import("../auth"))["auth"];
-let setupRoutes: (typeof import("./setup"))["setupRoutes"];
-let insertCredentialUser: (typeof import("./setup"))["_internal"]["insertCredentialUser"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let setupRoutes: (typeof import("./setup.ts"))["setupRoutes"];
+let insertCredentialUser: (typeof import("./setup.ts"))["_internal"]["insertCredentialUser"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const setupModule = await import("./setup");
+  const authModule = await import("../auth.ts");
+  const setupModule = await import("./setup.ts");
   auth = authModule.auth;
   setupRoutes = setupModule.setupRoutes;
   insertCredentialUser = setupModule._internal.insertCredentialUser;
@@ -73,7 +73,7 @@ describe("insertCredentialUser (the row-writing half of createFirstUser)", () =>
   // a genuine `auth.handler` sign-in call, not by asserting the row
   // shape matches what we believe Better Auth expects.
   test("writes a user + account row pair that Better Auth's own sign-in flow accepts", async () => {
-    const { hashPassword } = await import("../password");
+    const { hashPassword } = await import("../password.ts");
     const email = `insert-credential-${crypto.randomUUID()}@example.com`;
     const password = "correct horse battery staple";
     const passwordHash = await hashPassword(password);
@@ -104,7 +104,7 @@ describe("insertCredentialUser (the row-writing half of createFirstUser)", () =>
   });
 
   test("lowercases the stored email, mirroring Better Auth's own sign-up normalisation", async () => {
-    const { hashPassword } = await import("../password");
+    const { hashPassword } = await import("../password.ts");
     const passwordHash = await hashPassword("correct horse battery staple");
     const mixedCaseEmail = `Mixed-Case-${crypto.randomUUID()}@Example.com`;
 
@@ -220,7 +220,7 @@ console.log(JSON.stringify({
 
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
       encoding: "utf-8",
-      cwd: import.meta.dir,
+      cwd: import.meta.dirname,
       env: CHILD_ENV,
     });
     expect(result.status).toBe(0);
@@ -273,7 +273,7 @@ console.log(JSON.stringify({ statuses: [a.status, b.status].sort((x, y) => x - y
 `;
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
       encoding: "utf-8",
-      cwd: import.meta.dir,
+      cwd: import.meta.dirname,
       env: CHILD_ENV,
     });
     expect(result.status).toBe(0);

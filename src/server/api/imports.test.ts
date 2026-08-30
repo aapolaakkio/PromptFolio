@@ -1,12 +1,12 @@
-import { readBytes, readText } from "../files";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { readBytes, readText } from "../files.ts";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { NORDNET } from "../import/brokers";
+import { NORDNET } from "../import/brokers.ts";
 
 // This file exercises importRoutes (preview/commit/undo) and
 // detectBrokerConfig against a real, migrated database and a real Better
 // Auth session, mirroring src/server/api/accounts.test.ts's setup —
-// including its reliance on ../test-setup.ts (a bunfig.toml [test]
+// including its reliance on ../test-setup.ts (a vitest.config.ts [test]
 // preload script) to have already pinned the shared getDb() handle to a
 // migrated in-memory database before this file's own code runs. This file
 // must NOT call resetDbHandleForTests(), set DATABASE_PATH, or call
@@ -17,17 +17,17 @@ import { NORDNET } from "../import/brokers";
 // on any particular starting state, since every test in the process shares
 // one in-memory database.
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let importRoutes: (typeof import("./imports"))["importRoutes"];
-let detectBrokerConfig: (typeof import("./imports"))["detectBrokerConfig"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let importRoutes: (typeof import("./imports.ts"))["importRoutes"];
+let detectBrokerConfig: (typeof import("./imports.ts"))["detectBrokerConfig"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const accountsModule = await import("./accounts");
-  const instrumentsModule = await import("./instruments");
-  const importsModule = await import("./imports");
+  const authModule = await import("../auth.ts");
+  const accountsModule = await import("./accounts.ts");
+  const instrumentsModule = await import("./instruments.ts");
+  const importsModule = await import("./imports.ts");
   auth = authModule.auth;
   accountRoutes = accountsModule.accountRoutes;
   instrumentRoutes = instrumentsModule.instrumentRoutes;
@@ -205,7 +205,8 @@ const uploadRequest = (
   });
 };
 
-const fixtureBytes = (name: string) => readBytes(`${import.meta.dir}/../import/fixtures/${name}`);
+const fixtureBytes = (name: string) =>
+  readBytes(`${import.meta.dirname}/../import/fixtures/${name}`);
 
 // --- detectBrokerConfig (delimiter/encoding independence) ---
 
@@ -225,7 +226,9 @@ describe("detectBrokerConfig", () => {
   // never go through `detectBrokerConfig`/`buildDraft`'s file-upload path
   // at all -- see brokers.ts's `BROKER_CONFIGS` comment.
   test("does not detect an OP paste -- it is not wired into the CSV-upload broker list", async () => {
-    const text = await readText(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`);
+    const text = await readText(
+      `${import.meta.dirname}/../import/fixtures/op-web-paste-sample.txt`,
+    );
     const bytes = new TextEncoder().encode(text).buffer;
     expect(detectBrokerConfig(bytes)).toBeNull();
   });
@@ -484,8 +487,8 @@ describe("POST /api/imports/commit", () => {
     const accountId = await openAccount(cookie);
     await registerNokia(cookie);
 
-    const { getDb } = await import("../db");
-    const { instruments, priceFetchLog } = await import("../db/schema");
+    const { getDb } = await import("../db/index.ts");
+    const { instruments, priceFetchLog } = await import("../db/schema.ts");
     const { asc, eq } = await import("drizzle-orm");
     const { db } = getDb();
     // SAFETY: registerNokia() above always creates (or has already created, in an earlier
@@ -594,7 +597,7 @@ describe("POST /api/imports/:id/undo", () => {
 // asserted.
 
 const opPasteText = (): Promise<string> =>
-  readText(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`);
+  readText(`${import.meta.dirname}/../import/fixtures/op-web-paste-sample.txt`);
 
 /**
  * A fresh, schema-valid ISIN per call -- see instruments.test.ts's own

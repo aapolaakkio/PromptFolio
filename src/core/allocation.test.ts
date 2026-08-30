@@ -1,9 +1,16 @@
-import { test, expect } from "bun:test";
-import { allocateBy } from "./allocation";
-import type { PriceLookup } from "./returns";
-import type { ValuedCash } from "./cash";
-import type { Instrument, Txn } from "./types";
-import { parseMoney, parseQuantity, parseFxRate, parseCurrency, formatMoney, EUR } from "./money";
+import { test, expect } from "vitest";
+import { allocateBy } from "./allocation.ts";
+import type { PriceLookup } from "./returns.ts";
+import type { ValuedCash } from "./cash.ts";
+import type { Instrument, Txn } from "./types.ts";
+import {
+  parseMoney,
+  parseQuantity,
+  parseFxRate,
+  parseCurrency,
+  formatMoney,
+  EUR,
+} from "./money.ts";
 
 const USD = parseCurrency("USD");
 

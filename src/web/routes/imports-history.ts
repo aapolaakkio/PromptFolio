@@ -7,7 +7,7 @@ import { z } from "zod";
  * holdings table, and `imports-draft.ts` for the same split already applied to the
  * rest of this same page). `imports-history.test.ts` imports only this module;
  * `imports.tsx` never gets loaded by a test, so it stays out of Bun's per-file
- * coverage gate (`bunfig.toml`'s `coverageThreshold = 0.8`) for JSX a unit test cannot
+ * coverage gate (vitest.config.ts's line threshold) for JSX a unit test cannot
  * exercise.
  */
 

@@ -1,8 +1,8 @@
 import { and, eq } from "drizzle-orm";
 
-import type { getDb } from "../db";
-import { spendingRules } from "../db/schema";
-import { CATEGORY_LABELS, SEED_RULES, type Category } from "./categories";
+import type { getDb } from "../db/index.ts";
+import { spendingRules } from "../db/schema.ts";
+import { CATEGORY_LABELS, SEED_RULES, type Category } from "./categories.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 

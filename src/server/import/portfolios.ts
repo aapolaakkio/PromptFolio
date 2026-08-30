@@ -1,4 +1,4 @@
-import type { BrokerCsvConfig, RawRow } from "./types";
+import type { BrokerCsvConfig, RawRow } from "./types.ts";
 
 /**
  * The distinct account numbers a broker's export names, in the order they first

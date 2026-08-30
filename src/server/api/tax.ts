@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { requireUser } from "../auth-guard";
-import { getDb } from "../db";
-import { handle, HttpError, json } from "../http";
-import { taxYearFor, taxYearsFor } from "../tax";
+import { requireUser } from "../auth-guard.ts";
+import { getDb } from "../db/index.ts";
+import { handle, HttpError, json } from "../http.ts";
+import { taxYearFor, taxYearsFor } from "../tax.ts";
 
 const { db } = getDb();
 

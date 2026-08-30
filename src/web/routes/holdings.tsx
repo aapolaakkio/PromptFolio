@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet } from "../lib/api";
-import { eur, qty, share, fiDate } from "../lib/format";
-import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort";
-import { HoldingsChart } from "../charts/HoldingsChart";
-import { RecordPriceForm } from "./RecordPriceForm";
+import { apiGet } from "../lib/api.ts";
+import { eur, qty, share, fiDate } from "../lib/format.ts";
+import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
+import { HoldingsChart } from "../charts/HoldingsChart.tsx";
+import { RecordPriceForm } from "./RecordPriceForm.tsx";
 
 export type { Holding };
 

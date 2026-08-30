@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
-import { parseHoldingsPaste } from "./holdings-paste";
+import { parseHoldingsPaste } from "./holdings-paste.ts";
 
 // The shape a broker's portfolio table copies as: a header row and one
 // tab-separated row per holding. Values here are invented; the layout is the

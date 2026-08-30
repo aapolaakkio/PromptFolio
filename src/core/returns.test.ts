@@ -1,9 +1,16 @@
-import { test, expect } from "bun:test";
-import { valueSeries, xirr, twr, datesBetween, investedSeries } from "./returns";
-import type { PriceLookup } from "./returns";
-import { investedCashFlows } from "./ledger";
-import type { Instrument, Txn, TransactionType, CashFlow } from "./types";
-import { parseMoney, parseQuantity, parseFxRate, parseCurrency, formatMoney, EUR } from "./money";
+import { test, expect } from "vitest";
+import { valueSeries, xirr, twr, datesBetween, investedSeries } from "./returns.ts";
+import type { PriceLookup } from "./returns.ts";
+import { investedCashFlows } from "./ledger.ts";
+import type { Instrument, Txn, TransactionType, CashFlow } from "./types.ts";
+import {
+  parseMoney,
+  parseQuantity,
+  parseFxRate,
+  parseCurrency,
+  formatMoney,
+  EUR,
+} from "./money.ts";
 
 const USD = parseCurrency("USD");
 

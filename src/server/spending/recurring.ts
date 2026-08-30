@@ -1,7 +1,7 @@
-import { EUR, formatMoney, type Money } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { labelForCategory } from "./categories";
-import { categoriseWith, type SpendingRule } from "./rules";
+import { EUR, formatMoney, type Money } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { labelForCategory } from "./categories.ts";
+import { categoriseWith, type SpendingRule } from "./rules.ts";
 
 export type Cadence = "weekly" | "monthly" | "quarterly" | "yearly";
 

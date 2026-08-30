@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { sortHoldings, type Holding } from "./holdings-sort";
+import { test, expect } from "vitest";
+import { sortHoldings, type Holding } from "./holdings-sort.ts";
 
 const row = (name: string, valueEur: string, unrealisedEur: string): Holding => ({
   instrumentId: 1,

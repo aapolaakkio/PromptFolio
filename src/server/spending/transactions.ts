@@ -1,7 +1,7 @@
-import { formatMoney, EUR } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { internalTransferIds, investmentPaymentIds } from "./internal";
-import { categoriseWith, type SpendingRule } from "./rules";
+import { formatMoney, EUR } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { internalTransferIds, investmentPaymentIds } from "./internal.ts";
+import { categoriseWith, type SpendingRule } from "./rules.ts";
 
 /** Why a row is not counted as spending, or `null` when it is. */
 export type ExcludedReason =

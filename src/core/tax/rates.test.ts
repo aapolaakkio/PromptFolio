@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, formatMoney, parseMoney } from "../money";
+import { EUR, formatMoney, parseMoney } from "../money.ts";
 import {
   DEEMED_COST_LONG_PERCENT,
   DEEMED_COST_SHORT_PERCENT,
@@ -8,7 +8,7 @@ import {
   OST_DEPOSIT_CAP_EUR,
   percentOf,
   SMALL_SALE_LIMIT_EUR,
-} from "./rates";
+} from "./rates.ts";
 
 describe("percentOf", () => {
   test("rounds half-up to the cent, in integers", () => {

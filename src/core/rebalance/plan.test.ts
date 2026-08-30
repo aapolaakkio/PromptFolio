@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { addMoney, formatMoney, parseMoney, zeroMoney, EUR, type Money } from "../money";
-import type { DriftRow } from "./drift";
-import { attributeSale, rebalancePlan, type Trade } from "./plan";
+import { addMoney, formatMoney, parseMoney, zeroMoney, EUR, type Money } from "../money.ts";
+import type { DriftRow } from "./drift.ts";
+import { attributeSale, rebalancePlan, type Trade } from "./plan.ts";
 
 const row = (key: string, driftEur: string | null, untargeted = false): DriftRow => ({
   key,

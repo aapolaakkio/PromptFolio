@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import type { Disposal } from "../costbasis";
-import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money";
-import type { IsoDate, TransactionType, Txn } from "../types";
-import { taxYear } from "./year";
+import type { Disposal } from "../costbasis.ts";
+import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money.ts";
+import type { IsoDate, TransactionType, Txn } from "../types.ts";
+import { taxYear } from "./year.ts";
 
 let nextId = 1;
 const sale = (on: IsoDate, o: { proceeds: string; cost: string; accountId?: number }): Txn => ({

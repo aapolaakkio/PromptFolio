@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 
 // The only route in the app that writes a transaction by hand. Everything else
@@ -6,16 +6,16 @@ import { z } from "zod";
 // that keeps honest: it may only write cash rows (never a trade), and it may
 // only touch rows it wrote itself (never a broker's record).
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let cashEntryRoutes: (typeof import("./cash-entries"))["cashEntryRoutes"];
-let portfolioRoutes: (typeof import("./portfolio"))["portfolioRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let cashEntryRoutes: (typeof import("./cash-entries.ts"))["cashEntryRoutes"];
+let portfolioRoutes: (typeof import("./portfolio.ts"))["portfolioRoutes"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("./accounts")).accountRoutes;
-  cashEntryRoutes = (await import("./cash-entries")).cashEntryRoutes;
-  portfolioRoutes = (await import("./portfolio")).portfolioRoutes;
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("./accounts.ts")).accountRoutes;
+  cashEntryRoutes = (await import("./cash-entries.ts")).cashEntryRoutes;
+  portfolioRoutes = (await import("./portfolio.ts")).portfolioRoutes;
 });
 
 const sessionCookieFrom = (response: Response): string => {

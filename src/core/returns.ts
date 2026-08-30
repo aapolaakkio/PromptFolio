@@ -8,10 +8,10 @@ import {
   type FxRate,
   type Money,
   type Quantity,
-} from "./money";
-import { costBasisAt } from "./costbasis";
-import { investedCashFlows, positionsAt } from "./ledger";
-import type { CashFlow, Instrument, IsoDate, Txn } from "./types";
+} from "./money.ts";
+import { costBasisAt } from "./costbasis.ts";
+import { investedCashFlows, positionsAt } from "./ledger.ts";
+import type { CashFlow, Instrument, IsoDate, Txn } from "./types.ts";
 
 export type ValuePoint = {
   readonly date: IsoDate;

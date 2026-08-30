@@ -7,7 +7,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
-import type { ChatTool, ToolArgs } from "./tools";
+import type { ChatTool, ToolArgs } from "./tools.ts";
 
 export const CHAT_MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 4096;

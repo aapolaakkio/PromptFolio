@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { getDb } from "../db";
-import { account, user } from "../db/schema";
-import { hashPassword } from "../password";
-import { HttpError, handle, json } from "../http";
+import { getDb } from "../db/index.ts";
+import { account, user } from "../db/schema.ts";
+import { hashPassword } from "../password.ts";
+import { HttpError, handle, json } from "../http.ts";
 
 const { db } = getDb();
 
@@ -59,7 +59,7 @@ export const hasAnyUser = (): boolean =>
  * `user` row plus an `account` row with `providerId: "credential"`,
  * `issuer: "local:credential"`, and `accountId` equal to the new user's
  * id. Hashing goes through this project's own `hashPassword`
- * (`Bun.password`, argon2id -- password.ts), the same function Better
+ * (argon2id -- password.ts), the same function Better
  * Auth's own config points `emailAndPassword.password.hash` at, so a
  * normal `POST /api/auth/sign-in/email` afterwards verifies it exactly as
  * it would any other account. See setup.test.ts's child-process test,
@@ -74,8 +74,8 @@ export const hasAnyUser = (): boolean =>
  * hashing and trust that result by the time the insert runs -- a second
  * request's check could read the database in the gap while the first
  * request is still hashing. So the check happens again, synchronously,
- * immediately before the insert: `bun:sqlite` (via drizzle-orm's
- * bun-sqlite driver) is a synchronous API -- `.get()`/`.run()` return
+ * immediately before the insert: `node:sqlite` (via drizzle-orm's
+ * node-sqlite driver) is a synchronous API -- `.get()`/`.run()` return
  * immediately, not a Promise -- so the count-then-insert below is one
  * uninterrupted block of synchronous JavaScript with no `await` inside
  * it. Bun's single-threaded event loop can only switch to another
@@ -87,7 +87,7 @@ export const hasAnyUser = (): boolean =>
  * then reads count 1 and refuses. This is a real, checked guarantee (see
  * setup.test.ts's concurrent-request test), not a probabilistic one --
  * but it is a guarantee about THIS process, not about the deployment. It
- * holds because PromptFolio runs as exactly one `Bun.serve` process with
+ * holds because PromptFolio runs as exactly one server process with
  * one SQLite connection (see index.ts, compose.yaml -- no clustering, no
  * multiple workers sharing the database file). It would NOT hold if this
  * server were ever run as more than one process against the same

@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { readBytes, readText } from "./files";
+import { readBytes, readText } from "./files.ts";
 
 describe("readBytes", () => {
   test("returns exactly the file's own bytes, not the pool around them", async () => {

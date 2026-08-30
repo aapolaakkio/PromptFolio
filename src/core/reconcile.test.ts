@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
-import { differences, reconcile, DEFAULT_TOLERANCE, type SnapshotPosition } from "./reconcile";
-import { EUR, formatQuantity, parseFxRate, parseMoney, parseQuantity } from "./money";
-import type { TransactionType, Txn } from "./types";
+import { differences, reconcile, DEFAULT_TOLERANCE, type SnapshotPosition } from "./reconcile.ts";
+import { EUR, formatQuantity, parseFxRate, parseMoney, parseQuantity } from "./money.ts";
+import type { TransactionType, Txn } from "./types.ts";
 
 let nextId = 1;
 const txn = (

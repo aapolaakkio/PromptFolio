@@ -5,8 +5,8 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { Chart } from "@tanstack/react-charts";
 
-import { eur } from "../lib/format";
-import { colourFor, SERIES_COUNT } from "./palette";
+import { eur } from "../lib/format.ts";
+import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 /**
  * Matches `GET /api/allocation`'s actual JSON shape (`src/server/api/portfolio.ts`):

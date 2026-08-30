@@ -1,5 +1,5 @@
-import { parseMoney, parseQuantity, EUR } from "../../core/money";
-import type { PasteProblem } from "./holdings-paste";
+import { parseMoney, parseQuantity, EUR } from "../../core/money.ts";
+import type { PasteProblem } from "./holdings-paste.ts";
 
 /**
  * OP's web holdings view, copied as text.

@@ -1,6 +1,6 @@
-import { parseMoney, type Currency, EUR } from "../../core/money";
-import { parseCsv } from "./csv";
-import type { BrokerCsvConfig, RawRow } from "./types";
+import { parseMoney, type Currency, EUR } from "../../core/money.ts";
+import { parseCsv } from "./csv.ts";
+import type { BrokerCsvConfig, RawRow } from "./types.ts";
 
 /**
  * A bank statement's own shape, separate from `BrokerCsvConfig`'s securities

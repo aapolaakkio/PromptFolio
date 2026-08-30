@@ -1,9 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
-import { EUR, parseCurrency } from "../../core/money";
-import { testDb } from "../db";
-import { instruments, pendingPriceRejections, prices } from "../db/schema";
-import { MAX_PLAUSIBLE_RATIO, RE_BASELINE_CONFIRMATIONS, writePrices } from "./write";
+import { EUR, parseCurrency } from "../../core/money.ts";
+import { testDb } from "../db/index.ts";
+import { instruments, pendingPriceRejections, prices } from "../db/schema.ts";
+import { MAX_PLAUSIBLE_RATIO, RE_BASELINE_CONFIRMATIONS, writePrices } from "./write.ts";
 
 const SEK = parseCurrency("SEK");
 

@@ -1,6 +1,15 @@
-import { addMoney, divMoney, money, subMoney, toEur, zeroMoney, EUR, type Money } from "../money";
-import type { IsoDate, Txn } from "../types";
-import { OST_DEPOSIT_CAP_EUR } from "./rates";
+import {
+  addMoney,
+  divMoney,
+  money,
+  subMoney,
+  toEur,
+  zeroMoney,
+  EUR,
+  type Money,
+} from "../money.ts";
+import type { IsoDate, Txn } from "../types.ts";
+import { OST_DEPOSIT_CAP_EUR } from "./rates.ts";
 
 /**
  * The account's fair market value on a date, or the instrument that has no

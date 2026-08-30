@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import {
   buildLots,
   costBasisAt,
   costBasisPerInstrument,
   UnmatchedDisposalError,
-} from "./costbasis";
-import type { Txn, TransactionType } from "./types";
+} from "./costbasis.ts";
+import type { Txn, TransactionType } from "./types.ts";
 import {
   parseMoney,
   parseQuantity,
@@ -17,7 +17,7 @@ import {
   zeroMoney,
   EUR,
   type Currency,
-} from "./money";
+} from "./money.ts";
 
 const USD = parseCurrency("USD");
 

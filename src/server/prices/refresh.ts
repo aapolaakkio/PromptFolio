@@ -1,12 +1,12 @@
 import { asc, eq } from "drizzle-orm";
-import type { CronJob } from "bun";
+import { Cron } from "croner";
 
-import type { getDb } from "../db";
-import { instruments, priceFetchLog, prices, transactions } from "../db/schema";
-import { backfillFxRates, refreshFxRates } from "../fx";
-import { sourceFor } from "./registry";
-import type { FetchImpl, FetchedPrice } from "./types";
-import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write";
+import type { getDb } from "../db/index.ts";
+import { instruments, priceFetchLog, prices, transactions } from "../db/schema.ts";
+import { backfillFxRates, refreshFxRates } from "../fx.ts";
+import { sourceFor } from "./registry.ts";
+import type { FetchImpl, FetchedPrice } from "./types.ts";
+import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write.ts";
 
 type Db = ReturnType<typeof getDb>["db"];
 
@@ -263,7 +263,7 @@ export const backfillInstrument = async (
  * keeps that sweep from burning a request against each one, forever, for zero gain -- exactly
  * the "do not retry it pointlessly on every trigger" a real fix for this gap has to avoid.
  * `backfillInstrument` called directly (the import-commit trigger's one-off attempt, or a
- * manual `bun -e` call) is unaffected -- this exclusion only governs the sweep's own selection.
+ * manual `node -e` call) is unaffected -- this exclusion only governs the sweep's own selection.
  */
 const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund"]);
 
@@ -371,8 +371,8 @@ const SCHEDULE_TZ = "Europe/Helsinki";
 /**
  * The scheduled job's actual body, exported separately from
  * `startScheduler` so it can be called and asserted on directly in tests
- * without waiting on a real `Bun.cron` fire (the earliest this schedule
- * can trigger is the next weekday evening). `Bun.cron` mirrors
+ * without waiting on a real scheduled fire (the earliest this schedule
+ * can trigger is the next weekday evening). croner mirrors
  * `setTimeout`'s error semantics: a handler that rejects with no
  * `unhandledRejection` listener on `process` takes the whole process
  * down. This function never lets a rejection escape -- `refreshFxRates`,
@@ -439,30 +439,33 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
  * can exercise the validation below against a deliberately invalid
  * expression without touching the production constants.
  *
- * `Bun.cron.parse` -- the exact parser `Bun.cron` itself uses -- is
- * called up front so a typo fails loudly, with a clear message, at
- * startup rather than at the job's first (much later) scheduled fire.
- * Verified directly (`bun -e`) that this parser actually rejects a bad
- * expression two different ways, both normalized into the one thrown
- * error below: it throws synchronously for a *syntactically* invalid
- * expression (e.g. "not a cron expression"), and it returns `null` --
- * without throwing -- for a syntactically valid one with no future
- * occurrence at all (e.g. "0 0 30 2 *", February 30th never occurs).
+ * The expression is parsed up front so a typo fails loudly, with a clear
+ * message, at startup rather than at the job's first (much later)
+ * scheduled fire. A bad expression arrives two different ways, both
+ * normalized into the one thrown error below: the constructor throws for
+ * a syntactically invalid expression (e.g. "not a cron expression"), and
+ * `nextRun()` answers `null` -- without throwing -- for a syntactically
+ * valid one that never occurs at all (e.g. "0 0 30 2 *", February 30th).
  */
-export const startScheduler = (db: Db, opts: { schedule?: string; tz?: string } = {}): CronJob => {
+export const startScheduler = (db: Db, opts: { schedule?: string; tz?: string } = {}): Cron => {
   const schedule = opts.schedule ?? SCHEDULE;
   const tz = opts.tz ?? SCHEDULE_TZ;
 
-  let nextFireTime: Date | null;
+  // Created paused so a bad expression is caught before anything is armed, and
+  // so the check below cannot race a fire of its own.
+  let job: Cron;
   try {
-    nextFireTime = Bun.cron.parse(schedule, undefined, { tz });
+    job = new Cron(schedule, { timezone: tz, paused: true }, () => runScheduledRefresh(db));
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : "tuntematon virhe";
     throw new Error(`Ajastuslauseke ei kelpaa (${schedule}): ${detail}`);
   }
-  if (nextFireTime === null) {
+
+  if (job.nextRun() === null) {
+    job.stop();
     throw new Error(`Ajastuslauseke ei kelpaa: sillä ei ole tulevaa ajankohtaa (${schedule})`);
   }
 
-  return Bun.cron(schedule, () => runScheduledRefresh(db), { tz });
+  job.resume();
+  return job;
 };

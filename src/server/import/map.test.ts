@@ -1,16 +1,16 @@
-import { readBytes, readText } from "../files";
-import { test, expect } from "bun:test";
-import { mapRows, normaliseDate, contentHash, type DraftTxn } from "./map";
-import { parseCsv } from "./csv";
-import { parseOpPaste } from "./op-paste";
-import { NORDNET, OP_WEB_PASTE } from "./brokers";
-import { buildLots } from "../../core/costbasis";
-import { EUR, parseCurrency, formatMoney, money, parseFxRate } from "../../core/money";
-import type { RawRow } from "./types";
-import type { TransactionType, Txn } from "../../core/types";
+import { readBytes, readText } from "../files.ts";
+import { test, expect } from "vitest";
+import { mapRows, normaliseDate, contentHash, type DraftTxn } from "./map.ts";
+import { parseCsv } from "./csv.ts";
+import { parseOpPaste } from "./op-paste.ts";
+import { NORDNET, OP_WEB_PASTE } from "./brokers.ts";
+import { buildLots } from "../../core/costbasis.ts";
+import { EUR, parseCurrency, formatMoney, money, parseFxRate } from "../../core/money.ts";
+import type { RawRow } from "./types.ts";
+import type { TransactionType, Txn } from "../../core/types.ts";
 
-const fixture = (name: string) => readBytes(`${import.meta.dir}/fixtures/${name}`);
-const opFixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
+const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
+const opFixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {

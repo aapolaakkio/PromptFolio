@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import type { Dimension } from "../../core/allocation";
-import type { IsoDate } from "../../core/types";
-import type { getDb } from "../db";
+import type { Dimension } from "../../core/allocation.ts";
+import type { IsoDate } from "../../core/types.ts";
+import type { getDb } from "../db/index.ts";
 
 export type Db = ReturnType<typeof getDb>["db"];
 

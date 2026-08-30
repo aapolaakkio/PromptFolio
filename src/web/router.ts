@@ -1,16 +1,16 @@
 import { createRouter } from "@tanstack/react-router";
-import { buildRouteTree } from "./route-tree";
-import { CashPage } from "./routes/cash";
-import { ChatPage } from "./routes/chat";
-import { DashboardPage } from "./routes/dashboard";
-import { HoldingsPage } from "./routes/holdings";
-import { ImportsPage } from "./routes/imports";
-import { LoginPage } from "./routes/login";
-import { ReconcilePage } from "./routes/reconcile";
-import { SpendingPage } from "./routes/spending";
-import { RebalancePage } from "./routes/rebalance";
-import { TaxPage } from "./routes/tax";
-import { AuthenticatedLayout } from "./routes/root";
+import { buildRouteTree } from "./route-tree.ts";
+import { CashPage } from "./routes/cash.tsx";
+import { ChatPage } from "./routes/chat.tsx";
+import { DashboardPage } from "./routes/dashboard.tsx";
+import { HoldingsPage } from "./routes/holdings.tsx";
+import { ImportsPage } from "./routes/imports.tsx";
+import { LoginPage } from "./routes/login.tsx";
+import { ReconcilePage } from "./routes/reconcile.tsx";
+import { SpendingPage } from "./routes/spending.tsx";
+import { RebalancePage } from "./routes/rebalance.tsx";
+import { TaxPage } from "./routes/tax.tsx";
+import { AuthenticatedLayout } from "./routes/root.tsx";
 
 // Wires the real page components into the tree structure built by
 // route-tree.ts. This module is intentionally never imported by a test

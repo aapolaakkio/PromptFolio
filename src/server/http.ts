@@ -1,8 +1,8 @@
 import { ZodError } from "zod";
-import { HttpError } from "./errors";
+import { HttpError } from "./errors.ts";
 
 /**
- * Re-exported so route modules can `import { HttpError } from "./http"`
+ * Re-exported so route modules can `import { HttpError } from "./http.ts"`
  * alongside `handle`/`json` without a second import line. This module must
  * stay free of any dependency on auth.ts (directly or transitively via
  * auth-guard.ts) — auth.ts opens a database connection and throws at

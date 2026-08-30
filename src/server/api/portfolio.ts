@@ -1,34 +1,34 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { allocateBy } from "../../core/allocation";
+import { allocateBy } from "../../core/allocation.ts";
 import {
   accountsMissingCashRecord,
   fundingCashFlows,
   investedCashFlows,
   negativePositionIds,
-} from "../../core/ledger";
-import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money";
-import { investedSeries, twr, valueSeries, xirr } from "../../core/returns";
-import type { IsoDate } from "../../core/types";
-import { requireUser } from "../auth-guard";
-import { getDb } from "../db";
-import { accounts } from "../db/schema";
-import { HttpError, handle, json } from "../http";
-import { cashFor, holdingsFor, loadPortfolio, withAvailability } from "../valuation";
+} from "../../core/ledger.ts";
+import { addMoney, EUR, formatMoney, negateMoney, zeroMoney } from "../../core/money.ts";
+import { investedSeries, twr, valueSeries, xirr } from "../../core/returns.ts";
+import type { IsoDate } from "../../core/types.ts";
+import { requireUser } from "../auth-guard.ts";
+import { getDb } from "../db/index.ts";
+import { accounts } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
+import { cashFor, holdingsFor, loadPortfolio, withAvailability } from "../valuation.ts";
 import {
   availableCashEur,
   cashBalancesAt,
   lockedCashEur,
   totalCashEur,
   valueCash,
-} from "../../core/cash";
-import { cashFlowFor } from "../spending/cashflow";
-import { cashlessAccountIds, notSpendingIds } from "../spending/internal";
-import { CATEGORY_LABELS, labelForCategory } from "../spending/categories";
-import { monthlyByCategory, monthlyFlows } from "../spending/monthly";
-import { classifiedTransactions } from "../spending/transactions";
-import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules";
-import { summariseSpending } from "../spending/summary";
+} from "../../core/cash.ts";
+import { cashFlowFor } from "../spending/cashflow.ts";
+import { cashlessAccountIds, notSpendingIds } from "../spending/internal.ts";
+import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
+import { monthlyByCategory, monthlyFlows } from "../spending/monthly.ts";
+import { classifiedTransactions } from "../spending/transactions.ts";
+import { addRules, categoriseWith, removeRule, rulesFor } from "../spending/rules.ts";
+import { summariseSpending } from "../spending/summary.ts";
 
 const { db } = getDb();
 

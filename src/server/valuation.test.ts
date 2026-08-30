@@ -1,12 +1,12 @@
-import { readText } from "./files";
-import { test, expect } from "bun:test";
-import { EUR, formatMoney, parseCurrency } from "../core/money";
-import { valueSeries } from "../core/returns";
-import { testDb } from "./db";
-import { accounts, instruments, prices, transactions, user } from "./db/schema";
-import { backfillFxRates } from "./fx";
-import { ECB_DATA_URL } from "./fx-ecb";
-import { holdingsFor, loadPortfolio } from "./valuation";
+import { readText } from "./files.ts";
+import { test, expect } from "vitest";
+import { EUR, formatMoney, parseCurrency } from "../core/money.ts";
+import { valueSeries } from "../core/returns.ts";
+import { testDb } from "./db/index.ts";
+import { accounts, instruments, prices, transactions, user } from "./db/schema.ts";
+import { backfillFxRates } from "./fx.ts";
+import { ECB_DATA_URL } from "./fx-ecb.ts";
+import { holdingsFor, loadPortfolio } from "./valuation.ts";
 
 const seed = () => {
   const { db, sqlite } = testDb();
@@ -430,9 +430,9 @@ test("before/after: a SEK-quoted holding's historical value series is excluded (
 
   // Backfill fx history -- exactly what the nightly job (`runScheduledRefresh`) and a
   // fresh import commit (`backfillCommittedInstruments`) now both trigger.
-  const histFixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`);
+  const histFixtureText = () => readText(`${import.meta.dirname}/fixtures/ecb-sdmx-hist.csv`);
   const dispatch = async (input: string | URL | Request): Promise<Response> => {
-    expect(String(input)).toStartWith(ECB_DATA_URL);
+    expect(String(input).startsWith(ECB_DATA_URL)).toBe(true);
     return new Response(await histFixtureText());
   };
   const backfillResult = await backfillFxRates(db, { fetchImpl: dispatch });

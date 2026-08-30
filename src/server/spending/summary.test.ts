@@ -1,10 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, parseMoney, type Currency } from "../../core/money";
-import type { IsoDate, TransactionType, Txn } from "../../core/types";
-import { SEED_RULES } from "./categories";
-import { categoriseWith, type SpendingRule } from "./rules";
-import { summariseSpending } from "./summary";
+import { EUR, parseMoney, type Currency } from "../../core/money.ts";
+import type { IsoDate, TransactionType, Txn } from "../../core/types.ts";
+import { SEED_RULES } from "./categories.ts";
+import { categoriseWith, type SpendingRule } from "./rules.ts";
+import { summariseSpending } from "./summary.ts";
 
 // The assistant is not allowed to add these up in prose, so whatever this
 // returns is what a person is told they spent. The tests therefore pin the

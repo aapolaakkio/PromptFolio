@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { signIn } from "../lib/auth-client";
+import { signIn } from "../lib/auth-client.ts";
 
 export type FirstRunFormProps = {
   /** Called after the account is created AND the resulting sign-in succeeds. */

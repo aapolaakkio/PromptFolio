@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { bumpX } from "./curve";
+import { bumpX } from "./curve.ts";
 
 describe("bumpX", () => {
   test("leaves and arrives horizontally, which is what makes a ribbon readable", () => {

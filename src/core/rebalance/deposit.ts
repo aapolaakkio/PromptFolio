@@ -1,6 +1,6 @@
-import { addMoney, money, subMoney, zeroMoney, EUR, type Money } from "../money";
-import type { DriftRow } from "./drift";
-import { BASIS_POINTS, type Target } from "./targets";
+import { addMoney, money, subMoney, zeroMoney, EUR, type Money } from "../money.ts";
+import type { DriftRow } from "./drift.ts";
+import { BASIS_POINTS, type Target } from "./targets.ts";
 
 export type DepositAllocation = {
   readonly key: string;

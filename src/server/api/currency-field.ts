@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { parseCurrency } from "../../core/money";
+import { parseCurrency } from "../../core/money.ts";
 
 /**
  * The zod field for a request body's currency. Delegates the actual ISO

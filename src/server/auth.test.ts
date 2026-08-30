@@ -1,13 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { beforeAll, expect, test } from "bun:test";
-import { HttpError } from "./errors";
-import { hashPassword, verifyPassword } from "./password";
+import { beforeAll, expect, test } from "vitest";
+import { HttpError } from "./errors.ts";
+import { hashPassword, verifyPassword } from "./password.ts";
 
 // --- Shared, migrated in-memory database + a single Better Auth instance ---
 //
 // auth.ts calls getDb() at module scope, and getDb() memoises a shared
 // handle for the lifetime of the process (see db/index.ts). test-setup.ts
-// (a bunfig.toml `[test] preload` script — see its own comment for the
+// (a vitest.config.ts `setupFiles` entry — see its own comment for the
 // full story) has already pointed that handle at a migrated in-memory
 // database before this file's own code runs, so this file must NOT call
 // resetDbHandleForTests(): doing so would mint a second database that only
@@ -22,16 +22,16 @@ import { hashPassword, verifyPassword } from "./password";
 // ALLOW_SIGNUP is set to 'true' by test-setup.ts, which lets this file's
 // one `auth` instance permit sign-up, so tests here can create a real,
 // correctly-issued session to exercise requireUser's happy path.
-let auth: (typeof import("./auth"))["auth"];
-let resolveAuthSecret: (typeof import("./auth"))["resolveAuthSecret"];
-let resolveDisableSignUp: (typeof import("./auth"))["resolveDisableSignUp"];
-let requireUser: (typeof import("./auth-guard"))["requireUser"];
+let auth: (typeof import("./auth.ts"))["auth"];
+let resolveAuthSecret: (typeof import("./auth.ts"))["resolveAuthSecret"];
+let resolveDisableSignUp: (typeof import("./auth.ts"))["resolveDisableSignUp"];
+let requireUser: (typeof import("./auth-guard.ts"))["requireUser"];
 
 const TEST_SECRET = "test-secret-at-least-32-characters-long";
 
 beforeAll(async () => {
-  const authModule = await import("./auth");
-  const authGuardModule = await import("./auth-guard");
+  const authModule = await import("./auth.ts");
+  const authGuardModule = await import("./auth-guard.ts");
   auth = authModule.auth;
   resolveAuthSecret = authModule.resolveAuthSecret;
   resolveDisableSignUp = authModule.resolveDisableSignUp;
@@ -60,7 +60,7 @@ const signUp = (email: string, password: string): Promise<Response> =>
 
 test("hashes with argon2id and verifies", async () => {
   const hash = await hashPassword("correct horse battery staple");
-  expect(hash).toStartWith("$argon2id$");
+  expect(hash.startsWith("$argon2id$")).toBe(true);
   expect(await verifyPassword({ password: "correct horse battery staple", hash })).toBe(true);
   expect(await verifyPassword({ password: "wrong", hash })).toBe(false);
 });
@@ -184,7 +184,7 @@ console.log(JSON.stringify({ status: response.status, body }));
 
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
     encoding: "utf-8",
-    cwd: import.meta.dir,
+    cwd: import.meta.dirname,
     env: envForChild,
   });
 
@@ -227,7 +227,7 @@ test("the process refuses to boot when BETTER_AUTH_SECRET is missing", () => {
     ["--input-type=module", "-e", `await import(${JSON.stringify(authPath)})`],
     {
       encoding: "utf-8",
-      cwd: import.meta.dir,
+      cwd: import.meta.dirname,
       env: envForChild,
     },
   );

@@ -1,7 +1,7 @@
-import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money";
-import type { IsoDate, Txn } from "../../core/types";
-import { internalTransferIds } from "./internal";
-import { categoriseWith, isRefund, type SpendingRule } from "./rules";
+import { addMoney, EUR, formatMoney, zeroMoney, type Money } from "../../core/money.ts";
+import type { IsoDate, Txn } from "../../core/types.ts";
+import { internalTransferIds } from "./internal.ts";
+import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
 
 export type MonthlyFlow = {
   /** `2026-03`, so the client can sort and label without parsing a date. */

@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { eur, qty, pct, share, fiDate, fiDateTime } from "./format";
+import { test, expect } from "vitest";
+import { eur, qty, pct, share, fiDate, fiDateTime } from "./format.ts";
 
 // fi-FI uses a comma decimal separator and a narrow no-break space for thousands.
 const normalise = (s: string) => s.replace(/ | /g, " ");

@@ -1,4 +1,4 @@
-import { eur, fiDate } from "../lib/format";
+import { eur, fiDate } from "../lib/format.ts";
 
 /**
  * How every chart in this app formats a hovered value.

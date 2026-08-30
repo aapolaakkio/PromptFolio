@@ -1,12 +1,12 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { testDb } from "../db";
-import { accounts, fxRates, imports, instruments, transactions, user } from "../db/schema";
-import { EUR, parseCurrency } from "../../core/money";
-import { commitDraft, undoImport } from "./commit";
-import type { Draft, DraftTxn } from "./map";
-import type { FetchImpl } from "../prices/types";
-import { ECB_DATA_URL } from "../fx-ecb";
+import { testDb } from "../db/index.ts";
+import { accounts, fxRates, imports, instruments, transactions, user } from "../db/schema.ts";
+import { EUR, parseCurrency } from "../../core/money.ts";
+import { commitDraft, undoImport } from "./commit.ts";
+import type { Draft, DraftTxn } from "./map.ts";
+import type { FetchImpl } from "../prices/types.ts";
+import { ECB_DATA_URL } from "../fx-ecb.ts";
 
 const USD = parseCurrency("USD");
 const SEK = parseCurrency("SEK");

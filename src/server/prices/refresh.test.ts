@@ -1,17 +1,17 @@
-import { readText } from "../files";
-import { expect, test } from "bun:test";
+import { readText } from "../files.ts";
+import { expect, test } from "vitest";
 import { asc, eq } from "drizzle-orm";
 
-import { EUR, parseCurrency } from "../../core/money";
-import { testDb } from "../db";
-import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema";
+import { EUR, parseCurrency } from "../../core/money.ts";
+import { testDb } from "../db/index.ts";
+import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
 import {
   backfillInstrument,
   backfillMany,
   refreshPrices,
   runScheduledRefresh,
   startScheduler,
-} from "./refresh";
+} from "./refresh.ts";
 
 const SEK = parseCurrency("SEK");
 
@@ -264,7 +264,7 @@ test("nordnet_fund's two-NAV-point limitation is reported as an incomplete backf
   // page only ever has two recent NAV points (§10a A5).
   seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
-  const html = await readText(`${import.meta.dir}/fixtures/nordnet-fund-suomi.html`);
+  const html = await readText(`${import.meta.dirname}/fixtures/nordnet-fund-suomi.html`);
   const result = await backfillInstrument(db, instrument.id, {
     fetchImpl: async () => new Response(html),
     today: "2026-08-27",
@@ -529,8 +529,8 @@ test("an instrument with a years-old transaction ends up with price rows spannin
   // Loading through valuation.ts's `loadPortfolio` -- the same path
   // /api/value-series uses -- proves this is no longer true, end to end, through
   // a real `PriceLookup`, not a hand-built stub of one.
-  const { loadPortfolio } = await import("../valuation");
-  const { valueSeries } = await import("../../core/returns");
+  const { loadPortfolio } = await import("../valuation.ts");
+  const { valueSeries } = await import("../../core/returns.ts");
   const {
     txns,
     instruments: portfolioInstruments,
@@ -566,7 +566,7 @@ test("runScheduledRefresh never rejects, even when the FX fetch fails", async ()
   const { db } = testDb();
   // A held non-EUR currency forces refreshFxRates to actually attempt a
   // fetch; no fetchImpl is passed to runScheduledRefresh (matching how
-  // Bun.cron itself would call it), so this hits the real global fetch --
+  // the scheduler itself would call it), so this hits the real global fetch --
   // which src/server/test-network-guard.ts replaces with one that always
   // throws. This exercises exactly the failure this function exists to
   // survive: an outer try/catch that must never let a rejection through.
@@ -584,7 +584,7 @@ test("runScheduledRefresh's nightly catch-up sweep attempts backfill for an inst
   const instrument = seedInstrument(db);
   seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
-  // No fetchImpl passed to runScheduledRefresh (matching Bun.cron's real call, and the
+  // No fetchImpl passed to runScheduledRefresh (matching the scheduler's real call, and the
   // existing "never rejects" test above) -- this reaches the real global fetch, which
   // test-network-guard.ts replaces with one that always throws. Proves two things at
   // once: the catch-up sweep really did attempt a network call for this instrument
@@ -608,7 +608,7 @@ test("startScheduler rejects a syntactically invalid schedule instead of registe
   );
 });
 
-test("startScheduler rejects a schedule with no future occurrence (Bun.cron.parse returns null)", () => {
+test("startScheduler rejects a schedule with no future occurrence", () => {
   const { db } = testDb();
   expect(() => startScheduler(db, { schedule: "0 0 30 2 *", tz: "UTC" })).toThrow(/Ajastuslauseke/);
 });
@@ -618,7 +618,7 @@ test("startScheduler registers a real, verified-parseable schedule and returns a
   // Far enough in the future (relative to this fixture's 2026-08-27
   // "today") that it cannot fire during this test run.
   const job = startScheduler(db, { schedule: "0 3 1 1 *", tz: "UTC" });
-  expect(job.cron).toBe("0 3 1 1 *");
+  expect(job.getPattern()).toBe("0 3 1 1 *");
   job.stop();
 });
 

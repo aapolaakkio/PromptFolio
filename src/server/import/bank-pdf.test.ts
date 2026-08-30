@@ -1,7 +1,7 @@
-import { readBytes, readText } from "../files";
-import { describe, expect, test } from "bun:test";
+import { readBytes, readText } from "../files.ts";
+import { describe, expect, test } from "vitest";
 
-import { extractStatementText, parseOpStatementText, verifyStatement } from "./bank-pdf";
+import { extractStatementText, parseOpStatementText, verifyStatement } from "./bank-pdf.ts";
 
 // The fixture is the text layer of an OP statement, in the exact shapes a real
 // one uses: a unicode minus, a non-breaking thousands separator, an amount that
@@ -10,7 +10,7 @@ import { extractStatementText, parseOpStatementText, verifyStatement } from "./b
 // where the printed closing balance was reached to the cent.
 
 const fixture = (): Promise<string> =>
-  readText(`${import.meta.dir}/fixtures/op-statement-sample.txt`);
+  readText(`${import.meta.dirname}/fixtures/op-statement-sample.txt`);
 
 describe("parseOpStatementText", () => {
   test("reads the period from the balance lines the statement prints", async () => {
@@ -91,7 +91,7 @@ describe("verifyStatement", () => {
 
 describe("extractStatementText", () => {
   const pdf = (name: string): Promise<ArrayBuffer> =>
-    readBytes(`${import.meta.dir}/fixtures/${name}`);
+    readBytes(`${import.meta.dirname}/fixtures/${name}`);
 
   test("reads a real PDF's text layer, balances and all", async () => {
     const text = await extractStatementText(await pdf("op-statement-sample.pdf"));
@@ -130,7 +130,7 @@ describe("a row the parser cannot read", () => {
 
 describe("a fixed-term deposit's statement", () => {
   const fixedTerm = (): Promise<string> =>
-    readText(`${import.meta.dir}/fixtures/op-fixed-term-sample.txt`);
+    readText(`${import.meta.dirname}/fixtures/op-fixed-term-sample.txt`);
 
   test("reads balances that carry no sign", async () => {
     const statement = parseOpStatementText(await fixedTerm());

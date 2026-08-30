@@ -13,7 +13,7 @@ import type { RouteComponent } from "@tanstack/react-router";
  * exercise the real tree-building logic with trivial stub components
  * instead of the real ones -- which would otherwise pull those page
  * modules (and the chart library dashboard.tsx depends on) into the
- * test's transitive import graph and trip `bunfig.toml`'s per-file 0.8
+ * test's transitive import graph and trip vitest.config.ts's 0.8 line
  * coverage gate on files this project deliberately keeps untested (no DOM
  * harness -- see `routes/holdings-sort.ts`'s comment for the same
  * convention applied to `holdings.tsx`).

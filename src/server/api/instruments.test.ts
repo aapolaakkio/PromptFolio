@@ -1,23 +1,23 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 
 // Instruments are shared reference data across the family instance: any
 // authenticated user can read and create them, unlike accounts, which are
 // scoped per user. This file exercises instrumentRoutes against a real,
 // migrated database and a real Better Auth session, mirroring
 // src/server/api/accounts.test.ts's setup — including its reliance on
-// ../test-setup.ts (a bunfig.toml `[test] preload` script) to have already
+// ../test-setup.ts (a vitest.config.ts `setupFiles` entry) to have already
 // pinned the shared getDb() handle to a migrated in-memory database before
 // this file's own code runs. This file must NOT call
 // resetDbHandleForTests(), set DATABASE_PATH, or call getDb()/migrate()
 // itself — see test-setup.ts's comment for why, and accounts.test.ts's
 // comment for the real bug that duplicating that setup caused.
 
-let auth: (typeof import("../auth"))["auth"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
 
 beforeAll(async () => {
-  const authModule = await import("../auth");
-  const instrumentsModule = await import("./instruments");
+  const authModule = await import("../auth.ts");
+  const instrumentsModule = await import("./instruments.ts");
   auth = authModule.auth;
   instrumentRoutes = instrumentsModule.instrumentRoutes;
 });

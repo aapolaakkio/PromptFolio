@@ -1,12 +1,12 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { requireUser } from "../auth-guard";
-import { runTurn, type ChatEvent, type ToolRunnerClient, createClient } from "../chat/runner";
-import { buildChatTools } from "../chat/tools";
-import { getDb } from "../db";
-import { chatMessages, conversations } from "../db/schema";
-import { HttpError, handle, json } from "../http";
+import { requireUser } from "../auth-guard.ts";
+import { runTurn, type ChatEvent, type ToolRunnerClient, createClient } from "../chat/runner.ts";
+import { buildChatTools } from "../chat/tools.ts";
+import { getDb } from "../db/index.ts";
+import { chatMessages, conversations } from "../db/schema.ts";
+import { HttpError, handle, json } from "../http.ts";
 
 const { db } = getDb();
 

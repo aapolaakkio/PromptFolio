@@ -4,10 +4,10 @@ import { sankeyDiagram, type SankeyLink, type SankeyNode } from "@tanstack/chart
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
-import { eur } from "../lib/format";
-import { bumpX } from "./curve";
-import { MARK_FOCUS } from "./interactions";
-import { colourFor } from "./palette";
+import { eur } from "../lib/format.ts";
+import { bumpX } from "./curve.ts";
+import { MARK_FOCUS } from "./interactions.ts";
+import { colourFor } from "./palette.ts";
 
 export type FlowNode = { id: string; label: string; totalEur: string };
 export type FlowLink = { from: string; to: string; amountEur: string };

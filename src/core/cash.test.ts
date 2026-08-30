@@ -1,8 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { availableCashEur, cashBalancesAt, lockedCashEur, totalCashEur, valueCash } from "./cash";
-import { EUR, formatMoney, parseCurrency, parseMoney, type Currency } from "./money";
-import type { IsoDate, TransactionType, Txn } from "./types";
+import {
+  availableCashEur,
+  cashBalancesAt,
+  lockedCashEur,
+  totalCashEur,
+  valueCash,
+} from "./cash.ts";
+import { EUR, formatMoney, parseCurrency, parseMoney, type Currency } from "./money.ts";
+import type { IsoDate, TransactionType, Txn } from "./types.ts";
 
 const SEK = parseCurrency("SEK");
 

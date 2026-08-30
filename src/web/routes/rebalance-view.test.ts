@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { targetTotal } from "./rebalance-view";
+import { targetTotal } from "./rebalance-view.ts";
 
 describe("targetTotal", () => {
   test("adds the weights being typed, so the running total is what is on screen", () => {

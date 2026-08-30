@@ -1,26 +1,26 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 
-import { EUR } from "../../core/money";
+import { EUR } from "../../core/money.ts";
 
 // Exercises taxRoutes (src/server/api/tax.ts) against a real migrated database
 // and a real Better Auth session, following portfolio.test.ts's setup exactly:
 // the shared getDb() handle is already pinned to a migrated in-memory database
-// by ../test-setup.ts (a bunfig.toml `[test] preload` script), so this file
+// by ../test-setup.ts (a vitest.config.ts `setupFiles` entry), so this file
 // must not call resetDbHandleForTests() or migrate() itself. The database is
 // shared across every test file in the process, so every identity here is
 // derived from a fresh crypto.randomUUID().
 
-let auth: (typeof import("../auth"))["auth"];
-let accountRoutes: (typeof import("./accounts"))["accountRoutes"];
-let instrumentRoutes: (typeof import("./instruments"))["instrumentRoutes"];
-let taxRoutes: (typeof import("./tax"))["taxRoutes"];
+let auth: (typeof import("../auth.ts"))["auth"];
+let accountRoutes: (typeof import("./accounts.ts"))["accountRoutes"];
+let instrumentRoutes: (typeof import("./instruments.ts"))["instrumentRoutes"];
+let taxRoutes: (typeof import("./tax.ts"))["taxRoutes"];
 
 beforeAll(async () => {
-  auth = (await import("../auth")).auth;
-  accountRoutes = (await import("./accounts")).accountRoutes;
-  instrumentRoutes = (await import("./instruments")).instrumentRoutes;
-  taxRoutes = (await import("./tax")).taxRoutes;
+  auth = (await import("../auth.ts")).auth;
+  accountRoutes = (await import("./accounts.ts")).accountRoutes;
+  instrumentRoutes = (await import("./instruments.ts")).instrumentRoutes;
+  taxRoutes = (await import("./tax.ts")).taxRoutes;
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -90,8 +90,8 @@ const seedSale = async (
   cookie: string,
   o: { buyDate: string; sellDate: string; principal: number; proceeds: number },
 ): Promise<void> => {
-  const { getDb } = await import("../db");
-  const { transactions } = await import("../db/schema");
+  const { getDb } = await import("../db/index.ts");
+  const { transactions } = await import("../db/schema.ts");
   const { db } = getDb();
   const accountId = await createAccount(cookie, "aot");
   const instrumentId = await createInstrument(cookie);

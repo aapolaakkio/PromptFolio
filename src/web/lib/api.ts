@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
+  // Assigned in the body rather than declared as a parameter property: that
+  // is TypeScript syntax Node cannot strip, only transform, and this runs
+  // under plain Node in test child processes.
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
     this.name = "ApiError";
   }
 }

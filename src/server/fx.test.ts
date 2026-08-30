@@ -1,13 +1,13 @@
-import { readText } from "./files";
-import { expect, test } from "bun:test";
+import { readText } from "./files.ts";
+import { expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 
-import { EUR, parseCurrency, type Currency } from "../core/money";
-import { testDb } from "./db";
-import { accounts, fxRates, instruments, transactions, user } from "./db/schema";
-import { backfillFxRates, ensureFxRate, fxRateOn, refreshFxRates } from "./fx";
-import { ECB_DATA_URL, ecbSeriesUrl, parseEcbSdmxCsv } from "./fx-ecb";
-import type { FetchImpl } from "./prices/types";
+import { EUR, parseCurrency, type Currency } from "../core/money.ts";
+import { testDb } from "./db/index.ts";
+import { accounts, fxRates, instruments, transactions, user } from "./db/schema.ts";
+import { backfillFxRates, ensureFxRate, fxRateOn, refreshFxRates } from "./fx.ts";
+import { ECB_DATA_URL, ecbSeriesUrl, parseEcbSdmxCsv } from "./fx-ecb.ts";
+import type { FetchImpl } from "./prices/types.ts";
 
 const SEK = parseCurrency("SEK");
 const USD = parseCurrency("USD");
@@ -19,8 +19,8 @@ const USD = parseCurrency("USD");
  * the rates are unchanged from the earlier fixtures, so every expected value below still
  * describes the same arithmetic.
  */
-const fixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-daily.csv`);
-const histFixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`);
+const fixtureText = () => readText(`${import.meta.dirname}/fixtures/ecb-sdmx-daily.csv`);
+const histFixtureText = () => readText(`${import.meta.dirname}/fixtures/ecb-sdmx-hist.csv`);
 
 /**
  * Independently computed (Python `Decimal`, not this project's own code)
@@ -187,7 +187,7 @@ test("reads columns by name, so a response with extra columns still parses", () 
 
 test("the request asks for exactly the wanted currencies, from the given date", () => {
   const url = ecbSeriesUrl(["SEK", "NOK"], "2020-01-02");
-  expect(url).toStartWith(ECB_DATA_URL);
+  expect(url.startsWith(ECB_DATA_URL)).toBe(true);
   expect(url).toContain("D.NOK+SEK.EUR.SP00.A");
   expect(url).toContain("startPeriod=2020-01-02");
 });
@@ -218,7 +218,7 @@ test("fetches exactly the ledger's held currency (SEK), never defaulting to USD"
   const { db } = testDb();
   seedTransaction(db, SEK);
   const stub = async (url: string | URL | Request): Promise<Response> => {
-    expect(String(url)).toStartWith(ECB_DATA_URL);
+    expect(String(url).startsWith(ECB_DATA_URL)).toBe(true);
     return new Response(await fixtureText());
   };
   const result = await refreshFxRates(db, { fetchImpl: stub });
@@ -409,7 +409,7 @@ test("asks from the ledger's own earliest needed date, not from a recent window"
   const { db } = testDb();
   seedTransaction(db, SEK); // tradeDate 2026-01-01, see seedTransaction's own doc
   const dispatch: FetchImpl = async (input) => {
-    expect(String(input)).toStartWith(ECB_DATA_URL);
+    expect(String(input).startsWith(ECB_DATA_URL)).toBe(true);
     expect(String(input)).toContain("startPeriod=2026-01-01");
     return new Response(await histFixtureText());
   };

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { ApiError, apiDelete, apiGet, apiPost, apiUpload } from "../lib/api";
-import { eur, fiDate } from "../lib/format";
-import { accountTypeLabel } from "./account-type";
+import { ApiError, apiDelete, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { eur, fiDate } from "../lib/format.ts";
+import { accountTypeLabel } from "./account-type.ts";
 import {
   BalanceSchema,
   BankCommitSchema,
@@ -16,9 +16,9 @@ import {
   describeMaturity,
   describeReconciliation,
   ENTRY_LABELS,
-} from "./cash-view";
-import { AccountsSchema } from "./imports-draft";
-import { CreateAccountForm } from "./CreateAccountForm";
+} from "./cash-view.ts";
+import { AccountsSchema } from "./imports-draft.ts";
+import { CreateAccountForm } from "./CreateAccountForm.tsx";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 /**

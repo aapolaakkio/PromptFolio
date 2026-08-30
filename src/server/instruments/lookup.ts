@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { parseCurrency, type Currency } from "../../core/money";
-import { figiLookup, type InstrumentKind } from "./openfigi";
-import { resolveOpSlug } from "./op-slug";
-import { candidateSymbols } from "./venues";
+import { parseCurrency, type Currency } from "../../core/money.ts";
+import { figiLookup, type InstrumentKind } from "./openfigi.ts";
+import { resolveOpSlug } from "./op-slug.ts";
+import { candidateSymbols } from "./venues.ts";
 
 /**
  * Yahoo's search, verified 2026-08-28 (fixtures/yahoo-search-*.json):

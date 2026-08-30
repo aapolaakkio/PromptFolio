@@ -11,24 +11,26 @@
     "start": "NODE_ENV=production bun src/server/index.ts",
     "build": "bun run build.ts",
     "db:generate": "drizzle-kit generate",
-    "test": "bun test",
-    "test:cov": "bun test --coverage",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "fmt": "oxfmt src e2e",
     "fmt:check": "oxfmt --check src e2e",
-    "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test"
+    "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
     "@types/bun": "latest",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
+    "@vitest/coverage-v8": "^4.1.11",
     "bun-plugin-tailwind": "^0.1.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -39,6 +41,7 @@
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-router": "^1.170.32",
     "better-auth": "1.7.2",
+    "croner": "^10.0.1",
     "drizzle-orm": "1.0.0-rc.5-169397b",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

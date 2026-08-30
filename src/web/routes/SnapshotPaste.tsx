@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api";
-import { eur, qty } from "../lib/format";
+import { ApiError, apiGet, apiPost, apiUpload } from "../lib/api.ts";
+import { eur, qty } from "../lib/format.ts";
 
 const InstrumentSchema = z.object({ id: z.number(), name: z.string() });
 const CreatedSnapshotSchema = z.object({ id: z.number() });

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { z } from "zod";
-import { apiPost, ApiError } from "../lib/api";
+import { apiPost, ApiError } from "../lib/api.ts";
 
 /**
  * Closing the "manual price source has no way to enter a price" gap

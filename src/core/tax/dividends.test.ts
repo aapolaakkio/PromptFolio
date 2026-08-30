@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
-import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money";
-import type { IsoDate, Txn } from "../types";
-import { taxableDividends, totalDividendTaxable } from "./dividends";
+import { EUR, formatMoney, parseFxRate, parseMoney, parseQuantity } from "../money.ts";
+import type { IsoDate, Txn } from "../types.ts";
+import { taxableDividends, totalDividendTaxable } from "./dividends.ts";
 
 let nextId = 1;
 const dividend = (o: {

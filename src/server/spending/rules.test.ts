@@ -1,21 +1,21 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 
 // Rules decide which bucket real spending falls into, and three parties write
 // them: the seed, the owner, and the assistant. These tests pin the order they
 // resolve in and what each is allowed to overwrite.
 
-let addRules: (typeof import("./rules"))["addRules"];
-let categoriseWith: (typeof import("./rules"))["categoriseWith"];
-let matchRule: (typeof import("./rules"))["matchRule"];
-let removeRule: (typeof import("./rules"))["removeRule"];
-let rulesFor: (typeof import("./rules"))["rulesFor"];
-let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
-let auth: (typeof import("../auth"))["auth"];
+let addRules: (typeof import("./rules.ts"))["addRules"];
+let categoriseWith: (typeof import("./rules.ts"))["categoriseWith"];
+let matchRule: (typeof import("./rules.ts"))["matchRule"];
+let removeRule: (typeof import("./rules.ts"))["removeRule"];
+let rulesFor: (typeof import("./rules.ts"))["rulesFor"];
+let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
+let auth: (typeof import("../auth.ts"))["auth"];
 
 beforeAll(async () => {
-  ({ addRules, categoriseWith, matchRule, removeRule, rulesFor } = await import("./rules"));
-  db = (await import("../db")).getDb().db;
-  auth = (await import("../auth")).auth;
+  ({ addRules, categoriseWith, matchRule, removeRule, rulesFor } = await import("./rules.ts"));
+  db = (await import("../db/index.ts")).getDb().db;
+  auth = (await import("../auth.ts")).auth;
 });
 
 let next = 0;
