@@ -282,14 +282,14 @@ describe("a client that closes the stream", () => {
 describe("configuration", () => {
   test("answers 503 when the instance has no API key, instead of failing mid-stream", async () => {
     setChatClient(null);
-    const previous = Bun.env.ANTHROPIC_API_KEY;
-    delete Bun.env.ANTHROPIC_API_KEY;
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
     try {
       const cookie = await signUp();
       const response = await ask(cookie, { message: "moi" });
       expect(response.status).toBe(503);
     } finally {
-      if (previous !== undefined) Bun.env.ANTHROPIC_API_KEY = previous;
+      if (previous !== undefined) process.env.ANTHROPIC_API_KEY = previous;
     }
   });
 });

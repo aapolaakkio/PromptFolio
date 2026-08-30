@@ -40,7 +40,7 @@ const healthRoute = { GET: () => Response.json({ ok: true }) };
  */
 export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bun.serve> =>
   Bun.serve({
-    port: opts.port ?? Number(Bun.env.PORT ?? 3000),
+    port: opts.port ?? Number(process.env.PORT ?? 3000),
     /**
      * Bun closes a connection that has been idle for 10 seconds by default. A
      * chat turn is several model round trips and routinely quiet for longer
@@ -56,7 +56,7 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
     // reload. A full reload on change is the cheaper trade: this app's pages
     // hold no state a reload loses. `console` keeps browser errors visible in
     // the server's own log, which is how that crash was found.
-    development: Bun.env.NODE_ENV === "production" ? false : { hmr: false, console: true },
+    development: process.env.NODE_ENV === "production" ? false : { hmr: false, console: true },
     routes: {
       "/api/health": healthRoute,
       "/api/auth/*": (request) => auth.handler(request),
@@ -104,7 +104,7 @@ if (import.meta.main) {
   // explicitly, rather than relying on either of those incidental facts, is
   // what keeps a stray `bun run src/server/index.ts` outside `bun start`
   // from silently registering a real scheduled job too.
-  if (Bun.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production") {
     startScheduler(getDb().db);
   }
 

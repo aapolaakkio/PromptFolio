@@ -1,9 +1,10 @@
+import { readText } from "../files";
 import { expect, test } from "bun:test";
 
 import { parseCurrency } from "../../core/money";
 import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds";
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
+const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
 
 const stubOk = (body: string) => async (): Promise<Response> => new Response(body, { status: 200 });
 

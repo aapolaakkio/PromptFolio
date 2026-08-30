@@ -1,3 +1,4 @@
+import { readText } from "../files";
 import { describe, expect, test } from "bun:test";
 
 import { parseCurrency } from "../../core/money";
@@ -10,7 +11,7 @@ const EUR = parseCurrency("EUR");
 const USD = parseCurrency("USD");
 
 const fixture = (name: string): Promise<string> =>
-  Bun.file(new URL(`./fixtures/${name}`, import.meta.url)).text();
+  readText(new URL(`./fixtures/${name}`, import.meta.url));
 
 /**
  * A fetch stub keyed by substring of the requested URL, longest key first so

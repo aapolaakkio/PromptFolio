@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireUser } from "../auth-guard";
@@ -125,7 +126,7 @@ const buildDraft = async (file: File, accountId: number) => {
   }
 
   const { knownIsins, knownNames } = knownInstrumentMaps();
-  const sha256 = new Bun.CryptoHasher("sha256").update(new Uint8Array(bytes)).digest("hex");
+  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   // Task 10's structural problems (bad column count, malformed quoting)
   // are merged into the draft here so the review screen gets one
   // line-ordered list of everything wrong with the file, instead of a
@@ -174,7 +175,7 @@ const buildPasteDraft = (text: string, accountId: number) => {
     );
   }
   const { knownIsins, knownNames } = knownInstrumentMaps();
-  const sha256 = new Bun.CryptoHasher("sha256").update(text).digest("hex");
+  const sha256 = createHash("sha256").update(text).digest("hex");
   return {
     draft: mapRows(parsed.rows, OP_WEB_PASTE, knownIsins, {
       accountId,

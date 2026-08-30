@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -171,7 +172,7 @@ const classifyImportedSpending = async (
   userId: string,
   accountId: number,
 ): Promise<ClassifyResult | null> => {
-  const apiKey = Bun.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
 
   const { txns } = loadPortfolio(db, userId);
@@ -366,7 +367,7 @@ export const bankImportRoutes = {
       const { rows, problems, statement } = await readStatement(bytes);
       if (rows.length === 0) throw new HttpError(400, "Tiedostosta ei löytynyt yhtään tapahtumaa");
 
-      const sha256 = new Bun.CryptoHasher("sha256").update(new Uint8Array(bytes)).digest("hex");
+      const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
       const result = commitBankStatement(db, {
         userId,
         accountId,

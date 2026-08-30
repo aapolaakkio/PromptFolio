@@ -1,8 +1,9 @@
+import { readBytes } from "../files";
 import { test, expect } from "bun:test";
 import { parseCsv, detectBroker } from "./csv";
 import { NORDNET } from "./brokers";
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
+const fixture = (name: string) => readBytes(`${import.meta.dir}/fixtures/${name}`);
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {

@@ -1,3 +1,4 @@
+import { readBytes } from "../files";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
@@ -113,7 +114,7 @@ const openAccount = async (cookie: string, accountType: string | null): Promise<
 };
 
 const statement = async (): Promise<ArrayBuffer> =>
-  Bun.file(`${import.meta.dir}/../import/fixtures/op-bank-sample.csv`).arrayBuffer();
+  readBytes(`${import.meta.dir}/../import/fixtures/op-bank-sample.csv`);
 
 /**
  * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` over a plain
@@ -310,7 +311,7 @@ describe("POST /api/accounts/:id/balance", () => {
 
 describe("a PDF statement", () => {
   const pdf = (): Promise<ArrayBuffer> =>
-    Bun.file(`${import.meta.dir}/../import/fixtures/op-statement-sample.pdf`).arrayBuffer();
+    readBytes(`${import.meta.dir}/../import/fixtures/op-statement-sample.pdf`);
 
   test("is read, and says it was checked against its own printed balances", async () => {
     const cookie = await signUp();
@@ -378,9 +379,9 @@ describe("a PDF this app cannot read", () => {
     const accountId = await openAccount(cookie, "current");
     // A valid PDF that is not a statement: the parser's complaint has to reach
     // the owner, since "Palvelinvirhe" tells them nothing about what to do.
-    const notAStatement = await Bun.file(
+    const notAStatement = await readBytes(
       `${import.meta.dir}/../import/fixtures/scanned-no-text.pdf`,
-    ).arrayBuffer();
+    );
 
     const response = await upload("/api/imports/bank/preview", cookie, accountId, notAStatement);
 
@@ -400,7 +401,7 @@ describe("a PDF this app cannot read", () => {
 
 describe("importing several statements for one account", () => {
   const statementPdf = (name: string): Promise<ArrayBuffer> =>
-    Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).arrayBuffer();
+    readBytes(`${import.meta.dir}/../import/fixtures/${name}`);
 
   // op-statement-earlier.pdf covers 31.12.2024 - 28.8.2025, opening 0,00 and
   // closing 1 500,00; op-statement-sample.pdf picks up exactly there and ends
@@ -452,7 +453,7 @@ describe("importing several statements for one account", () => {
 
 describe("a fixed-term deposit's maturity date", () => {
   const depositPdf = (): Promise<ArrayBuffer> =>
-    Bun.file(`${import.meta.dir}/../import/fixtures/op-fixed-term-sample.pdf`).arrayBuffer();
+    readBytes(`${import.meta.dir}/../import/fixtures/op-fixed-term-sample.pdf`);
 
   const accountRow = async (accountId: number) => {
     const { getDb } = await import("../db");

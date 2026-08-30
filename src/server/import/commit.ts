@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { EUR, type Currency } from "../../core/money";
 import type { getDb } from "../db";
@@ -145,7 +146,7 @@ const enrichNote = (
 const storedContentHash = (row: DraftTxn, accountId: number): string => {
   const material = contentHash({ ...row, accountId });
   return row.externalId
-    ? new Bun.CryptoHasher("sha256").update(`${material}|${row.externalId}`).digest("hex")
+    ? createHash("sha256").update(`${material}|${row.externalId}`).digest("hex")
     : material;
 };
 

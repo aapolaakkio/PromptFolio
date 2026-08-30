@@ -1,9 +1,10 @@
+import { readText } from "../files";
 import { expect, test } from "bun:test";
 
 import { parseCurrency } from "../../core/money";
 import { YAHOO } from "./yahoo";
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
+const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
 
 /** Recorded 2026-08-27 from `query1.finance.yahoo.com/v8/finance/chart/NOKIA.HE?range=5d&interval=1d`. */
 const stubFetch = async (): Promise<Response> =>

@@ -4,6 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realFetch } from "../src/server/test-network-guard";
 
+import { readFile } from "node:fs/promises";
+
+const readFileText = (path: string | URL): Promise<string> => readFile(path, "utf-8");
+/** The file's own bytes: Node reads into a pooled buffer, so the slice matters. */
+const readFileBytes = async (path: string | URL): Promise<ArrayBuffer> => {
+  const buffer = await readFile(path);
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+};
+
 /**
  * Task 21's end-to-end smoke test: sign up, create an account, register
  * instruments, import a real broker export, and read the resulting
@@ -91,11 +100,14 @@ const startTestServer = async (dbPath: string) => {
   // 64 hex-ish characters, well over betterAuth's 32-character minimum
   // (see auth.ts's resolveAuthSecret) -- unique per test run, never reused.
   const secret = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  // Still Bun's spawn, and still launching Bun: this starts the real server,
+  // which imports bun:sqlite until stage 3 of the migration replaces it. It
+  // moves to node:child_process with the rest of the server, not before.
   const proc = Bun.spawn({
     cmd: ["bun", "src/server/index.ts"],
     cwd: PROJECT_ROOT,
     env: {
-      ...Bun.env,
+      ...process.env,
       DATABASE_PATH: dbPath,
       ALLOW_SIGNUP: "true",
       BETTER_AUTH_SECRET: secret,
@@ -312,9 +324,9 @@ test("Nordnet CSV: signs up, imports real broker rows, reports a degraded unmatc
   await registerInstrument(session, { ...HANETF_OLD, kind: "etf", currency: "EUR" });
   await registerInstrument(session, { ...HANETF_NEW, kind: "etf", currency: "EUR" });
 
-  const nordnetBytes = await Bun.file(
+  const nordnetBytes = await readFileBytes(
     join(PROJECT_ROOT, "src/server/import/fixtures/nordnet-sample.csv"),
-  ).arrayBuffer();
+  );
   // Read as raw bytes, not `.text()`: the fixture is UTF-16LE, and reading
   // it as text would silently re-encode it to UTF-8 before it ever reaches
   // the server, corrupting the exact bytes detectBrokerConfig() has to
@@ -406,9 +418,9 @@ test("OP paste: resolves instruments by name (no ISIN column), imports, and a re
   await registerInstrument(session, { ...OP_MAAILMA, kind: "fund", currency: "EUR" });
   await registerInstrument(session, { ...ESIMERKKI, kind: "stock", currency: "EUR" });
 
-  const pasteText = await Bun.file(
+  const pasteText = await readFileText(
     join(PROJECT_ROOT, "src/server/import/fixtures/op-web-paste-sample.txt"),
-  ).text();
+  );
   const pasteBody = JSON.stringify({ text: pasteText, accountId });
 
   const preview = await session.call("/api/imports/op-paste/preview", {

@@ -1,3 +1,4 @@
+import { readText } from "./files";
 import { test, expect } from "bun:test";
 import { EUR, formatMoney, parseCurrency } from "../core/money";
 import { valueSeries } from "../core/returns";
@@ -429,7 +430,7 @@ test("before/after: a SEK-quoted holding's historical value series is excluded (
 
   // Backfill fx history -- exactly what the nightly job (`runScheduledRefresh`) and a
   // fresh import commit (`backfillCommittedInstruments`) now both trigger.
-  const histFixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`).text();
+  const histFixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`);
   const dispatch = async (input: string | URL | Request): Promise<Response> => {
     expect(String(input)).toStartWith(ECB_DATA_URL);
     return new Response(await histFixtureText());

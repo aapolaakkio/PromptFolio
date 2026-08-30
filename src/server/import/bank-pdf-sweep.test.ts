@@ -1,3 +1,4 @@
+import { readText } from "../files";
 import { describe, expect, test } from "bun:test";
 
 import { verifyStatement } from "./bank-pdf";
@@ -11,7 +12,7 @@ import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep";
 // reached exactly.
 
 const fixture = (): Promise<string> =>
-  Bun.file(`${import.meta.dir}/fixtures/sweep-statement-sample.txt`).text();
+  readText(`${import.meta.dir}/fixtures/sweep-statement-sample.txt`);
 
 describe("isSweepStatement", () => {
   test("recognises the document by its own words, not the file name", async () => {

@@ -1,3 +1,4 @@
+import { readBytes, readText } from "../files";
 import { describe, expect, test } from "bun:test";
 
 import { extractStatementText, parseOpStatementText, verifyStatement } from "./bank-pdf";
@@ -9,7 +10,7 @@ import { extractStatementText, parseOpStatementText, verifyStatement } from "./b
 // where the printed closing balance was reached to the cent.
 
 const fixture = (): Promise<string> =>
-  Bun.file(`${import.meta.dir}/fixtures/op-statement-sample.txt`).text();
+  readText(`${import.meta.dir}/fixtures/op-statement-sample.txt`);
 
 describe("parseOpStatementText", () => {
   test("reads the period from the balance lines the statement prints", async () => {
@@ -90,7 +91,7 @@ describe("verifyStatement", () => {
 
 describe("extractStatementText", () => {
   const pdf = (name: string): Promise<ArrayBuffer> =>
-    Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
+    readBytes(`${import.meta.dir}/fixtures/${name}`);
 
   test("reads a real PDF's text layer, balances and all", async () => {
     const text = await extractStatementText(await pdf("op-statement-sample.pdf"));
@@ -129,7 +130,7 @@ describe("a row the parser cannot read", () => {
 
 describe("a fixed-term deposit's statement", () => {
   const fixedTerm = (): Promise<string> =>
-    Bun.file(`${import.meta.dir}/fixtures/op-fixed-term-sample.txt`).text();
+    readText(`${import.meta.dir}/fixtures/op-fixed-term-sample.txt`);
 
   test("reads balances that carry no sign", async () => {
     const statement = parseOpStatementText(await fixedTerm());

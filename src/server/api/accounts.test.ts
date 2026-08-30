@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,19 +58,23 @@ test("never leaks an unexpected error message to the client", async () => {
 test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database", () => {
   const httpPath = new URL("../http.ts", import.meta.url).pathname;
   const envWithoutSecret = Object.fromEntries(
-    Object.entries(Bun.env).filter(
+    Object.entries(process.env).filter(
       ([key]) => key !== "BETTER_AUTH_SECRET" && key !== "DATABASE_PATH",
     ),
   );
   const scratchCwd = mkdtempSync(join(tmpdir(), "promptfolio-http-import-"));
   try {
-    const result = Bun.spawnSync({
-      cmd: ["bun", "-e", `await import(${JSON.stringify(httpPath)}); console.log("ok")`],
-      cwd: scratchCwd,
-      env: envWithoutSecret,
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString().trim()).toBe("ok");
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", `await import(${JSON.stringify(httpPath)}); console.log("ok")`],
+      {
+        encoding: "utf-8",
+        cwd: scratchCwd,
+        env: envWithoutSecret,
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("ok");
     expect(existsSync(join(scratchCwd, "data"))).toBe(false);
   } finally {
     rmSync(scratchCwd, { recursive: true, force: true });

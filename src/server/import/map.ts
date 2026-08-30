@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money";
 import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types";
 
@@ -89,7 +90,7 @@ export const contentHash = (txn: Omit<DraftTxn, "line"> & { line?: number }): st
     txn.fee,
     txn.currency,
   ].join("|");
-  return new Bun.CryptoHasher("sha256").update(material).digest("hex");
+  return createHash("sha256").update(material).digest("hex");
 };
 
 /** Turns a structural CsvProblem (unparsed line) into the shared DraftProblem shape. */

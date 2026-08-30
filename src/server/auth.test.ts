@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { beforeAll, expect, test } from "bun:test";
 import { HttpError } from "./errors";
 import { hashPassword, verifyPassword } from "./password";
@@ -159,7 +160,7 @@ test("sign-up is rejected end-to-end when ALLOW_SIGNUP is not set", () => {
   // instrumentation misattribute hits on this file - see task-8-report.md.
   const authPath = new URL("./auth.ts", import.meta.url).pathname;
   const envWithoutAllowSignup = Object.fromEntries(
-    Object.entries(Bun.env).filter(([key]) => key !== "ALLOW_SIGNUP"),
+    Object.entries(process.env).filter(([key]) => key !== "ALLOW_SIGNUP"),
   );
   const envForChild = { ...envWithoutAllowSignup, DATABASE_PATH: ":memory:" };
   const payload = {
@@ -181,17 +182,17 @@ const body = await response.json();
 console.log(JSON.stringify({ status: response.status, body }));
 `;
 
-  const result = Bun.spawnSync({
-    cmd: ["bun", "-e", script],
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf-8",
     cwd: import.meta.dir,
     env: envForChild,
   });
 
-  expect(result.exitCode).toBe(0);
+  expect(result.status).toBe(0);
   // SAFETY: the child script above unconditionally prints exactly
   // `{ status, body }` as its only stdout line, or the process would have
   // exited non-zero and failed the assertion above instead.
-  const parsed = JSON.parse(result.stdout.toString().trim()) as {
+  const parsed = JSON.parse(result.stdout.trim()) as {
     status: number;
     body: { code?: string };
   };
@@ -217,18 +218,20 @@ test("resolveAuthSecret accepts a secret at or above the 32-character minimum", 
 test("the process refuses to boot when BETTER_AUTH_SECRET is missing", () => {
   const authPath = new URL("./auth.ts", import.meta.url).pathname;
   const envWithoutSecret = Object.fromEntries(
-    Object.entries(Bun.env).filter(([key]) => key !== "BETTER_AUTH_SECRET"),
+    Object.entries(process.env).filter(([key]) => key !== "BETTER_AUTH_SECRET"),
   );
   const envForChild = { ...envWithoutSecret, DATABASE_PATH: ":memory:" };
 
-  const result = Bun.spawnSync({
-    cmd: ["bun", "-e", `await import(${JSON.stringify(authPath)})`],
-    cwd: import.meta.dir,
-    env: envForChild,
-  });
-
-  expect(result.exitCode).not.toBe(0);
-  expect(result.stderr.toString()).toContain(
-    "BETTER_AUTH_SECRET must be set to at least 32 characters",
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", `await import(${JSON.stringify(authPath)})`],
+    {
+      encoding: "utf-8",
+      cwd: import.meta.dir,
+      env: envForChild,
+    },
   );
+
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("BETTER_AUTH_SECRET must be set to at least 32 characters");
 });

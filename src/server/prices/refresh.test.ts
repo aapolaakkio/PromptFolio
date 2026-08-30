@@ -1,3 +1,4 @@
+import { readText } from "../files";
 import { expect, test } from "bun:test";
 import { asc, eq } from "drizzle-orm";
 
@@ -263,7 +264,7 @@ test("nordnet_fund's two-NAV-point limitation is reported as an incomplete backf
   // page only ever has two recent NAV points (§10a A5).
   seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
-  const html = await Bun.file(`${import.meta.dir}/fixtures/nordnet-fund-suomi.html`).text();
+  const html = await readText(`${import.meta.dir}/fixtures/nordnet-fund-suomi.html`);
   const result = await backfillInstrument(db, instrument.id, {
     fetchImpl: async () => new Response(html),
     today: "2026-08-27",

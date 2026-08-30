@@ -1,3 +1,4 @@
+import { readText } from "./files";
 import { expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
@@ -18,8 +19,8 @@ const USD = parseCurrency("USD");
  * the rates are unchanged from the earlier fixtures, so every expected value below still
  * describes the same arithmetic.
  */
-const fixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-daily.csv`).text();
-const histFixtureText = () => Bun.file(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`).text();
+const fixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-daily.csv`);
+const histFixtureText = () => readText(`${import.meta.dir}/fixtures/ecb-sdmx-hist.csv`);
 
 /**
  * Independently computed (Python `Decimal`, not this project's own code)

@@ -1,3 +1,4 @@
+import { readBytes, readText } from "../files";
 import { test, expect } from "bun:test";
 import { mapRows, normaliseDate, contentHash, type DraftTxn } from "./map";
 import { parseCsv } from "./csv";
@@ -8,8 +9,8 @@ import { EUR, parseCurrency, formatMoney, money, parseFxRate } from "../../core/
 import type { RawRow } from "./types";
 import type { TransactionType, Txn } from "../../core/types";
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).arrayBuffer();
-const opFixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
+const fixture = (name: string) => readBytes(`${import.meta.dir}/fixtures/${name}`);
+const opFixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {

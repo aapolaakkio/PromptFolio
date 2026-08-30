@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as runMigrations } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 
-export const openDb = (path: string = Bun.env.DATABASE_PATH ?? "./data/promptfolio.db") => {
+export const openDb = (path: string = process.env.DATABASE_PATH ?? "./data/promptfolio.db") => {
   const sqlite = new Database(path, { create: true, strict: true });
   sqlite.exec("PRAGMA journal_mode = WAL");
   sqlite.exec("PRAGMA foreign_keys = ON");

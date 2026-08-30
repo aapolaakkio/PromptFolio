@@ -1,27 +1,7 @@
-[install]
-# Supply-chain security: refuse to install a package version published less
-# than a day ago, so a freshly-compromised release has time to be caught
-# and pulled before this project can pull it in.
-minimumReleaseAge = 86400
-# @tanstack/react-table@9.2.3 and @tanstack/react-charts@0.16.0 - the exact
-# releases the brief's ^9.2 / ^0.16 ranges resolve to - were both published
-# within the last 24h (see task-1-report.md). Excluded so `bun install` can
-# complete; revisit and drop this exclusion once an older matching release
-# exists.
-#
-# @tanstack/charts@0.16.0 is @tanstack/react-charts's own runtime dependency
-# (same release batch) and Task 18 needs it as a direct dependency too --
-# TimeSeriesChart.tsx imports `defineChart`/`lineY`/scale factories from it
-# directly, so it belongs in this project's own dependency list rather than
-# riding along as an undeclared transitive package.
-minimumReleaseAgeExcludes = ["@tanstack/react-table", "@tanstack/react-charts", "@tanstack/charts"]
-
-[run]
-# oxlint and oxfmt ship `#!/usr/bin/env node` wrapper bins. Forcing every
-# `bun run <script>` to execute under Bun (instead of letting the shebang
-# hand off to the machine's Node) is what lets oxlint's TypeScript
-# `oxlint.config.ts` load without any Node toolchain installed at all.
-bun = true
+# What is left here is Bun's test runner configuration, and only that. The
+# [install] policy moved to pnpm-workspace.yaml, and [run] bun = true is gone:
+# it existed so oxlint and oxfmt could run their #!/usr/bin/env node shebangs
+# on a machine with no Node at all, which is no longer the situation.
 
 [test]
 coverage = true

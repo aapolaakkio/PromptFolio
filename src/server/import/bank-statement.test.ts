@@ -1,3 +1,4 @@
+import { readBytes } from "../files";
 import { describe, expect, test } from "bun:test";
 
 import { matchesBank, OP_BANK, parseBankStatement } from "./bank-statement";
@@ -8,7 +9,7 @@ import { matchesBank, OP_BANK, parseBankStatement } from "./bank-statement";
 // which parsed with no problems and no duplicate archive ids.
 
 const fixture = (): Promise<ArrayBuffer> =>
-  Bun.file(`${import.meta.dir}/fixtures/op-bank-sample.csv`).arrayBuffer();
+  readBytes(`${import.meta.dir}/fixtures/op-bank-sample.csv`);
 
 /**
  * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` backed by a plain

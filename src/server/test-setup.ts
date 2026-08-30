@@ -42,9 +42,9 @@
  */
 import { getDb, migrate } from "./db";
 
-Bun.env.DATABASE_PATH = ":memory:";
-Bun.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-characters-long";
-Bun.env.ALLOW_SIGNUP = "true";
+process.env.DATABASE_PATH = ":memory:";
+process.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-characters-long";
+process.env.ALLOW_SIGNUP = "true";
 
 const { db } = getDb();
 migrate(db);

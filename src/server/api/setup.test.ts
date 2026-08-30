@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { count } from "drizzle-orm";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { getDb } from "../db";
@@ -160,7 +161,7 @@ describe("POST /api/setup", () => {
 // process refuses to boot..." tests.
 
 const CHILD_ENV = {
-  ...Bun.env,
+  ...process.env,
   DATABASE_PATH: ":memory:",
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
 };
@@ -217,16 +218,16 @@ console.log(JSON.stringify({
 }));
 `;
 
-    const result = Bun.spawnSync({
-      cmd: ["bun", "-e", script],
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
       cwd: import.meta.dir,
       env: CHILD_ENV,
     });
-    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe(0);
     // SAFETY: the child script above unconditionally prints exactly one
     // JSON line as its only stdout output, or the process would have
     // exited non-zero and failed the assertion above instead.
-    const parsed = JSON.parse(result.stdout.toString().trim()) as {
+    const parsed = JSON.parse(result.stdout.trim()) as {
       beforeStatus: number;
       beforeBody: { hasUsers: boolean };
       createdStatus: number;
@@ -270,16 +271,16 @@ const post = (email) => setupRoutes["/api/setup"].POST(
 const [a, b] = await Promise.all([post("racer-a@example.com"), post("racer-b@example.com")]);
 console.log(JSON.stringify({ statuses: [a.status, b.status].sort((x, y) => x - y) }));
 `;
-    const result = Bun.spawnSync({
-      cmd: ["bun", "-e", script],
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
       cwd: import.meta.dir,
       env: CHILD_ENV,
     });
-    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe(0);
     // SAFETY: the child script above unconditionally prints exactly one
     // JSON line shaped `{ statuses }` as its only stdout output, or the
     // process would have exited non-zero and failed the assertion above.
-    const parsed = JSON.parse(result.stdout.toString().trim()) as { statuses: number[] };
+    const parsed = JSON.parse(result.stdout.trim()) as { statuses: number[] };
     // Exactly one request creates the account (201), the other is refused
     // (403) -- never two 201s. This is the race the module comment on
     // createFirstUser explains.

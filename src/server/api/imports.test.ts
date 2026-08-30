@@ -1,3 +1,4 @@
+import { readBytes, readText } from "../files";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { NORDNET } from "../import/brokers";
@@ -204,8 +205,7 @@ const uploadRequest = (
   });
 };
 
-const fixtureBytes = (name: string) =>
-  Bun.file(`${import.meta.dir}/../import/fixtures/${name}`).arrayBuffer();
+const fixtureBytes = (name: string) => readBytes(`${import.meta.dir}/../import/fixtures/${name}`);
 
 // --- detectBrokerConfig (delimiter/encoding independence) ---
 
@@ -225,9 +225,7 @@ describe("detectBrokerConfig", () => {
   // never go through `detectBrokerConfig`/`buildDraft`'s file-upload path
   // at all -- see brokers.ts's `BROKER_CONFIGS` comment.
   test("does not detect an OP paste -- it is not wired into the CSV-upload broker list", async () => {
-    const text = await Bun.file(
-      `${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`,
-    ).text();
+    const text = await readText(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`);
     const bytes = new TextEncoder().encode(text).buffer;
     expect(detectBrokerConfig(bytes)).toBeNull();
   });
@@ -596,7 +594,7 @@ describe("POST /api/imports/:id/undo", () => {
 // asserted.
 
 const opPasteText = (): Promise<string> =>
-  Bun.file(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`).text();
+  readText(`${import.meta.dir}/../import/fixtures/op-web-paste-sample.txt`);
 
 /**
  * A fresh, schema-valid ISIN per call -- see instruments.test.ts's own

@@ -17,7 +17,7 @@
     "lint": "oxlint",
     "fmt": "oxfmt src e2e",
     "fmt:check": "oxfmt --check src e2e",
-    "check": "bun run lint && bun run fmt:check && bun run typecheck && bun test"
+    "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
@@ -33,6 +33,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
     "@better-auth/drizzle-adapter": "1.7.2",
+    "@node-rs/argon2": "^2.1.0",
     "@tanstack/charts": "^0.16.0",
     "@tanstack/react-charts": "^0.16.0",
     "@tanstack/react-query": "^5.102.8",

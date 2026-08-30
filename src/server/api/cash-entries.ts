@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -142,7 +143,7 @@ export const cashEntryRoutes = {
       // Hashed over the same material an imported row is, so entering the same
       // movement twice is refused by the ledger's own unique index rather than
       // silently doubling a balance.
-      const contentHash = new Bun.CryptoHasher("sha256")
+      const contentHash = createHash("sha256")
         .update(
           ["manual", body.accountId, body.type, body.tradeDate, minor, body.currency].join("|"),
         )

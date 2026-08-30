@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { test, expect } from "bun:test";
 import { eq } from "drizzle-orm";
 import { getTableConfig, type AnySQLiteTable } from "drizzle-orm/sqlite-core";
@@ -249,16 +250,16 @@ test("declares the accounts.user_id index and the price_fetch_log.run_at index",
 });
 
 test("getDb memoizes a single shared handle across calls", () => {
-  const originalPath = Bun.env.DATABASE_PATH;
-  Bun.env.DATABASE_PATH = ":memory:";
+  const originalPath = process.env.DATABASE_PATH;
+  process.env.DATABASE_PATH = ":memory:";
   try {
     const first = getDb();
     const second = getDb();
     expect(second).toBe(first);
     expect(first.sqlite.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   } finally {
-    if (originalPath === undefined) delete Bun.env.DATABASE_PATH;
-    else Bun.env.DATABASE_PATH = originalPath;
+    if (originalPath === undefined) delete process.env.DATABASE_PATH;
+    else process.env.DATABASE_PATH = originalPath;
   }
 });
 
@@ -274,23 +275,25 @@ test("resetDbHandleForTests() forces the next getDb() call to open a new handle"
   const dbIndexPath = new URL("./index.ts", import.meta.url).pathname;
   const script = `
     const { getDb, resetDbHandleForTests } = await import(${JSON.stringify(dbIndexPath)});
-    Bun.env.DATABASE_PATH = ":memory:";
+    process.env.DATABASE_PATH = ":memory:";
     const first = getDb();
     first.sqlite.exec("CREATE TABLE marker (id INTEGER)");
     resetDbHandleForTests();
-    Bun.env.DATABASE_PATH = ":memory:";
+    process.env.DATABASE_PATH = ":memory:";
     const second = getDb();
     const hasMarker = second.sqlite
       .query("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
       .get();
     console.log(JSON.stringify({ sameHandle: second === first, hasMarker: hasMarker !== null }));
   `;
-  const result = Bun.spawnSync({ cmd: ["bun", "-e", script] });
-  expect(result.exitCode).toBe(0);
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf-8",
+  });
+  expect(result.status).toBe(0);
   // SAFETY: the script above unconditionally prints exactly one JSON line
   // as its only stdout output, or the exit-code check above would already
   // have thrown.
-  const parsed = JSON.parse(result.stdout.toString().trim()) as {
+  const parsed = JSON.parse(result.stdout.trim()) as {
     sameHandle: boolean;
     hasMarker: boolean;
   };

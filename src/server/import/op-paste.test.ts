@@ -1,7 +1,8 @@
+import { readText } from "../files";
 import { test, expect } from "bun:test";
 import { parseOpPaste } from "./op-paste";
 
-const fixture = (name: string) => Bun.file(`${import.meta.dir}/fixtures/${name}`).text();
+const fixture = (name: string) => readText(`${import.meta.dir}/fixtures/${name}`);
 
 const HEADER = [
   "Laji",

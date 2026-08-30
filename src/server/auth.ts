@@ -44,11 +44,11 @@ export const auth = betterAuth({
     // adapter throws "Schema not found" the first time it resolves a model.
     schema: { user, session, account, verification },
   }),
-  baseURL: Bun.env.BASE_URL ?? "http://localhost:3000",
-  secret: resolveAuthSecret(Bun.env),
+  baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+  secret: resolveAuthSecret(process.env),
   emailAndPassword: {
     enabled: true,
-    disableSignUp: resolveDisableSignUp(Bun.env),
+    disableSignUp: resolveDisableSignUp(process.env),
     password: { hash: hashPassword, verify: verifyPassword },
   },
   session: {

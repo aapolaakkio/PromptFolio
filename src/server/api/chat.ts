@@ -24,7 +24,7 @@ const AskSchema = z
  * this path.
  */
 const resolveClient = (): ToolRunnerClient => {
-  const apiKey = Bun.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista");
   return createClient(apiKey);
 };

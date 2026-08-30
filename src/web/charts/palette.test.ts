@@ -2,6 +2,10 @@ import { test, expect } from "bun:test";
 
 import { colourFor, needsGrouping, SERIES_COUNT, SERIES_DARK, SERIES_LIGHT } from "./palette";
 
+import { readFile } from "node:fs/promises";
+
+const readFileText = (path: string | URL): Promise<string> => readFile(path, "utf-8");
+
 test("the palette has enough distinct colours for a realistic portfolio", () => {
   expect(SERIES_LIGHT.length).toBeGreaterThanOrEqual(8);
   expect(new Set(SERIES_LIGHT).size).toBe(SERIES_LIGHT.length);
@@ -29,7 +33,7 @@ test("colours are referenced through the theme, so dark mode needs no branch", (
 test("the stylesheet defines every slot this module promises, in both themes", async () => {
   // The values live in CSS and the count lives here; this is what stops the two
   // drifting apart and a chart asking for a variable nobody defined.
-  const css = await Bun.file("src/web/styles.css").text();
+  const css = await readFileText("src/web/styles.css");
   for (let slot = 1; slot <= SERIES_COUNT; slot++) {
     expect(css.match(new RegExp(`--series-${slot}:`, "g"))?.length).toBe(2);
   }
