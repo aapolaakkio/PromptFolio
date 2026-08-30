@@ -14,8 +14,8 @@
     "fmt": "oxfmt src e2e '!src/web/routeTree.gen.ts'",
     "fmt:check": "oxfmt --check src e2e '!src/web/routeTree.gen.ts'",
     "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov",
-    "dev:api": "bun --hot src/server/index.ts",
-    "prepare": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/bun": "latest",
     "@types/react": "^19.2.18",

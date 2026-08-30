@@ -15,3 +15,6 @@ coverage
 .DS_Store
 
 vite-env.d.ts
+e2e/.tmp/
+test-results/
+playwright-report/

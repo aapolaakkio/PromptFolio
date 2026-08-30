@@ -28,7 +28,7 @@ export default defineConfig({
     // assertions would stop meaning anything.
     pool: "threads",
     poolOptions: { threads: { singleThread: true } },
-    exclude: ["node_modules/**", "dist/**", "tools/oxlint/anti-slop/**"],
+    exclude: ["node_modules/**", "dist/**", "e2e/**", "tools/oxlint/anti-slop/**"],
     coverage: {
       provider: "v8",
       // The floor bunfig.toml actually enforced: 80 % across the project, not

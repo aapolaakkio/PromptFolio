@@ -20,6 +20,7 @@ import { Route as AuthenticatedRebalanceRouteImport } from './app/_authenticated
 import { Route as AuthenticatedReconcileRouteImport } from './app/_authenticated/reconcile'
 import { Route as AuthenticatedSpendingRouteImport } from './app/_authenticated/spending'
 import { Route as AuthenticatedTaxRouteImport } from './app/_authenticated/tax'
+import { Route as ApiAuthSplatRouteImport } from './app/api/auth/$'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -75,6 +76,11 @@ const AuthenticatedTaxRoute = AuthenticatedTaxRouteImport.update({
   path: '/tax',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/reconcile': typeof AuthenticatedReconcileRoute
   '/spending': typeof AuthenticatedSpendingRoute
   '/tax': typeof AuthenticatedTaxRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/spending': typeof AuthenticatedSpendingRoute
   '/tax': typeof AuthenticatedTaxRoute
   '/': typeof AuthenticatedIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/_authenticated/spending': typeof AuthenticatedSpendingRoute
   '/_authenticated/tax': typeof AuthenticatedTaxRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
     | '/reconcile'
     | '/spending'
     | '/tax'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/spending'
     | '/tax'
     | '/'
+    | '/api/auth/$'
   id:
     | '__root__'
     | '/_authenticated'
@@ -152,11 +163,13 @@ export interface FileRouteTypes {
     | '/_authenticated/spending'
     | '/_authenticated/tax'
     | '/_authenticated/'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -238,6 +251,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTaxRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -272,6 +292,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
