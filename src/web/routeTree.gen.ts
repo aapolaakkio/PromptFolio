@@ -20,7 +20,9 @@ import { Route as AuthenticatedRebalanceRouteImport } from './app/_authenticated
 import { Route as AuthenticatedReconcileRouteImport } from './app/_authenticated/reconcile'
 import { Route as AuthenticatedSpendingRouteImport } from './app/_authenticated/spending'
 import { Route as AuthenticatedTaxRouteImport } from './app/_authenticated/tax'
+import { Route as ApiHealthRouteImport } from './app/api/health'
 import { Route as ApiAuthSplatRouteImport } from './app/api/auth/$'
+import { Route as ApiCronRefreshRouteImport } from './app/api/cron/refresh'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -76,9 +78,19 @@ const AuthenticatedTaxRoute = AuthenticatedTaxRouteImport.update({
   path: '/tax',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCronRefreshRoute = ApiCronRefreshRouteImport.update({
+  id: '/api/cron/refresh',
+  path: '/api/cron/refresh',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -93,7 +105,9 @@ export interface FileRoutesByFullPath {
   '/reconcile': typeof AuthenticatedReconcileRoute
   '/spending': typeof AuthenticatedSpendingRoute
   '/tax': typeof AuthenticatedTaxRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -105,8 +119,10 @@ export interface FileRoutesByTo {
   '/reconcile': typeof AuthenticatedReconcileRoute
   '/spending': typeof AuthenticatedSpendingRoute
   '/tax': typeof AuthenticatedTaxRoute
+  '/api/health': typeof ApiHealthRoute
   '/': typeof AuthenticatedIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -120,8 +136,10 @@ export interface FileRoutesById {
   '/_authenticated/reconcile': typeof AuthenticatedReconcileRoute
   '/_authenticated/spending': typeof AuthenticatedSpendingRoute
   '/_authenticated/tax': typeof AuthenticatedTaxRoute
+  '/api/health': typeof ApiHealthRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -136,7 +154,9 @@ export interface FileRouteTypes {
     | '/reconcile'
     | '/spending'
     | '/tax'
+    | '/api/health'
     | '/api/auth/$'
+    | '/api/cron/refresh'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -148,8 +168,10 @@ export interface FileRouteTypes {
     | '/reconcile'
     | '/spending'
     | '/tax'
+    | '/api/health'
     | '/'
     | '/api/auth/$'
+    | '/api/cron/refresh'
   id:
     | '__root__'
     | '/_authenticated'
@@ -162,14 +184,18 @@ export interface FileRouteTypes {
     | '/_authenticated/reconcile'
     | '/_authenticated/spending'
     | '/_authenticated/tax'
+    | '/api/health'
     | '/_authenticated/'
     | '/api/auth/$'
+    | '/api/cron/refresh'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCronRefreshRoute: typeof ApiCronRefreshRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -251,11 +277,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTaxRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/cron/refresh': {
+      id: '/api/cron/refresh'
+      path: '/api/cron/refresh'
+      fullPath: '/api/cron/refresh'
+      preLoaderRoute: typeof ApiCronRefreshRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -292,7 +332,9 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCronRefreshRoute: ApiCronRefreshRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

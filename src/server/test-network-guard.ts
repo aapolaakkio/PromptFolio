@@ -1,62 +1,17 @@
 /**
- * Runs once, before any `*.test.ts` file loads, via vitest.config.ts's
- * `[test] preload` -- the same mechanism `test-setup.ts` already uses to
- * pin the shared test database, extended with a second entry rather than
- * a second, different bootstrap mechanism.
+ * Runs before any test file loads, via vitest.config.ts's setup files.
  *
- * Replaces the real global `fetch` with one that throws immediately.
- * "NO LIVE NETWORK CALLS IN THE TEST SUITE, EVER" (Task 14's brief) held
- * only as a property of every test file happening to pass its own
- * `fetchImpl` -- nothing in the committed suite enforced it. A future
- * price-source test (or any other test) that forgets to inject `fetchImpl`
- * would silently fall through to the real network: slower, flaky, and
- * exactly the kind of thing that stops failing loudly.
- *
- * Deliberately project-wide, not scoped to `src/server/prices/`: nothing
- * anywhere in this project's committed test suite calls the real network
- * today (checked: no `*.test.ts` file calls bare `fetch(...)` outside a
- * `fetchImpl` stub), so a blanket guard is both the simplest option and
- * the strongest guarantee. A future test that genuinely needs the real
- * network should inject a `fetchImpl` that reaches it deliberately, not
- * rely on the ambient global -- which is already every `PriceSource`'s
- * contract, so this changes no legitimate test's behaviour.
- *
- * Declared as a `function`+`namespace` merge (not a plain arrow function
- * cast with `as typeof fetch`) so it structurally satisfies Bun's
- * `typeof fetch`, which requires a static `preconnect` method that a bare
- * function value does not have -- see `src/server/prices/types.ts`'s
- * `FetchImpl` comment for the same issue on the production side.
- *
- * `realFetch` (below) is the one deliberate, explicit exception to "no
- * test may touch the real network": `globalThis.fetch` at the top of this
- * module -- captured before the `blockedFetch` reassignment two lines
- * down -- is still Bun's genuine implementation. Task 21's end-to-end test
- * (e2e/import-to-holdings.test.ts) is the one legitimate caller: it drives
- * a real HTTP server it started itself, on localhost, and needs a working
- * `fetch` to reach it. Exporting the captured reference (rather than, say,
- * checking an env var inside `blockedFetch` and falling through) keeps the
- * exception visible at every call site -- `import { realFetch }` -- instead
- * of ambient and easy to miss, and every other test file's un-imported
- * `fetch(...)` still throws exactly as before.
+ * Replaces the global `fetch` with one that throws. "No live network calls in
+ * the test suite, ever" held only as a property of every file happening to pass
+ * its own `fetchImpl`, and a test that forgot would silently reach the real
+ * network: slower, flaky, and exactly the kind of thing that stops failing
+ * loudly. A test that genuinely needs the network should inject a `fetchImpl`
+ * that reaches it deliberately.
  */
-// Marks this file as a module (it otherwise has no top-level import/export)
-// so the `function`+`namespace` merge below is allowed at all --
-// `verbatimModuleSyntax` disallows namespaces in a global script file.
-export const realFetch: typeof fetch = fetch;
-
-function blockedFetch(): Promise<Response> {
+globalThis.fetch = (): Promise<Response> => {
   throw new Error(
     "network blocked in tests: this call reached the real global fetch instead of an injected " +
       "fetchImpl. Pass fetchImpl explicitly (see src/server/prices/*.test.ts for the pattern) -- " +
       "no test in this project may touch the real network.",
   );
-}
-namespace blockedFetch {
-  export function preconnect(): void {
-    // No-op: nothing in the test suite calls fetch.preconnect either, but
-    // the static method must exist for `blockedFetch` to satisfy `typeof
-    // fetch`'s shape.
-  }
-}
-
-globalThis.fetch = blockedFetch;
+};

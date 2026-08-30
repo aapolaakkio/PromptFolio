@@ -5,13 +5,7 @@ import { asc, eq } from "drizzle-orm";
 import { EUR, parseCurrency } from "../../core/money.ts";
 import { testDb } from "../db/index.ts";
 import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
-import {
-  backfillInstrument,
-  backfillMany,
-  refreshPrices,
-  runScheduledRefresh,
-  startScheduler,
-} from "./refresh.ts";
+import { backfillInstrument, backfillMany, refreshPrices, runScheduledRefresh } from "./refresh.ts";
 
 const SEK = parseCurrency("SEK");
 
@@ -560,7 +554,7 @@ test("an instrument with a years-old transaction ends up with price rows spannin
   expect(nonZeroDays.length).toBeGreaterThan(0);
 });
 
-// --- runScheduledRefresh / startScheduler --------------------------------------
+// --- runScheduledRefresh ---
 
 test("runScheduledRefresh never rejects, even when the FX fetch fails", async () => {
   const { db } = testDb();
@@ -599,27 +593,6 @@ test("runScheduledRefresh's nightly catch-up sweep attempts backfill for an inst
   const backfillAttempt = log.find((row) => row.message?.includes("Taustatäyttö epäonnistui"));
   expect(backfillAttempt).toBeDefined();
   expect(backfillAttempt?.ok).toBe(false);
-});
-
-test("startScheduler rejects a syntactically invalid schedule instead of registering it silently", () => {
-  const { db } = testDb();
-  expect(() => startScheduler(db, { schedule: "not a cron expression", tz: "UTC" })).toThrow(
-    /Ajastuslauseke/,
-  );
-});
-
-test("startScheduler rejects a schedule with no future occurrence", () => {
-  const { db } = testDb();
-  expect(() => startScheduler(db, { schedule: "0 0 30 2 *", tz: "UTC" })).toThrow(/Ajastuslauseke/);
-});
-
-test("startScheduler registers a real, verified-parseable schedule and returns a stoppable job", () => {
-  const { db } = testDb();
-  // Far enough in the future (relative to this fixture's 2026-08-27
-  // "today") that it cannot fire during this test run.
-  const job = startScheduler(db, { schedule: "0 3 1 1 *", tz: "UTC" });
-  expect(job.getPattern()).toBe("0 3 1 1 *");
-  job.stop();
 });
 
 /** Seeds one ledger transaction in `currency`, with the user/account it needs to satisfy FKs, and no instrument. */

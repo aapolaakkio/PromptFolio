@@ -21,7 +21,7 @@ test("trims trailing zeros from quantities but keeps meaningful decimals", () =>
 
 // Intl.NumberFormat('fi-FI', ...) renders negatives with U+2212 (MINUS
 // SIGN), not ASCII hyphen-minus -- verified directly against this
-// project's Bun/ICU build. Regression test for the normalisation that
+// project's ICU build. Regression test for the normalisation that
 // keeps every formatter's output plain ASCII on the sign.
 test("normalises the Unicode minus sign to ASCII for negative quantities", () => {
   expect(qty("-3.500000")).toBe("-3,5");

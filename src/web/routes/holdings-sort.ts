@@ -3,7 +3,7 @@
  * it can be tested without rendering (this project has no DOM test harness,
  * by deliberate choice -- see `charts/palette.ts` for the same split
  * applied to chart colouring). `holdings.test.ts` imports only this module;
- * `holdings.tsx` never gets loaded by a test, so it stays out of Bun's
+ * `holdings.tsx` never gets loaded by a test, so it stays out of the
  * coverage gate (vitest.config.ts's line threshold)
  * instead of failing it for JSX that a unit test cannot exercise.
  */

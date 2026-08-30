@@ -4,7 +4,7 @@ Current as of 2026-08-30 (phases 4 and 5 shipped). Replaces the per-phase handov
 of date in ways that mattered: phase 2's said the PDF import path was dropped, and it has since
 been built.
 
-`bun run check`: 985 tests, 0 failures, 80 % per-file coverage floor held.
+`pnpm run check`: 985 tests, 0 failures, 80 % per-file coverage floor held.
 
 ## What exists
 
@@ -86,7 +86,7 @@ Each of these was arrived at by getting it wrong first.
 - **The tax module reports taxable income, never tax owed.** The 30 %/34 % bracket depends on
   capital income the app cannot see, so those rates appear nowhere in the code.
 - **Nothing inside an OST is taxed when it happens.** Sales and dividends there are excluded from
-  the taxable sets; tax falls on withdrawal, and the account is valued immediately *before* the
+  the taxable sets; tax falls on withdrawal, and the account is valued immediately _before_ the
   withdrawal being apportioned — valuing it after understates the total the profit is divided by.
 - **A withdrawal after an unvaluable one is reported as unknown, not computed.** The earlier gap
   leaves the deposits too high by an unknown amount, so the account looks like it holds no profit.
@@ -113,7 +113,7 @@ Each of these was arrived at by getting it wrong first.
 - **OP's securities export records no cash**, so those accounts show no balance and their
   money-weighted return is measured from purchases rather than deposits.
 - **A transfer whose other half is not imported** counts as income or spending.
-- **Classification is substring matching**, not understanding. What matches nothing lands in *Muu*
+- **Classification is substring matching**, not understanding. What matches nothing lands in _Muu_
   and is always reported as a share of the total.
 - **`transactions.unit_price` is denominated in the instrument's currency** while
   `transactions.currency` describes the cash side. `valuation.ts` reads it correctly; anything new
@@ -142,6 +142,6 @@ docs/superpowers/specs/2026-08-27-portfolio-manager-design.md
                contradicted it, and they are the most useful part to read
 ```
 
-`bun run check` runs oxlint (with the vendored `anti-slop` rules), oxfmt, `tsc --noEmit` and the
+`pnpm run check` runs oxlint (with the vendored `anti-slop` rules), oxfmt, `tsc --noEmit` and the
 suite. No test may touch the network: a preload replaces `fetch` with one that throws, so every
 external call is injected.

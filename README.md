@@ -8,24 +8,24 @@ how far it has drifted from where you wanted it.
 It also computes your Finnish capital-gains figures independently, so the pre-filled tax return has
 something to be checked against.
 
-One Bun process serves the API, the React frontend and a nightly price refresh. One SQLite file
-holds everything. No external database, no message queue, nothing else to run.
+One Node process serves the whole app. One SQLite file holds everything. No external database, no
+message queue, nothing else to run — the nightly price refresh is one endpoint your own cron calls.
 
 ---
 
 ## What it does
 
-| Screen         | What it shows                                                                                |
-| -------------- | -------------------------------------------------------------------------------------------- |
-| **Yleiskuva**  | Portfolio value, time- and money-weighted return, allocation, value over time                |
-| **Omistukset** | Every holding: quantity, cost basis, market value, gain, weight, price staleness             |
-| **Täsmäytys**  | A broker's holdings statement compared against what the ledger derives for the same day      |
-| **Käteinen**   | Bank accounts, balances per currency, statement import, manual entries                       |
+| Screen         | What it shows                                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Yleiskuva**  | Portfolio value, time- and money-weighted return, allocation, value over time                                                                                      |
+| **Omistukset** | Every holding: quantity, cost basis, market value, gain, weight, price staleness                                                                                   |
+| **Täsmäytys**  | A broker's holdings statement compared against what the ledger derives for the same day                                                                            |
+| **Käteinen**   | Bank accounts, balances per currency, statement import, manual entries                                                                                             |
 | **Kulutus**    | Spending by category or payee, a Sankey of the year's money, monthly income against spending, category by month, and every transaction with the class it was given |
-| **Verot**      | Per tax year: realised gains both permitted ways, dividends, OST withdrawals                  |
-| **Tasapaino**  | Target allocation, drift against it, where to put new money, and fees per year                |
-| **Avustaja**   | A chat assistant that answers from the same figures the screens show                         |
-| **Tuonnit**    | Import history, with undo                                                                    |
+| **Verot**      | Per tax year: realised gains both permitted ways, dividends, OST withdrawals                                                                                       |
+| **Tasapaino**  | Target allocation, drift against it, where to put new money, and fees per year                                                                                     |
+| **Avustaja**   | A chat assistant that answers from the same figures the screens show                                                                                               |
+| **Tuonnit**    | Import history, with undo                                                                                                                                          |
 
 Every chart is interactive: hover for a crosshair and exact figures, drag across the value chart to
 zoom to any period, and pick a preset window. Colours come from one palette checked for
@@ -42,8 +42,7 @@ Two kinds of account, kept apart deliberately:
 ## Requirements
 
 - **Docker and Docker Compose** (recommended), or
-- **Bun 1.4+** directly. No Node.js: `bunfig.toml` sets `[run] bun = true`, so even `oxlint` and
-  `oxfmt` — whose binaries ship a `#!/usr/bin/env node` shebang — run under Bun.
+- **Node 26+ and pnpm 11+** directly.
 
 ## First run
 
@@ -51,7 +50,7 @@ Two kinds of account, kept apart deliberately:
 
 ```bash
 cp .env.example .env
-echo "BETTER_AUTH_SECRET=$(bun -e 'console.log(crypto.randomUUID()+crypto.randomUUID())')" >> .env
+echo "BETTER_AUTH_SECRET=$(node -e "console.log(crypto.randomUUID()+crypto.randomUUID())")" >> .env
 docker compose up --build -d
 curl -fsS localhost:3000/api/health     # {"ok":true}
 ```
@@ -63,14 +62,14 @@ re-running them against a current database is a no-op.
 ### Without Docker
 
 ```bash
-bun install
+pnpm install
 cp .env.example .env
-echo "BETTER_AUTH_SECRET=$(bun -e 'console.log(crypto.randomUUID()+crypto.randomUUID())')" >> .env
-bun run build
-bun start
+echo "BETTER_AUTH_SECRET=$(node -e "console.log(crypto.randomUUID()+crypto.randomUUID())")" >> .env
+pnpm run build
+pnpm start
 ```
 
-`bun start` migrates before serving, exactly as the container does.
+`pnpm start` migrates before serving, exactly as the container does.
 
 ### Creating your account
 
@@ -126,7 +125,7 @@ The importer keeps the broker's own text for each row (Nordnet's `Tapahtumatekst
 type alone cannot say what a cash movement was — a transfer to another of your own accounts, the
 cash leg of a share subscription that returns days later, and money genuinely leaving all arrive as
 the same label — and that text is what tells them apart. Re-importing a file fills the text in on
-rows that predate this, reported as *täydennetty* rather than skipped, so nothing has to be deleted
+rows that predate this, reported as _täydennetty_ rather than skipped, so nothing has to be deleted
 and imported again.
 
 Two Nordnet label pairs stay **unmapped** on purpose and surface for review rather than being
@@ -150,7 +149,7 @@ payees the CSV left blank, without duplicating anything.
 
 **Credit cards.** OP's card log is a third format, detected by its own header, and it changes what
 a bill means. Without it, the lump sum leaving your current account each month is all the ledger
-knows, and it lands in *Lainat ja luotot* — a large line that says nothing about what you bought.
+knows, and it lands in _Lainat ja luotot_ — a large line that says nothing about what you bought.
 Import the card log and the bill is recognised as what it is: money moved to the card, cancelled
 against the card's own settlement row, with the individual purchases taking its place in the
 categories. The card's own charges — interest, an account fee — are ordinary spending, and a refund
@@ -244,7 +243,7 @@ allocates a deposit you name against your target; it suggests buys only, never a
 it inside the rule above. **Recurring payments** is derived, not declared: the same payee three
 times or more, on a regular rhythm, for an amount that barely moves — which is what separates a
 subscription from the weekly shop — reported as what it costs a year. **Reconciliation** reports an
-account with no imported statement as *unchecked* rather than as agreeing, because "nothing to
+account with no imported statement as _unchecked_ rather than as agreeing, because "nothing to
 compare" and "compared and equal" are the two answers it must never merge.
 
 Base figures always come from a tool. The model may derive new ones (differences, shares,
@@ -270,7 +269,7 @@ difference can be traced rather than argued about.
 Every rule is cited to vero.fi in `src/core/tax/rates.ts` and was verified on 2026-08-29. What the
 report knows:
 
-- **Realised gains, both permitted ways.** Actual cost against the *hankintameno-olettama* (20 % of
+- **Realised gains, both permitted ways.** Actual cost against the _hankintameno-olettama_ (20 % of
   the sale price under ten years' ownership, 40 % from ten), with the better one marked and the
   other shown beside it — the choice is the taxpayer's, so it is displayed rather than assumed. The
   two methods use different bases: the actual method deducts the selling fee, the deemed one does
@@ -278,17 +277,17 @@ report knows:
 - **FIFO within one account**, which is the rule vero.fi states. A share held in two accounts has
   two independent queues.
 - **The small-sales exemption**, both ways: at most 1 000 € of sales in a year makes the gains
-  exempt *and* the losses non-deductible.
+  exempt _and_ the losses non-deductible.
 - **Losses**, netted within the year and carried five years, oldest first.
 - **Dividends**: 85 % taxable, 15 % exempt.
 - **Equity savings accounts.** Nothing inside an OST is taxed when it happens — not a sale, not a
   dividend. Tax falls on withdrawal, on the profit share: profit ÷ account value × amount withdrawn,
-  with the account valued *immediately before* the withdrawal. The capital part of a withdrawal
+  with the account valued _immediately before_ the withdrawal. The capital part of a withdrawal
   reduces the deposits, which is both the base for the next withdrawal and what the 100 000 €
   lifetime cap is measured against.
 - **What counts as a withdrawal, and what doesn't.** The tax the broker withholds is booked as its
   own row but is part of the withdrawal, so it counts toward the amount withdrawn and is shown
-  beside our own figure to compare against. A share subscription's *reservation* — money taken out
+  beside our own figure to compare against. A share subscription's _reservation_ — money taken out
   to pay for it and returned days later, with the allotment booked separately as the purchase — is
   not a withdrawal at all, and is matched structurally, since nothing in the export marks it.
 - **A swap carries its lots.** When a holding changes form (a fund merger, a tender offer), the
@@ -297,7 +296,7 @@ report knows:
   the per-lot cost is what FIFO consumes on a later partial sale.
 
 A withdrawal whose account holds something unpriceable — an unlisted share, or a delisted one with
-no surviving feed — reports *ei laskettavissa* naming the instrument and date, never an
+no surviving feed — reports _ei laskettavissa_ naming the instrument and date, never an
 apportionment resting on a guessed value. The row itself offers to record that price, because the
 blocking holding has usually been sold since and appears on no other screen. Every later withdrawal
 reads as not computable too: the earlier gap leaves the deposits too high by an unknown amount, so
@@ -309,7 +308,7 @@ broker's own per-disposal statement. That found one real defect, worth several e
 understated loss, in how a swap's cost basis was carried. What remains is a cent on each of the
 year's gain and loss totals, from splitting one sale's proceeds across many acquisition lots: this
 app allocates the cash pro rata so the parts sum to what actually arrived, while the broker prices
-each lot independently — which is why *their* rows do not sum to *their* own stated total either.
+each lot independently — which is why _their_ rows do not sum to _their_ own stated total either.
 The pre-filled return is the one to file; this report is for catching euros, not cents.
 
 ## Targets, drift and fees
@@ -320,17 +319,17 @@ paying?
 You set a target allocation on one dimension — by kind, currency, account or instrument — as
 percentages that must sum to exactly 100 %. A set that sums to 90 % is refused rather than scaled
 up: it means a slice was forgotten, and inventing the missing tenth would have you measuring drift
-against a target you never set. A slice with no target is *untargeted*, which is not the same as
+against a target you never set. A slice with no target is _untargeted_, which is not the same as
 targeted at zero — only the second implies selling it.
 
 Drift is shown in percentage points and in euros, and a slice within five points of its target reads
-*tavoitteessa*. The figure is always computed; the band only decides how it reads, because a screen
+_tavoitteessa_. The figure is always computed; the band only decides how it reads, because a screen
 that calls everything drifted teaches you to ignore it.
 
 **Two ways to correct it, and they are not equal.**
 
 - **New money** is the default. You enter an amount and the app says where it should go, measured
-  against the target applied to the total *after* the deposit — adding money changes every weight.
+  against the target applied to the total _after_ the deposit — adding money changes every weight.
   This realises no gain and triggers no tax.
 - **Full rebalance** is a view you ask for. It shows the buys and sells that hit the target exactly,
   and **every sale states the gain it would realise**, because a tool that says "sell 4 000 €"
@@ -349,7 +348,7 @@ so counting it would make the figure meaningless.
 A job runs **weekdays at 19:30 Europe/Helsinki**, after Finnish fund NAVs publish: it refreshes FX
 from the ECB and every non-`manual` instrument's price, then backfills any instrument whose history
 does not yet reach its earliest transaction. It is registered only under `NODE_ENV=production`, so
-`bun run dev` never fires a real fetch. Every attempt is logged to `price_fetch_log`; a failing
+`pnpm run dev` never fires a real fetch. Every attempt is logged to `price_fetch_log`; a failing
 source degrades that holding's badge to stale rather than breaking the dashboard.
 
 **Which holdings get real history.** Yahoo-priced instruments (listed shares, ETFs) backfill years
@@ -362,7 +361,7 @@ deliberately stops asking.
 To run it by hand:
 
 ```bash
-docker compose exec promptfolio bun -e "
+docker compose exec promptfolio node -e "
 const { getDb } = await import('./src/server/db');
 const { runScheduledRefresh } = await import('./src/server/prices/refresh');
 await runScheduledRefresh(getDb().db);
@@ -385,12 +384,13 @@ back the same way. Without Docker, the same applies to `DATABASE_PATH`.
 ## Development
 
 ```bash
-bun run dev        # hot-reloading server on :3000
-bun run check      # lint, format check, typecheck, tests with coverage
-bun run db:generate  # a migration from a schema change
+pnpm run dev         # hot-reloading server on :3000
+pnpm run check       # lint, format check, typecheck, tests with coverage
+pnpm run e2e         # the browser test, against its own database
+pnpm run db:generate # a migration from a schema change
 ```
 
-`bun run check` is the gate: oxlint (including vendored `anti-slop` rules), oxfmt, `tsc --noEmit`,
+`pnpm run check` is the gate: oxlint (including vendored `anti-slop` rules), oxfmt, `tsc --noEmit`,
 and the test suite with an 80 % per-file coverage floor. No test may touch the network — a preload
 replaces `fetch` with one that throws, so every external call is injected and stubbed.
 

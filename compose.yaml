@@ -20,10 +20,14 @@ services:
       # not. Passed through explicitly all the same: a key sitting in .env
       # that Compose never forwards looks exactly like a broken feature.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Bun.cron is given tz: 'Europe/Helsinki' explicitly for the price
-      # refresh schedule regardless of this setting, but log timestamps
-      # and any other new Date() formatting follow the container clock --
-      # set here so both agree.
+      # Authorises POST /api/cron/refresh, the price and FX refresh. Nothing
+      # inside the container schedules it: a timer only runs while the process
+      # does, restarts its clock on every deploy, and fires twice if the app is
+      # ever run twice. Point your own cron at the endpoint instead. Unset means
+      # the endpoint refuses every call.
+      CRON_SECRET: ${CRON_SECRET:-}
+      # Log timestamps and any other new Date() formatting follow the container
+      # clock, so it is set to match the household's.
       TZ: Europe/Helsinki
     volumes:
       - promptfolio-data:/data

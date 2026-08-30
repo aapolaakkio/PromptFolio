@@ -1,7 +1,7 @@
 /**
  * `Intl.NumberFormat('fi-FI', ...)` renders a negative sign as U+2212
  * (MINUS SIGN), not ASCII U+002D (hyphen-minus) -- verified directly
- * against this project's Bun/ICU build, for both `currency` and `percent`
+ * against this project's ICU build, for both `currency` and `percent`
  * styles. Every other locale-specific character (comma decimal separator,
  * narrow no-break space grouping, trailing "€"/"%") is left exactly as
  * Intl produces it; only the minus glyph is normalised to ASCII, so a

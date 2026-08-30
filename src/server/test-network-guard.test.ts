@@ -12,7 +12,3 @@ import { expect, test } from "vitest";
 test("the real global fetch is replaced with one that throws, not silently reaches the network", () => {
   expect(() => fetch("https://example.com")).toThrow(/network blocked in tests/);
 });
-
-test("fetch.preconnect stays callable (a harmless no-op) so code that calls it doesn't crash", () => {
-  expect(() => fetch.preconnect("https://example.com")).not.toThrow();
-});

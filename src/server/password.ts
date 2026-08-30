@@ -6,7 +6,7 @@ import { hash, verify } from "@node-rs/argon2";
  * The parameters match what `Bun.password` was called with, and they have to:
  * argon2id writes them into the hash string, so every password stored before
  * this change is verified with the settings it was made under. Nobody is
- * locked out by the move off Bun -- proven by a test below, not by reading.
+ * locked out by the move off Bun's own hashing -- proven by a test, not by reading.
  */
 // Argon2id is this library's default, and naming it explicitly is not
 // available: `Algorithm` is an ambient const enum, which `verbatimModuleSyntax`

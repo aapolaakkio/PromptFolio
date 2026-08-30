@@ -1,6 +1,6 @@
 allowBuilds:
   '@prisma/client': false
-  bun: false
+  '@prisma/engines': false
   esbuild: true
   prisma: false
   simple-git-hooks: false
@@ -11,7 +11,5 @@ minimumReleaseAgeExclude:
   - "@tanstack/react-table"
   - "@tanstack/react-charts"
   - "@tanstack/charts"
-
-nodeLinker: hoisted
 
 engineStrict: true

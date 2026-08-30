@@ -1,5 +1,4 @@
 import { asc, eq } from "drizzle-orm";
-import { Cron } from "croner";
 
 import type { getDb } from "../db/index.ts";
 import { instruments, priceFetchLog, prices, transactions } from "../db/schema.ts";
@@ -313,17 +312,11 @@ export const backfillMany = async (
   return { attempted, backfilled, incomplete, errored };
 };
 
-/** Weekday evenings, after Finnish fund NAVs publish. */
-const SCHEDULE = "30 19 * * 1-5";
-const SCHEDULE_TZ = "Europe/Helsinki";
-
 /**
- * The job's body, exported so a test can call it rather than wait for the next
- * weekday evening.
+ * The day's prices and rates, called by POST /api/cron/refresh.
  *
- * croner mirrors setTimeout: a handler that rejects with no listener takes the
- * process down. Each phase has its own try/catch, so one evening's ECB outage
- * cannot stop the next evening's run.
+ * Each phase has its own try/catch, so one evening's ECB outage cannot stop the
+ * rest of the run -- and the endpoint answers rather than failing.
  */
 export const runScheduledRefresh = async (db: Db): Promise<void> => {
   try {
@@ -366,33 +359,4 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
   } catch (cause) {
     console.error("Taustatäyttö epäonnistui", cause);
   }
-};
-
-/**
- * Registers the daily refresh job. The expression is parsed up front so a typo
- * fails at startup rather than at the first scheduled fire -- which arrives two
- * ways: the constructor throws on invalid syntax, and `nextRun()` answers null,
- * without throwing, for valid syntax that never occurs.
- */
-export const startScheduler = (db: Db, opts: { schedule?: string; tz?: string } = {}): Cron => {
-  const schedule = opts.schedule ?? SCHEDULE;
-  const tz = opts.tz ?? SCHEDULE_TZ;
-
-  // Created paused so a bad expression is caught before anything is armed, and
-  // so the check below cannot race a fire of its own.
-  let job: Cron;
-  try {
-    job = new Cron(schedule, { timezone: tz, paused: true }, () => runScheduledRefresh(db));
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : "tuntematon virhe";
-    throw new Error(`Ajastuslauseke ei kelpaa (${schedule}): ${detail}`);
-  }
-
-  if (job.nextRun() === null) {
-    job.stop();
-    throw new Error(`Ajastuslauseke ei kelpaa: sillä ei ole tulevaa ajankohtaa (${schedule})`);
-  }
-
-  job.resume();
-  return job;
 };
