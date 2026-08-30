@@ -69,12 +69,15 @@ The shims and the SQLite driver therefore go first, and both are verifiable unde
 `bun test` because Bun implements `node:sqlite` too. The runner changes last, when the
 code it runs no longer needs Bun.
 
-**5. Vite and Start.** `vite.config.ts` with `tanstackStart({ spa: { enabled: true } })`,
-`@vitejs/plugin-react`, `@tailwindcss/vite`. `build.ts` and `bun-plugin-tailwind` go.
+**5. Vite and Start.** Done. `vite.config.ts` with `tanstackStart`, `@vitejs/plugin-react`
+and `@tailwindcss/vite`; `build.ts`, `main.tsx`, `index.html` and the code-based route
+tree deleted. Routes are files under `src/web/app`, each pointing at the page component
+that already existed, and `routes.test.ts` inherits `route-tree.test.ts`'s job of proving
+every screen is reachable and points at itself.
 
-**6. Frontend routes.** The code-based tree in `route-tree.ts` becomes files under
-`src/routes/`. `route-tree.test.ts` tests structure with stub components and must keep
-doing so, or the split it exists for is lost.
+**6. Session on the server.** The authenticated layout gates in the browser, so SSR
+currently renders a loading state for every page. `beforeLoad` plus a server function
+that reads the session cookie turns that into a real render or a redirect.
 
 **7. The API becomes server functions.** Not 44 route files -- server functions,
 which is what Start is for. `createServerFn({ method }).validator(Schema).handler(fn)`

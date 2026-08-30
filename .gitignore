@@ -13,3 +13,5 @@ coverage
 
 
 .DS_Store
+
+vite-env.d.ts

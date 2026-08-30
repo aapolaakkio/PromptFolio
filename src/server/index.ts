@@ -1,4 +1,3 @@
-import index from "../web/index.html";
 import { auth } from "./auth.ts";
 import { accountRoutes } from "./api/accounts.ts";
 import { bankImportRoutes } from "./api/bank-imports.ts";
@@ -72,7 +71,9 @@ export const createServer = (opts: { port?: number } = {}): ReturnType<typeof Bu
       ...portfolioRoutes,
       ...priceRoutes,
       ...snapshotRoutes,
-      "/*": index,
+      // The frontend is Vite and TanStack Start's now; this server answers the
+      // API alone, until the last handler becomes a server function and it
+      // stops existing altogether.
     },
   });
 

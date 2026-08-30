@@ -7,9 +7,9 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "bun --hot src/server/index.ts",
+    "dev": "vite dev",
     "start": "NODE_ENV=production bun src/server/index.ts",
-    "build": "bun run build.ts",
+    "build": "vite build",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "test:cov": "vitest run --coverage",
@@ -17,19 +17,23 @@
     "lint": "oxlint",
     "fmt": "oxfmt src e2e",
     "fmt:check": "oxfmt --check src e2e",
-    "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov"
+    "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov",
+    "dev:api": "bun --hot src/server/index.ts"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/bun": "latest",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
     "@vitest/coverage-v8": "^4.1.11",
     "bun-plugin-tailwind": "^0.1.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "typescript": "^7.0.2",
+    "vite": "^8.2.2",
     "vitest": "^4.1.11"
   },
   "dependencies": {
@@ -40,6 +44,7 @@
     "@tanstack/react-charts": "^0.16.0",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-router": "^1.170.32",
+    "@tanstack/react-start": "^1.168.49",
     "better-auth": "1.7.2",
     "croner": "^10.0.1",
     "drizzle-orm": "1.0.0-rc.5-169397b",
