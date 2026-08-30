@@ -16,7 +16,7 @@ only "turn HMR off". Vite does not have the bug.
 |---|---|---|
 | Bundler & dev server | `Bun.build`, HTML imports | Vite 8 + TanStack Start (SPA mode) |
 | Runtime | Bun | Node 24 (22.12 works but needs `--experimental-sqlite`) |
-| HTTP | `Bun.serve` routes | Start server routes, file-based |
+| HTTP | `Bun.serve` routes | Start server functions; routes only where a URL is the contract |
 | SQLite | `bun:sqlite` | `node:sqlite` + `drizzle-orm/node-sqlite` |
 | Tests | `bun test`, 1 098 of them | Vitest (same `describe`/`test`/`expect`) |
 | Package manager | `bun install` | pnpm |
@@ -76,9 +76,31 @@ code it runs no longer needs Bun.
 `src/routes/`. `route-tree.test.ts` tests structure with stub components and must keep
 doing so, or the split it exists for is lost.
 
-**7. API routes.** 44 handlers, one file each: `/api/health` → `src/routes/api/health.ts`,
-`/api/accounts/:id` → `api/accounts/$id.ts`, `/api/auth/*` → `api/auth/$.ts`. The bodies
-do not change.
+**7. The API becomes server functions.** Not 44 route files -- server functions,
+which is what Start is for. `createServerFn({ method }).validator(Schema).handler(fn)`
+takes the existing zod schema as its validator and the existing handler body almost
+unchanged, and the client calls it as a typed function instead of assembling a URL.
+
+What that deletes is the point: every `apiGet("/api/holdings", HoldingsSchema)` on the
+client, and with it the second copy of each schema that exists only to parse a response
+the server just serialised. A field renamed on the server becomes a type error in the
+component rather than a zod failure at runtime -- which is exactly the class of bug that
+blanked Käteinen and Täsmäytys when one account type went unrecognised.
+
+Three things stay real HTTP routes, each for a reason:
+
+- **`/api/auth/*`** -- Better Auth's own client calls those exact URLs. A server function
+  is reachable only through Start's RPC endpoint, so this is not portable.
+- **`/api/health`** -- a URL is the interface. Docker and any uptime check want to curl it.
+- **The chat stream** -- SSE, and the one request that is quiet for minutes at a time.
+  Server functions can return a raw `Response`, so this should work as one; the spike
+  proves it before the other 41 move, because if it cannot stream the shape of stage 7
+  changes.
+
+The tests move with them, and get shorter: a test that builds a `Request`, calls
+`accountRoutes["/api/accounts"].POST(...)` and parses JSON back becomes a call to the
+function with an argument. Roughly 30 test files, mechanical but not trivial, and each
+one loses its hand-written request plumbing.
 
 **8. The rest of the server.** What Start does not own: migrate-on-boot, the nightly price
 refresh, the unhandled-rejection guard.
