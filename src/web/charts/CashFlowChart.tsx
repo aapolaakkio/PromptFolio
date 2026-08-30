@@ -1,9 +1,12 @@
 import { useMemo } from "react";
 import { defineChart, link, rect, text } from "@tanstack/charts";
-import { sankeyDiagram } from "@tanstack/charts/network/sankey";
+import { sankeyDiagram, type SankeyLink, type SankeyNode } from "@tanstack/charts/network/sankey";
+import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
+import { eur } from "../lib/format";
 import { bumpX } from "./curve";
+import { MARK_FOCUS } from "./interactions";
 import { colourFor } from "./palette";
 
 export type FlowNode = { id: string; label: string; totalEur: string };
@@ -18,8 +21,40 @@ export type FlowLink = { from: string; to: string; amountEur: string };
  */
 const labelsOnLeft = (id: string): boolean => id.startsWith("in:") || id === "income";
 
-/** The euro figure the server computed, shown beside the label rather than recomputed here. */
-const labelFor = (node: FlowNode): string => `${node.label}: ${node.totalEur} €`;
+/**
+ * The euro figure the server computed, shown beside the label rather than
+ * recomputed here -- and formatted through the same `eur()` the tables use, so
+ * a figure in the diagram and the same figure in the table beside it read
+ * identically. It printed the raw decimal string before, which meant the
+ * diagram wrote "1234.5 €" where the table wrote "1 234,50 €".
+ */
+const labelFor = (node: FlowNode): string => `${node.label}: ${eur(node.totalEur)}`;
+
+/**
+ * What a hovered mark is, in words.
+ *
+ * A ribbon is a flow between two nodes and reads as "from → to: amount"; a node
+ * block is a total and reads as its own label. Anything else -- a label, a
+ * stray mark -- says nothing rather than printing coordinates.
+ */
+/** The row shape this file feeds the diagram, once a value is attached. */
+type FlowRow = FlowLink & { readonly value: number };
+
+/**
+ * What a hovered mark is, in words.
+ *
+ * The library discriminates the two shapes with `kind`, and both are the
+ * *laid-out* objects rather than the rows fed in -- a ribbon carries
+ * `sourceNode`/`targetNode`, the same objects the stroke colour is read from.
+ * Reading the input rows instead produced "undefined: epäluku €": every field
+ * missing, and a NaN formatted as though it were money.
+ */
+const describe = (
+  datum: SankeyLink<FlowNode, FlowRow, string> | SankeyNode<FlowNode, FlowRow, string>,
+): string =>
+  datum.kind === "link"
+    ? `${datum.sourceNode.data.label} → ${datum.targetNode.data.label}: ${eur(datum.data.amountEur)}`
+    : `${datum.data.label}: ${eur(datum.data.totalEur)}`;
 
 /**
  * A Sankey of one period's money: what came in, and where it went.
@@ -68,7 +103,9 @@ export const CashFlowChart = ({
                 curve: bumpX,
                 strokeWidth: (flow) => Math.max(1, flow.width),
                 stroke: (flow) => colourOf.get(flow.targetNode.data.id) ?? colourFor(0),
-                strokeOpacity: 0.4,
+                // Opaque enough to carry its colour, sheer enough that crossing
+                // ribbons stay separable where they overlap.
+                strokeOpacity: 0.55,
                 lineCap: "butt",
               }),
               // One rect mark per node, since `fill` is a mark-level colour
@@ -115,6 +152,15 @@ export const CashFlowChart = ({
       ],
       scales: { x: null, y: null },
       guides: false,
+      // A ribbon's own figure is not written anywhere on the diagram -- only
+      // the nodes carry labels -- so hovering one is the only way to read what
+      // a single flow was worth. Without a format of its own the tooltip prints
+      // the mark's geometry (x1, y1, key), which is true and unreadable.
+      ...MARK_FOCUS,
+      tooltip: {
+        use: tooltip,
+        format: (point) => describe(point.datum),
+      },
     });
   }, [nodes, links]);
 

@@ -39,14 +39,3 @@ export const TIME_FOCUS = {
  * should show nothing, not the nearest bar.
  */
 export const MARK_FOCUS = { focus: "nearest" } as const;
-
-/**
- * Whether a chart is worth offering zoom on.
- *
- * Only time. Zooming a pie or a flow diagram means nothing -- there is no axis
- * to narrow -- and offering a control that does nothing is worse than not
- * offering it. A short series is not worth it either: a reader can already see
- * every point.
- */
-export const ZOOM_MIN_POINTS = 30;
-export const worthZooming = (pointCount: number): boolean => pointCount >= ZOOM_MIN_POINTS;

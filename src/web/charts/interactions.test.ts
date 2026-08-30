@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 
-import { dateTip, moneyTip, shareTip, worthZooming, ZOOM_MIN_POINTS } from "./interactions";
+import { dateTip, moneyTip, shareTip } from "./interactions";
 
 test("a hovered figure reads exactly as the same figure in a table", () => {
   // Two formatting paths for one number is two chances to disagree, and the
@@ -21,11 +21,4 @@ test("a date tooltip uses the same Finnish form as the tables", () => {
 
 test("a share tooltip keeps one decimal and a decimal comma", () => {
   expect(shareTip("Osuus", 0.1523)).toBe("Osuus: 15,2 %");
-});
-
-test("zoom is offered only where there is enough to zoom into", () => {
-  // A reader can already see every point in a short series; a control that
-  // does nothing is worse than no control.
-  expect(worthZooming(ZOOM_MIN_POINTS - 1)).toBe(false);
-  expect(worthZooming(ZOOM_MIN_POINTS)).toBe(true);
 });

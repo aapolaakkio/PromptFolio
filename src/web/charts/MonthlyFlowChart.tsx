@@ -1,8 +1,13 @@
 import { useMemo } from "react";
-import { barY, defineChart, group } from "@tanstack/charts";
+import { barY, colorLegend, defineChart, group } from "@tanstack/charts";
 import { scaleBand } from "@tanstack/charts/scales/band";
+import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
+import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
+import { eur } from "../lib/format";
+import { MARK_FOCUS } from "./interactions";
+import { colourFor } from "./palette";
 
 export type MonthlyPoint = { month: string; incomeEur: string; expensesEur: string };
 
@@ -20,28 +25,57 @@ const shortMonth = (month: string): string => {
  * height answer it at a glance where a mirrored axis makes the reader do the
  * comparison themselves.
  */
-export const MonthlyFlowChart = ({ months }: { readonly months: readonly MonthlyPoint[] }) => {
-  const definition = useMemo(() => {
-    const rows = months.flatMap((point) => [
-      { month: shortMonth(point.month), kind: "Tulot", amount: Number(point.incomeEur) },
-      { month: shortMonth(point.month), kind: "Menot", amount: Number(point.expensesEur) },
-    ]);
+/**
+ * Built outside the component so a test can construct it -- `defineChart`
+ * validates at run time, and a misplaced scale throws only on mount.
+ */
+export const monthlyDefinition = (months: readonly MonthlyPoint[]) => {
+  const rows = months.flatMap((point) => [
+    { month: shortMonth(point.month), kind: "Tulot", amount: Number(point.incomeEur) },
+    { month: shortMonth(point.month), kind: "Menot", amount: Number(point.expensesEur) },
+  ]);
 
-    return defineChart({
-      marks: [
-        barY(rows, {
-          x: "month",
-          y: "amount",
-          color: "kind",
-          layout: group(),
-        }),
-      ],
-      scales: {
-        x: { scale: () => scaleBand<string>() },
-        y: { scale: scaleLinear, nice: true, grid: true },
+  return defineChart({
+    marks: [
+      barY(rows, {
+        x: "month",
+        y: "amount",
+        color: "kind",
+        layout: group(),
+        // Rounded at the data end only: the bar stays anchored to the
+        // baseline, which is what its length is measured from.
+        radius: 4,
+        // A gap of surface between the paired bars, so two adjacent fills
+        // read as two bars rather than one wide one.
+        inset: 1,
+      }),
+    ],
+    scales: {
+      x: { scale: () => scaleBand<string>() },
+      y: {
+        scale: scaleLinear,
+        nice: true,
+        grid: true,
+        axis: { ticks: { format: (value: number) => eur(String(value)) } },
       },
-    });
-  }, [months]);
+    },
+    // A sibling of `scales`, not one of them -- the positional scale ids are
+    // reserved, and a colour scale among them fails at runtime.
+    color: {
+      scale: scaleOrdinal<string, string>()
+        .domain(["Tulot", "Menot"])
+        .range([colourFor(2), colourFor(1)]),
+      // Two series, so a legend is not optional: identity must never rest on
+      // colour alone.
+      legend: colorLegend({ label: "" }),
+    },
+    ...MARK_FOCUS,
+    tooltip,
+  });
+};
+
+export const MonthlyFlowChart = ({ months }: { readonly months: readonly MonthlyPoint[] }) => {
+  const definition = useMemo(() => monthlyDefinition(months), [months]);
 
   if (months.length === 0) return <p className="text-muted">Ei vielä dataa.</p>;
 
