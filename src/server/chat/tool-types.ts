@@ -48,6 +48,10 @@ export type ToolArgs = {
   readonly amountEur?: string;
   /** Free text matched against a transaction's own bank text. */
   readonly search?: string;
+  /** One classification rule's payee pattern. */
+  readonly pattern?: string;
+  /** Classification rules to store, for the tools that write them. */
+  readonly rules?: readonly { readonly pattern: string; readonly category: string }[];
 };
 
 /** What a tool hands back: JSON, because that is what the model reads. */
@@ -55,7 +59,12 @@ export type JsonValue = string | number | boolean | null | readonly JsonValue[];
 export type ToolResult = { readonly [key: string]: JsonValue | ToolResult | readonly ToolResult[] };
 
 /**
- * The read-only tools the chat model may call (spec §8).
+ * The tools the chat model may call (spec §8).
+ *
+ * All but three only read. The three that write -- in `tools-rules.ts` -- write
+ * the classification and nothing else: no tool can create, change or delete a
+ * transaction, an account or a price, so the ledger the figures are derived
+ * from stays exactly what was imported.
  *
  * Every one is a thin wrapper over the same `core` function the dashboard calls,
  * so chat and screen cannot disagree about a number. None of them writes, none

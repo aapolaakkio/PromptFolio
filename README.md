@@ -212,12 +212,22 @@ get wrong:
 ## The assistant
 
 Ask questions in Finnish on **Avustaja**. It reads through the same functions the screens call, so
-chat and dashboard cannot disagree. It is read-only: no tool writes to the ledger.
+chat and dashboard cannot disagree. **No tool writes to the ledger** — not a transaction, not an
+account, not a price. Three tools do write, and what they write is the classification: you can ask
+it to sort the payees no rule recognises, correct a category that came out wrong, or drop a rule
+that matches too much.
+
+Three guards make that safe to give away. A new rule must name a category the app already has, and
+its pattern must occur in a payee your own ledger holds and no rule yet matches — a payee invented
+by the model, or planted in a statement's text, writes nothing. A rule **you** wrote is never
+touched: the assistant may revise a built-in rule or its own, and is told to say so when it can't.
+Every rule it stores is marked `ai` on **Kulutus**, where you can edit or delete it. A wrong rule
+misreads a total; it cannot alter a euro of what was imported.
 
 Tools: holdings, allocation, returns, value series, transactions, instruments, cash, spending,
 uncategorised spending, the money flow of a period, spending month by month, a single
-transaction's classification, the tax year, drift against target, where to put new money, and an
-exact decimal calculator. Every result carries the date it was computed for and whether any price
+transaction's classification, the tax year, drift against target, where to put new money, an exact
+decimal calculator, and the three that save, correct and remove a classification rule. Every result carries the date it was computed for and whether any price
 behind it is stale. The assistant reports the gap to a target but never recommends a trade, and
 where it mentions a sale it reports the gain that sale would realise.
 

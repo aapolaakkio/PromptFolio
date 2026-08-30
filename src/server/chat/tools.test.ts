@@ -12,6 +12,7 @@ let auth: (typeof import("../auth"))["auth"];
 let accountRoutes: (typeof import("../api/accounts"))["accountRoutes"];
 let instrumentRoutes: (typeof import("../api/instruments"))["instrumentRoutes"];
 let rebalanceRoutes: (typeof import("../api/rebalance"))["rebalanceRoutes"];
+let addRules: (typeof import("../spending/rules"))["addRules"];
 let buildChatTools: (typeof import("./tools"))["buildChatTools"];
 let db: ReturnType<(typeof import("../db"))["getDb"]>["db"];
 let transactions: (typeof import("../db/schema"))["transactions"];
@@ -22,6 +23,7 @@ beforeAll(async () => {
   accountRoutes = (await import("../api/accounts")).accountRoutes;
   instrumentRoutes = (await import("../api/instruments")).instrumentRoutes;
   rebalanceRoutes = (await import("../api/rebalance")).rebalanceRoutes;
+  addRules = (await import("../spending/rules")).addRules;
   buildChatTools = (await import("./tools")).buildChatTools;
   db = (await import("../db")).getDb().db;
   transactions = (await import("../db/schema")).transactions;
@@ -213,6 +215,7 @@ const seed = async (): Promise<{
   accountId: number;
   bankAccountId: number;
   cookie: string;
+  userId: string;
 }> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
   const accountId = await createAccount(cookie);
@@ -222,7 +225,14 @@ const seed = async (): Promise<{
   buy(accountId, instrumentId, "2026-01-02");
   price(instrumentId, "2026-01-02", 1000);
   price(instrumentId, "2026-06-01", 1200);
-  return { tools: buildChatTools(db, userId), instrumentId, accountId, bankAccountId, cookie };
+  return {
+    tools: buildChatTools(db, userId),
+    instrumentId,
+    accountId,
+    bankAccountId,
+    cookie,
+    userId,
+  };
 };
 
 describe("get_holdings", () => {
@@ -776,5 +786,126 @@ describe("get_transaction_class", () => {
 
     expect(result.count).toBe(1);
     expect(result.transactions[0]?.text).toContain("LIDL");
+  });
+});
+
+// The only tools in the app that write. What they may touch is the whole point:
+// the classification, never the ledger, and never a rule its owner wrote.
+describe("save_spending_rules", () => {
+  test("stores a rule for a payee the ledger actually holds", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+
+    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
+    // tools-rules.ts; the assertion only names the fields read below.
+    const result = toolNamed(tools, "save_spending_rules").run({
+      rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
+    }) as { added: readonly { pattern: string; label: string; matches: number }[] };
+
+    expect(result.added).toHaveLength(1);
+    expect(result.added[0]?.label).toBe("Ruokakauppa");
+    // Says what the rule now catches, so an answer can report the effect.
+    expect(result.added[0]?.matches).toBe(1);
+
+    // And the rule is live: the same payment now reads as groceries.
+    // SAFETY: as above -- get_spending's literal is fixed in tools.ts.
+    const spending = toolNamed(tools, "get_spending").run({
+      from: "2026-07-01",
+      to: "2026-07-31",
+    }) as { groups: readonly { label: string }[] };
+    expect(spending.groups.some((group) => group.label === "Ruokakauppa")).toBe(true);
+  });
+
+  test("refuses a payee that is nowhere in the ledger", async () => {
+    const { tools } = await seed();
+
+    // A statement line is text the app did not write. If a crafted one could
+    // talk the model into a rule, the rule would still have to name a merchant
+    // this ledger holds -- and this one does not.
+    // SAFETY: as above.
+    const result = toolNamed(tools, "save_spending_rules").run({
+      rules: [{ pattern: "KEKSITTY KAUPPA", category: "ruoka" }],
+    }) as { added: readonly unknown[]; skipped: readonly string[] };
+
+    expect(result.added).toEqual([]);
+    expect(result.skipped).toContain("KEKSITTY KAUPPA");
+  });
+
+  test("refuses a category the app does not have", async () => {
+    const { tools } = await seed();
+
+    expect(() =>
+      toolNamed(tools, "save_spending_rules").schema.parse({
+        rules: [{ pattern: "OUTOKAUPPA", category: "kryptovaluutta" }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("update_spending_rule and remove_spending_rule", () => {
+  test("corrects a rule it wrote itself", async () => {
+    const { tools, bankAccountId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+    toolNamed(tools, "save_spending_rules").run({
+      rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
+    });
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "update_spending_rule").run({
+      pattern: "OUTOKAUPPA",
+      category: "ravintolat",
+    }) as { changed: boolean; from: string; to: string };
+
+    expect(result.changed).toBe(true);
+    expect(result.from).toBe("Ruokakauppa");
+    expect(result.to).toBe("Ravintolat ja kahvilat");
+  });
+
+  test("will not touch a rule the user wrote", async () => {
+    const { tools, bankAccountId, userId } = await seed();
+    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+    // The user's own decision, stored the way the Kulutus page stores it.
+    addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
+
+    // SAFETY: as above.
+    // SAFETY: as above.
+    const changed = toolNamed(tools, "update_spending_rule").run({
+      pattern: "OUTOKAUPPA",
+      category: "ravintolat",
+    }) as { changed: boolean; reason: string };
+    // SAFETY: as above.
+    const removed = toolNamed(tools, "remove_spending_rule").run({
+      pattern: "OUTOKAUPPA",
+    }) as { removed: boolean; reason: string };
+
+    expect(changed.changed).toBe(false);
+    expect(changed.reason).toBe("owned-by-user");
+    expect(removed.removed).toBe(false);
+    expect(removed.reason).toBe("owned-by-user");
+  });
+
+  test("may repoint a built-in seed rule, which is not the user's own", async () => {
+    const { tools } = await seed();
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "update_spending_rule").run({
+      pattern: "K-MARKET",
+      category: "vapaa-aika",
+    }) as { changed: boolean; from: string };
+
+    expect(result.changed).toBe(true);
+    expect(result.from).toBe("Ruokakauppa");
+  });
+
+  test("reports a rule that is not there rather than inventing one", async () => {
+    const { tools } = await seed();
+
+    // SAFETY: as above.
+    const result = toolNamed(tools, "remove_spending_rule").run({
+      pattern: "EI TÄLLAISTA",
+    }) as { removed: boolean; reason: string };
+
+    expect(result.removed).toBe(false);
+    expect(result.reason).toBe("no-such-rule");
   });
 });

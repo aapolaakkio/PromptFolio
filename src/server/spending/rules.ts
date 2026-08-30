@@ -119,6 +119,81 @@ export const addRules = (
   return { added, rejected };
 };
 
+/**
+ * Which rules the assistant may change, and which are the owner's alone.
+ *
+ * A rule the person wrote themselves is a decision, not a guess: the assistant
+ * may add to it and may revise its own work or a built-in seed, but it can
+ * never overwrite what its owner decided. That asymmetry is the whole safety
+ * property of giving it write access at all -- everything it can touch, it can
+ * be asked to put back.
+ */
+const ASSISTANT_MAY_CHANGE: ReadonlySet<string> = new Set(["seed", "ai"]);
+
+export type RuleChange =
+  | { readonly ok: true; readonly pattern: string; readonly was: Category }
+  | { readonly ok: false; readonly reason: "no-such-rule" | "owned-by-user" };
+
+const storedRule = (
+  db: Db,
+  userId: string,
+  pattern: string,
+): { readonly category: string; readonly source: string } | undefined => {
+  // The built-in rules become rows on the first `rulesFor` call, not at sign-up.
+  // Reading the table straight would therefore find nothing at all for a user
+  // who has never opened Kulutus -- and report every seed rule as "no such
+  // rule" rather than as one that exists and may be changed.
+  rulesFor(db, userId);
+  return db
+    .select({ category: spendingRules.category, source: spendingRules.source })
+    .from(spendingRules)
+    .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, pattern)))
+    .all()[0];
+};
+
+/**
+ * Points an existing rule at a different category.
+ *
+ * `addRules` deliberately never overwrites, which leaves a wrong rule
+ * unfixable; this is the one way to correct one, and it refuses a rule whose
+ * source is `user`. The corrected rule becomes `ai`, because that is now who
+ * decided it -- provenance a person can see is what makes the change
+ * reviewable.
+ */
+export const recategoriseRule = (
+  db: Db,
+  userId: string,
+  pattern: string,
+  category: Category,
+): RuleChange => {
+  const target = pattern.trim().toUpperCase();
+  const existing = storedRule(db, userId, target);
+  if (existing === undefined) return { ok: false, reason: "no-such-rule" };
+  if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
+
+  db.update(spendingRules)
+    .set({ category, source: "ai" })
+    .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
+    .run();
+  // SAFETY: every stored category is written through `isCategory`, either by
+  // `addRules`, by this function, or by the seed table itself.
+  return { ok: true, pattern: target, was: existing.category as Category };
+};
+
+/** Deletes a rule the assistant is allowed to touch -- never one the user wrote. */
+export const retractRule = (db: Db, userId: string, pattern: string): RuleChange => {
+  const target = pattern.trim().toUpperCase();
+  const existing = storedRule(db, userId, target);
+  if (existing === undefined) return { ok: false, reason: "no-such-rule" };
+  if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
+
+  db.delete(spendingRules)
+    .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
+    .run();
+  // SAFETY: as in `recategoriseRule`.
+  return { ok: true, pattern: target, was: existing.category as Category };
+};
+
 /** Deletes one rule of this user's. Returns whether there was one to delete. */
 export const removeRule = (db: Db, userId: string, pattern: string): boolean => {
   const target = pattern.trim().toUpperCase();

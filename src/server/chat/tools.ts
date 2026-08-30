@@ -9,6 +9,7 @@ import {
   today,
 } from "./tool-types";
 import { buildMoneyTools } from "./tools-money";
+import { buildRuleTools } from "./tools-rules";
 
 import { allocateBy } from "../../core/allocation";
 import { cashBalancesAt, valueCash } from "../../core/cash";
@@ -475,4 +476,5 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     },
   },
   ...buildMoneyTools(db, userId),
+  ...buildRuleTools(db, userId),
 ];
