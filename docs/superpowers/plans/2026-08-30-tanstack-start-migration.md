@@ -92,10 +92,15 @@ Three things stay real HTTP routes, each for a reason:
 - **`/api/auth/*`** -- Better Auth's own client calls those exact URLs. A server function
   is reachable only through Start's RPC endpoint, so this is not portable.
 - **`/api/health`** -- a URL is the interface. Docker and any uptime check want to curl it.
-- **The chat stream** -- SSE, and the one request that is quiet for minutes at a time.
-  Server functions can return a raw `Response`, so this should work as one; the spike
-  proves it before the other 41 move, because if it cannot stream the shape of stage 7
-  changes.
+- **The chat stream** -- and it turns out this one does *not* have to stay a route.
+  `createServerFn({ method: "GET", response: "raw" })` returning a `Response` over a
+  `ReadableStream` streams incrementally: the spike's three ticks arrived 0.4 s apart,
+  which is the delay the handler put between them. So the chat becomes a server function
+  like everything else.
+
+  Worth knowing from the same probe: the RPC endpoint answers **403 without an `Origin`
+  header**. Server functions are origin-guarded by default, which is a property this app
+  wants and did not have before.
 
 The tests move with them, and get shorter: a test that builds a `Request`, calls
 `accountRoutes["/api/accounts"].POST(...)` and parses JSON back becomes a call to the
