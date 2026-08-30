@@ -19,27 +19,27 @@
     "@better-auth/cli": "1.5.0-beta.13",
     "@oxlint/plugins": "1.80.0",
     "@types/bun": "latest",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "bun-plugin-tailwind": "^0.1.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
-    "typescript": "^7"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
     "@better-auth/drizzle-adapter": "1.7.2",
-    "@tanstack/charts": "^0.16",
-    "@tanstack/react-charts": "^0.16",
-    "@tanstack/react-query": "^5.102",
-    "@tanstack/react-router": "^1.170",
+    "@tanstack/charts": "^0.16.0",
+    "@tanstack/react-charts": "^0.16.0",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-router": "^1.170.32",
     "better-auth": "1.7.2",
     "drizzle-orm": "1.0.0-rc.5-169397b",
-    "react": "^19",
-    "react-dom": "^19",
-    "tailwindcss": "^4.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3",
     "unpdf": "^1.8.1",
-    "zod": "^4"
+    "zod": "^4.5.2"
   }
 }
