@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "pnpm db:migrate:local && vite dev",
     "build": "vite build",
-    "deploy": "vite build && wrangler deploy",
-    "preview": "vite build && wrangler dev",
+    "deploy": "vite build && pnpm db:migrate && wrangler deploy",
+    "preview": "vite build && pnpm db:migrate:local && wrangler dev",
     "cf-typegen": "wrangler types --env-file .env.example",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply promptfolio --remote",

@@ -41,35 +41,36 @@ Two kinds of account, kept apart deliberately:
 
 ## Requirements
 
-- **Docker and Docker Compose** (recommended), or
-- **Node 26+ and pnpm 11+** directly.
+- **Node 26+ and pnpm 11+**.
+- **A Cloudflare account** for the deployed instance. Local development needs none: the Worker
+  and its D1 database run on your machine.
 
 ## First run
 
-### Docker
-
-```bash
-cp .env.example .env
-echo "BETTER_AUTH_SECRET=$(node -e "console.log(crypto.randomUUID()+crypto.randomUUID())")" >> .env
-docker compose up --build -d
-curl -fsS localhost:3000/api/health     # {"ok":true}
-```
-
-The container creates `/data/promptfolio.db` in the `promptfolio-data` volume and applies every
-migration before serving. It does this on every boot; migrations are additive and idempotent, so
-re-running them against a current database is a no-op.
-
-### Without Docker
+### Locally
 
 ```bash
 pnpm install
 cp .env.example .env
 echo "BETTER_AUTH_SECRET=$(node -e "console.log(crypto.randomUUID()+crypto.randomUUID())")" >> .env
-pnpm run build
-pnpm start
+pnpm run dev
 ```
 
-`pnpm start` migrates before serving, exactly as the container does.
+`pnpm run dev` applies every migration to a local D1 under `.wrangler/state` before serving, and
+`pnpm run preview` does the same for the production build. Migrations are additive and
+idempotent, so re-running them against a current database is a no-op.
+
+### On Cloudflare
+
+```bash
+pnpm exec wrangler d1 create promptfolio        # paste the id into wrangler.jsonc
+pnpm exec wrangler secret put BETTER_AUTH_SECRET
+pnpm run deploy
+```
+
+`pnpm run deploy` migrates the remote database before uploading the Worker, so a schema change
+never ships without its table. `BASE_URL` and `ALLOW_SIGNUP` are set in `wrangler.jsonc`; every
+other variable below is a secret, set with `wrangler secret put`.
 
 ### Creating your account
 
@@ -92,14 +93,13 @@ curl -s localhost:3000/api/auth/sign-up/email \
 
 ## Configuration
 
-| Variable             | Default                    | Purpose                                                                                                                                                              |
-| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET` | _(none — refuses to boot)_ | Session signing key, ≥32 characters. No fallback and no usable example value: a default secret in a self-hosted financial app is a silent authentication bypass.     |
-| `BASE_URL`           | `http://localhost:3000`    | Where the app is reached                                                                                                                                             |
-| `DATABASE_PATH`      | `./data/promptfolio.db`    | SQLite file (the container uses `/data/promptfolio.db`)                                                                                                              |
-| `PORT`               | `3000`                     | HTTP port                                                                                                                                                            |
-| `ALLOW_SIGNUP`       | `false`                    | Opens `POST /api/auth/sign-up/email`. Read once at boot.                                                                                                             |
-| `ANTHROPIC_API_KEY`  | _(none)_                   | Enables the assistant and the import-time classification of new payees. Without it, chat answers 503 and classification is skipped silently — everything else works. |
+| Variable             | Default                     | Purpose                                                                                                                                                              |
+| -------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET` | _(none — refuses to serve)_ | Session signing key, ≥32 characters. No fallback and no usable example value: a default secret in a self-hosted financial app is a silent authentication bypass.     |
+| `BASE_URL`           | `http://localhost:3000`     | Where the app is reached                                                                                                                                             |
+| `ALLOW_SIGNUP`       | `false`                     | Opens `POST /api/auth/sign-up/email`. Read once at boot.                                                                                                             |
+| `CRON_SECRET`        | _(none)_                    | Authorises a hand-run `POST /api/cron/refresh`. Empty refuses every call.                                                                                            |
+| `ANTHROPIC_API_KEY`  | _(none)_                    | Enables the assistant and the import-time classification of new payees. Without it, chat answers 503 and classification is skipped silently — everything else works. |
 
 ## Getting data in
 
@@ -361,25 +361,18 @@ deliberately stops asking.
 To run it by hand:
 
 ```bash
-docker compose exec promptfolio node -e "
-const { getDb } = await import('./src/server/db');
-const { runScheduledRefresh } = await import('./src/server/prices/refresh');
-await runScheduledRefresh(getDb().db);
-"
+curl -fsS -X POST -H "authorization: Bearer $CRON_SECRET" https://your-worker.workers.dev/api/cron/refresh
 ```
 
 ## Backup and restore
 
-Everything is one SQLite file (plus `-wal`/`-shm` while running).
+Everything is one D1 database.
 
 ```bash
-docker compose stop promptfolio
-docker compose cp promptfolio:/data/promptfolio.db ./backup-$(date +%F).db
-docker compose start promptfolio
+pnpm exec wrangler d1 export promptfolio --remote --output backup-$(date +%F).sql
 ```
 
-Stopping first checkpoints the WAL, so the copy is self-contained. Restore by copying the file
-back the same way. Without Docker, the same applies to `DATABASE_PATH`.
+Restore into an empty database with `wrangler d1 execute promptfolio --remote --file <backup>`.
 
 ## Development
 
