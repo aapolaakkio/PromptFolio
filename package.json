@@ -6,7 +6,7 @@
     "dev": "pnpm db:migrate:local && vite dev",
     "build": "vite build",
     "deploy": "vite build && pnpm db:migrate && wrangler deploy",
-    "preview": "vite build && pnpm db:migrate:local && wrangler dev",
+    "preview": "vite build && pnpm db:migrate:local && wrangler dev --port 3000",
     "cf-typegen": "wrangler types --env-file .env.example",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply promptfolio --remote",
