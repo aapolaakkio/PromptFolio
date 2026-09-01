@@ -8,289 +8,289 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from "./app/__root";
-import { Route as AuthenticatedRouteImport } from "./app/_authenticated";
-import { Route as LoginRouteImport } from "./app/login";
-import { Route as AuthenticatedIndexRouteImport } from "./app/_authenticated/index";
-import { Route as AuthenticatedCashRouteImport } from "./app/_authenticated/cash";
-import { Route as AuthenticatedChatRouteImport } from "./app/_authenticated/chat";
-import { Route as AuthenticatedHoldingsRouteImport } from "./app/_authenticated/holdings";
-import { Route as AuthenticatedImportsRouteImport } from "./app/_authenticated/imports";
-import { Route as AuthenticatedRebalanceRouteImport } from "./app/_authenticated/rebalance";
-import { Route as AuthenticatedReconcileRouteImport } from "./app/_authenticated/reconcile";
-import { Route as AuthenticatedSpendingRouteImport } from "./app/_authenticated/spending";
-import { Route as AuthenticatedTaxRouteImport } from "./app/_authenticated/tax";
-import { Route as ApiAuthSplatRouteImport } from "./app/api/auth/$";
-import { Route as ApiCronRefreshRouteImport } from "./app/api/cron/refresh";
+import { Route as rootRouteImport } from './app/__root'
+import { Route as AuthenticatedRouteImport } from './app/_authenticated'
+import { Route as LoginRouteImport } from './app/login'
+import { Route as AuthenticatedIndexRouteImport } from './app/_authenticated/index'
+import { Route as AuthenticatedCashRouteImport } from './app/_authenticated/cash'
+import { Route as AuthenticatedChatRouteImport } from './app/_authenticated/chat'
+import { Route as AuthenticatedHoldingsRouteImport } from './app/_authenticated/holdings'
+import { Route as AuthenticatedImportsRouteImport } from './app/_authenticated/imports'
+import { Route as AuthenticatedRebalanceRouteImport } from './app/_authenticated/rebalance'
+import { Route as AuthenticatedReconcileRouteImport } from './app/_authenticated/reconcile'
+import { Route as AuthenticatedSpendingRouteImport } from './app/_authenticated/spending'
+import { Route as AuthenticatedTaxRouteImport } from './app/_authenticated/tax'
+import { Route as ApiAuthSplatRouteImport } from './app/api/auth/$'
+import { Route as ApiCronRefreshRouteImport } from './app/api/cron/refresh'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
-  id: "/_authenticated",
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const LoginRoute = LoginRouteImport.update({
-  id: "/login",
-  path: "/login",
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedCashRoute = AuthenticatedCashRouteImport.update({
-  id: "/cash",
-  path: "/cash",
+  id: '/cash',
+  path: '/cash',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
-  id: "/chat",
-  path: "/chat",
+  id: '/chat',
+  path: '/chat',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedHoldingsRoute = AuthenticatedHoldingsRouteImport.update({
-  id: "/holdings",
-  path: "/holdings",
+  id: '/holdings',
+  path: '/holdings',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedImportsRoute = AuthenticatedImportsRouteImport.update({
-  id: "/imports",
-  path: "/imports",
+  id: '/imports',
+  path: '/imports',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedRebalanceRoute = AuthenticatedRebalanceRouteImport.update({
-  id: "/rebalance",
-  path: "/rebalance",
+  id: '/rebalance',
+  path: '/rebalance',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedReconcileRoute = AuthenticatedReconcileRouteImport.update({
-  id: "/reconcile",
-  path: "/reconcile",
+  id: '/reconcile',
+  path: '/reconcile',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedSpendingRoute = AuthenticatedSpendingRouteImport.update({
-  id: "/spending",
-  path: "/spending",
+  id: '/spending',
+  path: '/spending',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedTaxRoute = AuthenticatedTaxRouteImport.update({
-  id: "/tax",
-  path: "/tax",
+  id: '/tax',
+  path: '/tax',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
-  id: "/api/auth/$",
-  path: "/api/auth/$",
+  id: '/api/auth/$',
+  path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const ApiCronRefreshRoute = ApiCronRefreshRouteImport.update({
-  id: "/api/cron/refresh",
-  path: "/api/cron/refresh",
+  id: '/api/cron/refresh',
+  path: '/api/cron/refresh',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof AuthenticatedIndexRoute;
-  "/login": typeof LoginRoute;
-  "/cash": typeof AuthenticatedCashRoute;
-  "/chat": typeof AuthenticatedChatRoute;
-  "/holdings": typeof AuthenticatedHoldingsRoute;
-  "/imports": typeof AuthenticatedImportsRoute;
-  "/rebalance": typeof AuthenticatedRebalanceRoute;
-  "/reconcile": typeof AuthenticatedReconcileRoute;
-  "/spending": typeof AuthenticatedSpendingRoute;
-  "/tax": typeof AuthenticatedTaxRoute;
-  "/api/auth/$": typeof ApiAuthSplatRoute;
-  "/api/cron/refresh": typeof ApiCronRefreshRoute;
+  '/': typeof AuthenticatedIndexRoute
+  '/login': typeof LoginRoute
+  '/cash': typeof AuthenticatedCashRoute
+  '/chat': typeof AuthenticatedChatRoute
+  '/holdings': typeof AuthenticatedHoldingsRoute
+  '/imports': typeof AuthenticatedImportsRoute
+  '/rebalance': typeof AuthenticatedRebalanceRoute
+  '/reconcile': typeof AuthenticatedReconcileRoute
+  '/spending': typeof AuthenticatedSpendingRoute
+  '/tax': typeof AuthenticatedTaxRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRoutesByTo {
-  "/login": typeof LoginRoute;
-  "/cash": typeof AuthenticatedCashRoute;
-  "/chat": typeof AuthenticatedChatRoute;
-  "/holdings": typeof AuthenticatedHoldingsRoute;
-  "/imports": typeof AuthenticatedImportsRoute;
-  "/rebalance": typeof AuthenticatedRebalanceRoute;
-  "/reconcile": typeof AuthenticatedReconcileRoute;
-  "/spending": typeof AuthenticatedSpendingRoute;
-  "/tax": typeof AuthenticatedTaxRoute;
-  "/": typeof AuthenticatedIndexRoute;
-  "/api/auth/$": typeof ApiAuthSplatRoute;
-  "/api/cron/refresh": typeof ApiCronRefreshRoute;
+  '/login': typeof LoginRoute
+  '/cash': typeof AuthenticatedCashRoute
+  '/chat': typeof AuthenticatedChatRoute
+  '/holdings': typeof AuthenticatedHoldingsRoute
+  '/imports': typeof AuthenticatedImportsRoute
+  '/rebalance': typeof AuthenticatedRebalanceRoute
+  '/reconcile': typeof AuthenticatedReconcileRoute
+  '/spending': typeof AuthenticatedSpendingRoute
+  '/tax': typeof AuthenticatedTaxRoute
+  '/': typeof AuthenticatedIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport;
-  "/_authenticated": typeof AuthenticatedRouteWithChildren;
-  "/login": typeof LoginRoute;
-  "/_authenticated/cash": typeof AuthenticatedCashRoute;
-  "/_authenticated/chat": typeof AuthenticatedChatRoute;
-  "/_authenticated/holdings": typeof AuthenticatedHoldingsRoute;
-  "/_authenticated/imports": typeof AuthenticatedImportsRoute;
-  "/_authenticated/rebalance": typeof AuthenticatedRebalanceRoute;
-  "/_authenticated/reconcile": typeof AuthenticatedReconcileRoute;
-  "/_authenticated/spending": typeof AuthenticatedSpendingRoute;
-  "/_authenticated/tax": typeof AuthenticatedTaxRoute;
-  "/_authenticated/": typeof AuthenticatedIndexRoute;
-  "/api/auth/$": typeof ApiAuthSplatRoute;
-  "/api/cron/refresh": typeof ApiCronRefreshRoute;
+  __root__: typeof rootRouteImport
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_authenticated/cash': typeof AuthenticatedCashRoute
+  '/_authenticated/chat': typeof AuthenticatedChatRoute
+  '/_authenticated/holdings': typeof AuthenticatedHoldingsRoute
+  '/_authenticated/imports': typeof AuthenticatedImportsRoute
+  '/_authenticated/rebalance': typeof AuthenticatedRebalanceRoute
+  '/_authenticated/reconcile': typeof AuthenticatedReconcileRoute
+  '/_authenticated/spending': typeof AuthenticatedSpendingRoute
+  '/_authenticated/tax': typeof AuthenticatedTaxRoute
+  '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/refresh': typeof ApiCronRefreshRoute
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
+  fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | "/"
-    | "/login"
-    | "/cash"
-    | "/chat"
-    | "/holdings"
-    | "/imports"
-    | "/rebalance"
-    | "/reconcile"
-    | "/spending"
-    | "/tax"
-    | "/api/auth/$"
-    | "/api/cron/refresh";
-  fileRoutesByTo: FileRoutesByTo;
+    | '/'
+    | '/login'
+    | '/cash'
+    | '/chat'
+    | '/holdings'
+    | '/imports'
+    | '/rebalance'
+    | '/reconcile'
+    | '/spending'
+    | '/tax'
+    | '/api/auth/$'
+    | '/api/cron/refresh'
+  fileRoutesByTo: FileRoutesByTo
   to:
-    | "/login"
-    | "/cash"
-    | "/chat"
-    | "/holdings"
-    | "/imports"
-    | "/rebalance"
-    | "/reconcile"
-    | "/spending"
-    | "/tax"
-    | "/"
-    | "/api/auth/$"
-    | "/api/cron/refresh";
+    | '/login'
+    | '/cash'
+    | '/chat'
+    | '/holdings'
+    | '/imports'
+    | '/rebalance'
+    | '/reconcile'
+    | '/spending'
+    | '/tax'
+    | '/'
+    | '/api/auth/$'
+    | '/api/cron/refresh'
   id:
-    | "__root__"
-    | "/_authenticated"
-    | "/login"
-    | "/_authenticated/cash"
-    | "/_authenticated/chat"
-    | "/_authenticated/holdings"
-    | "/_authenticated/imports"
-    | "/_authenticated/rebalance"
-    | "/_authenticated/reconcile"
-    | "/_authenticated/spending"
-    | "/_authenticated/tax"
-    | "/_authenticated/"
-    | "/api/auth/$"
-    | "/api/cron/refresh";
-  fileRoutesById: FileRoutesById;
+    | '__root__'
+    | '/_authenticated'
+    | '/login'
+    | '/_authenticated/cash'
+    | '/_authenticated/chat'
+    | '/_authenticated/holdings'
+    | '/_authenticated/imports'
+    | '/_authenticated/rebalance'
+    | '/_authenticated/reconcile'
+    | '/_authenticated/spending'
+    | '/_authenticated/tax'
+    | '/_authenticated/'
+    | '/api/auth/$'
+    | '/api/cron/refresh'
+  fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren;
-  LoginRoute: typeof LoginRoute;
-  ApiAuthSplatRoute: typeof ApiAuthSplatRoute;
-  ApiCronRefreshRoute: typeof ApiCronRefreshRoute;
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCronRefreshRoute: typeof ApiCronRefreshRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    "/_authenticated": {
-      id: "/_authenticated";
-      path: "";
-      fullPath: "/";
-      preLoaderRoute: typeof AuthenticatedRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/login": {
-      id: "/login";
-      path: "/login";
-      fullPath: "/login";
-      preLoaderRoute: typeof LoginRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/_authenticated/": {
-      id: "/_authenticated/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof AuthenticatedIndexRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/cash": {
-      id: "/_authenticated/cash";
-      path: "/cash";
-      fullPath: "/cash";
-      preLoaderRoute: typeof AuthenticatedCashRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/chat": {
-      id: "/_authenticated/chat";
-      path: "/chat";
-      fullPath: "/chat";
-      preLoaderRoute: typeof AuthenticatedChatRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/holdings": {
-      id: "/_authenticated/holdings";
-      path: "/holdings";
-      fullPath: "/holdings";
-      preLoaderRoute: typeof AuthenticatedHoldingsRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/imports": {
-      id: "/_authenticated/imports";
-      path: "/imports";
-      fullPath: "/imports";
-      preLoaderRoute: typeof AuthenticatedImportsRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/rebalance": {
-      id: "/_authenticated/rebalance";
-      path: "/rebalance";
-      fullPath: "/rebalance";
-      preLoaderRoute: typeof AuthenticatedRebalanceRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/reconcile": {
-      id: "/_authenticated/reconcile";
-      path: "/reconcile";
-      fullPath: "/reconcile";
-      preLoaderRoute: typeof AuthenticatedReconcileRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/spending": {
-      id: "/_authenticated/spending";
-      path: "/spending";
-      fullPath: "/spending";
-      preLoaderRoute: typeof AuthenticatedSpendingRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/tax": {
-      id: "/_authenticated/tax";
-      path: "/tax";
-      fullPath: "/tax";
-      preLoaderRoute: typeof AuthenticatedTaxRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/api/auth/$": {
-      id: "/api/auth/$";
-      path: "/api/auth/$";
-      fullPath: "/api/auth/$";
-      preLoaderRoute: typeof ApiAuthSplatRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/api/cron/refresh": {
-      id: "/api/cron/refresh";
-      path: "/api/cron/refresh";
-      fullPath: "/api/cron/refresh";
-      preLoaderRoute: typeof ApiCronRefreshRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/': {
+      id: '/_authenticated/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/cash': {
+      id: '/_authenticated/cash'
+      path: '/cash'
+      fullPath: '/cash'
+      preLoaderRoute: typeof AuthenticatedCashRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/chat': {
+      id: '/_authenticated/chat'
+      path: '/chat'
+      fullPath: '/chat'
+      preLoaderRoute: typeof AuthenticatedChatRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/holdings': {
+      id: '/_authenticated/holdings'
+      path: '/holdings'
+      fullPath: '/holdings'
+      preLoaderRoute: typeof AuthenticatedHoldingsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/imports': {
+      id: '/_authenticated/imports'
+      path: '/imports'
+      fullPath: '/imports'
+      preLoaderRoute: typeof AuthenticatedImportsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/rebalance': {
+      id: '/_authenticated/rebalance'
+      path: '/rebalance'
+      fullPath: '/rebalance'
+      preLoaderRoute: typeof AuthenticatedRebalanceRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/reconcile': {
+      id: '/_authenticated/reconcile'
+      path: '/reconcile'
+      fullPath: '/reconcile'
+      preLoaderRoute: typeof AuthenticatedReconcileRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/spending': {
+      id: '/_authenticated/spending'
+      path: '/spending'
+      fullPath: '/spending'
+      preLoaderRoute: typeof AuthenticatedSpendingRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/tax': {
+      id: '/_authenticated/tax'
+      path: '/tax'
+      fullPath: '/tax'
+      preLoaderRoute: typeof AuthenticatedTaxRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/cron/refresh': {
+      id: '/api/cron/refresh'
+      path: '/api/cron/refresh'
+      fullPath: '/api/cron/refresh'
+      preLoaderRoute: typeof ApiCronRefreshRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
-  AuthenticatedCashRoute: typeof AuthenticatedCashRoute;
-  AuthenticatedChatRoute: typeof AuthenticatedChatRoute;
-  AuthenticatedHoldingsRoute: typeof AuthenticatedHoldingsRoute;
-  AuthenticatedImportsRoute: typeof AuthenticatedImportsRoute;
-  AuthenticatedRebalanceRoute: typeof AuthenticatedRebalanceRoute;
-  AuthenticatedReconcileRoute: typeof AuthenticatedReconcileRoute;
-  AuthenticatedSpendingRoute: typeof AuthenticatedSpendingRoute;
-  AuthenticatedTaxRoute: typeof AuthenticatedTaxRoute;
-  AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute;
+  AuthenticatedCashRoute: typeof AuthenticatedCashRoute
+  AuthenticatedChatRoute: typeof AuthenticatedChatRoute
+  AuthenticatedHoldingsRoute: typeof AuthenticatedHoldingsRoute
+  AuthenticatedImportsRoute: typeof AuthenticatedImportsRoute
+  AuthenticatedRebalanceRoute: typeof AuthenticatedRebalanceRoute
+  AuthenticatedReconcileRoute: typeof AuthenticatedReconcileRoute
+  AuthenticatedSpendingRoute: typeof AuthenticatedSpendingRoute
+  AuthenticatedTaxRoute: typeof AuthenticatedTaxRoute
+  AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -303,27 +303,27 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedSpendingRoute: AuthenticatedSpendingRoute,
   AuthenticatedTaxRoute: AuthenticatedTaxRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
-};
+}
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
   AuthenticatedRouteChildren,
-);
+)
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronRefreshRoute: ApiCronRefreshRoute,
-};
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()
 
-import type { getRouter } from "./router.tsx";
-import type { createStart } from "@tanstack/react-start";
-declare module "@tanstack/react-start" {
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
   interface Register {
-    ssr: true;
-    router: Awaited<ReturnType<typeof getRouter>>;
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
   }
 }

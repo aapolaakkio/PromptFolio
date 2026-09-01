@@ -1,7 +1,13 @@
 import { defineConfig } from "oxlint";
 
 export default defineConfig({
-  ignorePatterns: [".claude/**", "dist/**", "drizzle/**", "tools/oxlint/anti-slop/**"],
+  ignorePatterns: [
+    ".claude/**",
+    "dist/**",
+    "drizzle/**",
+    "tools/oxlint/anti-slop/**",
+    "src/web/routeTree.gen.ts",
+  ],
   jsPlugins: [{ name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" }],
   rules: {
     "anti-slop/no-chained-type-assertions": "error",
