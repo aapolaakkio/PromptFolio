@@ -14,12 +14,25 @@ import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { accountTypeLabel } from "./account-type.ts";
 import { RenameAccount } from "./RenameAccount.tsx";
 import { ImportHistory } from "./ImportHistory.tsx";
-import { type CommitResult, minorToEur, summarise, type DraftResponse } from "./imports-draft.ts";
+import {
+  type CommitResult,
+  minorToEur,
+  summariseAll,
+  unknownAcross,
+  type DraftResponse,
+} from "./imports-draft.ts";
 import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 
-/** Which upload path produced the current `draft`, so resolving an unknown instrument re-previews the right one. */
+/** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
+
+/** One previewed input: the file it came from (none for the paste), and what the server read from it. */
+type Previewed = {
+  readonly name: string;
+  readonly file: File | null;
+  readonly draft: DraftResponse;
+};
 
 /**
  * What an import did, in one line.
@@ -36,12 +49,12 @@ const importSummary = (data: CommitResult): string => {
 export const ImportsPage = () => {
   const queryClient = useQueryClient();
   const [source, setSource] = useState<Source>("file");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [accountId, setAccountId] = useState<number | null>(null);
-  const [draft, setDraft] = useState<DraftResponse | null>(null);
+  const [previews, setPreviews] = useState<Previewed[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [results, setResults] = useState<string[]>([]);
   const [showCreateAccount, setShowCreateAccount] = useState(false);
   // Which import an undo request is currently in flight for -- disables that one
   // entry's button (see ImportHistory's own `undoingId` prop) without disabling the
@@ -101,9 +114,9 @@ export const ImportsPage = () => {
   const showCreateAccountForm = showCreateAccount || (!accounts.isPending && !hasAccounts);
 
   const resetOutcome = () => {
-    setDraft(null);
+    setPreviews(null);
     setError(null);
-    setResult(null);
+    setResults([]);
   };
 
   const selectSource = (next: Source) => {
@@ -111,34 +124,32 @@ export const ImportsPage = () => {
     resetOutcome();
   };
 
-  const fileForm = (): FormData => {
+  const fileForm = (file: File): FormData => {
     const data = new FormData();
-    // SAFETY: the "Esikatsele"/"Tuo" buttons below are disabled whenever
-    // `file` or `accountId` is null, so both are always set by the time
-    // either mutation actually runs.
-    data.set("file", file!);
+    data.set("file", file);
+    // SAFETY: the "Esikatsele" button below is disabled while `accountId` is
+    // null, so it is always set by the time a preview or commit runs.
     data.set("accountId", String(accountId));
     return data;
   };
 
-  const previewFile = useMutation({
-    mutationFn: () => previewImport({ data: fileForm() }),
-    onSuccess: (data) => {
-      setDraft(data);
-      setError(null);
-      setResult(null);
-    },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
-  });
+  const showPreviews = (data: Previewed[]) => {
+    setPreviews(data);
+    setError(null);
+    setResults([]);
+  };
 
-  const commitFile = useMutation({
-    mutationFn: () => commitImport({ data: fileForm() }),
-    onSuccess: (data) => {
-      setResult(importSummary(data));
-      setDraft(null);
-      void queryClient.invalidateQueries();
-    },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
+  const previewFile = useMutation({
+    mutationFn: () =>
+      Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          file,
+          draft: await previewImport({ data: fileForm(file) }),
+        })),
+      ),
+    onSuccess: showPreviews,
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
   // The OP paste text travels from the <textarea> to this body untouched --
@@ -154,29 +165,46 @@ export const ImportsPage = () => {
   });
 
   const previewPaste = useMutation({
-    mutationFn: () => previewOpPaste({ data: pasteBody() }),
-    onSuccess: (data) => {
-      setDraft(data);
-      setError(null);
-      setResult(null);
-    },
+    mutationFn: async () => [
+      { name: "OP-liite", file: null, draft: await previewOpPaste({ data: pasteBody() }) },
+    ],
+    onSuccess: showPreviews,
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
-  const commitPaste = useMutation({
-    mutationFn: () => commitOpPaste({ data: pasteBody() }),
-    onSuccess: (data) => {
-      setResult(importSummary(data));
-      setDraft(null);
-      void queryClient.invalidateQueries();
+  // One input at a time, so each file stays its own import with its own undo.
+  // A failure stops the loop: the files before it are in, the failing one is
+  // named, and the rest stay in the preview for a retry.
+  const commit = useMutation({
+    mutationFn: async () => {
+      for (const entry of previews ?? []) {
+        try {
+          const data =
+            entry.file === null
+              ? await commitOpPaste({ data: pasteBody() })
+              : await commitImport({ data: fileForm(entry.file) });
+          setResults((prev) => [...prev, `${entry.name}: ${importSummary(data)}`]);
+          setPreviews((prev) => prev?.filter((p) => p !== entry) ?? null);
+          setFiles((prev) => prev.filter((f) => f !== entry.file));
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Tuonti epäonnistui";
+          throw new Error(`${entry.name}: ${message}`);
+        }
+      }
+    },
+    onSuccess: () => {
+      setPreviews(null);
+      setError(null);
     },
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
+    onSettled: () => void queryClient.invalidateQueries(),
   });
 
   const preview = source === "file" ? previewFile : previewPaste;
-  const commit = source === "file" ? commitFile : commitPaste;
 
-  const summary = draft ? summarise(draft) : null;
+  const drafts = (previews ?? []).map((p) => p.draft);
+  const summary = previews ? summariseAll(drafts) : null;
+  const unknown = unknownAcross(drafts);
 
   return (
     <>
@@ -256,19 +284,20 @@ export const ImportsPage = () => {
       {source === "file" ? (
         <section className="card mt-4">
           <label>
-            CSV-tiedosto (Nordnet)
+            CSV-tiedostot (Nordnet) — yhden tai useamman kerralla
             <input
               type="file"
               accept=".csv,text/csv"
+              multiple
               onChange={(e) => {
-                setFile(e.target.files?.[0] ?? null);
+                setFiles(Array.from(e.target.files ?? []));
                 resetOutcome();
               }}
             />
           </label>
           <button
             type="button"
-            disabled={!file || accountId === null || previewFile.isPending}
+            disabled={files.length === 0 || accountId === null || previewFile.isPending}
             onClick={() => previewFile.mutate()}
           >
             {previewFile.isPending ? "Luetaan…" : "Esikatsele"}
@@ -303,86 +332,28 @@ export const ImportsPage = () => {
           {error}
         </p>
       )}
-      {result && (
-        <p role="status" className="mt-4 text-gain">
-          {result}
-        </p>
+      {results.length > 0 && (
+        <ul role="status" className="mt-4 grid gap-1 text-gain">
+          {results.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       )}
 
-      {draft && summary && (
+      {previews && summary && (
         <>
-          <section className="card mt-6">
-            <h2>Esikatselu — {draft.broker}</h2>
-            <p>
-              {summary.good} tuotavaa riviä
-              {summary.problems > 0 && `, ${summary.problems} ongelmaa`}
-              {summary.unknown > 0 && `, ${summary.unknown} tuntematonta arvopaperia`}.
-            </p>
+          {previews.map((entry, index) => (
+            <PreviewCard key={`${index}-${entry.name}`} entry={entry} />
+          ))}
 
-            {/*
-              Every row, scrollable, rather than the first 50 and a count of
-              what was hidden: this is the last screen before the rows enter the
-              ledger, so the rows a reviewer most needs to check are exactly the
-              ones a cut-off list hides. The header stays put while the body
-              scrolls.
-            */}
-            <div className="max-h-112 overflow-auto rounded border border-line">
-              <table>
-                <thead className="sticky top-0 bg-surface">
-                  <tr>
-                    <th>Rivi</th>
-                    <th>Päivä</th>
-                    <th>Laji</th>
-                    <th>ISIN</th>
-                    <th className="num">Summa</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {draft.txns.map((t) => (
-                    <tr key={t.line}>
-                      <td className="num">{t.line}</td>
-                      <td>{fiDate(t.tradeDate)}</td>
-                      <td>{t.type}</td>
-                      <td>{t.isin ?? "—"}</td>
-                      <td className="num">{eur(minorToEur(t.amount))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          {draft.problems.length > 0 && (
-            <section className="card mt-4">
-              <h2>Ongelmalliset rivit</h2>
-              <p className="text-muted">
-                Näitä rivejä ei tuoda. Korjaa tiedosto tai jatka ilman niitä.
-              </p>
-              <ul className="mt-3 grid gap-2">
-                {draft.problems.map((p) => (
-                  <li key={p.line}>
-                    <strong>Rivi {p.line}:</strong> {p.message}
-                    <div className="font-mono text-xs text-muted">
-                      {p.rawLine !== undefined
-                        ? p.rawLine
-                        : Object.entries(p.raw)
-                            .map(([k, v]) => `${k}=${v}`)
-                            .join("  ")}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {draft.unknownIsins.length > 0 && (
+          {unknown.length > 0 && (
             <section className="mt-4">
               <h2>Tuntemattomat arvopaperit</h2>
               <p className="text-muted">
                 Lisää nämä ennen tuontia, jotta hinnat osataan hakea oikeasta lähteestä.
               </p>
               <div className="mt-3 grid gap-4 md:grid-cols-2">
-                {draft.unknownIsins.map((u) => (
+                {unknown.map((u) => (
                   <UnknownInstrumentForm
                     key={u.isin ?? u.name}
                     isin={u.isin}
@@ -401,7 +372,11 @@ export const ImportsPage = () => {
             disabled={!summary.canCommit || commit.isPending}
             onClick={() => commit.mutate()}
           >
-            {commit.isPending ? "Tuodaan…" : `Tuo ${summary.good} tapahtumaa`}
+            {commit.isPending
+              ? "Tuodaan…"
+              : previews.length > 1
+                ? `Tuo ${previews.length} tiedostoa (${summary.good} tapahtumaa)`
+                : `Tuo ${summary.good} tapahtumaa`}
           </button>
         </>
       )}
@@ -423,6 +398,83 @@ export const ImportsPage = () => {
           <ImportHistory records={history.data} undoingId={undoingId} onUndo={handleUndo} />
         )}
       </section>
+    </>
+  );
+};
+
+/** One file's preview: its rows, and the rows that could not be read. */
+const PreviewCard = ({ entry }: { readonly entry: Previewed }) => {
+  const { draft } = entry;
+  const summary = summariseAll([draft]);
+  return (
+    <>
+      <section className="card mt-6">
+        <h2>
+          Esikatselu — {entry.name} ({draft.broker})
+        </h2>
+        <p>
+          {summary.good} tuotavaa riviä
+          {summary.problems > 0 && `, ${summary.problems} ongelmaa`}
+          {summary.unknown > 0 && `, ${summary.unknown} tuntematonta arvopaperia`}.
+        </p>
+
+        {/*
+              Every row, scrollable, rather than the first 50 and a count of
+              what was hidden: this is the last screen before the rows enter the
+              ledger, so the rows a reviewer most needs to check are exactly the
+              ones a cut-off list hides. The header stays put while the body
+              scrolls.
+            */}
+        <div className="max-h-112 overflow-auto rounded border border-line">
+          <table>
+            <thead className="sticky top-0 bg-surface">
+              <tr>
+                <th>Rivi</th>
+                <th>Päivä</th>
+                <th>Laji</th>
+                <th>ISIN</th>
+                <th className="num">Summa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {draft.txns.map((t) => (
+                <tr key={t.line}>
+                  <td className="num">{t.line}</td>
+                  <td>{fiDate(t.tradeDate)}</td>
+                  <td>{t.type}</td>
+                  <td>{t.isin ?? "—"}</td>
+                  <td className="num">{eur(minorToEur(t.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {draft.problems.length > 0 && (
+        <section className="card mt-4">
+          <h2>Ongelmalliset rivit</h2>
+          <p className="text-muted">
+            Näitä rivejä ei tuoda. Korjaa tiedosto tai jatka ilman niitä.
+          </p>
+          <div className="mt-3 max-h-80 overflow-auto">
+            <ul className="grid gap-2">
+              {draft.problems.map((p) => (
+                <li key={p.line}>
+                  <strong>Rivi {p.line}:</strong> {p.message}
+                  <div className="font-mono text-xs text-muted">
+                    {p.rawLine !== undefined
+                      ? p.rawLine
+                      : Object.entries(p.raw)
+                          .map(([k, v]) => `${k}=${v}`)
+                          .join("  ")}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
     </>
   );
 };

@@ -1,6 +1,12 @@
 import { test, expect } from "vitest";
 import { z } from "zod";
-import { minorToEur, summarise, type DraftResponse } from "./imports-draft.ts";
+import {
+  minorToEur,
+  summarise,
+  summariseAll,
+  unknownAcross,
+  type DraftResponse,
+} from "./imports-draft.ts";
 
 // Test rows carry only the fields `summarise` reads; a typed factory keeps the
 // assertion out of the tests (anti-slop/require-safety-comment-for-type-assertion).
@@ -107,4 +113,28 @@ test("the dashboard's excluded-instrument shape accepts a holding with no ISIN",
   expect(schema.parse([{ instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" }])).toEqual([
     { instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" },
   ]);
+});
+
+test("summariseAll adds up every file and commits only when each file can", () => {
+  const ok = draft({ txns: [txnStub(2), txnStub(3)] });
+  const unknown = draft({
+    txns: [txnStub(4)],
+    unknownIsins: [{ isin: "FI0009000681", name: "NOKIA", currency: "EUR" }],
+  });
+  expect(summariseAll([ok, ok])).toEqual({ good: 4, problems: 0, unknown: 0, canCommit: true });
+  expect(summariseAll([ok, unknown]).canCommit).toBe(false);
+  expect(summariseAll([ok, unknown]).unknown).toBe(1);
+  // A file with nothing to import would only leave an empty import record.
+  expect(summariseAll([ok, draft()]).canCommit).toBe(false);
+  expect(summariseAll([]).canCommit).toBe(false);
+});
+
+test("unknownAcross lists an instrument once however many files name it", () => {
+  const nokia = { isin: "FI0009000681", name: "NOKIA", currency: "EUR" };
+  const byName = { isin: null, name: "OP-Maailma", currency: "EUR" };
+  const drafts = [
+    draft({ unknownIsins: [nokia, byName] }),
+    draft({ unknownIsins: [nokia, { ...byName, currency: "SEK" }] }),
+  ];
+  expect(unknownAcross(drafts)).toEqual([nokia, byName]);
 });

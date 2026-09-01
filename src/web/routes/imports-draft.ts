@@ -88,5 +88,30 @@ export const summarise = (draft: DraftResponse) => ({
   canCommit: draft.txns.length > 0 && draft.unknownIsins.length === 0,
 });
 
+/**
+ * The same over several files: every file must be importable on its own, since
+ * each becomes its own import record, and a file with nothing to import would
+ * leave only an empty record behind.
+ */
+export const summariseAll = (drafts: readonly DraftResponse[]) => {
+  const each = drafts.map(summarise);
+  return {
+    good: each.reduce((sum, s) => sum + s.good, 0),
+    problems: each.reduce((sum, s) => sum + s.problems, 0),
+    unknown: unknownAcross(drafts).length,
+    canCommit: each.length > 0 && each.every((s) => s.canCommit),
+  };
+};
+
+/** Unknown instruments once each, however many files name them; the first file's row wins. */
+export const unknownAcross = (drafts: readonly DraftResponse[]) => {
+  const seen = new Map<string, DraftResponse["unknownIsins"][number]>();
+  for (const u of drafts.flatMap((d) => d.unknownIsins)) {
+    const key = u.isin ?? u.name;
+    if (!seen.has(key)) seen.set(key, u);
+  }
+  return [...seen.values()];
+};
+
 /** `amount`/`fee` arrive as integer minor units (scale 2, core/money.ts) -- never a decimal string. */
 export const minorToEur = (minor: number): string => (minor / 100).toFixed(2);

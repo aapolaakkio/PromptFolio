@@ -149,43 +149,45 @@ export const SnapshotPaste = ({
             </p>
           )}
 
-          <table className="mt-3">
-            <thead>
-              <tr>
-                <th>Otteella</th>
-                <th className="num">Määrä</th>
-                <th className="num">Arvo</th>
-                <th>Arvopaperi täällä</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.name}>
-                  <td>{row.name}</td>
-                  <td className="num">{qty(row.quantity)}</td>
-                  <td className="num">{eur(row.marketValueEur)}</td>
-                  <td>
-                    <select
-                      value={mapping[row.name] ?? ""}
-                      onChange={(e) =>
-                        setMapping((current) => ({
-                          ...current,
-                          [row.name]: e.target.value === "" ? null : Number(e.target.value),
-                        }))
-                      }
-                    >
-                      <option value="">— valitse —</option>
-                      {(instruments.data ?? []).map((instrument) => (
-                        <option key={instrument.id} value={instrument.id}>
-                          {instrument.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
+          <div className="mt-3 max-h-112 overflow-auto rounded border border-line">
+            <table>
+              <thead className="sticky top-0 bg-surface">
+                <tr>
+                  <th>Otteella</th>
+                  <th className="num">Määrä</th>
+                  <th className="num">Arvo</th>
+                  <th>Arvopaperi täällä</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.name}>
+                    <td>{row.name}</td>
+                    <td className="num">{qty(row.quantity)}</td>
+                    <td className="num">{eur(row.marketValueEur)}</td>
+                    <td>
+                      <select
+                        value={mapping[row.name] ?? ""}
+                        onChange={(e) =>
+                          setMapping((current) => ({
+                            ...current,
+                            [row.name]: e.target.value === "" ? null : Number(e.target.value),
+                          }))
+                        }
+                      >
+                        <option value="">— valitse —</option>
+                        {(instruments.data ?? []).map((instrument) => (
+                          <option key={instrument.id} value={instrument.id}>
+                            {instrument.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <button
             type="button"

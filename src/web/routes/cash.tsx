@@ -21,6 +21,8 @@ import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { getCash } from "../server/portfolio.ts";
 import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
 
+type BankCommitResult = Awaited<ReturnType<typeof commitBankImport>>;
+
 /** What a person can record by hand, as the ledger stores it. */
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
 
@@ -37,7 +39,8 @@ const today = (): string => new Date().toISOString().slice(0, 10);
 export const CashPage = () => {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [imported, setImported] = useState<{ name: string; data: BankCommitResult }[]>([]);
   const [balance, setBalance] = useState("");
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,19 +71,39 @@ export const CashPage = () => {
   };
 
   const preview = useMutation({
-    mutationFn: (form: FormData) => previewBankImport({ data: form }),
+    mutationFn: () =>
+      Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          data: await previewBankImport({ data: formFor(file) }),
+        })),
+      ),
+    onMutate: () => setImported([]),
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
+  // One statement at a time. A failure names the file and stops; the ones
+  // before it are in, and re-importing them is a no-op the bank's archive
+  // ids guarantee, so a retry of the whole selection is safe.
   const commit = useMutation({
-    mutationFn: (form: FormData) => commitBankImport({ data: form }),
+    mutationFn: async () => {
+      for (const file of files) {
+        try {
+          const data = await commitBankImport({ data: formFor(file) });
+          setImported((prev) => [...prev, { name: file.name, data }]);
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Tuonti epäonnistui";
+          throw new Error(`${file.name}: ${message}`);
+        }
+      }
+    },
     onSuccess: () => {
       setError(null);
       preview.reset();
-      setFile(null);
-      refresh();
+      setFiles([]);
     },
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
+    onSettled: refresh,
   });
 
   const reconcile = useMutation({
@@ -102,10 +125,10 @@ export const CashPage = () => {
     onSuccess: refresh,
   });
 
-  const formFor = (): FormData | null => {
-    if (!file || chosen === null) return null;
+  const formFor = (file: File): FormData => {
     const form = new FormData();
     form.append("file", file);
+    // SAFETY: the buttons below are disabled while no account is chosen.
     form.append("accountId", String(chosen));
     return form;
   };
@@ -220,54 +243,53 @@ export const CashPage = () => {
             </p>
             <input
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.pdf,text/csv,application/pdf"
+              multiple
               onChange={(event) => {
-                setFile(event.target.files?.[0] ?? null);
+                setFiles(Array.from(event.target.files ?? []));
+                setImported([]);
                 preview.reset();
               }}
             />
             <div className="flex gap-2">
               <button
                 type="button"
-                disabled={!file || preview.isPending}
-                onClick={() => {
-                  const form = formFor();
-                  if (form) preview.mutate(form);
-                }}
+                disabled={files.length === 0 || chosen === null || preview.isPending}
+                onClick={() => preview.mutate()}
               >
                 {preview.isPending ? "Luetaan…" : "Esikatsele"}
               </button>
               <button
                 type="button"
                 disabled={!preview.data || commit.isPending}
-                onClick={() => {
-                  const form = formFor();
-                  if (form) commit.mutate(form);
-                }}
+                onClick={() => commit.mutate()}
               >
-                {commit.isPending ? "Tuodaan…" : "Tuo"}
+                {commit.isPending
+                  ? "Tuodaan…"
+                  : files.length > 1
+                    ? `Tuo ${files.length} tiedostoa`
+                    : "Tuo"}
               </button>
             </div>
 
-            {preview.data && (
-              <div className="grid gap-2">
+            {preview.data?.map(({ name, data }, index) => (
+              <div key={`${index}-${name}`} className="grid gap-2">
+                {preview.data.length > 1 && <h3>{name}</h3>}
                 <p>
-                  {preview.data.rows} tapahtumaa {fiDate(preview.data.from ?? "")}–
-                  {fiDate(preview.data.to ?? "")}. Sisään {eur(preview.data.totalInEur)}, ulos{" "}
-                  {eur(preview.data.totalOutEur)}.
+                  {data.rows} tapahtumaa {fiDate(data.from ?? "")}–{fiDate(data.to ?? "")}. Sisään{" "}
+                  {eur(data.totalInEur)}, ulos {eur(data.totalOutEur)}.
                 </p>
-                {preview.data.verified && (
+                {data.verified && (
                   <p className="text-muted text-sm">
-                    Tiliote ilmoittaa saldoksi {eur(preview.data.openingBalanceEur ?? "0.00")} →{" "}
-                    {eur(preview.data.closingBalanceEur ?? "0.00")}, ja rivit täsmäävät siihen.
-                    Alkusaldo kirjataan automaattisesti.
-                    {preview.data.maturityDate !== null &&
-                      ` Erääntyy ${fiDate(preview.data.maturityDate)}.`}
+                    Tiliote ilmoittaa saldoksi {eur(data.openingBalanceEur ?? "0.00")} →{" "}
+                    {eur(data.closingBalanceEur ?? "0.00")}, ja rivit täsmäävät siihen. Alkusaldo
+                    kirjataan automaattisesti.
+                    {data.maturityDate !== null && ` Erääntyy ${fiDate(data.maturityDate)}.`}
                   </p>
                 )}
-                {preview.data.problems.length > 0 && (
+                {data.problems.length > 0 && (
                   <p className="text-loss text-sm">
-                    {preview.data.problems.length} riviä ei voitu lukea; muut tuodaan.
+                    {data.problems.length} riviä ei voitu lukea; muut tuodaan.
                   </p>
                 )}
                 {/* A statement runs to hundreds of rows; the preview scrolls
@@ -276,8 +298,8 @@ export const CashPage = () => {
                 <div className="max-h-80 overflow-auto rounded border border-line">
                   <table>
                     <tbody>
-                      {preview.data.sample.map((row, index) => (
-                        <tr key={`${row.date}-${index}`}>
+                      {data.sample.map((row, rowIndex) => (
+                        <tr key={`${row.date}-${rowIndex}`}>
                           <td>{fiDate(row.date)}</td>
                           <td className="text-right">{eur(row.amountEur)}</td>
                           <td className="text-muted">{row.note}</td>
@@ -287,27 +309,24 @@ export const CashPage = () => {
                   </table>
                 </div>
               </div>
-            )}
+            ))}
 
-            {commit.data && (
-              <>
-                <p>{describeImport(commit.data)}</p>
-                {describeMaturity(commit.data) !== null && (
-                  <p className={commit.data.maturityConflict === null ? "" : "text-loss"}>
-                    {describeMaturity(commit.data)}
+            {imported.map(({ name, data }, index) => (
+              <div key={`${index}-${name}`}>
+                {imported.length > 1 && <h3>{name}</h3>}
+                <p>{describeImport(data)}</p>
+                {describeMaturity(data) !== null && (
+                  <p className={data.maturityConflict === null ? "" : "text-loss"}>
+                    {describeMaturity(data)}
                   </p>
                 )}
-                {commit.data.reconciliation && (
-                  <p
-                    className={
-                      commit.data.reconciliation.differenceEur === "0.00" ? "" : "text-loss"
-                    }
-                  >
-                    {describeReconciliation(commit.data.reconciliation)}
+                {data.reconciliation && (
+                  <p className={data.reconciliation.differenceEur === "0.00" ? "" : "text-loss"}>
+                    {describeReconciliation(data.reconciliation)}
                   </p>
                 )}
-              </>
-            )}
+              </div>
+            ))}
           </div>
 
           <div className="card grid gap-3">
