@@ -33,6 +33,8 @@ Käytettävissäsi on työkaluja, jotka lukevat käyttäjän oman salkun ja pank
 export type ChatEvent =
   | { readonly type: "conversation"; readonly id: number }
   | { readonly type: "tool"; readonly name: string }
+  /** A piece of the answer as the model writes it; the `answer` that follows is the whole. */
+  | { readonly type: "delta"; readonly text: string }
   | { readonly type: "answer"; readonly text: string }
   | { readonly type: "error"; readonly message: string };
 
@@ -71,8 +73,14 @@ export type TurnParams = {
  * tests drive the whole loop -- tool dispatch, event order, what goes back to
  * the model -- against a scripted model, with no account and no cost.
  */
+export type RunOptions = {
+  readonly signal?: AbortSignal;
+  /** Called with each piece of text as the model produces it. */
+  readonly onDelta?: (text: string) => void;
+};
+
 export type ChatClient = {
-  readonly run: (params: TurnParams, options?: { signal?: AbortSignal }) => Promise<ModelReply>;
+  readonly run: (params: TurnParams, options?: RunOptions) => Promise<ModelReply>;
 };
 
 /** Qwen thinks out loud between these tags when allowed to; the reader never should see it. */
@@ -153,22 +161,139 @@ const toReply = (parsed: z.infer<typeof ModelOutput>): ModelReply => {
   };
 };
 
+/**
+ * One streamed chunk, in either shape Workers AI uses: chat-completion deltas
+ * for the newer models, `response` pieces for the older ones. Anything else in
+ * a chunk is ignored rather than refused: a stream carries usage lines and
+ * keep-alives that are not the model's words.
+ */
+const StreamChunk = z.object({
+  response: z.string().nullish(),
+  tool_calls: z
+    .array(
+      z.object({
+        name: z.string(),
+        arguments: z.union([z.string(), z.json().transform((value) => JSON.stringify(value))]),
+      }),
+    )
+    .optional(),
+  choices: z
+    .array(
+      z.object({
+        delta: z
+          .object({
+            content: z.string().nullish(),
+            tool_calls: z
+              .array(
+                z.object({
+                  index: z.number().int().optional(),
+                  id: z.string().optional(),
+                  function: z
+                    .object({ name: z.string().optional(), arguments: z.string().optional() })
+                    .optional(),
+                }),
+              )
+              .optional(),
+          })
+          .optional(),
+      }),
+    )
+    .optional(),
+});
+
+type PartialCall = { id: string; name: string; arguments: string };
+
+/**
+ * Reads a server-sent-event stream from the binding into one reply, handing
+ * each piece of text on as it arrives. Tool calls come in pieces too, keyed by
+ * index, and are assembled here.
+ */
+export const readStream = async (
+  stream: ReadableStream<Uint8Array>,
+  onDelta: (text: string) => void,
+): Promise<ModelReply> => {
+  let text = "";
+  let calls: readonly PartialCall[] = [];
+  let buffer = "";
+
+  const apply = (chunk: z.infer<typeof StreamChunk>) => {
+    const piece = chunk.choices?.[0]?.delta?.content ?? chunk.response ?? "";
+    if (piece !== "") {
+      text += piece;
+      onDelta(piece);
+    }
+    for (const call of chunk.tool_calls ?? []) {
+      calls = [
+        ...calls,
+        { id: `call_${calls.length}`, name: call.name, arguments: call.arguments },
+      ];
+    }
+    for (const delta of chunk.choices?.[0]?.delta?.tool_calls ?? []) {
+      const index = delta.index ?? 0;
+      const current = calls[index] ?? { id: `call_${index}`, name: "", arguments: "" };
+      const next = {
+        id: delta.id ?? current.id,
+        name: delta.function?.name ?? current.name,
+        arguments: current.arguments + (delta.function?.arguments ?? ""),
+      };
+      calls =
+        index < calls.length ? calls.map((c, at) => (at === index ? next : c)) : [...calls, next];
+    }
+  };
+
+  const takeLine = (line: string) => {
+    if (!line.startsWith("data: ")) return;
+    const payload = line.slice("data: ".length).trim();
+    if (payload === "[DONE]" || payload === "") return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    const parsed = StreamChunk.safeParse(raw);
+    if (parsed.success) apply(parsed.data);
+  };
+
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) takeLine(line);
+  }
+  takeLine(buffer);
+
+  return { text: stripThinking(text), toolCalls: calls.filter((call) => call.name !== "") };
+};
+
 /** Workers AI, through the Worker's own binding: no key, no URL, billed to the account. */
 export const createClient = (): ChatClient => ({
   run: async (params, options) => {
-    const inputs: ChatCompletionsInput = {
+    const base = {
       messages: toApiMessages(params.messages),
       tools: [...params.tools],
       max_tokens: params.max_tokens,
       // Answers, not deliberation: the tool loop is where the work happens,
       // and thinking tokens are billed like any other.
       chat_template_kwargs: { enable_thinking: false },
+      // Streamed, so a reader sees words as they come rather than a blank
+      // screen until the whole answer exists.
+      stream: true,
     };
     const output = await env.AI.run(
       params.model,
-      inputs,
+      base,
       options?.signal ? { signal: options.signal } : undefined,
     );
+    // The binding types a streamed reply as a plain object; at runtime it is
+    // the stream itself. A model that ignored `stream` answers whole.
+    if (output instanceof ReadableStream) {
+      return readStream(output, options?.onDelta ?? (() => undefined));
+    }
     return toReply(ModelOutput.parse(output));
   },
 });
@@ -204,6 +329,49 @@ const runTool = async (tools: readonly ChatTool[], call: ToolCall): Promise<stri
 };
 
 /**
+ * A model call whose text pieces can be read as they arrive. The callback the
+ * client offers is turned into an async iterable, so `runTurn` can yield the
+ * pieces from inside its own loop; the iterable ends when the reply settles.
+ */
+const withDeltas = (client: ChatClient, params: TurnParams, signal?: AbortSignal) => {
+  let queue: readonly string[] = [];
+  let settled = false;
+  let wake: (() => void) | null = null;
+  const notify = () => {
+    const waiting = wake;
+    wake = null;
+    waiting?.();
+  };
+  const onDelta = (text: string) => {
+    queue = [...queue, text];
+    notify();
+  };
+  const options: RunOptions = signal ? { signal, onDelta } : { onDelta };
+  const reply = client.run(params, options).finally(() => {
+    settled = true;
+    notify();
+  });
+  // A rejection is surfaced by `await reply` in the caller, after the deltas.
+  reply.catch(() => undefined);
+  const deltas = {
+    async *[Symbol.asyncIterator]() {
+      while (!settled || queue.length > 0) {
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          continue;
+        }
+        const batch = queue;
+        queue = [];
+        yield* batch;
+      }
+    },
+  };
+  return { deltas, reply };
+};
+
+/**
  * One turn, yielding an event per tool dispatched and one answer at the end.
  * The loop is ours: ask, run whatever the model called, hand the results back,
  * until it answers in words. The events exist so an answer can be traced to
@@ -225,10 +393,13 @@ export async function* runTurn(
     // The signal is the client's: when the browser drops the connection, the
     // in-flight request is cancelled rather than run to completion. A tool
     // loop that nobody is reading still costs tokens.
-    const reply = await client.run(
+    const streamed = withDeltas(
+      client,
       { model, max_tokens: MAX_TOKENS, messages, tools: definitions },
-      signal ? { signal } : undefined,
+      signal,
     );
+    for await (const piece of streamed.deltas) yield { type: "delta", text: piece };
+    const reply = await streamed.reply;
     if (signal?.aborted === true) return;
     if (reply.text !== "") last = reply.text;
     if (reply.toolCalls.length === 0) {

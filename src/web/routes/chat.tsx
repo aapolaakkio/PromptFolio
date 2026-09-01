@@ -60,6 +60,8 @@ export const ChatPage = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [model, setModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
+  // The answer so far, word by word, until the whole one arrives and replaces it.
+  const [streaming, setStreaming] = useState("");
 
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -90,7 +92,7 @@ export const ChatPage = () => {
   const transcript = useRef<HTMLOListElement>(null);
   useEffect(() => {
     transcript.current?.scrollTo({ top: transcript.current.scrollHeight });
-  }, [turns.length, busy]);
+  }, [turns.length, busy, streaming]);
 
   const send = async () => {
     const message = draft.trim();
@@ -111,12 +113,15 @@ export const ChatPage = () => {
         if (event.type === "conversation") setConversationId(event.id);
         if (event.type === "tool") setTools((previous) => [...previous, event.name]);
         if (event.type === "error") setError(event.message);
+        if (event.type === "delta") setStreaming((previous) => previous + event.text);
         if (event.type === "answer") {
+          setStreaming("");
           setPending((previous) => [...previous, { role: "assistant", content: event.text }]);
         }
       }
     } finally {
       setBusy(false);
+      setStreaming("");
       setPending([]);
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       void queryClient.invalidateQueries({ queryKey: ["conversation"] });
@@ -204,9 +209,14 @@ export const ChatPage = () => {
               {turn.role === "user" ? turn.content : <Markdown text={turn.content} />}
             </li>
           ))}
+          {streaming !== "" && (
+            <li className="max-w-[90%] rounded bg-surface px-3 py-2">
+              <Markdown text={streaming} />
+            </li>
+          )}
         </ol>
 
-        {busy && (
+        {busy && streaming === "" && (
           <p className="text-muted">
             {tools.length === 0
               ? "Ajattelee…"

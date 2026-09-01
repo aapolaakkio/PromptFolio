@@ -12,6 +12,7 @@ import { askTurn } from "../server/chat.ts";
 export const ChatEventSchema = z.union([
   z.object({ type: z.literal("conversation"), id: z.number().int().positive() }),
   z.object({ type: z.literal("tool"), name: z.string() }),
+  z.object({ type: z.literal("delta"), text: z.string() }),
   z.object({ type: z.literal("answer"), text: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);

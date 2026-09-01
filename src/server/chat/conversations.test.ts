@@ -64,6 +64,7 @@ const turn = (userId: string, body: AskBody, signal: AbortSignal = never) =>
 const ChatEventSchema = z.union([
   z.object({ type: z.literal("conversation"), id: z.number() }),
   z.object({ type: z.literal("tool"), name: z.string() }),
+  z.object({ type: z.literal("delta"), text: z.string() }),
   z.object({ type: z.literal("answer"), text: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);

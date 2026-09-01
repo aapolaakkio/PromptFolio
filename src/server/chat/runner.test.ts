@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import {
+  readStream,
   runTurn,
   SYSTEM_PROMPT,
   toolDefinitions,
@@ -217,5 +218,119 @@ describe("toolDefinitions", () => {
         },
       },
     ]);
+  });
+});
+
+const sse = (...chunks: unknown[]): ReadableStream<Uint8Array> =>
+  new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const chunk of chunks)
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+
+describe("readStream", () => {
+  test("joins chat-completion deltas into text, handing each piece on as it arrives", async () => {
+    const pieces: string[] = [];
+    const reply = await readStream(
+      sse(
+        { choices: [{ delta: { content: "Salkun " } }] },
+        { choices: [{ delta: { content: "arvo." } }] },
+      ),
+      (text) => pieces.push(text),
+    );
+    expect(pieces).toEqual(["Salkun ", "arvo."]);
+    expect(reply).toEqual({ text: "Salkun arvo.", toolCalls: [] });
+  });
+
+  test("assembles a tool call streamed in pieces", async () => {
+    const reply = await readStream(
+      sse(
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "c1", function: { name: "get_holdings", arguments: "" } },
+                ],
+              },
+            },
+          ],
+        },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"on":' } }] } }] },
+        {
+          choices: [
+            { delta: { tool_calls: [{ index: 0, function: { arguments: '"2026-06-01"}' } }] } },
+          ],
+        },
+      ),
+      () => undefined,
+    );
+    expect(reply.toolCalls).toEqual([
+      { id: "c1", name: "get_holdings", arguments: '{"on":"2026-06-01"}' },
+    ]);
+  });
+
+  test("reads the older models' shape too", async () => {
+    const pieces: string[] = [];
+    const reply = await readStream(
+      sse(
+        { response: "Tuotto " },
+        { response: "oli 20 %." },
+        { response: "", tool_calls: [{ name: "get_returns", arguments: { on: "2026-06-01" } }] },
+      ),
+      (text) => pieces.push(text),
+    );
+    expect(pieces).toEqual(["Tuotto ", "oli 20 %."]);
+    expect(reply.text).toBe("Tuotto oli 20 %.");
+    expect(reply.toolCalls).toEqual([
+      { id: "call_0", name: "get_returns", arguments: '{"on":"2026-06-01"}' },
+    ]);
+  });
+
+  test("a chunk split across two reads is still one event", async () => {
+    const encoder = new TextEncoder();
+    const whole = 'data: {"choices":[{"delta":{"content":"kokonainen"}}]}\n\ndata: [DONE]\n\n';
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(whole.slice(0, 20)));
+        controller.enqueue(encoder.encode(whole.slice(20)));
+        controller.close();
+      },
+    });
+    expect((await readStream(stream, () => undefined)).text).toBe("kokonainen");
+  });
+});
+
+describe("runTurn streaming", () => {
+  test("yields each piece of the answer as a delta before the answer itself", async () => {
+    const client: ChatClient = {
+      run: (_params, options) => {
+        options?.onDelta?.("Salkun ");
+        options?.onDelta?.("arvo on 120,00 EUR.");
+        return Promise.resolve(says("Salkun arvo on 120,00 EUR."));
+      },
+    };
+    const events = await drain(runTurn(client, [], [{ role: "user", content: "moi" }]));
+    expect(events).toEqual([
+      { type: "delta", text: "Salkun " },
+      { type: "delta", text: "arvo on 120,00 EUR." },
+      { type: "answer", text: "Salkun arvo on 120,00 EUR." },
+    ]);
+  });
+
+  test("deltas that arrive while a reply is pending are not lost", async () => {
+    const client: ChatClient = {
+      run: (_params, options) =>
+        new Promise((resolve) => {
+          setTimeout(() => options?.onDelta?.("myöhemmin"), 5);
+          setTimeout(() => resolve(says("myöhemmin")), 10);
+        }),
+    };
+    const events = await drain(runTurn(client, [], []));
+    expect(events.map((event) => event.type)).toEqual(["delta", "answer"]);
   });
 });
