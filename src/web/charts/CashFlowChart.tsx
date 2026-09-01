@@ -4,13 +4,11 @@ import { sankeyDiagram, type SankeyLink, type SankeyNode } from "@tanstack/chart
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
+import type { FlowLink, FlowNode } from "../../server/spending/cashflow.ts";
 import { eur } from "../lib/format.ts";
 import { bumpX } from "./curve.ts";
 import { MARK_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
-
-export type FlowNode = { id: string; label: string; totalEur: string };
-export type FlowLink = { from: string; to: string; amountEur: string };
 
 /**
  * Which side of the diagram a node's label belongs on.

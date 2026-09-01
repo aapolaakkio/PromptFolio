@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAccounts } from "../server/accounts.ts";
 import { useState } from "react";
 
-import { ApiError } from "../lib/api.ts";
 import {
   commitBankImport,
   previewBankImport,
@@ -70,8 +69,7 @@ export const CashPage = () => {
 
   const preview = useMutation({
     mutationFn: (form: FormData) => previewBankImport({ data: form }),
-    onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Esikatselu epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
   const commit = useMutation({
@@ -82,7 +80,7 @@ export const CashPage = () => {
       setFile(null);
       refresh();
     },
-    onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Tuonti epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
   });
 
   const reconcile = useMutation({
@@ -96,7 +94,7 @@ export const CashPage = () => {
       refresh();
     },
     onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Saldon tallennus epäonnistui"),
+      setError(cause instanceof Error ? cause.message : "Saldon tallennus epäonnistui"),
   });
 
   const removeEntry = useMutation({
@@ -412,7 +410,7 @@ const ManualEntryForm = ({
       onSaved();
     },
     onError: (cause) =>
-      onError(cause instanceof ApiError ? cause.message : "Tapahtuman tallennus epäonnistui"),
+      onError(cause instanceof Error ? cause.message : "Tapahtuman tallennus epäonnistui"),
   });
 
   return (

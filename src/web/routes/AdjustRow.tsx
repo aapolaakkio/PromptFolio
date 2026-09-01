@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError } from "../lib/api.ts";
 import { adjustSnapshot } from "../server/snapshots.ts";
 import type { ReconcileRow } from "./reconcile-view.ts";
 
@@ -48,7 +47,7 @@ export const AdjustRow = ({
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "Korjaus epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Korjaus epäonnistui");
     },
   });
 

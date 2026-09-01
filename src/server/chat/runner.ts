@@ -87,7 +87,7 @@ const cachedMessages = (
         : message.content,
   }));
 
-export type TurnOptions = { signal?: AbortSignal };
+type TurnOptions = { signal?: AbortSignal };
 
 export type ToolRunnerClient = {
   readonly beta: {

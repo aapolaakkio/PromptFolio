@@ -18,5 +18,5 @@ import { createAuthClient } from "better-auth/react";
  * listeners) is behind the same guard, checked directly against the
  * installed package source.
  */
-export const authClient = createAuthClient();
-export const { signIn, signOut, useSession } = authClient;
+const authClient = createAuthClient();
+export const { signIn, signOut } = authClient;

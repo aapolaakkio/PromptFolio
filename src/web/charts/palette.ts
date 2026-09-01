@@ -43,13 +43,3 @@ export const SERIES_COUNT = SERIES_LIGHT.length;
  * has to re-learn the chart every time they change the date range.
  */
 export const colourFor = (index: number): string => `var(--series-${(index % SERIES_COUNT) + 1})`;
-
-/**
- * A ninth series does not get an invented ninth hue.
- *
- * Beyond eight, colour stops carrying identity -- the reader cannot hold nine
- * hues apart, and a generated one is never as separable as the validated eight.
- * Callers group the tail into one "Muu" series instead; this says where that
- * line falls so they do not have to guess.
- */
-export const needsGrouping = (seriesCount: number): boolean => seriesCount > SERIES_COUNT;

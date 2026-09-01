@@ -1,13 +1,11 @@
 import { z } from "zod";
 
 /**
- * The reconcile response's shape, parsed rather than cast (see lib/api.ts's own
- * note on why a bare `as T` is the exception here, not the rule). Quantities
- * arrive as decimal strings and stay strings: this screen only displays them,
+ * A reconcile row's shape. Quantities arrive as decimal strings and stay strings: this screen only displays them,
  * and turning a fractional fund unit into a JavaScript number to render it is
  * how precision gets lost at the last possible moment.
  */
-export const ReconcileRowSchema = z.object({
+const ReconcileRowSchema = z.object({
   instrumentId: z.number(),
   name: z.string().nullable(),
   derived: z.string(),
@@ -17,25 +15,7 @@ export const ReconcileRowSchema = z.object({
   presence: z.enum(["both", "snapshot-only", "ledger-only"]),
 });
 
-export const ReconcileSchema = z.object({
-  snapshotId: z.number(),
-  accountId: z.number(),
-  asOf: z.string(),
-  source: z.enum(["pdf", "vision", "manual"]),
-  rows: z.array(ReconcileRowSchema),
-  differences: z.number(),
-});
-
 export type ReconcileRow = z.infer<typeof ReconcileRowSchema>;
-export type Reconcile = z.infer<typeof ReconcileSchema>;
-
-export const SnapshotSchema = z.object({
-  id: z.number(),
-  accountId: z.number(),
-  asOf: z.string(),
-  source: z.enum(["pdf", "vision", "manual"]),
-});
-export type Snapshot = z.infer<typeof SnapshotSchema>;
 
 /**
  * What a row means in words, because a bare delta does not say what to do about

@@ -3,7 +3,7 @@ import type { IsoDate, Txn } from "../../core/types.ts";
 import { CATEGORY_LABELS, type Category } from "./categories.ts";
 import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
 
-export type SpendingGroup = {
+type SpendingGroup = {
   readonly key: string;
   readonly label: string;
   /** Always negative or zero: this is money that left. */
@@ -25,7 +25,7 @@ export type SpendingSummary = {
 };
 
 /** One transaction, reduced to what a spending view needs. */
-export type SpendingRow = { readonly note: string; readonly amount: Money; readonly date: IsoDate };
+type SpendingRow = { readonly note: string; readonly amount: Money; readonly date: IsoDate };
 
 const groupKey = (
   row: SpendingRow,

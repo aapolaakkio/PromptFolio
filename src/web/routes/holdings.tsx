@@ -6,8 +6,6 @@ import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
 import { getHoldings } from "../server/portfolio.ts";
 
-export type { Holding };
-
 const KIND_LABELS = {
   stock: "Osake",
   etf: "ETF",

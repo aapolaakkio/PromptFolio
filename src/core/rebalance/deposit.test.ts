@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { addMoney, formatMoney, parseMoney, zeroMoney, EUR } from "../money.ts";
-import { allocateDeposit, uncoveredAfterDeposit } from "./deposit.ts";
+import { allocateDeposit } from "./deposit.ts";
 import type { DriftRow } from "./drift.ts";
 
 const row = (key: string, actualBp: number): DriftRow => ({
@@ -71,7 +71,6 @@ describe("allocateDeposit", () => {
     // A split that loses a cent will not reconcile against the deposit it
     // describes.
     expect(formatMoney(totalOf(allocations))).toBe("100.01");
-    expect(formatMoney(uncoveredAfterDeposit(allocations, deposit))).toBe("0.00");
   });
 
   test("never sends money to an untargeted slice", () => {

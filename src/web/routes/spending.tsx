@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { ApiError } from "../lib/api.ts";
 import { eur, fiDate } from "../lib/format.ts";
 import {
   deleteSpendingRule,
@@ -90,7 +89,7 @@ export const SpendingPage = () => {
     mutationFn: (pattern: string) => deleteSpendingRule({ data: { pattern } }),
     onSuccess: refresh,
     onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Säännön poisto epäonnistui"),
+      setError(cause instanceof Error ? cause.message : "Säännön poisto epäonnistui"),
   });
 
   return (
@@ -405,7 +404,7 @@ const AddRuleForm = ({
       onSaved();
     },
     onError: (cause) =>
-      onError(cause instanceof ApiError ? cause.message : "Säännön tallennus epäonnistui"),
+      onError(cause instanceof Error ? cause.message : "Säännön tallennus epäonnistui"),
   });
 
   const chosen = category === "" ? (categories[0]?.id ?? "") : category;
@@ -468,7 +467,7 @@ const ClassifyOne = ({
       saveSpendingRules({ data: { rules: [{ pattern: merchant, category }] } }),
     onSuccess: onSaved,
     onError: (cause) =>
-      onError(cause instanceof ApiError ? cause.message : "Säännön tallennus epäonnistui"),
+      onError(cause instanceof Error ? cause.message : "Säännön tallennus epäonnistui"),
   });
 
   return (

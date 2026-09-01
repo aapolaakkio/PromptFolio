@@ -26,7 +26,7 @@ export type DraftTxn = {
  * `rawLine` is present only for a structural failure that never reached fields;
  * a consumer renders it when present and `raw`'s entries otherwise.
  */
-export type DraftProblem = {
+type DraftProblem = {
   readonly line: number;
   readonly message: string;
   readonly raw: Record<string, string>;

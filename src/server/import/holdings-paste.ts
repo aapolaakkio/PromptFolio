@@ -18,7 +18,7 @@ export const decodeHoldingsFile = (bytes: Uint8Array): string => {
   return new TextDecoder(encoding).decode(bytes).replace(/^\ufeff/, "");
 };
 
-export type PastedHolding = {
+type PastedHolding = {
   readonly name: string;
   readonly quantity: string;
   readonly marketValueEur: string;

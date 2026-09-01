@@ -12,7 +12,7 @@
  * chooses what to calculate -- it simply does not do the calculating.
  */
 
-export type CalcOperation = "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
+type CalcOperation = "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
 
 export type CalcRequest = {
   readonly operation: CalcOperation;

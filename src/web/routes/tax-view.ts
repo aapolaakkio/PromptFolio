@@ -2,12 +2,10 @@ import type { getTaxYear } from "../server/tax.ts";
 import { z } from "zod";
 
 /**
- * The shapes `/api/tax` returns, parsed rather than cast.
- *
- * Every money field is a decimal string, as everywhere else on the wire: a
+ * A disposal row's shape. Every money field is a decimal string, as everywhere else on the wire: a
  * JSON number would round a cent away before this screen ever saw it.
  */
-export const TaxDisposalSchema = z.object({
+const TaxDisposalSchema = z.object({
   instrument: z.string(),
   isin: z.string(),
   accountName: z.string(),
@@ -24,63 +22,6 @@ export const TaxDisposalSchema = z.object({
   method: z.enum(["actual", "deemed"]),
   gainEur: z.string(),
 });
-
-export const TaxDividendSchema = z.object({
-  instrument: z.string().nullable(),
-  accountName: z.string(),
-  paidOn: z.string(),
-  grossEur: z.string(),
-  withheldEur: z.string(),
-  taxableEur: z.string(),
-  withholdingRecorded: z.boolean(),
-});
-
-export const OstWithdrawalSchema = z.object({
-  withdrawnOn: z.string(),
-  amountEur: z.string(),
-  withheldEur: z.string(),
-  valueEur: z.string().nullable(),
-  profitEur: z.string().nullable(),
-  taxableEur: z.string().nullable(),
-  pricedFrom: z.string().nullable(),
-  blockedBy: z.string().nullable(),
-  priceInstrument: z.object({ id: z.number(), name: z.string(), currency: z.string() }).nullable(),
-});
-
-export const OstSchema = z.object({
-  accountName: z.string(),
-  withdrawals: z.array(OstWithdrawalSchema),
-  depositedEur: z.string(),
-  capRemainingEur: z.string(),
-  incomplete: z.boolean(),
-});
-
-const CarriedLossSchema = z.object({
-  fromYear: z.number(),
-  amountEur: z.string(),
-});
-
-export const TaxYearSchema = z.object({
-  year: z.number(),
-  disposals: z.array(TaxDisposalSchema),
-  totalSalePriceEur: z.string(),
-  exempt: z.boolean(),
-  gainsEur: z.string(),
-  lossesEur: z.string(),
-  netEur: z.string(),
-  lossesUsedEur: z.string(),
-  lossCarriedIn: z.array(CarriedLossSchema),
-  lossCarriedOut: z.array(CarriedLossSchema),
-  dividends: z.array(TaxDividendSchema),
-  dividendTaxableEur: z.string(),
-  ost: z.array(OstSchema),
-  source: z.object({
-    transactions: z.number(),
-    earliest: z.string().nullable(),
-  }),
-});
-
-export const TaxYearsSchema = z.array(z.number());
 
 /**
  * The report's shape, taken from the function that produces it rather than

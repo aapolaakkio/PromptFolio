@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { ApiError } from "../lib/api.ts";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
 /** The four sources a price can come from, as the instrument store defines them. */
@@ -163,7 +162,7 @@ export const UnknownInstrumentForm = ({
       });
       onResolved();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Tallennus epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui");
     } finally {
       setSubmitting(false);
     }

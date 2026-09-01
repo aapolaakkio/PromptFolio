@@ -1,4 +1,4 @@
-import { addMoney, money, subMoney, zeroMoney, EUR, type Money } from "../money.ts";
+import { addMoney, money, zeroMoney, EUR, type Money } from "../money.ts";
 import type { DriftRow } from "./drift.ts";
 import { BASIS_POINTS, type Target } from "./targets.ts";
 
@@ -97,13 +97,3 @@ export const allocateDeposit = (args: {
 /** A row's own value, recovered from its share of the pre-deposit total. */
 const sliceValue = (row: DriftRow, totalEur: Money): Money =>
   money((BigInt(row.actualBp) * totalEur.minor) / BigInt(BASIS_POINTS), EUR);
-
-/** Exported for the report: what the deposit leaves uncovered. */
-export const uncoveredAfterDeposit = (
-  allocations: readonly DepositAllocation[],
-  depositEur: Money,
-): Money =>
-  subMoney(
-    depositEur,
-    allocations.reduce((sum, allocation) => addMoney(sum, allocation.amountEur), zeroMoney(EUR)),
-  );

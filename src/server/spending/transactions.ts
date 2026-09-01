@@ -4,7 +4,7 @@ import { internalTransferIds, investmentPaymentIds } from "./internal.ts";
 import { categoriseWith, type SpendingRule } from "./rules.ts";
 
 /** Why a row is not counted as spending, or `null` when it is. */
-export type ExcludedReason =
+type ExcludedReason =
   | "income"
   | "internal-transfer"
   | "investment"

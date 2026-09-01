@@ -3,7 +3,7 @@ import type { IsoDate, Txn } from "../../core/types.ts";
 import { labelForCategory } from "./categories.ts";
 import { categoriseWith, type SpendingRule } from "./rules.ts";
 
-export type Cadence = "weekly" | "monthly" | "quarterly" | "yearly";
+type Cadence = "weekly" | "monthly" | "quarterly" | "yearly";
 
 export type RecurringPayment = {
   readonly payee: string;

@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import {
   ACCOUNT_TYPES,
   accountTypeLabel,
-  HOLDS_CASH,
   isAccountKind,
   isAccountType,
   typesFor,
@@ -59,15 +58,6 @@ describe("accountTypeLabel", () => {
     expect(accountTypeLabel("fixed_term")).toBe("Määräaikaistili");
     expect(accountTypeLabel("current")).toBe("Käyttötili");
   });
-});
-
-test("a credit card holds no cash, every other bank account does", () => {
-  // Its balance is what is owed for purchases already counted as spending;
-  // counting it as cash would subtract the same money twice, and counting it
-  // as an asset would be worse.
-  expect(HOLDS_CASH("credit")).toBe(false);
-  expect(HOLDS_CASH("current")).toBe(true);
-  expect(HOLDS_CASH(null)).toBe(true);
 });
 
 test("the account schema accepts every type the app can offer", async () => {

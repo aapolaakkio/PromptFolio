@@ -6,21 +6,11 @@ import { scalePoint } from "@tanstack/charts/scales/point";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
+import type { CategoryMonth } from "../../server/spending/monthly.ts";
 import { eur } from "../lib/format.ts";
 import { colourFor, SERIES_COUNT } from "./palette.ts";
 
-export type CategoryMonth = {
-  readonly month: string;
-  readonly byCategory: Readonly<Record<string, string>>;
-};
-
 export type Category = { readonly key: string; readonly label: string };
-
-export type TrendRow = {
-  readonly month: string;
-  readonly category: string;
-  readonly amount: number;
-};
 
 /**
  * `2026-03` as `3/26`, short enough that a year of them fits an axis.

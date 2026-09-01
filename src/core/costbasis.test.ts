@@ -51,8 +51,8 @@ const txn = (
 
 // `amount` is the fee-inclusive total cash that moved (see `Txn.amount`'s doc
 // in core/types.ts) -- it is what both real brokers report (OP's `Yhteensä`,
-// Nordnet's `Summa`), and `core/ledger.ts`'s `cashAt` relies on it being the
-// true cash movement. `fee` is carried alongside purely for reporting and must
+// Nordnet's `Summa`), and the cash views rely on it being the true cash
+// movement. `fee` is carried alongside purely for reporting and must
 // never be added to (or subtracted from) `amount` again here -- doing so was
 // exactly C2: a real broker fee got double-counted into cost basis/proceeds.
 test("a single buy's cost basis is its fee-inclusive amount, unadjusted by fee", () => {

@@ -15,7 +15,7 @@ import type { PasteProblem } from "./holdings-paste.ts";
  * held. A row is a name followed by exactly the eight figures the table shows,
  * and anything else is reported rather than absorbed.
  */
-export type OpWebHolding = {
+type OpWebHolding = {
   readonly name: string;
   readonly quantity: string;
   readonly costEur: string;

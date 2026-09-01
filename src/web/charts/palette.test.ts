@@ -1,6 +1,6 @@
 import { test, expect } from "vitest";
 
-import { colourFor, needsGrouping, SERIES_COUNT, SERIES_DARK, SERIES_LIGHT } from "./palette.ts";
+import { colourFor, SERIES_COUNT, SERIES_DARK, SERIES_LIGHT } from "./palette.ts";
 
 import { readFile } from "node:fs/promises";
 
@@ -37,11 +37,4 @@ test("the stylesheet defines every slot this module promises, in both themes", a
   for (let slot = 1; slot <= SERIES_COUNT; slot++) {
     expect(css.match(new RegExp(`--series-${slot}:`, "g"))?.length).toBe(2);
   }
-});
-
-test("says when there are too many series for colour to carry identity", () => {
-  // Beyond eight a reader cannot hold the hues apart, and a generated ninth is
-  // never as separable as the validated eight.
-  expect(needsGrouping(SERIES_COUNT)).toBe(false);
-  expect(needsGrouping(SERIES_COUNT + 1)).toBe(true);
 });

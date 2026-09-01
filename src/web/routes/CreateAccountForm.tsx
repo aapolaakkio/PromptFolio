@@ -11,7 +11,6 @@ import {
   type AccountKind,
   type AccountType,
 } from "./account-type.ts";
-import { ApiError } from "../lib/api.ts";
 
 /**
  * Closing the "a fresh install cannot create its first account without
@@ -19,8 +18,7 @@ import { ApiError } from "../lib/api.ts";
  * since Task 9, but no screen ever called it -- `imports.tsx` only rendered
  * a `<select>` over accounts that already existed. This form is that
  * missing entry path, mirroring `UnknownInstrumentForm.tsx`'s own shape
- * (local state, one `apiPost`, a response schema narrowed to only the
- * fields this form reads).
+ * (local state, one server call).
  *
  * **Deliberately create-only.** There is no update, no delete here, and
  * none should be added for symmetry: deleting an account cascades to every
@@ -48,7 +46,7 @@ const isBroker = (value: string): value is Broker => BROKER_VALUES.some((b) => b
 
 /** Only the fields this form actually reads out of POST /api/accounts's response. */
 const CreatedAccountSchema = z.object({ id: z.number(), name: z.string() });
-export type CreatedAccount = z.infer<typeof CreatedAccountSchema>;
+type CreatedAccount = z.infer<typeof CreatedAccountSchema>;
 
 export type CreateAccountFormProps = {
   readonly onCreated: (account: CreatedAccount) => void;
@@ -95,7 +93,7 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
       setBaseCurrency("EUR");
       onCreated(created);
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Tilin luonti epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Tilin luonti epäonnistui");
     } finally {
       setSubmitting(false);
     }

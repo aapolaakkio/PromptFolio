@@ -1,13 +1,9 @@
 import {
-  addMoney,
   addQuantity,
   isZeroQuantity,
   negateMoney,
   subQuantity,
   toEur,
-  zeroMoney,
-  type Currency,
-  type Money,
   type Quantity,
 } from "./money.ts";
 import type { CashFlow, IsoDate, Txn } from "./types.ts";
@@ -67,11 +63,6 @@ export const positionsAt = (txns: readonly Txn[], on: IsoDate): Map<number, Quan
  */
 export const negativePositionIds = (txns: readonly Txn[], on: IsoDate): number[] =>
   [...positionsAt(txns, on)].filter(([, qty]) => qty.scaled < 0n).map(([id]) => id);
-
-export const cashAt = (txns: readonly Txn[], on: IsoDate, currency: Currency): Money =>
-  upTo(txns, on)
-    .filter((t) => t.currency === currency)
-    .reduce((sum, t) => addMoney(sum, t.amount), zeroMoney(currency));
 
 export const externalCashFlows = (txns: readonly Txn[]): CashFlow[] =>
   txns

@@ -59,7 +59,7 @@ const grouped = (slices: readonly AllocationSlice[]): AllocationSlice[] => {
  * chart mounts, which no type check and no test of a React component's props
  * would catch. Exporting the builder makes that a unit test.
  */
-export const allocationDefinition = (shown: readonly AllocationSlice[]) =>
+const allocationDefinition = (shown: readonly AllocationSlice[]) =>
   defineChart({
     marks: [
       barX(

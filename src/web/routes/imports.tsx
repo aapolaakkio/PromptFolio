@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError } from "../lib/api.ts";
 import {
   commitImport,
   commitOpPaste,
@@ -83,7 +82,7 @@ export const ImportsPage = () => {
       // The server's own 409 message already names exactly why (a later sale
       // depends on the units this import introduced, per commit.ts's undoImport) --
       // shown verbatim rather than folded into a generic failure message.
-      setUndoError(cause instanceof ApiError ? cause.message : "Perumine epäonnistui");
+      setUndoError(cause instanceof Error ? cause.message : "Perumine epäonnistui");
     },
   });
 
@@ -129,8 +128,7 @@ export const ImportsPage = () => {
       setError(null);
       setResult(null);
     },
-    onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Esikatselu epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
   const commitFile = useMutation({
@@ -140,7 +138,7 @@ export const ImportsPage = () => {
       setDraft(null);
       void queryClient.invalidateQueries();
     },
-    onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Tuonti epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
   });
 
   // The OP paste text travels from the <textarea> to this body untouched --
@@ -162,8 +160,7 @@ export const ImportsPage = () => {
       setError(null);
       setResult(null);
     },
-    onError: (cause) =>
-      setError(cause instanceof ApiError ? cause.message : "Esikatselu epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
   const commitPaste = useMutation({
@@ -173,7 +170,7 @@ export const ImportsPage = () => {
       setDraft(null);
       void queryClient.invalidateQueries();
     },
-    onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Tuonti epäonnistui"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
   });
 
   const preview = source === "file" ? previewFile : previewPaste;

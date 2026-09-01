@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError } from "../lib/api.ts";
 import {
   proposeSnapshotFromCsv,
   proposeSnapshotFromPaste,
@@ -61,7 +60,7 @@ export const SnapshotPaste = ({
       setMapping(Object.fromEntries(result.rows.map((row) => [row.name, row.instrumentId])));
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "Taulukon luku epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Taulukon luku epäonnistui");
     },
   });
 
@@ -91,7 +90,7 @@ export const SnapshotPaste = ({
       onCreated(snapshot.id);
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "Otteen tallennus epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Otteen tallennus epäonnistui");
     },
   });
 

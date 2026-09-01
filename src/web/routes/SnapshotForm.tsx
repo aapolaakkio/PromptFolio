@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError } from "../lib/api.ts";
 import { saveSnapshot } from "../server/snapshots.ts";
 import { getInstruments } from "../server/instruments.ts";
 
@@ -53,7 +52,7 @@ export const SnapshotForm = ({
       onCreated(snapshot.id);
     },
     onError: (cause) => {
-      setError(cause instanceof ApiError ? cause.message : "Otteen tallennus epäonnistui");
+      setError(cause instanceof Error ? cause.message : "Otteen tallennus epäonnistui");
     },
   });
 

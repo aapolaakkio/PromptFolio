@@ -420,7 +420,7 @@ export type CashReport = {
 };
 
 /** One account's cash, as the API and the chat tools report it. */
-export type CashView = {
+type CashView = {
   readonly accountId: number;
   readonly accountName: string;
   readonly currency: Currency;

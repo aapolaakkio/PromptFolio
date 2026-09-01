@@ -43,7 +43,7 @@ const RATE = /^\d+(\.\d+)?$/;
  * EUR-per-foreign at the same scale, in exact bigint arithmetic with the half-up rounding
  * `core/money.ts` uses everywhere else. 1 EUR = 1.0870 USD inverts to 91_996_320.
  */
-export const invertScaledRate = (scaled: bigint): number => {
+const invertScaledRate = (scaled: bigint): number => {
   const numerator = 10n ** 16n;
   const quotient = numerator / scaled;
   const remainder = numerator % scaled;

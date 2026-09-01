@@ -6,20 +6,11 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 import { eur } from "../lib/format.ts";
+import { shortMonth } from "./CategoryTrendChart.tsx";
 import { MARK_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
 
 export type MonthlyPoint = { month: string; incomeEur: string; expensesEur: string };
-
-/**
- * `2026-03` as `3/26`, short enough that twelve of them fit an axis.
- *
- * A tick label, never the value a row is keyed by -- see CategoryTrendChart.
- */
-const shortMonth = (month: string): string => {
-  const [year = "", number = ""] = month.split("-");
-  return `${Number(number)}/${year.slice(2)}`;
-};
 
 /**
  * Income and spending side by side, one pair of bars per month.
@@ -33,7 +24,7 @@ const shortMonth = (month: string): string => {
  * Built outside the component so a test can construct it -- `defineChart`
  * validates at run time, and a misplaced scale throws only on mount.
  */
-export const monthlyDefinition = (months: readonly MonthlyPoint[]) => {
+const monthlyDefinition = (months: readonly MonthlyPoint[]) => {
   const rows = months.flatMap((point) => [
     { month: shortMonth(point.month), kind: "Tulot", amount: Number(point.incomeEur) },
     { month: shortMonth(point.month), kind: "Menot", amount: Number(point.expensesEur) },

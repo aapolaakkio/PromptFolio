@@ -39,34 +39,6 @@ export type DraftResponse = {
   unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
 };
 
-export const DraftResponseSchema: z.ZodType<DraftResponse> = z.object({
-  broker: z.string(),
-  filename: z.string(),
-  sha256: z.string(),
-  txns: z.array(
-    z.object({
-      line: z.number(),
-      type: z.string(),
-      tradeDate: z.string(),
-      isin: z.string().nullable(),
-      quantity: z.number(),
-      amount: z.number(),
-      currency: z.string(),
-    }),
-  ),
-  problems: z.array(
-    z.object({
-      line: z.number(),
-      message: z.string(),
-      raw: z.record(z.string(), z.string()),
-      rawLine: z.string().optional(),
-    }),
-  ),
-  unknownIsins: z.array(
-    z.object({ isin: z.string().nullable(), name: z.string(), currency: z.string() }),
-  ),
-});
-
 export type CommitResult = {
   importId: number;
   inserted: number;
@@ -74,13 +46,6 @@ export type CommitResult = {
   /** Rows already stored that this import filled a blank field on. */
   enriched: number;
 };
-
-export const CommitResultSchema: z.ZodType<CommitResult> = z.object({
-  importId: z.number(),
-  inserted: z.number(),
-  skipped: z.number(),
-  enriched: z.number(),
-});
 
 export type Account = {
   id: number;
@@ -109,8 +74,6 @@ export const AccountSchema: z.ZodType<Account> = z.object({
   kind: z.enum(["brokerage", "bank"]),
   accountType: z.enum(ACCOUNT_TYPE_IDS).nullable(),
 });
-
-export const AccountsSchema = z.array(AccountSchema);
 
 /**
  * The screen's central rule, made checkable in isolation: commit stays

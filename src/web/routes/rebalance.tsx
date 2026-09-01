@@ -11,7 +11,8 @@ import {
   saveTargetAllocation,
 } from "../server/rebalance.ts";
 import { eur } from "../lib/format.ts";
-import { targetTotal, type DriftRowView, type TargetView } from "./rebalance-view.ts";
+import type { DriftRowView, TargetView } from "../../server/rebalance.ts";
+import { targetTotal } from "./rebalance-view.ts";
 
 const DIMENSIONS = [
   { value: "kind", label: "Lajeittain" },

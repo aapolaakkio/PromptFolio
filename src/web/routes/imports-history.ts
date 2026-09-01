@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 /**
  * The import history's logic, split out of the page so it can be tested without
  * rendering -- this project has no DOM test harness, by choice.
@@ -22,23 +20,6 @@ export type ImportRecord = {
   skipped: number;
   undone: boolean;
 };
-
-export const ImportRecordSchema: z.ZodType<ImportRecord> = z.object({
-  id: z.number(),
-  kind: z.enum(["csv_nordnet", "csv_op", "csv_bank", "pdf", "vision", "manual"]),
-  filename: z.string(),
-  createdAt: z.string(),
-  inserted: z.number(),
-  skipped: z.number(),
-  undone: z.boolean(),
-});
-
-export const ImportHistorySchema = z.array(ImportRecordSchema);
-
-/** Matches `POST /api/imports/:id/undo`'s `{ deleted }` response (`commit.ts`'s `UndoResult`). */
-export type UndoResult = { deleted: number };
-
-export const UndoResultSchema: z.ZodType<UndoResult> = z.object({ deleted: z.number() });
 
 /** Finnish label for each `imports.kind` value this table shows in its "Lähde" column. */
 export const IMPORT_KIND_LABELS = {

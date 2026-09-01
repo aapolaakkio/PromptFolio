@@ -1,10 +1,8 @@
 import { test, expect } from "vitest";
 import {
-  ImportHistorySchema,
   IMPORT_KIND_LABELS,
   undoClickHandler,
   undoConfirmMessage,
-  UndoResultSchema,
   type ImportRecord,
 } from "./imports-history.ts";
 
@@ -17,20 +15,6 @@ const record = (over: Partial<ImportRecord> = {}): ImportRecord => ({
   skipped: 2,
   undone: false,
   ...over,
-});
-
-test("ImportHistorySchema parses a real GET /api/imports response shape", () => {
-  const body = [record(), record({ id: 2, kind: "csv_op", undone: true })];
-  expect(ImportHistorySchema.parse(body)).toEqual(body);
-});
-
-test("ImportHistorySchema rejects a malformed entry instead of silently coercing it", () => {
-  const malformed = [{ ...record(), kind: "not-a-real-kind" }];
-  expect(() => ImportHistorySchema.parse(malformed)).toThrow();
-});
-
-test("UndoResultSchema parses POST /api/imports/:id/undo's { deleted } response", () => {
-  expect(UndoResultSchema.parse({ deleted: 3 })).toEqual({ deleted: 3 });
 });
 
 test("every import kind has a non-empty Finnish label", () => {

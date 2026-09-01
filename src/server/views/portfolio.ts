@@ -48,7 +48,7 @@ const DAY_MS = 86_400_000;
 const dayBefore = (date: IsoDate): IsoDate =>
   new Date(Date.parse(date) - DAY_MS).toISOString().slice(0, 10);
 
-export const LABEL_ONLY: ReadonlySet<string> = new Set([
+const LABEL_ONLY: ReadonlySet<string> = new Set([
   "PKORTTIMAKSU",
   "MAKSUPALVELU",
   "TILISIIRTO",
