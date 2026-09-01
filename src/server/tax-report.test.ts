@@ -1,24 +1,24 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
-import { getDb } from "./db/index.ts";
+import { db } from "./db/index.ts";
 import { addInstrument } from "./instruments/store.ts";
 
 import { EUR } from "../core/money.ts";
 
 // Exercises the tax report (src/server/tax.ts) against a real migrated database
 // and a real Better Auth session, following portfolio.test.ts's setup exactly:
-// the shared getDb() handle is already pinned to a migrated in-memory database
+// the shared database is already pinned to a migrated in-memory database
 // by ../test-setup.ts (a vitest.config.ts `setupFiles` entry), so this file
 // must not call resetDbHandleForTests() or migrate() itself. The database is
 // shared across every test file in the process, so every identity here is
 // derived from a fresh crypto.randomUUID().
 
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let taxYearFor: (typeof import("./tax.ts"))["taxYearFor"];
 let taxYearsFor: (typeof import("./tax.ts"))["taxYearsFor"];
 
 beforeAll(async () => {
-  auth = (await import("./auth.ts")).auth;
+  auth = (await import("./auth.ts")).getAuth();
   ({ taxYearFor, taxYearsFor } = await import("./tax.ts"));
 });
 
@@ -47,24 +47,28 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
 const randomIsin = (): string =>
   `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
-const createAccount = (userId: string, accountType: "aot" | "ost"): number =>
-  openAccountRow(
-    getDb().db,
-    userId,
-    CreateAccount.parse({ name: "Nordnet", broker: "nordnet", accountType }),
+const createAccount = async (userId: string, accountType: "aot" | "ost"): Promise<number> =>
+  (
+    await openAccountRow(
+      db,
+      userId,
+      CreateAccount.parse({ name: "Nordnet", broker: "nordnet", accountType }),
+    )
   ).id;
 
-const createInstrument = (): number => {
+const createInstrument = async (): Promise<number> => {
   const isin = randomIsin();
-  return addInstrument(getDb().db, {
-    isin,
-    ticker: "TST",
-    name: "Test Co",
-    kind: "stock",
-    currency: EUR,
-    priceSource: "manual",
-    sourceKey: isin,
-  }).id;
+  return (
+    await addInstrument(db, {
+      isin,
+      ticker: "TST",
+      name: "Test Co",
+      kind: "stock",
+      currency: EUR,
+      priceSource: "manual",
+      sourceKey: isin,
+    })
+  ).id;
 };
 
 /** A buy and a later sale, seeded straight through the shared handle. */
@@ -72,10 +76,10 @@ const seedSale = async (
   userId: string,
   o: { buyDate: string; sellDate: string; principal: number; proceeds: number },
 ): Promise<void> => {
-  const { getDb } = await import("./db/index.ts");
+  const { db } = await import("./db/index.ts");
   const { transactions } = await import("./db/schema.ts");
-  const accountId = createAccount(userId, "aot");
-  const instrumentId = createInstrument();
+  const accountId = await createAccount(userId, "aot");
+  const instrumentId = await createInstrument();
 
   const row = (type: "BUY" | "SELL", tradeDate: string, amount: number) => ({
     accountId,
@@ -94,8 +98,8 @@ const seedSale = async (
     importId: null,
   });
 
-  getDb()
-    .db.insert(transactions)
+  await db
+    .insert(transactions)
     .values([row("BUY", o.buyDate, -o.principal), row("SELL", o.sellDate, o.proceeds)])
     .run();
 };
@@ -113,7 +117,7 @@ describe("taxYearFor", () => {
         proceeds: 500_000,
       });
 
-      const body = taxYearFor(getDb().db, userId, 2025);
+      const body = await taxYearFor(db, userId, 2025);
 
       expect(body.year).toBe(2025);
       expect(body.disposals).toHaveLength(1);
@@ -139,7 +143,7 @@ describe("taxYearFor", () => {
       proceeds: 90_000,
     });
 
-    const body = taxYearFor(getDb().db, userId, 2025);
+    const body = await taxYearFor(db, userId, 2025);
 
     expect(body.exempt).toBe(true);
     expect(body.netEur).toBe("0.00");
@@ -155,7 +159,7 @@ describe("taxYearFor", () => {
       proceeds: 500_000,
     });
 
-    const body = taxYearFor(getDb().db, stranger.userId, 2025);
+    const body = await taxYearFor(db, stranger.userId, 2025);
 
     expect(body.disposals).toEqual([]);
   });
@@ -183,6 +187,6 @@ describe("taxYearsFor", () => {
       proceeds: 500_000,
     });
 
-    expect(taxYearsFor(getDb().db, userId)).toEqual([2025, 2023]);
+    expect(await taxYearsFor(db, userId)).toEqual([2025, 2023]);
   });
 });

@@ -1,9 +1,11 @@
 import { readText } from "./files.ts";
+import { urlOf } from "./prices/types.ts";
+import type { Db } from "./db/index.ts";
 import { expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 
 import { EUR, parseCurrency, type Currency } from "../core/money.ts";
-import { testDb } from "./db/index.ts";
+import { testDb } from "./db/test-db.ts";
 import { accounts, fxRates, instruments, transactions, user } from "./db/schema.ts";
 import { backfillFxRates, ensureFxRate, fxRateOn, refreshFxRates } from "./fx.ts";
 import { ECB_DATA_URL, ecbSeriesUrl, parseEcbSdmxCsv } from "./fx-ecb.ts";
@@ -87,9 +89,10 @@ const expectedHistRate = (date: string, currency: string): number => {
 };
 
 /** Seeds one ledger transaction in `currency`, with the user/account it needs to satisfy FKs. */
-const seedTransaction = (db: ReturnType<typeof testDb>["db"], currency: Currency) => {
+const seedTransaction = async (db: Db, currency: Currency) => {
   const userId = crypto.randomUUID();
-  db.insert(user)
+  await db
+    .insert(user)
     .values({
       id: userId,
       name: "Testikäyttäjä",
@@ -99,12 +102,14 @@ const seedTransaction = (db: ReturnType<typeof testDb>["db"], currency: Currency
       updatedAt: new Date(),
     })
     .run();
-  const account = db
+  const account = await db
     .insert(accounts)
     .values({ userId, name: "Nordnet", broker: "nordnet", baseCurrency: EUR })
     .returning()
     .get();
-  db.insert(transactions)
+  if (account === undefined) throw new Error("account insert returned nothing");
+  await db
+    .insert(transactions)
     .values({
       accountId: account.id,
       type: "DEPOSIT",
@@ -167,13 +172,13 @@ test("skips a day ECB did not publish rather than discarding the days it did", (
   ]);
 });
 
-test("rejects a response whose header is not the SDMX layout", () => {
+test("rejects a response whose header is not the SDMX layout", async () => {
   expect(() => parseEcbSdmxCsv("Date,SEK\n2026-08-27,11.2340\n", new Set(["SEK"]))).toThrow(
     /puuttuu odotettu sarake/,
   );
 });
 
-test("rejects an empty response instead of reporting no rates", () => {
+test("rejects an empty response instead of reporting no rates", async () => {
   expect(() => parseEcbSdmxCsv("", new Set(["SEK"]))).toThrow(/tyhjä/);
 });
 
@@ -195,19 +200,19 @@ test("the request asks for exactly the wanted currencies, from the given date", 
 // --- refreshFxRates ----------------------------------------------------------
 
 test("fetches nothing and touches no network when the ledger holds no foreign currency", async () => {
-  const { db } = testDb();
-  const mustNotBeCalled = (): Promise<Response> => {
+  const { db } = await testDb();
+  const mustNotBeCalled = async (): Promise<Response> => {
     throw new Error("must not be called");
   };
   const result = await refreshFxRates(db, { fetchImpl: mustNotBeCalled });
   expect(result).toEqual({ inserted: 0 });
-  expect(db.select().from(fxRates).all()).toEqual([]);
+  expect(await db.select().from(fxRates).all()).toEqual([]);
 });
 
 test("fetches nothing when the ledger only ever traded in EUR", async () => {
-  const { db } = testDb();
-  seedTransaction(db, EUR);
-  const mustNotBeCalled = (): Promise<Response> => {
+  const { db } = await testDb();
+  await seedTransaction(db, EUR);
+  const mustNotBeCalled = async (): Promise<Response> => {
     throw new Error("must not be called");
   };
   const result = await refreshFxRates(db, { fetchImpl: mustNotBeCalled });
@@ -215,41 +220,41 @@ test("fetches nothing when the ledger only ever traded in EUR", async () => {
 });
 
 test("fetches exactly the ledger's held currency (SEK), never defaulting to USD", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
   const stub = async (url: string | URL | Request): Promise<Response> => {
-    expect(String(url).startsWith(ECB_DATA_URL)).toBe(true);
+    expect(urlOf(url).startsWith(ECB_DATA_URL)).toBe(true);
     return new Response(await fixtureText());
   };
   const result = await refreshFxRates(db, { fetchImpl: stub });
   expect(result).toEqual({ inserted: 1 });
-  const rows = db.select().from(fxRates).all();
+  const rows = await db.select().from(fxRates).all();
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK });
 });
 
 test("stores rates idempotently: a second run for the same date inserts nothing new", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
   const stub = async (): Promise<Response> => new Response(await fixtureText());
   expect((await refreshFxRates(db, { fetchImpl: stub })).inserted).toBe(1);
   expect((await refreshFxRates(db, { fetchImpl: stub })).inserted).toBe(0);
-  expect(db.select().from(fxRates).all()).toHaveLength(1);
+  expect(await db.select().from(fxRates).all()).toHaveLength(1);
 });
 
 test("never inserts an EUR row, even for a ledger holding a currency alongside EUR deposits", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
-  seedTransaction(db, EUR);
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
+  await seedTransaction(db, EUR);
   const stub = async (): Promise<Response> => new Response(await fixtureText());
   await refreshFxRates(db, { fetchImpl: stub });
-  const rows = db.select().from(fxRates).all();
+  const rows = await db.select().from(fxRates).all();
   expect(rows.every((row) => row.currency !== "EUR")).toBe(true);
 });
 
 test("surfaces a non-OK ECB response as a thrown error instead of silently storing nothing", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
   const failing = async (): Promise<Response> =>
     new Response("down", { status: 503, statusText: "Service Unavailable" });
   await expect(refreshFxRates(db, { fetchImpl: failing })).rejects.toThrow(/503/);
@@ -262,9 +267,10 @@ test("fetches a currency held only by an instrument's own quotation currency, wi
   // the cash that moved was EUR) but whose price/NAV is quoted in SEK. Before this fix,
   // SEK never appeared in `transactions.currency`, so its rate was never fetched even
   // though the instrument plainly needs one to be valued.
-  const { db } = testDb();
-  seedTransaction(db, EUR); // only ever a EUR transaction -- no SEK row anywhere
-  db.insert(instruments)
+  const { db } = await testDb();
+  await seedTransaction(db, EUR); // only ever a EUR transaction -- no SEK row anywhere
+  await db
+    .insert(instruments)
     .values({
       isin: "SE0002756973",
       ticker: null,
@@ -278,15 +284,16 @@ test("fetches a currency held only by an instrument's own quotation currency, wi
   const stub = async (): Promise<Response> => new Response(await fixtureText());
   const result = await refreshFxRates(db, { fetchImpl: stub });
   expect(result).toEqual({ inserted: 1 });
-  const rows = db.select().from(fxRates).all();
+  const rows = await db.select().from(fxRates).all();
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ currency: SEK, rateEur: EXPECTED_RATE_EUR.SEK });
 });
 
 test("unions transaction and instrument currencies without fetching a currency twice", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
-  db.insert(instruments)
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
+  await db
+    .insert(instruments)
     .values({
       isin: "SE0002756973",
       ticker: null,
@@ -309,23 +316,24 @@ test("unions transaction and instrument currencies without fetching a currency t
 
 // --- C1b: fxRateOn / ensureFxRate -- breaks the "first non-EUR transaction" deadlock ---
 
-test("fxRateOn returns null with no matching row, and the newest row on or before the date otherwise", () => {
-  const { db } = testDb();
-  db.insert(fxRates)
+test("fxRateOn returns null with no matching row, and the newest row on or before the date otherwise", async () => {
+  const { db } = await testDb();
+  await db
+    .insert(fxRates)
     .values([
       { date: "2026-08-20", currency: SEK, rateEur: 9_000_000 },
       { date: "2026-08-25", currency: SEK, rateEur: 9_100_000 },
     ])
     .run();
-  expect(fxRateOn(db, SEK, "2026-08-19")).toBeNull();
-  expect(fxRateOn(db, SEK, "2026-08-22")).toBe(9_000_000);
-  expect(fxRateOn(db, SEK, "2026-08-30")).toBe(9_100_000);
+  expect(await fxRateOn(db, SEK, "2026-08-19")).toBeNull();
+  expect(await fxRateOn(db, SEK, "2026-08-22")).toBe(9_000_000);
+  expect(await fxRateOn(db, SEK, "2026-08-30")).toBe(9_100_000);
 });
 
 test("ensureFxRate returns the existing rate without ever calling fetchImpl", async () => {
-  const { db } = testDb();
-  db.insert(fxRates).values({ date: "2026-08-20", currency: SEK, rateEur: 9_000_000 }).run();
-  const mustNotBeCalled = (): Promise<Response> => {
+  const { db } = await testDb();
+  await db.insert(fxRates).values({ date: "2026-08-20", currency: SEK, rateEur: 9_000_000 }).run();
+  const mustNotBeCalled = async (): Promise<Response> => {
     throw new Error("must not be called");
   };
   const rate = await ensureFxRate(db, SEK, "2026-08-22", mustNotBeCalled);
@@ -333,40 +341,40 @@ test("ensureFxRate returns the existing rate without ever calling fetchImpl", as
 });
 
 test("ensureFxRate fetches and stores ECB's rate on demand when nothing exists yet, breaking the deadlock", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   // No fx_rates row at all -- exactly the deadlock: refreshFxRates() never fetches a
   // currency the ledger doesn't hold yet, and this currency's first transaction is
   // exactly what would introduce it.
   const stub = async (): Promise<Response> => new Response(await fixtureText());
   const rate = await ensureFxRate(db, SEK, "2026-08-27", stub);
   expect(rate).toBe(EXPECTED_RATE_EUR.SEK);
-  expect(db.select().from(fxRates).all()).toHaveLength(1);
+  expect(await db.select().from(fxRates).all()).toHaveLength(1);
 });
 
 test("ensureFxRate returns null (not a thrown error) when ECB has nothing older than the requested date", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const rate = await ensureFxRate(db, SEK, "2020-01-01", dispatch);
   expect(rate).toBeNull();
   // Everything the request did return is still stored, so a later lookup on or after
   // any of those dates is served without another fetch.
-  expect(db.select().from(fxRates).all()).toHaveLength(5);
+  expect(await db.select().from(fxRates).all()).toHaveLength(5);
 });
 
 test("ensureFxRate resolves a back-dated request in one ranged fetch -- the previously-blocked case", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const rate = await ensureFxRate(db, SEK, "2020-01-02", dispatch);
   expect(rate).toBe(expectedHistRate("2020-01-02", "SEK"));
-  const rows = db.select().from(fxRates).all();
+  const rows = await db.select().from(fxRates).all();
   expect(rows.some((r) => r.date === "2020-01-02" && r.currency === "SEK")).toBe(true);
 });
 
 test("ensureFxRate asks ECB once, for the requested currency and from the requested date", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   const urls: string[] = [];
   const dispatch: FetchImpl = async (input) => {
-    urls.push(String(input));
+    urls.push(urlOf(input));
     return new Response(await histFixtureText());
   };
   await ensureFxRate(db, SEK, "2020-01-02", dispatch);
@@ -376,18 +384,18 @@ test("ensureFxRate asks ECB once, for the requested currency and from the reques
 });
 
 test("ensureFxRate swallows a fetch failure to null instead of throwing out of a commit", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   const failing = async (): Promise<Response> =>
     new Response("down", { status: 503, statusText: "Service Unavailable" });
   const rate = await ensureFxRate(db, SEK, "2026-08-27", failing);
   expect(rate).toBeNull();
-  expect(db.select().from(fxRates).all()).toEqual([]);
+  expect(await db.select().from(fxRates).all()).toEqual([]);
 });
 
 // --- backfillFxRates -- the historical-file catch-up sweep (nightly + on import commit) ---
 
 test("backfills nothing and touches no network for an empty ledger", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   const mustNotBeCalled: FetchImpl = () => {
     throw new Error("must not be called");
   };
@@ -396,8 +404,8 @@ test("backfills nothing and touches no network for an empty ledger", async () =>
 });
 
 test("backfills nothing when the ledger only ever traded EUR", async () => {
-  const { db } = testDb();
-  seedTransaction(db, EUR);
+  const { db } = await testDb();
+  await seedTransaction(db, EUR);
   const mustNotBeCalled: FetchImpl = () => {
     throw new Error("must not be called");
   };
@@ -406,11 +414,11 @@ test("backfills nothing when the ledger only ever traded EUR", async () => {
 });
 
 test("asks from the ledger's own earliest needed date, not from a recent window", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK); // tradeDate 2026-01-01, see seedTransaction's own doc
+  const { db } = await testDb();
+  await seedTransaction(db, SEK); // tradeDate 2026-01-01, see seedTransaction's own doc
   const dispatch: FetchImpl = async (input) => {
-    expect(String(input).startsWith(ECB_DATA_URL)).toBe(true);
-    expect(String(input)).toContain("startPeriod=2026-01-01");
+    expect(urlOf(input).startsWith(ECB_DATA_URL)).toBe(true);
+    expect(urlOf(input)).toContain("startPeriod=2026-01-01");
     return new Response(await histFixtureText());
   };
   const result = await backfillFxRates(db, { fetchImpl: dispatch });
@@ -421,9 +429,10 @@ test("asks from the ledger's own earliest needed date, not from a recent window"
 test("backfills a currency held only by an instrument's own quotation currency, back to that instrument's earliest transaction", async () => {
   // Mirrors refreshFxRates' own C1 case, but for the historical catch-up: a fund whose
   // transactions are booked in EUR (§10a A2/A5) but whose price/NAV is quoted in SEK.
-  const { db } = testDb();
+  const { db } = await testDb();
   const userId = crypto.randomUUID();
-  db.insert(user)
+  await db
+    .insert(user)
     .values({
       id: userId,
       name: "Testikäyttäjä",
@@ -433,12 +442,12 @@ test("backfills a currency held only by an instrument's own quotation currency, 
       updatedAt: new Date(),
     })
     .run();
-  const account = db
+  const account = await db
     .insert(accounts)
     .values({ userId, name: "Nordnet", broker: "nordnet", baseCurrency: EUR })
     .returning()
     .get();
-  const fund = db
+  const fund = await db
     .insert(instruments)
     .values({
       isin: "SE0009123456",
@@ -451,7 +460,8 @@ test("backfills a currency held only by an instrument's own quotation currency, 
     })
     .returning()
     .get();
-  db.insert(transactions)
+  await db
+    .insert(transactions)
     .values({
       accountId: account.id,
       instrumentId: fund.id,
@@ -466,7 +476,7 @@ test("backfills a currency held only by an instrument's own quotation currency, 
   const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const result = await backfillFxRates(db, { fetchImpl: dispatch });
   expect(result).toEqual({ inserted: 5, currencies: 1 });
-  const rows = db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
+  const rows = await db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
   expect(rows).toHaveLength(5);
   // Reaches all the way back to the fixture's own oldest row, well before the
   // transaction's own 2026-08-24 date -- exactly what "not just today" means.
@@ -483,12 +493,12 @@ test("backfills a currency held only by an instrument's own quotation currency, 
 });
 
 test("aggregates a mixed batch: one currency already covered is skipped, another still needing backfill is fetched -- one combined request either way", async () => {
-  const { db } = testDb();
+  const { db } = await testDb();
   // SEK already has a row reaching back before its own earliest need -- no backfill due.
-  seedTransaction(db, SEK); // tradeDate 2026-01-01
-  db.insert(fxRates).values({ date: "2025-01-01", currency: SEK, rateEur: 9_000_000 }).run();
+  await seedTransaction(db, SEK); // tradeDate 2026-01-01
+  await db.insert(fxRates).values({ date: "2025-01-01", currency: SEK, rateEur: 9_000_000 }).run();
   // USD needs a fresh fetch: no fx_rates row for it at all yet.
-  seedTransaction(db, USD); // tradeDate 2026-01-01
+  await seedTransaction(db, USD); // tradeDate 2026-01-01
 
   let calls = 0;
   const dispatch: FetchImpl = async () => {
@@ -500,16 +510,16 @@ test("aggregates a mixed batch: one currency already covered is skipped, another
   expect(result.currencies).toBe(1); // only USD was pending
 
   // SEK's pre-existing row is untouched -- still exactly the one row it started with.
-  const sekRows = db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
+  const sekRows = await db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
   expect(sekRows).toEqual([{ date: "2025-01-01", currency: SEK, rateEur: 9_000_000 }]);
   // USD is now backfilled from the historical fixture.
-  const usdRows = db.select().from(fxRates).where(eq(fxRates.currency, USD)).all();
+  const usdRows = await db.select().from(fxRates).where(eq(fxRates.currency, USD)).all();
   expect(usdRows.length).toBeGreaterThan(0);
 });
 
 test("surfaces a non-OK historical ECB response as a thrown error instead of silently backfilling nothing", async () => {
-  const { db } = testDb();
-  seedTransaction(db, SEK);
+  const { db } = await testDb();
+  await seedTransaction(db, SEK);
   const failing: FetchImpl = async () =>
     new Response("down", { status: 503, statusText: "Service Unavailable" });
   await expect(backfillFxRates(db, { fetchImpl: failing })).rejects.toThrow(/503/);

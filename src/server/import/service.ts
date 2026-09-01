@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readUpload } from "./upload.ts";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { imports, instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
@@ -15,7 +15,6 @@ import { parseOpPaste } from "./op-paste.ts";
 import type { BrokerCsvConfig } from "./types.ts";
 import { assertAccountOwned } from "../accounts.ts";
 
-const { db } = getDb();
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
 const MAX_PASTE_CHARS = 2_000_000;
@@ -59,8 +58,8 @@ export const detectBrokerConfig = (
  * are built from one query so `buildDraft`/`buildPasteDraft` never issue it
  * twice.
  */
-const knownInstrumentMaps = () => {
-  const rows = db
+const knownInstrumentMaps = async () => {
+  const rows = await db
     .select({ isin: instruments.isin, name: instruments.name, id: instruments.id })
     .from(instruments)
     .all();
@@ -93,7 +92,7 @@ const buildDraft = async (file: File, accountId: number) => {
     );
   }
 
-  const { knownIsins, knownNames } = knownInstrumentMaps();
+  const { knownIsins, knownNames } = await knownInstrumentMaps();
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   // Task 10's structural problems (bad column count, malformed quoting)
   // are merged into the draft here so the review screen gets one
@@ -121,7 +120,7 @@ const PasteBody = z.object({
  * same way. No detection step: the paste has no delimiter and no header row for
  * a signature to match.
  */
-const buildPasteDraft = (text: string, accountId: number) => {
+const buildPasteDraft = async (text: string, accountId: number) => {
   let parsed: ReturnType<typeof parseOpPaste>;
   try {
     parsed = parseOpPaste(text);
@@ -136,7 +135,7 @@ const buildPasteDraft = (text: string, accountId: number) => {
       cause instanceof Error ? cause.message : "OP-liitettä ei voitu jäsentää",
     );
   }
-  const { knownIsins, knownNames } = knownInstrumentMaps();
+  const { knownIsins, knownNames } = await knownInstrumentMaps();
   const sha256 = createHash("sha256").update(text).digest("hex");
   return {
     draft: mapRows(parsed.rows, OP_WEB_PASTE, knownIsins, {
@@ -170,35 +169,36 @@ const OP_PASTE_FILENAME = "op-liite.txt";
 // (readUpload caps it at 5 MB, PasteBody caps text at 2 M characters) and
 // the parse is cheap.
 
-export const listImports = (userId: string) =>
-  db
-    .select()
-    .from(imports)
-    .where(eq(imports.userId, userId))
-    .orderBy(desc(imports.createdAt), desc(imports.id))
-    .all()
-    .map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      filename: row.filename,
-      // ISO 8601, like every other cross-boundary instant here: the frontend
-      // formats it, this layer never pre-formats a date for a locale.
-      createdAt: row.createdAt.toISOString(),
-      inserted: row.insertedCount,
-      skipped: row.skippedCount,
-      undone: row.status === "undone",
-    }));
+export const listImports = async (userId: string) =>
+  (
+    await db
+      .select()
+      .from(imports)
+      .where(eq(imports.userId, userId))
+      .orderBy(desc(imports.createdAt), desc(imports.id))
+      .all()
+  ).map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    filename: row.filename,
+    // ISO 8601, like every other cross-boundary instant here: the frontend
+    // formats it, this layer never pre-formats a date for a locale.
+    createdAt: row.createdAt.toISOString(),
+    inserted: row.insertedCount,
+    skipped: row.skippedCount,
+    undone: row.status === "undone",
+  }));
 
 export const previewUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
-  assertAccountOwned(userId, accountId);
+  await assertAccountOwned(userId, accountId);
   const { config, draft, sha256 } = await buildDraft(file, accountId);
   return { broker: config.broker, filename: file.name, sha256, ...draft };
 };
 
 export const commitUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
-  assertAccountOwned(userId, accountId);
+  await assertAccountOwned(userId, accountId);
   const { config, draft, sha256 } = await buildDraft(file, accountId);
   const result = await commitDraft(db, {
     userId,
@@ -212,17 +212,17 @@ export const commitUpload = async (userId: string, form: FormData) => {
   return result;
 };
 
-export const previewPaste = (userId: string, body: z.infer<typeof PasteBody>) => {
+export const previewPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
-  assertAccountOwned(userId, accountId);
-  const { draft, sha256 } = buildPasteDraft(text, accountId);
+  await assertAccountOwned(userId, accountId);
+  const { draft, sha256 } = await buildPasteDraft(text, accountId);
   return { broker: OP_WEB_PASTE.broker, filename: OP_PASTE_FILENAME, sha256, ...draft };
 };
 
 export const commitPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
-  assertAccountOwned(userId, accountId);
-  const { draft, sha256 } = buildPasteDraft(text, accountId);
+  await assertAccountOwned(userId, accountId);
+  const { draft, sha256 } = await buildPasteDraft(text, accountId);
   const result = await commitDraft(db, {
     userId,
     accountId,

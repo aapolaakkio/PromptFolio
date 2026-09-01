@@ -1,11 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { taxYearFor, taxYearsFor } from "../../server/tax.ts";
 import { authed, readable } from "./guard.ts";
-
-const { db } = getDb();
 
 const Year = z
   .number()

@@ -7,32 +7,31 @@ import { EUR, type Currency } from "../../core/money.ts";
 type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
 import { addInstrument } from "../instruments/store.ts";
 import { eq } from "drizzle-orm";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { prices } from "../db/schema.ts";
 
-// getDb() is safe to call statically here (unlike auth.ts/accounts.ts/
+// the shared database is safe to use statically here (unlike auth.ts/accounts.ts/
 // instruments.ts, imported dynamically below): it does not throw at import
 // time and does not decide the shared handle's identity on its own --
 // ../test-setup.ts (a vitest.config.ts setupFiles entry) has already pinned that
 // handle to a migrated in-memory database before this file's own top-level
 // code runs, so this just retrieves the same handle every other route
 // module in this process shares.
-const { db } = getDb();
 
 // Mirrors instruments.test.ts's own setup comment: this file exercises
 // priceRoutes against the real, migrated, process-shared database, via
 // dynamic imports from beforeAll (auth.ts is a process-wide ES module
 // singleton pinned to that database by ../test-setup.ts before this file's
 // own top-level code runs). Must NOT call resetDbHandleForTests(), set
-// DATABASE_PATH, or call getDb()/migrate() itself -- see test-setup.ts's
+// DATABASE_PATH, or call the shared database itself -- see test-setup.ts's
 // comment and accounts.test.ts's comment for the real bug that duplicating
 // that setup caused.
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
 beforeAll(async () => {
   const authModule = await import("../auth.ts");
-  auth = authModule.auth;
+  auth = authModule.getAuth();
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -71,7 +70,7 @@ const createInstrument = async (
   cookie: string,
   overrides: { currency?: Currency; priceSource?: PriceSource } = {},
 ): Promise<{ id: number }> => {
-  const created = addInstrument(getDb().db, {
+  const created = await addInstrument(db, {
     isin: randomIsin(),
     ticker: null,
     name: "Testirahasto",
@@ -83,8 +82,8 @@ const createInstrument = async (
   return { id: created.id };
 };
 
-const recordPrice = (body: { instrumentId: number; date: string; price: string }) =>
-  recordManualPrice(getDb().db, PriceInput.parse(body));
+const recordPrice = async (body: { instrumentId: number; date: string; price: string }) =>
+  recordManualPrice(db, PriceInput.parse(body));
 
 describe("recordManualPrice", () => {
   // "rejects a request with no session" is the authed middleware's job now,
@@ -94,7 +93,7 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-manual-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    const body = recordPrice({
+    const body = await recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-27",
       price: "12,34",
@@ -106,13 +105,13 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-comma-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    recordPrice({
+    await recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-27",
       price: "283,60",
     });
 
-    const row = db
+    const row = await db
       .select({ close: prices.close, currency: prices.currency, source: prices.source })
       .from(prices)
       .where(eq(prices.instrumentId, instrument.id))
@@ -122,25 +121,25 @@ describe("recordManualPrice", () => {
 
   test("rejects an unknown instrument id with 404", async () => {
     await signUp(`price-unknown-${crypto.randomUUID()}@example.com`);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: 999_999_999,
         date: "2026-08-27",
         price: "10",
       }),
-    ).toThrow(/löydy/);
+    ).rejects.toThrow(/löydy/);
   });
 
   test("rejects a malformed date with 400 field detail", async () => {
     const { cookie } = await signUp(`price-bad-date-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "27.8.2026",
         price: "10",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
     // The field is named by the schema now, not by an error envelope: parsing
     // it directly is what the server function's validator does.
     expect(PriceInput.safeParse({ instrumentId: 1, date: "2024-02-31", price: "10" }).success).toBe(
@@ -151,37 +150,37 @@ describe("recordManualPrice", () => {
   test("rejects a price that is not a valid decimal string with 400", async () => {
     const { cookie } = await signUp(`price-not-decimal-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2026-08-27",
         price: "not a number",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   test("rejects a zero price with 400", async () => {
     const { cookie } = await signUp(`price-zero-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2026-08-27",
         price: "0",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   test("rejects a negative price with 400", async () => {
     const { cookie } = await signUp(`price-negative-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2026-08-27",
         price: "-5",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   // The plausibility guard (write.ts) is deliberately bypassed for a
@@ -192,7 +191,7 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-implausible-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    recordPrice({
+    await recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-26",
       price: "10",
@@ -203,20 +202,20 @@ describe("recordManualPrice", () => {
       date: "2026-08-27",
       price: "500",
     });
-    const body = second;
+    const body = await second;
     expect(body.written).toBe(1);
   });
 
   test("rejects a date that is not a real calendar day (2024-02-31) with 400", async () => {
     const { cookie } = await signUp(`price-bad-calendar-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2024-02-31",
         price: "10",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
     // The field is named by the schema now, not by an error envelope: parsing
     // it directly is what the server function's validator does.
     expect(PriceInput.safeParse({ instrumentId: 1, date: "2024-02-31", price: "10" }).success).toBe(
@@ -227,19 +226,19 @@ describe("recordManualPrice", () => {
   test("rejects a nonsense month/day pair (2024-99-99) with 400, the same as a malformed date", async () => {
     const { cookie } = await signUp(`price-bad-month-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2024-99-99",
         price: "10",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   test("accepts 2024-02-29, a real leap day", async () => {
     const { cookie } = await signUp(`price-leap-day-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    recordPrice({
+    await recordPrice({
       instrumentId: instrument.id,
       date: "2024-02-29",
       price: "10",
@@ -249,13 +248,13 @@ describe("recordManualPrice", () => {
   test("rejects 2023-02-29, since 2023 is not a leap year, with 400", async () => {
     const { cookie } = await signUp(`price-not-leap-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         date: "2023-02-29",
         price: "10",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   // requirePositiveMinor (prices/types.ts) has no upper bound of its own, and a manual
@@ -266,7 +265,7 @@ describe("recordManualPrice", () => {
   test("rejects a price so large it cannot be stored as an exact integer, with 400", async () => {
     const { cookie } = await signUp(`price-too-large-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
-    expect(() =>
+    await expect(
       recordPrice({
         instrumentId: instrument.id,
         // 28 digits before the decimal point -- well past Number.MAX_SAFE_INTEGER (2^53 -
@@ -275,8 +274,8 @@ describe("recordManualPrice", () => {
         date: "2026-08-27",
         price: "1".repeat(28),
       }),
-    ).toThrow();
-    const row = db
+    ).rejects.toThrow();
+    const row = await db
       .select({ close: prices.close })
       .from(prices)
       .where(eq(prices.instrumentId, instrument.id))
@@ -289,8 +288,8 @@ describe("recordManualPrice", () => {
     const { cookie } = await signUp(`price-overwrite-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
 
-    recordPrice({ instrumentId: instrument.id, date: "2026-08-27", price: "10" });
-    recordPrice({
+    await recordPrice({ instrumentId: instrument.id, date: "2026-08-27", price: "10" });
+    await recordPrice({
       instrumentId: instrument.id,
       date: "2026-08-27",
       price: "20",

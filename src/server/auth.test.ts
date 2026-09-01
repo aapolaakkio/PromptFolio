@@ -1,11 +1,10 @@
-import { spawnSync } from "node:child_process";
+import { env } from "cloudflare:workers";
 import { beforeAll, expect, test } from "vitest";
 import { HttpError } from "./errors.ts";
-import { hashPassword, verifyPassword } from "./password.ts";
 
 // --- Shared, migrated in-memory database + a single Better Auth instance ---
 //
-// auth.ts calls getDb() at module scope, and getDb() memoises a shared
+// auth.ts reads the database at module scope, and the database module exports a shared
 // handle for the lifetime of the process (see db/index.ts). test-setup.ts
 // (a vitest.config.ts `setupFiles` entry — see its own comment for the
 // full story) has already pointed that handle at a migrated in-memory
@@ -22,7 +21,7 @@ import { hashPassword, verifyPassword } from "./password.ts";
 // ALLOW_SIGNUP is set to 'true' by test-setup.ts, which lets this file's
 // one `auth` instance permit sign-up, so tests here can create a real,
 // correctly-issued session to exercise requireUser's happy path.
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let resolveAuthSecret: (typeof import("./auth.ts"))["resolveAuthSecret"];
 let resolveDisableSignUp: (typeof import("./auth.ts"))["resolveDisableSignUp"];
 let requireUser: (typeof import("./auth-guard.ts"))["requireUser"];
@@ -32,7 +31,7 @@ const TEST_SECRET = "test-secret-at-least-32-characters-long";
 beforeAll(async () => {
   const authModule = await import("./auth.ts");
   const authGuardModule = await import("./auth-guard.ts");
-  auth = authModule.auth;
+  auth = authModule.getAuth();
   resolveAuthSecret = authModule.resolveAuthSecret;
   resolveDisableSignUp = authModule.resolveDisableSignUp;
   requireUser = authGuardModule.requireUser;
@@ -56,33 +55,11 @@ const signUp = (email: string, password: string): Promise<Response> =>
     }),
   );
 
-// --- Password hashing (src/server/password.ts) ---
-
-test("hashes with argon2id and verifies", async () => {
-  const hash = await hashPassword("correct horse battery staple");
-  expect(hash.startsWith("$argon2id$")).toBe(true);
-  expect(await verifyPassword({ password: "correct horse battery staple", hash })).toBe(true);
-  expect(await verifyPassword({ password: "wrong", hash })).toBe(false);
-});
-
-test("the same password hashes differently each time", async () => {
-  const a = await hashPassword("same");
-  const b = await hashPassword("same");
-  expect(a).not.toBe(b);
-});
-
-test("verifyPassword fails closed (returns false, doesn't throw) on a malformed stored hash", async () => {
-  // Bun.password.verify throws on a hash it can't parse (unsupported
-  // algorithm, invalid encoding). A corrupted/hand-edited row must not
-  // crash sign-in; it must be treated the same as a wrong password.
-  expect(await verifyPassword({ password: "x", hash: "not-a-valid-hash-at-all" })).toBe(false);
-  expect(
-    await verifyPassword({
-      password: "x",
-      hash: "$2b$10$notreallybcryptgarbagegarbagegarbagegarba",
-    }),
-  ).toBe(false);
-});
+// Password hashing had its own tests here, against src/server/password.ts's
+// argon2 backend. Both are gone: workerd cannot load a native Rust binding, so
+// hashing is Better Auth's own (scrypt) and testing it would be testing the
+// library. What actually matters -- that an account this app writes can then
+// sign in through the real handler -- is covered end-to-end in setup.test.ts.
 
 // --- requireUser (src/server/auth-guard.ts) ---
 
@@ -149,60 +126,49 @@ test("resolveDisableSignUp closes sign-up unless ALLOW_SIGNUP is exactly 'true'"
   expect(resolveDisableSignUp({ ALLOW_SIGNUP: "true" })).toBe(false);
 });
 
-test("sign-up is rejected end-to-end when ALLOW_SIGNUP is not set", () => {
-  // This is the control that stops an anonymous stranger who reaches the
-  // URL from creating an account on an application holding financial
-  // records. resolveDisableSignUp's unit tests above prove the boolean is
-  // computed correctly; this proves an actual /sign-up/email request is
-  // actually refused. It runs in a real child process (not a second
-  // same-process module instance via a cache-busted dynamic import)
-  // because a same-process second `auth` instance made Bun's coverage
-  // instrumentation misattribute hits on this file - see task-8-report.md.
-  const authPath = new URL("./auth.ts", import.meta.url).pathname;
-  const envWithoutAllowSignup = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key !== "ALLOW_SIGNUP"),
-  );
-  const envForChild = { ...envWithoutAllowSignup, DATABASE_PATH: ":memory:" };
-  const payload = {
-    name: "Nope",
-    email: "blocked@example.com",
-    password: "correct horse battery staple",
-  };
-
-  const script = `
-const { auth } = await import(${JSON.stringify(authPath)});
-const response = await auth.handler(
-  new Request("http://localhost/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(${JSON.stringify(payload)}),
-  }),
-);
-const body = await response.json();
-console.log(JSON.stringify({ status: response.status, body }));
-`;
-
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    encoding: "utf-8",
-    cwd: import.meta.dirname,
-    env: envForChild,
-  });
-
-  expect(result.status).toBe(0);
-  // SAFETY: the child script above unconditionally prints exactly
-  // `{ status, body }` as its only stdout line, or the process would have
-  // exited non-zero and failed the assertion above instead.
-  const parsed = JSON.parse(result.stdout.trim()) as {
-    status: number;
-    body: { code?: string };
-  };
-  expect(parsed.status).not.toBe(200);
-  expect(parsed.body.code).toBe("EMAIL_PASSWORD_SIGN_UP_DISABLED");
+test("sign-up is rejected end-to-end when ALLOW_SIGNUP is not set", async () => {
+  // This is the control that stops an anonymous stranger who reaches the URL
+  // from creating an account on an application holding financial records.
+  // resolveDisableSignUp's unit tests above prove the boolean is computed
+  // correctly; this proves an actual /sign-up/email request is actually
+  // refused.
+  //
+  // It used to run in a child process, which a Worker binding cannot be handed
+  // to. `getAuth()` reads its configuration once and remembers it, so the
+  // binding is changed and the instance dropped instead.
+  const authModule = await import("./auth.ts");
+  const previous = env.ALLOW_SIGNUP;
+  env.ALLOW_SIGNUP = "false";
+  authModule._resetAuthForTests();
+  try {
+    const response = await authModule.getAuth().handler(
+      new Request("http://localhost/api/auth/sign-up/email", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Nope",
+          email: `blocked-${crypto.randomUUID()}@example.com`,
+          password: "correct horse battery staple",
+        }),
+      }),
+    );
+    expect(response.status).not.toBe(200);
+    // SAFETY: Better Auth's documented refusal body for this route carries a
+    // `code`; anything else fails the assertion rather than reading as a pass.
+    const body = (await response.json()) as { code?: string };
+    expect(body.code).toBe("EMAIL_PASSWORD_SIGN_UP_DISABLED");
+  } finally {
+    env.ALLOW_SIGNUP = previous;
+    // Every later test in this process shares the instance, so it has to go
+    // back to the one they expect.
+    authModule._resetAuthForTests();
+    auth = authModule.getAuth();
+  }
 });
 
 // --- BETTER_AUTH_SECRET must be a real secret, or the process refuses to boot ---
 
-test("resolveAuthSecret rejects a missing, empty, or too-short secret", () => {
+test("resolveAuthSecret rejects a missing, empty, or too-short secret", async () => {
   expect(() => resolveAuthSecret({})).toThrow(
     "BETTER_AUTH_SECRET must be set to at least 32 characters",
   );
@@ -215,23 +181,22 @@ test("resolveAuthSecret accepts a secret at or above the 32-character minimum", 
   expect(resolveAuthSecret({ BETTER_AUTH_SECRET: TEST_SECRET })).toBe(TEST_SECRET);
 });
 
-test("the process refuses to boot when BETTER_AUTH_SECRET is missing", () => {
-  const authPath = new URL("./auth.ts", import.meta.url).pathname;
-  const envWithoutSecret = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key !== "BETTER_AUTH_SECRET"),
-  );
-  const envForChild = { ...envWithoutSecret, DATABASE_PATH: ":memory:" };
-
-  const result = spawnSync(
-    process.execPath,
-    ["--input-type=module", "-e", `await import(${JSON.stringify(authPath)})`],
-    {
-      encoding: "utf-8",
-      cwd: import.meta.dirname,
-      env: envForChild,
-    },
-  );
-
-  expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain("BETTER_AUTH_SECRET must be set to at least 32 characters");
+test("the server refuses to serve when BETTER_AUTH_SECRET is missing", async () => {
+  // The refusal moved with the instance: `auth` is built on first use now
+  // rather than at import, because a Worker evaluates modules during a
+  // request. So this is `getAuth()` throwing, not a process failing to boot --
+  // the same refusal, at the first request instead of at startup.
+  const authModule = await import("./auth.ts");
+  const previous = env.BETTER_AUTH_SECRET;
+  env.BETTER_AUTH_SECRET = "";
+  authModule._resetAuthForTests();
+  try {
+    expect(() => authModule.getAuth()).toThrow(
+      "BETTER_AUTH_SECRET must be set to at least 32 characters",
+    );
+  } finally {
+    env.BETTER_AUTH_SECRET = previous;
+    authModule._resetAuthForTests();
+    auth = authModule.getAuth();
+  }
 });

@@ -3,7 +3,7 @@ import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { addRules } from "../spending/rules.ts";
 import { AllocationInput } from "../../web/server/portfolio.ts";
 import { Range } from "../../web/server/portfolio.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { holdingsFor } from "../valuation.ts";
 import {
   allocationView,
@@ -17,13 +17,13 @@ import { addInstrument } from "../instruments/store.ts";
 import { EUR, parseMoney } from "../../core/money.ts";
 import { xirr } from "../../core/returns.ts";
 
-// Exercises portfolioRoutes (src/server/api/portfolio.ts) against a real,
+// Exercises the portfolio views (src/server/views/portfolio.ts) against a real,
 // migrated database and a real Better Auth session, mirroring
 // accounts.test.ts's and instruments.test.ts's setup -- including their
 // reliance on ../test-setup.ts (a vitest.config.ts `setupFiles` entry) to
-// have already pinned the shared getDb() handle to a migrated in-memory
+// have already pinned the shared database to a migrated in-memory
 // database before this file's own code runs. This file must NOT call
-// resetDbHandleForTests(), set DATABASE_PATH, or call getDb()/migrate()
+// resetDbHandleForTests(), set DATABASE_PATH, or call the shared database
 // itself -- see test-setup.ts's and accounts.test.ts's comments for why.
 //
 // The database is shared with every other *.test.ts file in the process,
@@ -35,11 +35,11 @@ import { xirr } from "../../core/returns.ts";
 /** What the views default to when a caller names no date. */
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
 beforeAll(async () => {
   const authModule = await import("../auth.ts");
-  auth = authModule.auth;
+  auth = authModule.getAuth();
 });
 
 const sessionCookieFrom = (response: Response): string => {
@@ -69,27 +69,29 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
 const randomIsin = (): string =>
   `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
-const createAccount = (userId: string): number =>
-  openAccountRow(getDb().db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }))
+const createAccount = async (userId: string): Promise<number> =>
+  (await openAccountRow(db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" })))
     .id;
 
-const createInstrument = (isin: string): number => {
-  return addInstrument(getDb().db, {
-    isin,
-    ticker: "TST",
-    name: "Test Co",
-    kind: "stock",
-    currency: EUR,
-    priceSource: "manual",
-    sourceKey: isin,
-  }).id;
+const createInstrument = async (isin: string): Promise<number> => {
+  return (
+    await addInstrument(db, {
+      isin,
+      ticker: "TST",
+      name: "Test Co",
+      kind: "stock",
+      currency: EUR,
+      priceSource: "manual",
+      sourceKey: isin,
+    })
+  ).id;
 };
 
 // The four routes read transactions/prices directly, and Task 16 adds no
 // HTTP route for writing either -- transactions arrive via the import
 // pipeline (Tasks 10-12), prices via the refresh job (Task 15). Seeding
 // them for these route-level tests therefore goes straight through the
-// shared getDb() handle, exactly like valuation.test.ts's lower-level seed.
+// shared database, exactly like valuation.test.ts's lower-level seed.
 /** The two response shapes the cash tests read, parsed rather than cast. */
 
 const seedHolding = async (
@@ -103,15 +105,15 @@ const seedHolding = async (
     prices: Array<{ date: string; close: number }>;
   },
 ): Promise<{ accountId: number; instrumentId: number }> => {
-  const { getDb } = await import("../db/index.ts");
+  const { db } = await import("../db/index.ts");
   const { prices, transactions } = await import("../db/schema.ts");
 
-  const accountId = createAccount(userId);
-  const instrumentId = createInstrument(randomIsin());
+  const accountId = await createAccount(userId);
+  const instrumentId = await createInstrument(randomIsin());
   const fee = opts.fee ?? 0;
 
-  getDb()
-    .db.insert(transactions)
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId,
@@ -135,8 +137,8 @@ const seedHolding = async (
     .run();
 
   if (opts.prices.length > 0) {
-    getDb()
-      .db.insert(prices)
+    await db
+      .insert(prices)
       .values(
         opts.prices.map((p) => ({
           instrumentId,
@@ -172,7 +174,7 @@ describe("GET /api/holdings", () => {
       prices: [{ date: "2024-01-10", close: 415 }],
     });
 
-    const body = holdingsFor(getDb().db, userId, "2024-06-01");
+    const body = await holdingsFor(db, userId, "2024-06-01");
     expect(body).toHaveLength(1);
     const holding = body[0]!;
     expect(holding.quantity).toBe("100.000000");
@@ -201,7 +203,7 @@ describe("GET /api/holdings", () => {
 
     // The id comes from the session, so a stranger asking is a stranger's
     // own empty portfolio -- not a way to reach someone else's.
-    expect(holdingsFor(getDb().db, stranger.userId, today())).toEqual([]);
+    expect(await holdingsFor(db, stranger.userId, today())).toEqual([]);
   });
 
   // "rejects a malformed 'on' parameter" belonged to the URL. getHoldings takes
@@ -223,15 +225,15 @@ describe("GET /api/holdings", () => {
   // since it was first caught.
   test("degrades the affected position instead of 400ing the whole request when a sale has no matching purchase", async () => {
     const { userId } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    const accountId = createAccount(userId);
+    const accountId = await createAccount(userId);
     const isin = randomIsin();
-    const instrumentId = createInstrument(isin);
+    const instrumentId = await createInstrument(isin);
 
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId,
@@ -250,7 +252,7 @@ describe("GET /api/holdings", () => {
       })
       .run();
 
-    const body = holdingsFor(getDb().db, userId, "2025-01-01");
+    const body = await holdingsFor(db, userId, "2025-01-01");
     expect(body).toHaveLength(1);
     const holding = body[0]!;
     // The raw ledger fact is still reported honestly: 10 units disposed, 0
@@ -276,7 +278,7 @@ describe("GET /api/holdings", () => {
 
   test("an unmatched sale on one instrument does not affect another instrument's holding", async () => {
     const { userId } = await signUp(`holdings-unmatched-other-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
     // A perfectly ordinary holding...
@@ -290,9 +292,9 @@ describe("GET /api/holdings", () => {
 
     // ...alongside a second instrument with an unmatched sale.
     const brokenIsin = randomIsin();
-    const brokenInstrumentId = createInstrument(brokenIsin);
-    getDb()
-      .db.insert(transactions)
+    const brokenInstrumentId = await createInstrument(brokenIsin);
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId: brokenInstrumentId,
@@ -311,7 +313,7 @@ describe("GET /api/holdings", () => {
       })
       .run();
 
-    const body = holdingsFor(getDb().db, userId, "2024-06-01");
+    const body = await holdingsFor(db, userId, "2024-06-01");
     expect(body).toHaveLength(2);
     const ok = body.find((h) => h.isin !== brokenIsin)!;
     const broken = body.find((h) => h.isin === brokenIsin)!;
@@ -337,7 +339,7 @@ describe("GET /api/value-series", () => {
       ],
     });
 
-    const body = valueSeriesView(getDb().db, userId, "2024-01-01", "2024-01-05");
+    const body = await valueSeriesView(db, userId, "2024-01-01", "2024-01-05");
     expect(body).toHaveLength(5);
     // 10 units at 10.00/unit = 100.00; at 11.00/unit = 110.00. The purchase
     // cost 100.00 and none of it has come back out, so invested capital is
@@ -371,14 +373,14 @@ describe("GET /api/value-series", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = valueSeriesView(getDb().db, userId, undefined, "2024-01-03");
+    const body = await valueSeriesView(db, userId, undefined, "2024-01-03");
     expect(body[0]?.date).toBe("2024-01-01");
     expect(body).toHaveLength(3);
   });
 
   test("defaults to a long since-inception range without error", async () => {
     const { userId } = await signUp(`series-default-${crypto.randomUUID()}@example.com`);
-    const body = valueSeriesView(getDb().db, userId, "2015-01-01", today());
+    const body = await valueSeriesView(db, userId, "2015-01-01", today());
     expect(body[0]!.date).toBe("2015-01-01");
     expect(body.length).toBeGreaterThan(2000);
     expect(body.every((p) => p.valueEur === "0.00")).toBe(true);
@@ -411,7 +413,7 @@ describe("GET /api/value-series", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = valueSeriesView(getDb().db, stranger.userId, "2024-01-01", "2024-01-01");
+    const body = await valueSeriesView(db, stranger.userId, "2024-01-01", "2024-01-01");
     // Nothing of the owner's leaks into a stranger's series -- neither what it
     // is worth nor what was put into it.
     expect(body).toEqual([
@@ -433,14 +435,14 @@ describe("GET /api/value-series", () => {
   // in excludedInstrumentIds instead.
   test("a negative (unmatched-disposal) position never makes the daily value negative", async () => {
     const { userId } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument(randomIsin());
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument(randomIsin());
 
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId,
@@ -459,7 +461,7 @@ describe("GET /api/value-series", () => {
       })
       .run();
 
-    const body = valueSeriesView(getDb().db, userId, "2024-01-01", "2024-01-01");
+    const body = await valueSeriesView(db, userId, "2024-01-01", "2024-01-01");
     expect(body).toHaveLength(1);
     expect(body[0]!.valueEur).toBe("0.00");
     expect(Number(body[0]!.valueEur)).toBeGreaterThanOrEqual(0);
@@ -480,7 +482,7 @@ describe("GET /api/allocation", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = allocationView(getDb().db, userId, "kind", "2024-01-01");
+    const body = await allocationView(db, userId, "kind", "2024-01-01");
     // 10 units at 10.00/unit = 100.00.
     expect(body.slices).toEqual([
       { key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 },
@@ -498,7 +500,7 @@ describe("GET /api/allocation", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = allocationView(getDb().db, userId, "currency", "2024-01-01");
+    const body = await allocationView(db, userId, "currency", "2024-01-01");
     expect(body.slices.map((s) => s.key)).toContain("EUR");
   });
 
@@ -509,7 +511,7 @@ describe("GET /api/allocation", () => {
   // just as misleading as a fabricated negative amount.
   test("a negative (unmatched-disposal) position never contributes a negative amount, and is named in excludedInstruments instead", async () => {
     const { userId } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
     // One ordinary holding...
@@ -522,11 +524,11 @@ describe("GET /api/allocation", () => {
     });
 
     // ...and a second instrument sold with nothing ever bought.
-    const cookieAccountId = createAccount(userId);
+    const cookieAccountId = await createAccount(userId);
     const brokenIsin = randomIsin();
-    const brokenInstrumentId = createInstrument(brokenIsin);
-    getDb()
-      .db.insert(transactions)
+    const brokenInstrumentId = await createInstrument(brokenIsin);
+    await db
+      .insert(transactions)
       .values({
         accountId: cookieAccountId,
         instrumentId: brokenInstrumentId,
@@ -545,7 +547,7 @@ describe("GET /api/allocation", () => {
       })
       .run();
 
-    const body = allocationView(getDb().db, userId, "kind", "2024-01-01");
+    const body = await allocationView(db, userId, "kind", "2024-01-01");
     // Only the ordinary holding's 100.00 -- the broken instrument contributes
     // nothing, positive or negative.
     expect(body.slices).toEqual([
@@ -578,7 +580,7 @@ describe("GET /api/allocation", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const response = allocationView(getDb().db, stranger.userId, "kind", "2024-01-01");
+    const response = await allocationView(db, stranger.userId, "kind", "2024-01-01");
     expect(response).toEqual({ slices: [], excludedInstruments: [] });
   });
 });
@@ -588,7 +590,7 @@ describe("GET /api/allocation", () => {
 describe("GET /api/returns", () => {
   test("reports value, TWR (a ratio) and MWR as a number, given a deposit, a withdrawal and growth", async () => {
     const { userId } = await signUp(`returns-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
     const { accountId } = await seedHolding(userId, {
@@ -602,8 +604,8 @@ describe("GET /api/returns", () => {
       ],
     });
 
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         {
           accountId,
@@ -640,7 +642,7 @@ describe("GET /api/returns", () => {
       ])
       .run();
 
-    const body = returnsView(getDb().db, userId, "2024-01-01", "2025-01-01");
+    const body = await returnsView(db, userId, "2024-01-01", "2025-01-01");
     expect(body.valueEur).toBe("10000.00");
     expect(body.stale).toBe(false);
     // C4: this used to assert -0.3650793650793651 -- a "hardening" of the exact bug this
@@ -678,16 +680,16 @@ describe("GET /api/returns", () => {
 
   test("returns mwr: null (not a fabricated rate) when contributions have no offsetting sign", async () => {
     const { userId } = await signUp(`returns-nullmwr-${crypto.randomUUID()}@example.com`);
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    const accountId = createAccount(userId);
+    const accountId = await createAccount(userId);
 
     // A deposit that is never invested: valueSeries only prices tracked
     // positions, so the tracked value stays 0 for the whole window and
     // xirr sees only non-positive amounts -- "unknown", not "0%".
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId: null,
@@ -706,14 +708,14 @@ describe("GET /api/returns", () => {
       })
       .run();
 
-    const body = returnsView(getDb().db, userId, "2024-01-01", "2024-12-31");
+    const body = await returnsView(db, userId, "2024-01-01", "2024-12-31");
     expect(body.valueEur).toBe("0.00");
     expect(body.mwr).toBeNull();
   });
 
   test("returns mwr: null rather than throwing for a user with no transactions at all", async () => {
     const { userId } = await signUp(`returns-empty-${crypto.randomUUID()}@example.com`);
-    const body = returnsView(getDb().db, userId, "2024-01-01", "2024-12-31");
+    const body = await returnsView(db, userId, "2024-01-01", "2024-12-31");
     expect(body.mwr).toBeNull();
     expect(body.twr).toBe(0);
     expect(body.valueEur).toBe("0.00");
@@ -732,15 +734,15 @@ describe("GET /api/returns", () => {
       prices: [{ date: "2024-01-01", close: 8000 }],
     });
 
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    const unpricedInstrumentId = createInstrument(randomIsin());
+    const unpricedInstrumentId = await createInstrument(randomIsin());
     // A second holding bought the same day, in the same account -- but deliberately
     // never given a `prices` row at all, e.g. an S-Pankki/Danske manual fund set to
     // `manual` before its first NAV entry (spec §10a A5).
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId: unpricedInstrumentId,
@@ -759,7 +761,7 @@ describe("GET /api/returns", () => {
       })
       .run();
 
-    const body = returnsView(getDb().db, userId, "2024-01-01", "2024-01-05");
+    const body = await returnsView(db, userId, "2024-01-01", "2024-01-05");
     // Superseded twice over. It first reported -1 (-100%) for an otherwise flat,
     // priced position; then null, because a never-priced holding excluded every
     // sub-period. A holding with no price yet is now carried at its cost basis, so
@@ -789,7 +791,7 @@ describe("GET /api/returns", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = returnsView(getDb().db, stranger.userId, "2024-01-01", "2024-01-01");
+    const body = await returnsView(db, stranger.userId, "2024-01-01", "2024-01-01");
     expect(body.valueEur).toBe("0.00");
     expect(body.mwr).toBeNull();
   });
@@ -816,7 +818,7 @@ describe("GET /api/returns", () => {
       ],
     });
 
-    const body = returnsView(getDb().db, userId, "2024-07-01", "2025-01-01");
+    const body = await returnsView(db, userId, "2024-07-01", "2025-01-01");
     expect(body.valueEur).toBe("6000.00"); // 100 x 60.00
 
     // Independently derived expected flows, with no dependency on
@@ -859,12 +861,12 @@ describe("GET /api/cash", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
     // 500,00 in, 100,00 spent on the holding above: 400,00 left as cash.
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         {
           accountId,
@@ -883,11 +885,11 @@ describe("GET /api/cash", () => {
       ])
       .run();
 
-    const cashBody = cashView(getDb().db, userId, "2024-01-01");
+    const cashBody = await cashView(db, userId, "2024-01-01");
     expect(cashBody.totalEur).toBe("400.00");
     expect(cashBody.rows[0]?.currency).toBe("EUR");
 
-    const returnsBody = returnsView(getDb().db, userId, "2024-01-01", "2024-01-01");
+    const returnsBody = await returnsView(db, userId, "2024-01-01", "2024-01-01");
     // Positions and cash stay separate and are also given added up, so the
     // dashboard never has to do money arithmetic of its own.
     expect(returnsBody.valueEur).toBe("100.00");
@@ -905,7 +907,7 @@ describe("GET /api/cash", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    const body = cashView(getDb().db, userId, "2024-01-01");
+    const body = await cashView(db, userId, "2024-01-01");
     // The purchase alone would sum to -100,00, which is an artefact of an
     // export that lists securities only -- not a debt.
     expect(body.rows).toEqual([]);
@@ -927,7 +929,7 @@ describe("bank accounts", () => {
       ],
     });
 
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
     const cashRow = (
@@ -951,34 +953,36 @@ describe("bank accounts", () => {
     });
 
     // The brokerage account funds its own purchase, so there is a real flow.
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([cashRow(accountId, "DEPOSIT", "2023-12-31", 10_000)])
       .run();
 
-    const askReturns = () => returnsView(getDb().db, userId, "2024-01-01", "2024-06-01");
-    const before = askReturns();
+    const askReturns = () => returnsView(db, userId, "2024-01-01", "2024-06-01");
+    const before = await askReturns();
 
     // A bank account with a salary in and a grocery run out.
-    const bankId = openAccountRow(
-      getDb().db,
-      userId,
-      CreateAccount.parse({
-        name: "OP käyttötili",
-        broker: "op",
-        kind: "bank",
-        accountType: "current",
-      }),
+    const bankId = (
+      await openAccountRow(
+        db,
+        userId,
+        CreateAccount.parse({
+          name: "OP käyttötili",
+          broker: "op",
+          kind: "bank",
+          accountType: "current",
+        }),
+      )
     ).id;
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         cashRow(bankId, "DEPOSIT", "2024-02-01", 320_000),
         cashRow(bankId, "WITHDRAWAL", "2024-02-02", -4_215),
       ])
       .run();
 
-    const after = askReturns();
+    const after = await askReturns();
 
     // The whole point: spending is not performance.
     expect(after.twr).toBe(before.twr);
@@ -991,26 +995,28 @@ describe("bank accounts", () => {
 });
 
 describe("a fixed-term deposit's cash", () => {
-  const openDeposit = (userId: string, maturityDate: string | null): number => {
+  const openDeposit = async (userId: string, maturityDate: string | null): Promise<number> => {
     const account = {
       name: "OP määräaikaistili",
       broker: "op",
       kind: "bank",
       accountType: "fixed_term",
     };
-    return openAccountRow(
-      getDb().db,
-      userId,
-      CreateAccount.parse(maturityDate === null ? account : { ...account, maturityDate }),
+    return (
+      await openAccountRow(
+        db,
+        userId,
+        CreateAccount.parse(maturityDate === null ? account : { ...account, maturityDate }),
+      )
     ).id;
   };
 
   const deposit = async (accountId: number, amount: number, tradeDate: string) => {
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         {
           accountId,
@@ -1032,10 +1038,10 @@ describe("a fixed-term deposit's cash", () => {
 
   test("counts toward the total but not toward what can be spent today", async () => {
     const { userId } = await signUp(`locked-${crypto.randomUUID()}@example.com`);
-    const depositId = openDeposit(userId, "2027-06-22");
+    const depositId = await openDeposit(userId, "2027-06-22");
     await deposit(depositId, 1_000_000, "2026-06-22");
 
-    const body = cashView(getDb().db, userId, "2026-08-28");
+    const body = await cashView(db, userId, "2026-08-28");
 
     expect(body.totalEur).toBe("10000.00");
     // The money is the owner's, and none of it is available before maturity.
@@ -1047,10 +1053,10 @@ describe("a fixed-term deposit's cash", () => {
 
   test("becomes spendable once the term has run", async () => {
     const { userId } = await signUp(`matured-${crypto.randomUUID()}@example.com`);
-    const depositId = openDeposit(userId, "2027-06-22");
+    const depositId = await openDeposit(userId, "2027-06-22");
     await deposit(depositId, 1_000_000, "2026-06-22");
 
-    const body = cashView(getDb().db, userId, "2027-07-01");
+    const body = await cashView(db, userId, "2027-07-01");
 
     expect(body.availableEur).toBe("10000.00");
     expect(body.lockedEur).toBe("0.00");
@@ -1058,10 +1064,10 @@ describe("a fixed-term deposit's cash", () => {
 
   test("a deposit with no maturity recorded stays locked rather than counted as spendable", async () => {
     const { userId } = await signUp(`unknown-term-${crypto.randomUUID()}@example.com`);
-    const depositId = openDeposit(userId, null);
+    const depositId = await openDeposit(userId, null);
     await deposit(depositId, 500_000, "2026-06-22");
 
-    const body = cashView(getDb().db, userId, "2026-08-28");
+    const body = await cashView(db, userId, "2026-08-28");
 
     // "Nobody entered when this frees up" is not the same as "it is free".
     expect(body.lockedEur).toBe("5000.00");
@@ -1070,21 +1076,23 @@ describe("a fixed-term deposit's cash", () => {
 
   test("gets its own allocation slice, separate from spendable cash", async () => {
     const { userId } = await signUp(`slice-${crypto.randomUUID()}@example.com`);
-    const currentId = openAccountRow(
-      getDb().db,
-      userId,
-      CreateAccount.parse({
-        name: "OP käyttötili",
-        broker: "op",
-        kind: "bank",
-        accountType: "current",
-      }),
+    const currentId = (
+      await openAccountRow(
+        db,
+        userId,
+        CreateAccount.parse({
+          name: "OP käyttötili",
+          broker: "op",
+          kind: "bank",
+          accountType: "current",
+        }),
+      )
     ).id;
-    const depositId = openDeposit(userId, "2027-06-22");
+    const depositId = await openDeposit(userId, "2027-06-22");
     await deposit(currentId, 100_000, "2026-06-22");
     await deposit(depositId, 1_000_000, "2026-06-22");
 
-    const body = allocationView(getDb().db, userId, "kind", "2026-08-28");
+    const body = await allocationView(db, userId, "kind", "2026-08-28");
 
     expect(body.slices.find((slice) => slice.key === "cash")?.valueEur).toBe("1000.00");
     expect(body.slices.find((slice) => slice.key === "fixed_term")?.valueEur).toBe("10000.00");
@@ -1092,23 +1100,25 @@ describe("a fixed-term deposit's cash", () => {
 });
 
 describe("GET /api/spending/uncategorised", () => {
-  const bankAccount = (userId: string): number =>
-    openAccountRow(
-      getDb().db,
-      userId,
-      CreateAccount.parse({
-        name: "OP käyttötili",
-        broker: "op",
-        kind: "bank",
-        accountType: "current",
-      }),
+  const bankAccount = async (userId: string): Promise<number> =>
+    (
+      await openAccountRow(
+        db,
+        userId,
+        CreateAccount.parse({
+          name: "OP käyttötili",
+          broker: "op",
+          kind: "bank",
+          accountType: "current",
+        }),
+      )
     ).id;
 
   const spend = async (accountId: number, note: string, minor: number, tradeDate: string) => {
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         {
           accountId,
@@ -1129,7 +1139,7 @@ describe("GET /api/spending/uncategorised", () => {
       .run();
   };
 
-  const ask = (userId: string) => uncategorisedView(getDb().db, userId, "2026-01-01", "2026-12-31");
+  const ask = (userId: string) => uncategorisedView(db, userId, "2026-01-01", "2026-12-31");
 
   // The anonymous-caller case is the middleware's, as above.
 
@@ -1137,11 +1147,11 @@ describe("GET /api/spending/uncategorised", () => {
     // The categorised totals are summaries, and a summary nobody can open is
     // one they have to take on trust. This is the ledger behind them.
     const { userId } = await signUp(`ledger-${crypto.randomUUID()}@example.com`);
-    const accountId = bankAccount(userId);
+    const accountId = await bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
     await spend(accountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-02");
 
-    const response = classifiedView(getDb().db, userId, "2026-01-01", "2026-12-31");
+    const response = await classifiedView(db, userId, "2026-01-01", "2026-12-31");
     const body = response;
 
     // Newest first, each with its class, and money in named as income rather
@@ -1157,12 +1167,12 @@ describe("GET /api/spending/uncategorised", () => {
 
   test("lists what no rule matched, summed per payee, and nothing else", async () => {
     const { userId } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
-    const accountId = bankAccount(userId);
+    const accountId = await bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -500, "2026-03-03");
 
-    const body = ask(userId);
+    const body = await ask(userId);
 
     // The grocery shop has a seed rule; the unknown one is here, added up.
     expect(body.merchants).toEqual([
@@ -1174,23 +1184,23 @@ describe("GET /api/spending/uncategorised", () => {
 
   test("a payee disappears from the list once it has a rule", async () => {
     const { userId } = await signUp(`uncat-rule-${crypto.randomUUID()}@example.com`);
-    const accountId = bankAccount(userId);
+    const accountId = await bankAccount(userId);
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
-    expect(ask(userId).merchants).toHaveLength(1);
+    expect((await ask(userId)).merchants).toHaveLength(1);
 
-    addRules(getDb().db, userId, [{ pattern: "PIENI PUOTI OY", category: "ruoka" }], "user");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI OY", category: "ruoka" }], "user");
 
     // Which is the whole loop this screen exists for: see it, file it, gone.
-    expect(ask(userId).merchants).toEqual([]);
+    expect((await ask(userId)).merchants).toEqual([]);
   });
 
   test("marks a bare payment label as having no payee, so no rule is offered for it", async () => {
     const { userId } = await signUp(`uncat-label-${crypto.randomUUID()}@example.com`);
-    const accountId = bankAccount(userId);
+    const accountId = await bankAccount(userId);
     // A statement that carried no payee leaves the note as the label alone.
     await spend(accountId, "MAKSUPALVELU", -45_297, "2026-03-01");
 
-    const body = ask(userId);
+    const body = await ask(userId);
 
     // A rule on "MAKSUPALVELU" would file every bill payment as whatever this
     // one turned out to be -- rent, in the case that produced this test.
@@ -1200,15 +1210,15 @@ describe("GET /api/spending/uncategorised", () => {
 
   test("leaves out a payment that funded an investment", async () => {
     const { userId } = await signUp(`uncat-inv-${crypto.randomUUID()}@example.com`);
-    const accountId = bankAccount(userId);
-    const brokerage = createAccount(userId);
-    const instrumentId = createInstrument(randomIsin());
+    const accountId = await bankAccount(userId);
+    const brokerage = await createAccount(userId);
+    const instrumentId = await createInstrument(randomIsin());
     await spend(accountId, "SÄÄNN.SÄÄST. — RAHASTO", -25_000, "2026-03-01");
 
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values([
         {
           accountId: brokerage,
@@ -1228,6 +1238,6 @@ describe("GET /api/spending/uncategorised", () => {
       .run();
 
     // Money put into a fund is not an unclassified expense waiting for a label.
-    expect(ask(userId).merchants).toEqual([]);
+    expect((await ask(userId)).merchants).toEqual([]);
   });
 });

@@ -18,6 +18,15 @@ export type FetchedPrice = {
  */
 export type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+/**
+ * The URL a `FetchImpl` was called with, whichever of the three forms it took.
+ *
+ * `String(request)` is "[object Request]", not its URL, so a stub that matches
+ * on the address silently stops matching the moment a caller passes a Request.
+ */
+export const urlOf = (input: string | URL | Request): string =>
+  input instanceof Request ? input.url : String(input);
+
 export type FetchArgs = {
   readonly sourceKey: string;
   readonly from: string;

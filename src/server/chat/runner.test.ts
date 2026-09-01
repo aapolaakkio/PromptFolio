@@ -76,7 +76,7 @@ const drain = async (events: AsyncGenerator<ChatEvent>): Promise<ChatEvent[]> =>
   return out;
 };
 
-const stubTool = (name: string, run: (args: ToolArgs) => ToolResult): ChatTool => ({
+const stubTool = (name: string, run: (args: ToolArgs) => Promise<ToolResult>): ChatTool => ({
   name,
   description: "test",
   schema: z.object({}).strict(),
@@ -93,7 +93,7 @@ describe("runTurn", () => {
     const events = await drain(
       runTurn(
         client,
-        [stubTool("get_holdings", () => ({}))],
+        [stubTool("get_holdings", () => Promise.resolve({}))],
         [{ role: "user", content: "Paljonko salkku on arvoltaan?" }],
       ),
     );
@@ -156,7 +156,9 @@ describe("runTurn", () => {
       message([{ type: "text", text: "Tuotto oli 20,00 %.", citations: null }]),
     ]);
 
-    const events = await drain(runTurn(client, [stubTool("get_returns", () => ({}))], []));
+    const events = await drain(
+      runTurn(client, [stubTool("get_returns", () => Promise.resolve({}))], []),
+    );
 
     expect(events.at(-1)).toEqual({ type: "answer", text: "Tuotto oli 20,00 %." });
   });
@@ -183,7 +185,13 @@ describe("runTurn", () => {
     const seen: Seen = { params: null };
     const client = clientYielding([message([{ type: "text", text: "ok", citations: null }])], seen);
 
-    await drain(runTurn(client, [stubTool("get_holdings", () => ({ asOf: "2026-06-01" }))], []));
+    await drain(
+      runTurn(
+        client,
+        [stubTool("get_holdings", () => Promise.resolve({ asOf: "2026-06-01" }))],
+        [],
+      ),
+    );
 
     expect(await seen.params?.tools[0]?.run({})).toBe('{"asOf":"2026-06-01"}');
   });

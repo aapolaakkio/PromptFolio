@@ -1,10 +1,8 @@
 import { and, eq } from "drizzle-orm";
 
-import type { getDb } from "../db/index.ts";
+import { chunkForInsert, type Db } from "../db/index.ts";
 import { spendingRules } from "../db/schema.ts";
 import { CATEGORY_LABELS, SEED_RULES, type Category } from "./categories.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 export type SpendingRule = {
   readonly pattern: string;
@@ -26,8 +24,8 @@ export const isCategory = (value: string): value is Category =>
  * The rules this user's spending is read through. Seeded once, then theirs: a
  * deleted rule stays deleted, and re-seeding on every call would undo that.
  */
-export const rulesFor = (db: Db, userId: string): SpendingRule[] => {
-  const stored = db
+export const rulesFor = async (db: Db, userId: string): Promise<SpendingRule[]> => {
+  const stored = await db
     .select({
       pattern: spendingRules.pattern,
       category: spendingRules.category,
@@ -38,16 +36,18 @@ export const rulesFor = (db: Db, userId: string): SpendingRule[] => {
     .all();
 
   if (stored.length === 0) {
-    db.insert(spendingRules)
-      .values(
-        SEED_RULES.map((rule) => ({
-          userId,
-          pattern: rule.pattern,
-          category: rule.category,
-          source: "seed" as const,
-        })),
-      )
-      .run();
+    const seeds = SEED_RULES.map((rule) => ({
+      userId,
+      pattern: rule.pattern,
+      category: rule.category,
+      source: "seed" as const,
+    }));
+    // Chunked, and batched so the whole seed still lands or none of it does:
+    // there are more seed rules than D1 allows bound variables in one insert.
+    const inserts = chunkForInsert(seeds, 4).map((chunk) => db.insert(spendingRules).values(chunk));
+    // SAFETY: `db.batch` is typed as a non-empty tuple; SEED_RULES is a
+    // non-empty literal, so `chunkForInsert` always returns at least one chunk.
+    await db.batch(inserts as [(typeof inserts)[number], ...typeof inserts]);
     return SEED_RULES.map((rule) => ({ ...rule, source: "seed" as const }));
   }
 
@@ -80,13 +80,13 @@ export const categoriseWith = (note: string, rules: readonly SpendingRule[]): Ca
  */
 export type RuleAdditions = { readonly added: SpendingRule[]; readonly rejected: string[] };
 
-export const addRules = (
+export const addRules = async (
   db: Db,
   userId: string,
   proposed: readonly { pattern: string; category: string }[],
   source: "ai" | "user",
-): RuleAdditions => {
-  const existing = new Set(rulesFor(db, userId).map((rule) => rule.pattern));
+): Promise<RuleAdditions> => {
+  const existing = new Set((await rulesFor(db, userId)).map((rule) => rule.pattern));
   const added: SpendingRule[] = [];
   const rejected: string[] = [];
 
@@ -98,7 +98,8 @@ export const addRules = (
     }
     if (existing.has(pattern)) continue;
 
-    db.insert(spendingRules)
+    await db
+      .insert(spendingRules)
       .values({ userId, pattern, category: candidate.category, source })
       .run();
     existing.add(pattern);
@@ -119,21 +120,23 @@ export type RuleChange =
   | { readonly ok: true; readonly pattern: string; readonly was: Category }
   | { readonly ok: false; readonly reason: "no-such-rule" | "owned-by-user" };
 
-const storedRule = (
+const storedRule = async (
   db: Db,
   userId: string,
   pattern: string,
-): { readonly category: string; readonly source: string } | undefined => {
+): Promise<{ readonly category: string; readonly source: string } | undefined> => {
   // The built-in rules become rows on the first `rulesFor` call, not at sign-up.
   // Reading the table straight would therefore find nothing at all for a user
   // who has never opened Kulutus -- and report every seed rule as "no such
   // rule" rather than as one that exists and may be changed.
-  rulesFor(db, userId);
-  return db
-    .select({ category: spendingRules.category, source: spendingRules.source })
-    .from(spendingRules)
-    .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, pattern)))
-    .all()[0];
+  await rulesFor(db, userId);
+  return (
+    await db
+      .select({ category: spendingRules.category, source: spendingRules.source })
+      .from(spendingRules)
+      .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, pattern)))
+      .all()
+  )[0];
 };
 
 /**
@@ -141,18 +144,19 @@ const storedRule = (
  * adding never overwrites. Refuses a rule a person wrote, and marks what it does
  * change as the assistant's, so the change stays reviewable.
  */
-export const recategoriseRule = (
+export const recategoriseRule = async (
   db: Db,
   userId: string,
   pattern: string,
   category: Category,
-): RuleChange => {
+): Promise<RuleChange> => {
   const target = pattern.trim().toUpperCase();
-  const existing = storedRule(db, userId, target);
+  const existing = await storedRule(db, userId, target);
   if (existing === undefined) return { ok: false, reason: "no-such-rule" };
   if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
 
-  db.update(spendingRules)
+  await db
+    .update(spendingRules)
     .set({ category, source: "ai" })
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
     .run();
@@ -162,13 +166,14 @@ export const recategoriseRule = (
 };
 
 /** Deletes a rule the assistant is allowed to touch -- never one the user wrote. */
-export const retractRule = (db: Db, userId: string, pattern: string): RuleChange => {
+export const retractRule = async (db: Db, userId: string, pattern: string): Promise<RuleChange> => {
   const target = pattern.trim().toUpperCase();
-  const existing = storedRule(db, userId, target);
+  const existing = await storedRule(db, userId, target);
   if (existing === undefined) return { ok: false, reason: "no-such-rule" };
   if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
 
-  db.delete(spendingRules)
+  await db
+    .delete(spendingRules)
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
     .run();
   // SAFETY: as in `recategoriseRule`.
@@ -176,9 +181,9 @@ export const retractRule = (db: Db, userId: string, pattern: string): RuleChange
 };
 
 /** Deletes one rule of this user's. Returns whether there was one to delete. */
-export const removeRule = (db: Db, userId: string, pattern: string): boolean => {
+export const removeRule = async (db: Db, userId: string, pattern: string): Promise<boolean> => {
   const target = pattern.trim().toUpperCase();
-  const deleted = db
+  const deleted = await db
     .delete(spendingRules)
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
     .returning({ pattern: spendingRules.pattern })

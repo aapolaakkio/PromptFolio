@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "promptfolio",
+  "compatibility_date": "2026-09-01",
+  // node:crypto (createHash, used by the import hashing) and node:buffer come
+  // from here. Without it the import and price modules fail to resolve at build.
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "promptfolio",
+      // Filled in by `wrangler d1 create promptfolio`.
+      "database_id": "REPLACE_WITH_DATABASE_ID",
+      "migrations_dir": "drizzle",
+      // drizzle-kit writes `<name>/migration.sql`, not the flat `*.sql`
+      // wrangler looks for by default.
+      "migrations_pattern": "drizzle/*/migration.sql"
+    }
+  ],
+  "vars": {
+    "BASE_URL": "http://localhost:3000",
+    "ALLOW_SIGNUP": "false"
+  }
+}

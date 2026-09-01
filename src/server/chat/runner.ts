@@ -129,9 +129,9 @@ export async function* runTurn(
       // serialised here. Failures are returned as a message rather than thrown:
       // a thrown tool kills the whole turn, whereas a message lets the model say
       // what it could not find out.
-      run: (args: ToolArgs) => {
+      run: async (args: ToolArgs) => {
         try {
-          return JSON.stringify(tool.run(args));
+          return JSON.stringify(await tool.run(args));
         } catch (cause) {
           return JSON.stringify({
             error: cause instanceof Error ? cause.message : "Työkalu epäonnistui",

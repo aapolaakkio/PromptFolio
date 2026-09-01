@@ -99,9 +99,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "mitä jäi. Vastaa kysymykseen 'menikö kesäkuussa enemmän kuin tuli'. Summat on laskettu " +
       "valmiiksi -- älä laske niitä itse yhteen.",
     schema: CashFlow,
-    run: (input) => {
+    run: async (input) => {
       const { from = LEDGER_START, to = today() } = CashFlow.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       // Every account that is not a bank one holds investments, and its own
       // deposits are the reliable record of money moved into it -- the same
@@ -111,7 +111,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       );
       const flow = cashFlowFor({
         txns,
-        rules: rulesFor(db, userId),
+        rules: await rulesFor(db, userId),
         bankAccountIds: bank,
         investedAccountIds: invested,
         cashlessInvestedAccountIds: cashlessAccountIds(txns, bank),
@@ -153,12 +153,12 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "kehitys kun category annetaan. Käytä tätä kun kysytään onko jokin kasvanut tai " +
       "laskenut -- älä kutsu get_spending kerran per kuukausi.",
     schema: Trend,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { from = LEDGER_START, to = today(), category } = Trend.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const shared = {
         txns,
-        rules: rulesFor(db, userId),
+        rules: await rulesFor(db, userId),
         bankAccountIds: new Set(bankAccountIds),
         from,
         to,
@@ -206,10 +206,10 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "Mihin uusi raha kannattaa laittaa, jotta jakauma lähestyy tavoitetta. Anna summa " +
       "euroina. Ehdottaa vain ostoja, ei koskaan myyntejä.",
     schema: Deposit,
-    run: (input) => {
+    run: async (input) => {
       const { amountEur, on = today(), by = "kind" } = Deposit.parse(input);
       const deposit = parseMoney(amountEur, EUR);
-      const allocations = depositPlanFor(db, userId, by, on, deposit);
+      const allocations = await depositPlanFor(db, userId, by, on, deposit);
 
       return {
         asOf: on,
@@ -237,18 +237,18 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "kulutukseen, ja jos ei niin miksi (oma siirto, sijoitus, tulo, alkusaldo). Käytä tätä " +
       "kun kysytään miksi jokin ei näy kulutuksessa. search rajaa tapahtuman omaan tekstiin.",
     schema: Classified,
-    run: (input) => {
+    run: async (input) => {
       const {
         from = LEDGER_START,
         to = today(),
         search,
         limit = DEFAULT_TXN_LIMIT,
       } = Classified.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       const all = classifiedTransactions({
         txns,
-        rules: rulesFor(db, userId),
+        rules: await rulesFor(db, userId),
         bankAccountIds: bank,
         cashlessAccountIds: cashlessAccountIds(txns, bank),
         labelFor: labelForCategory,
@@ -289,9 +289,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "sovelluksen oma, ai = sinä, user = käyttäjä itse). Katso tästä ennen kuin tallennat " +
       "uuden säännön tai korjaat vanhaa -- näet mitä on jo olemassa ja mitä et saa muuttaa.",
     schema: RuleQuery,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { search, limit = 60 } = RuleQuery.parse(input);
-      const all = rulesFor(db, userId);
+      const all = await rulesFor(db, userId);
       const needle = search?.toUpperCase();
       const matching =
         needle === undefined
@@ -330,9 +330,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "lasketaan. Vastaa kysymykseen pitävätkö luvut paikkansa. Tili josta ei ole raporttia on " +
       "tarkistamatta, ei kunnossa.",
     schema: NoArgs,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       NoArgs.parse(input);
-      const checks = reconciliationFor(db, userId);
+      const checks = await reconciliationFor(db, userId);
 
       return {
         accounts: checks.map((check) => ({
@@ -363,13 +363,13 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "kolmesti, säännöllisin välein ja lähes samalla summalla. annualEur kertoo mitä maksu " +
       "maksaa vuodessa. active=false tarkoittaa että maksu on loppunut.",
     schema: Recurring,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { from = LEDGER_START, to = today() } = Recurring.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       const payments = recurringPayments({
         txns,
-        rules: rulesFor(db, userId),
+        rules: await rulesFor(db, userId),
         bankAccountIds: bank,
         excludedIds: notSpendingIds(txns, bank),
         from,
@@ -404,9 +404,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       "Koko varallisuuden kehitys: sijoitusten arvo ja pankkitilien saldot yhteensä. " +
       "get_value_series näyttää vain sijoitukset. Enintään 60 pistettä tasavälein.",
     schema: NetWorth,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { from = "2015-01-01", to = today() } = NetWorth.parse(input);
-      const { investedTxns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
+      const { investedTxns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
       // Thinned before the cash is valued, not after: each point costs a walk
       // over every cash transaction, and sixty points is what a sentence about

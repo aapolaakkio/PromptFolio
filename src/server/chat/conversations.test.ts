@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import { z, ZodError } from "zod";
@@ -16,12 +17,12 @@ type ToolRunnerClient = (typeof import("./runner.ts"))["createClient"] extends (
 
 type Conversations = typeof import("./conversations.ts");
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let chat: Conversations;
 let setChatClient: Conversations["_setChatClient"];
 
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).auth;
+  auth = (await import("../auth.ts")).getAuth();
   chat = await import("./conversations.ts");
   setChatClient = chat._setChatClient;
 });
@@ -136,9 +137,9 @@ const conversationIdOf = (events: readonly StreamedEvent[]): number => {
   return first.id;
 };
 
-const statusOf = (run: () => void): number => {
+const statusOf = async <T>(run: () => Promise<T>): Promise<number> => {
   try {
-    run();
+    await run();
   } catch (cause) {
     if (cause instanceof HttpError) return cause.status;
     if (cause instanceof ZodError) return 400;
@@ -151,19 +152,19 @@ describe("startTurn", () => {
   test("refuses an empty question rather than paying for an empty turn", async () => {
     setChatClient(scriptedClient());
     const userId = await signUp();
-    expect(statusOf(() => turn(userId, { message: "   " }))).toBe(400);
+    expect(await statusOf(() => turn(userId, { message: "   " }))).toBe(400);
   });
 
   test("streams the conversation id and the answer, and stores both turns", async () => {
     setChatClient(scriptedClient());
     const userId = await signUp();
 
-    const events = await eventsOf(turn(userId, { message: "Paljonko salkku on arvoltaan?" }));
+    const events = await eventsOf(await turn(userId, { message: "Paljonko salkku on arvoltaan?" }));
 
     expect(events[0]?.type).toBe("conversation");
     expect(events.at(-1)).toEqual({ type: "answer", text: "Salkun arvo on 120,00 EUR." });
 
-    expect(chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
+    expect(await chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
       { role: "user", content: "Paljonko salkku on arvoltaan?" },
       { role: "assistant", content: "Salkun arvo on 120,00 EUR." },
     ]);
@@ -173,10 +174,10 @@ describe("startTurn", () => {
     setChatClient(failingClient());
     const userId = await signUp();
 
-    const events = await eventsOf(turn(userId, { message: "Mikä on tuotto?" }));
+    const events = await eventsOf(await turn(userId, { message: "Mikä on tuotto?" }));
 
     expect(events.at(-1)).toEqual({ type: "error", message: "Vastauksen haku epäonnistui" });
-    expect(chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
+    expect(await chat.conversationMessages(userId, conversationIdOf(events))).toEqual([
       { role: "user", content: "Mikä on tuotto?" },
     ]);
   });
@@ -186,12 +187,18 @@ describe("startTurn", () => {
     const owner = await signUp();
     const stranger = await signUp();
 
-    const id = conversationIdOf(await eventsOf(turn(owner, { message: "Ensimmäinen kysymys" })));
+    const id = conversationIdOf(
+      await eventsOf(await turn(owner, { message: "Ensimmäinen kysymys" })),
+    );
 
-    const again = await eventsOf(turn(owner, { conversationId: id, message: "Entä toinen?" }));
+    const again = await eventsOf(
+      await turn(owner, { conversationId: id, message: "Entä toinen?" }),
+    );
     expect(again[0]).toEqual({ type: "conversation", id });
 
-    expect(statusOf(() => turn(stranger, { conversationId: id, message: "Näytä" }))).toBe(404);
+    expect(await statusOf(() => turn(stranger, { conversationId: id, message: "Näytä" }))).toBe(
+      404,
+    );
   });
 });
 
@@ -219,13 +226,13 @@ describe("a client that goes away mid-turn", () => {
 
     const abort = new AbortController();
     abort.abort();
-    const events = await eventsOf(turn(userId, { message: "Pitkä kysymys" }, abort.signal));
+    const events = await eventsOf(await turn(userId, { message: "Pitkä kysymys" }, abort.signal));
 
     expect(pulled).toBe(1);
     // No error event: the user leaving is not a failure to report.
     expect(events.some((event) => event.type === "error")).toBe(false);
     // ...and no answer stored, because none was received.
-    const stored = chat.conversationMessages(userId, conversationIdOf(events));
+    const stored = await chat.conversationMessages(userId, conversationIdOf(events));
     expect(stored.map((m) => m.role)).toEqual(["user"]);
   });
 });
@@ -235,18 +242,18 @@ describe("a client that closes the stream", () => {
     setChatClient(scriptedClient("Vastaus jota kukaan ei lue."));
     const userId = await signUp();
 
-    const stream = turn(userId, { message: "Suljetaan kesken" });
+    const stream = await turn(userId, { message: "Suljetaan kesken" });
     // What a browser navigating away does: stop reading and cancel the body.
     // Enqueueing into that closed stream must not surface as a failed turn.
     await stream.cancel();
 
-    const id = chat.listConversations(userId)[0]?.id;
+    const id = (await chat.listConversations(userId))[0]?.id;
     expect(id).toBeDefined();
     if (id === undefined) return;
     // Waited for, not read: the turn outlives the reader, so the answer lands
     // after the cancel rather than before it.
-    await vi.waitFor(() =>
-      expect(chat.conversationMessages(userId, id).map((m) => m.role)).toEqual([
+    await vi.waitFor(async () =>
+      expect((await chat.conversationMessages(userId, id)).map((m) => m.role)).toEqual([
         "user",
         "assistant",
       ]),
@@ -257,13 +264,16 @@ describe("a client that closes the stream", () => {
 describe("configuration", () => {
   test("refuses with 503 when the instance has no API key, instead of failing mid-stream", async () => {
     setChatClient(null);
-    const previous = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
+    // The key is a Worker binding now, not `process.env`, so this pokes the
+    // binding the server actually reads. Empty is what "unset" looks like
+    // there: wrangler.jsonc has no way to express an absent var.
+    const previous = env.ANTHROPIC_API_KEY;
+    env.ANTHROPIC_API_KEY = "";
     try {
       const userId = await signUp();
-      expect(statusOf(() => turn(userId, { message: "moi" }))).toBe(503);
+      expect(await statusOf(() => turn(userId, { message: "moi" }))).toBe(503);
     } finally {
-      if (previous !== undefined) process.env.ANTHROPIC_API_KEY = previous;
+      env.ANTHROPIC_API_KEY = previous;
     }
   });
 });
@@ -273,11 +283,11 @@ describe("listConversations", () => {
     setChatClient(scriptedClient());
     const mine = await signUp();
     const other = await signUp();
-    await eventsOf(turn(mine, { message: "Vanhempi kysymys" }));
-    await eventsOf(turn(mine, { message: "Uudempi kysymys" }));
-    await eventsOf(turn(other, { message: "Jonkun muun kysymys" }));
+    await eventsOf(await turn(mine, { message: "Vanhempi kysymys" }));
+    await eventsOf(await turn(mine, { message: "Uudempi kysymys" }));
+    await eventsOf(await turn(other, { message: "Jonkun muun kysymys" }));
 
-    expect(chat.listConversations(mine).map((c) => c.title)).toEqual([
+    expect((await chat.listConversations(mine)).map((c) => c.title)).toEqual([
       "Uudempi kysymys",
       "Vanhempi kysymys",
     ]);
@@ -289,11 +299,11 @@ describe("deleteConversation", () => {
     setChatClient(scriptedClient());
     const owner = await signUp();
     const stranger = await signUp();
-    const id = conversationIdOf(await eventsOf(turn(owner, { message: "Poistettava" })));
+    const id = conversationIdOf(await eventsOf(await turn(owner, { message: "Poistettava" })));
 
-    expect(statusOf(() => chat.deleteConversation(stranger, id))).toBe(404);
+    expect(await statusOf(() => chat.deleteConversation(stranger, id))).toBe(404);
 
-    chat.deleteConversation(owner, id);
-    expect(statusOf(() => chat.conversationMessages(owner, id))).toBe(404);
+    await chat.deleteConversation(owner, id);
+    expect(await statusOf(() => chat.conversationMessages(owner, id))).toBe(404);
   });
 });

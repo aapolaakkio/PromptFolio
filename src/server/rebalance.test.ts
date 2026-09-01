@@ -4,15 +4,15 @@ import { EUR } from "../core/money.ts";
 
 // Covers what the routes do not reach: attributing a slice-level sale to the
 // instruments inside it, and the gain that sale would realise. Same setup rules
-// as every other server test -- the shared getDb() handle is already pinned to a
+// as every other server test -- the shared database is already pinned to a
 // migrated in-memory database by ./test-setup.ts.
 
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let rebalancePlanFor: (typeof import("./rebalance.ts"))["rebalancePlanFor"];
 let saveTargets: (typeof import("./rebalance.ts"))["saveTargets"];
 
 beforeAll(async () => {
-  auth = (await import("./auth.ts")).auth;
+  auth = (await import("./auth.ts")).getAuth();
   rebalancePlanFor = (await import("./rebalance.ts")).rebalancePlanFor;
   saveTargets = (await import("./rebalance.ts")).saveTargets;
 });
@@ -41,37 +41,40 @@ const signUp = async (): Promise<string> => {
  * shares and buy fund.
  */
 const seed = async (o: { costKnown: boolean }): Promise<string> => {
-  const { getDb } = await import("./db/index.ts");
+  const { db } = await import("./db/index.ts");
   const { accounts, instruments, prices, transactions } = await import("./db/schema.ts");
-  const { db } = getDb();
   const userId = await signUp();
 
-  const accountId = db
-    .insert(accounts)
-    .values({ userId, name: "Nordnet", broker: "nordnet", accountType: "aot", kind: "brokerage" })
-    .returning({ id: accounts.id })
-    .all()[0]!.id;
+  const accountId = (
+    await db
+      .insert(accounts)
+      .values({ userId, name: "Nordnet", broker: "nordnet", accountType: "aot", kind: "brokerage" })
+      .returning({ id: accounts.id })
+      .all()
+  )[0]!.id;
 
-  const makeInstrument = (name: string, kind: "stock" | "fund") => {
+  const makeInstrument = async (name: string, kind: "stock" | "fund") => {
     const isin = `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
-    return db
-      .insert(instruments)
-      .values({
-        isin,
-        ticker: null,
-        name,
-        kind,
-        currency: EUR,
-        priceSource: "manual",
-        sourceKey: isin,
-      })
-      .returning({ id: instruments.id })
-      .all()[0]!.id;
+    return (
+      await db
+        .insert(instruments)
+        .values({
+          isin,
+          ticker: null,
+          name,
+          kind,
+          currency: EUR,
+          priceSource: "manual",
+          sourceKey: isin,
+        })
+        .returning({ id: instruments.id })
+        .all()
+    )[0]!.id;
   };
 
-  const big = makeInstrument("Big Co", "stock");
-  const small = makeInstrument("Small Co", "stock");
-  const fund = makeInstrument("A Fund", "fund");
+  const big = await makeInstrument("Big Co", "stock");
+  const small = await makeInstrument("Small Co", "stock");
+  const fund = await makeInstrument("A Fund", "fund");
 
   const buy = (instrumentId: number, amount: number, quantity: number) => ({
     accountId,
@@ -91,7 +94,8 @@ const seed = async (o: { costKnown: boolean }): Promise<string> => {
   });
 
   // Big Co cost 300, Small Co cost 100, the fund cost 200.
-  db.insert(transactions)
+  await db
+    .insert(transactions)
     .values([
       buy(big, 300_00, 10_000_000),
       buy(small, 100_00, 10_000_000),
@@ -101,7 +105,8 @@ const seed = async (o: { costKnown: boolean }): Promise<string> => {
 
   if (!o.costKnown) {
     // A sale with no matching purchase leaves Big Co's cost basis unknown.
-    db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         ...buy(big, 0, 0),
         type: "SELL",
@@ -121,11 +126,12 @@ const seed = async (o: { costKnown: boolean }): Promise<string> => {
     fetchedAt: new Date("2025-06-02T00:00:00Z"),
   });
   // Shares doubled; the fund is flat.
-  db.insert(prices)
+  await db
+    .insert(prices)
     .values([price(big, 60_00), price(small, 20_00), price(fund, 20_00)])
     .run();
 
-  saveTargets(db, userId, "kind", [
+  await saveTargets(db, userId, "kind", [
     { key: "stock", weightBp: 5000 },
     { key: "fund", weightBp: 5000 },
   ]);
@@ -135,9 +141,9 @@ const seed = async (o: { costKnown: boolean }): Promise<string> => {
 describe("rebalancePlanFor", () => {
   test("attributes a slice-level sale across the slice's holdings and totals the gain", async () => {
     const userId = await seed({ costKnown: true });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    const plan = rebalancePlanFor(getDb().db, userId, "kind", "2025-06-02");
+    const plan = await rebalancePlanFor(db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");
 
     // Shares are worth 800 of a 1 000 portfolio against a 50 % target, so 300
@@ -152,9 +158,9 @@ describe("rebalancePlanFor", () => {
 
   test("says the gain is unknown when a holding's cost basis is", async () => {
     const userId = await seed({ costKnown: false });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    const plan = rebalancePlanFor(getDb().db, userId, "kind", "2025-06-02");
+    const plan = await rebalancePlanFor(db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");
 
     // A partial total presented as a whole one is exactly the error this view

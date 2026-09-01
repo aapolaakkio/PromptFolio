@@ -75,12 +75,12 @@ test("a row with no name is reported rather than imported unnamed", () => {
   expect(problems[0]!.message).toContain("nimi");
 });
 
-test("refuses a paste whose header has no quantity column", () => {
+test("refuses a paste whose header has no quantity column", async () => {
   expect(() => parseHoldingsPaste(["Nimi\tArvo EUR", "Esimerkki\t10,00"].join("\n"))).toThrow(
     /puuttuu sarake/,
   );
 });
 
-test("refuses a paste that is only a header", () => {
+test("refuses a paste that is only a header", async () => {
   expect(() => parseHoldingsPaste(HEADER)).toThrow(/puuttuu otsikkorivi tai rivit/);
 });

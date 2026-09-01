@@ -69,13 +69,13 @@ describe("parseSweepStatementText", () => {
     expect(rows[2]?.note).toBe("Periodical transaction to saving account");
   });
 
-  test("refuses a document with no totals line rather than importing rows alone", () => {
+  test("refuses a document with no totals line rather than importing rows alone", async () => {
     expect(() => parseSweepStatementText("Savings Account Statement\n2026-08-01\n")).toThrow(
       /alku- ja loppusaldoa/,
     );
   });
 
-  test("refuses one whose period it cannot read", () => {
+  test("refuses one whose period it cannot read", async () => {
     const noPeriod = [
       "Savings Account Statement",
       "COUNT CREDIT TURNOVER DEBIT TURNOVER INITIAL BALANCE END BALANCE",

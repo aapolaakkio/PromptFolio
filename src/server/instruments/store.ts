@@ -1,11 +1,9 @@
 import { eq } from "drizzle-orm";
 
 import type { Currency } from "../../core/money.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /** What a caller may set on a new instrument, already validated. */
 export type NewInstrument = {
@@ -24,7 +22,7 @@ export type NewInstrument = {
  * are readable and creatable by any signed-in user. Only ledger rows are scoped
  * to their owner.
  */
-export const listInstruments = (db: Db) => db.select().from(instruments).all();
+export const listInstruments = async (db: Db) => await db.select().from(instruments).all();
 
 /**
  * Registers an instrument, refusing one that is already there.
@@ -34,13 +32,17 @@ export const listInstruments = (db: Db) => db.select().from(instruments).all();
  * has no ISIN any registry will give up -- and inventing one would corrupt the
  * identifier every broker's rows join on.
  */
-export const addInstrument = (db: Db, body: NewInstrument) => {
+export const addInstrument = async (db: Db, body: NewInstrument) => {
   const isin = body.isin ?? null;
   if (isin !== null) {
-    const existing = db.select().from(instruments).where(eq(instruments.isin, isin)).get();
+    const existing = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
     if (existing) throw new HttpError(409, `ISIN ${isin} on jo lisätty`);
   } else {
-    const existing = db.select().from(instruments).where(eq(instruments.name, body.name)).get();
+    const existing = await db
+      .select()
+      .from(instruments)
+      .where(eq(instruments.name, body.name))
+      .get();
     if (existing) throw new HttpError(409, `Arvopaperi ${body.name} on jo lisätty`);
   }
 

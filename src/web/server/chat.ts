@@ -34,10 +34,10 @@ export const removeConversation = createServerFn({ method: "POST" })
 export const askTurn = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(Ask)
-  .handler(({ data, context }) => {
+  .handler(async ({ data, context }) => {
     const request = getRequest();
     try {
-      const stream = startTurn(context.userId, data, request.signal);
+      const stream = await startTurn(context.userId, data, request.signal);
       return new Response(stream, {
         headers: {
           "content-type": "text/event-stream",

@@ -26,11 +26,9 @@ import {
 import { EUR, formatMoney, zeroMoney } from "../../core/money.ts";
 import { investedSeries, valueSeries } from "../../core/returns.ts";
 import type { IsoDate } from "../../core/types.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { accounts } from "../db/schema.ts";
 import { cashFor, loadPortfolio, withAvailability } from "../valuation.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /**
  * What the handlers used to compute between reading a request and writing a
@@ -76,8 +74,13 @@ export const cashView = (db: Db, userId: string, on: IsoDate) => {
   return cashFor(db, userId, on);
 };
 
-export const valueSeriesView = (db: Db, userId: string, from: IsoDate | undefined, to: IsoDate) => {
-  const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+export const valueSeriesView = async (
+  db: Db,
+  userId: string,
+  from: IsoDate | undefined,
+  to: IsoDate,
+) => {
+  const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
   // Without a start given, the ledger's own first day -- a fixed floor like
   // 1900 draws a century of flat zero before anything happened, and bills a
   // point per day for it.
@@ -98,14 +101,14 @@ export const valueSeriesView = (db: Db, userId: string, from: IsoDate | undefine
   }));
 };
 
-export const allocationView = (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
-  const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
+export const allocationView = async (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
+  const { txns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
 
   // Cash is part of the allocation (spec 10c/C2): a portfolio holding a
   // fifth of its value in an unspent deposit is not 100 % invested, and a
   // pie chart that says so is wrong.
-  const cash = withAvailability(
+  const cash = await withAvailability(
     db,
     userId,
     valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),
@@ -140,8 +143,8 @@ export const allocationView = (db: Db, userId: string, dimension: Dimension, on:
   };
 };
 
-export const cashFlowView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { txns, bankAccountIds } = loadPortfolio(db, userId);
+export const cashFlowView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+  const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
   // Every account that is not a bank one holds investments, and its own
   // deposits are the reliable record of money moved into it.
@@ -151,7 +154,7 @@ export const cashFlowView = (db: Db, userId: string, from: IsoDate, to: IsoDate)
 
   return cashFlowFor({
     txns,
-    rules: rulesFor(db, userId),
+    rules: await rulesFor(db, userId),
     bankAccountIds: bank,
     investedAccountIds: invested,
     cashlessInvestedAccountIds: cashlessAccountIds(txns, bank),
@@ -160,11 +163,11 @@ export const cashFlowView = (db: Db, userId: string, from: IsoDate, to: IsoDate)
   });
 };
 
-export const monthlyView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { txns, bankAccountIds } = loadPortfolio(db, userId);
+export const monthlyView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+  const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const shared = {
     txns,
-    rules: rulesFor(db, userId),
+    rules: await rulesFor(db, userId),
     bankAccountIds: new Set(bankAccountIds),
     from,
     to,
@@ -180,15 +183,15 @@ export const monthlyView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
   };
 };
 
-export const classifiedView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { txns, bankAccountIds } = loadPortfolio(db, userId);
+export const classifiedView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+  const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
   return {
     from,
     to,
     transactions: classifiedTransactions({
       txns,
-      rules: rulesFor(db, userId),
+      rules: await rulesFor(db, userId),
       bankAccountIds: bank,
       cashlessAccountIds: cashlessAccountIds(txns, bank),
       labelFor: labelForCategory,
@@ -198,11 +201,11 @@ export const classifiedView = (db: Db, userId: string, from: IsoDate, to: IsoDat
   };
 };
 
-export const uncategorisedView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { txns, bankAccountIds } = loadPortfolio(db, userId);
+export const uncategorisedView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+  const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
   const moved = notSpendingIds(txns, bank);
-  const rules = rulesFor(db, userId);
+  const rules = await rulesFor(db, userId);
 
   // Only what no rule matched: this is the list a person works through to
   // teach the app, so anything already classified is noise in it.
@@ -231,7 +234,7 @@ export const uncategorisedView = (db: Db, userId: string, from: IsoDate, to: Iso
   };
 };
 
-export const spendingView = (
+export const spendingView = async (
   db: Db,
   userId: string,
   from: IsoDate,
@@ -241,7 +244,7 @@ export const spendingView = (
 ) => {
   // Bank rows only -- see summariseSpending's own note on why a purchase is
   // not spending.
-  const { txns, bankAccountIds } = loadPortfolio(db, userId);
+  const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
   // A payment that funded a fund purchase, moved money to the owner's own
   // savings, or settled the credit card is not spending, and would
@@ -249,12 +252,12 @@ export const spendingView = (
   const moved = notSpendingIds(txns, bank);
   return summariseSpending(
     txns.filter((txn) => bank.has(txn.accountId) && !moved.has(txn.id)),
-    { from, to, by, limit, rules: rulesFor(db, userId) },
+    { from, to, by, limit, rules: await rulesFor(db, userId) },
   );
 };
 
-export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
-  const { cashTxns, investedTxns, instruments, prices } = loadPortfolio(db, userId);
+export const returnsView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+  const { cashTxns, investedTxns, instruments, prices } = await loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
   // Invested transactions only: a bank account's rows are spending and
   // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving
@@ -327,12 +330,13 @@ export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
   // isin/name the same way `/api/allocation`'s `excludedInstruments` already is,
   // so the dashboard can name the holding instead of showing a bare id.
   const ownedAccounts = new Map(
-    db
-      .select({ id: accounts.id, name: accounts.name })
-      .from(accounts)
-      .where(eq(accounts.userId, userId))
-      .all()
-      .map((row) => [row.id, row.name] as const),
+    (
+      await db
+        .select({ id: accounts.id, name: accounts.name })
+        .from(accounts)
+        .where(eq(accounts.userId, userId))
+        .all()
+    ).map((row) => [row.id, row.name] as const),
   );
 
   const excludedIds = new Set(series.flatMap((point) => point.excludedInstrumentIds));
@@ -345,7 +349,7 @@ export const returnsView = (db: Db, userId: string, from: IsoDate, to: IsoDate) 
   // never does money arithmetic and one definition of "what it is worth" serves
   // the dashboard and the chat. The returns below stay position-only: an unspent
   // deposit lowers the total without meaning the portfolio performed worse.
-  const cashAtEnd = withAvailability(
+  const cashAtEnd = await withAvailability(
     db,
     userId,
     valueCash(cashBalancesAt(cashTxns, to), prices.fxOn, to),

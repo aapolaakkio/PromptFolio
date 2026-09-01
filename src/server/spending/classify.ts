@@ -1,12 +1,10 @@
 import { z } from "zod";
 
 import type { Txn } from "../../core/types.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import type { ToolRunnerClient } from "../chat/runner.ts";
 import { CATEGORY_LABELS } from "./categories.ts";
 import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /** How many unknown merchants one import may ask the model about. */
 const BATCH_LIMIT = 40;
@@ -105,7 +103,7 @@ export const classifyNewMerchants = async (
     model: string;
   },
 ): Promise<ClassifyResult> => {
-  const rules = rulesFor(db, userId);
+  const rules = await rulesFor(db, userId);
   const merchants = unknownMerchants(args.txns, rules, args.accountIds);
   if (merchants.length === 0) return { asked: 0, added: 0, rejected: 0, error: null };
 
@@ -137,7 +135,7 @@ export const classifyNewMerchants = async (
     const proposals = parsed.filter((proposal) =>
       upper.some((name) => name.includes(proposal.pattern.trim().toUpperCase())),
     );
-    const { added, rejected } = addRules(db, userId, proposals, "ai");
+    const { added, rejected } = await addRules(db, userId, proposals, "ai");
     return {
       asked: merchants.length,
       added: added.length,

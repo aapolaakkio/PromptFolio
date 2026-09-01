@@ -17,11 +17,9 @@ import type { OstValuation } from "../core/tax/ost.ts";
 import { isPriceStale } from "../core/staleness.ts";
 import { taxYear } from "../core/tax/year.ts";
 import type { Instrument, IsoDate } from "../core/types.ts";
-import type { getDb } from "./db/index.ts";
+import type { Db } from "./db/index.ts";
 import { accounts } from "./db/schema.ts";
 import { loadPortfolio } from "./valuation.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /**
  * How large a hole still counts as the market being closed. Five days covers
@@ -152,9 +150,9 @@ const explainEarlierGap = (since: IsoDate): string =>
   `liian suuri eikä tämän noston voitto-osuutta voi laskea luotettavasti. Kirjaa aiemmalta ` +
   `päivältä puuttuva hinta, niin tämäkin rivi laskeutuu.`;
 
-export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView => {
-  const { txns, instruments, prices, nextPriceDateAfter } = loadPortfolio(db, userId);
-  const owned = db.select().from(accounts).where(eq(accounts.userId, userId)).all();
+export const taxYearFor = async (db: Db, userId: string, year: number): Promise<TaxYearView> => {
+  const { txns, instruments, prices, nextPriceDateAfter } = await loadPortfolio(db, userId);
+  const owned = await db.select().from(accounts).where(eq(accounts.userId, userId)).all();
   const nameOf = new Map(owned.map((account) => [account.id, account.name]));
   const instrumentById = new Map(instruments.map((i) => [i.id, i]));
   const ostAccountIds = new Set<number>(
@@ -340,8 +338,8 @@ export const taxYearFor = (db: Db, userId: string, year: number): TaxYearView =>
 };
 
 /** The years that have any taxable event, newest first. */
-export const taxYearsFor = (db: Db, userId: string): number[] => {
-  const { txns } = loadPortfolio(db, userId);
+export const taxYearsFor = async (db: Db, userId: string): Promise<number[]> => {
+  const { txns } = await loadPortfolio(db, userId);
   const years = new Set<number>();
   for (const t of txns) {
     if (t.type === "SELL" || t.type === "DIVIDEND" || t.type === "WITHDRAWAL") {

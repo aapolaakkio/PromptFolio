@@ -1,10 +1,9 @@
+import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "./db/index.ts";
+import { getAuth } from "./auth.ts";
+import { db } from "./db/index.ts";
 import { account, user } from "./db/schema.ts";
-import { hashPassword } from "./password.ts";
 import { HttpError } from "./errors.ts";
-
-const { db } = getDb();
 
 // Mirrors Better Auth's own emailAndPassword defaults (see
 // ctx.context.password.config.{min,max}PasswordLength in
@@ -42,8 +41,8 @@ type FirstUserSummary = { id: string; email: string; name: string };
  * name. The getSetupState server function returns exactly this boolean and
  * nothing else.
  */
-export const hasAnyUser = (): boolean =>
-  db.select({ id: user.id }).from(user).limit(1).get() != null;
+export const hasAnyUser = async (): Promise<boolean> =>
+  (await db.select({ id: user.id }).from(user).limit(1).get()) != null;
 
 /**
  * Creates the instance's first account, replacing an ALLOW_SIGNUP-and-curl dance.
@@ -54,65 +53,74 @@ export const hasAnyUser = (): boolean =>
  * in exactly the shape that handler writes them, hashed by the same function its
  * config points at, so an ordinary sign-in afterwards verifies them normally.
  *
- * Race safety: hashing is asynchronous, so a check before it cannot be trusted by
- * the time the insert runs. The check happens again immediately before the
- * insert, and the driver is synchronous, so count-then-insert is one uninterrupted
- * block -- the second concurrent request reads a count of one and refuses. That
- * holds for this process, which is the whole deployment; it would not hold across
- * several processes against one database.
+ * Race safety is the database's job now, not the driver's. The old note relied
+ * on a synchronous driver making count-then-insert one uninterrupted block;
+ * D1 is asynchronous and a Worker runs many isolates, so that argument is gone.
+ * `insertCredentialUser` gets the guarantee from SQL instead -- see its comment
+ * -- which also holds across isolates, as the old one never did.
  *
- * What it does not guarantee is that the request winning the race is the owner's:
- * there is no credential to check yet. Do not expose a fresh instance publicly
- * before completing this step.
+ * What it still does not guarantee is that the request winning the race is the
+ * owner's: there is no credential to check yet. Do not expose a fresh instance
+ * publicly before completing this step.
  */
 export const createFirstUser = async (
   input: z.infer<typeof CreateFirstUser>,
 ): Promise<FirstUserSummary> => {
-  const passwordHash = await hashPassword(input.password);
+  // Better Auth's own hasher, so an ordinary sign-in afterwards verifies these
+  // rows normally -- the same reason this file re-states its length bounds.
+  const passwordHash = await getAuth().$context.then((context) =>
+    context.password.hash(input.password),
+  );
 
-  // Synchronous from here on -- see the guarantee explained above. No
-  // `await`, no async call, until this function returns.
-  if (hasAnyUser()) throw new HttpError(403, "Tili on jo luotu");
-  return insertCredentialUser(input, passwordHash);
+  return await insertCredentialUser(input, passwordHash);
 };
 
 /**
  * The user and account row pair for a new email/password account. Split out so a
  * test can prove the pair really authenticates, without needing an empty database.
- *
- * Not exported: it carries no guard, so its only caller is the one above,
- * immediately after that guard passes, in the same synchronous block.
  */
-const insertCredentialUser = (
+const insertCredentialUser = async (
   input: z.infer<typeof CreateFirstUser>,
   passwordHash: string,
-): FirstUserSummary => {
+): Promise<FirstUserSummary> => {
   const email = input.email.toLowerCase();
   const now = new Date();
   const userId = crypto.randomUUID();
 
-  db.insert(user)
-    .values({
-      id: userId,
-      name: input.name,
-      email,
-      emailVerified: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .run();
-  db.insert(account)
-    .values({
-      id: crypto.randomUUID(),
-      userId,
-      accountId: userId,
-      providerId: "credential",
-      issuer: "local:credential",
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .run();
+  // Two statements as one batch, which D1 runs as a single transaction, and
+  // between them they are the whole "exactly one owner" guarantee:
+  //
+  //  - the user row inserts only `WHERE NOT EXISTS (SELECT 1 FROM user)`, so a
+  //    second caller writes nothing;
+  //  - the account row then references that user id, and D1 enforces the
+  //    foreign key, so the second caller's batch fails and rolls back.
+  //
+  // The check is the database's, not a read this code did earlier and hoped
+  // was still true -- which is what makes it hold across isolates.
+  const at = now.getTime();
+  try {
+    await db.batch([
+      db.run(sql`
+        INSERT INTO ${user} (id, name, email, email_verified, created_at, updated_at)
+        SELECT ${userId}, ${input.name}, ${email}, 0, ${at}, ${at}
+        WHERE NOT EXISTS (SELECT 1 FROM ${user})
+      `),
+      db.insert(account).values({
+        id: crypto.randomUUID(),
+        userId,
+        accountId: userId,
+        providerId: "credential",
+        issuer: "local:credential",
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    ]);
+  } catch {
+    // The only way the pair can fail is the guard above rejecting a second
+    // owner; anything else would already have failed validation.
+    throw new HttpError(403, "Tili on jo luotu");
+  }
 
   return { id: userId, email, name: input.name };
 };

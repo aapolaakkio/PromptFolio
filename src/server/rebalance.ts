@@ -21,11 +21,9 @@ import { feesByYear } from "../core/rebalance/fees.ts";
 import { attributeSale, rebalancePlan } from "../core/rebalance/plan.ts";
 import { checkTargets, type Target } from "../core/rebalance/targets.ts";
 import type { IsoDate } from "../core/types.ts";
-import type { getDb } from "./db/index.ts";
+import { chunkForInsert, type Db } from "./db/index.ts";
 import { accounts, allocationTargets } from "./db/schema.ts";
 import { loadPortfolio, withAvailability } from "./valuation.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 export type TargetView = { readonly key: string; readonly weightPercent: string };
 
@@ -81,63 +79,70 @@ export type FeeYearView = {
 /** A basis-point weight as the decimal string the wire carries. */
 const asPercent = (bp: number): string => (bp / 100).toFixed(2);
 
-export const targetsFor = (db: Db, userId: string, dimension: Dimension): readonly TargetView[] =>
-  storedTargets(db, userId, dimension).map((target) => ({
+export const targetsFor = async (
+  db: Db,
+  userId: string,
+  dimension: Dimension,
+): Promise<readonly TargetView[]> =>
+  (await storedTargets(db, userId, dimension)).map((target) => ({
     key: target.key,
     weightPercent: asPercent(target.weightBp),
   }));
 
-const storedTargets = (db: Db, userId: string, dimension: Dimension): Target[] =>
-  db
-    .select()
-    .from(allocationTargets)
-    .where(and(eq(allocationTargets.userId, userId), eq(allocationTargets.dimension, dimension)))
-    .all()
-    .map((row) => ({ key: row.key, weightBp: row.weightBp }));
+const storedTargets = async (db: Db, userId: string, dimension: Dimension): Promise<Target[]> =>
+  (
+    await db
+      .select()
+      .from(allocationTargets)
+      .where(and(eq(allocationTargets.userId, userId), eq(allocationTargets.dimension, dimension)))
+      .all()
+  ).map((row) => ({ key: row.key, weightBp: row.weightBp }));
 
 /**
  * Replaces a dimension's targets in one transaction. Wholesale, never added to: a
  * set is a statement about the whole portfolio, and inserting into one leaves it
  * summing to something other than 100 %, refused only on the next read.
  */
-export const saveTargets = (
+export const saveTargets = async (
   db: Db,
   userId: string,
   dimension: Dimension,
   targets: readonly Target[],
-): { readonly ok: true } | { readonly ok: false; readonly message: string } => {
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> => {
   const error = checkTargets(targets);
   if (error !== null) return { ok: false, message: error.message };
 
-  db.transaction((tx) => {
-    tx.delete(allocationTargets)
-      .where(and(eq(allocationTargets.userId, userId), eq(allocationTargets.dimension, dimension)))
-      .run();
-    tx.insert(allocationTargets)
-      .values(
-        targets.map((target) => ({
-          userId,
-          dimension,
-          key: target.key,
-          weightBp: target.weightBp,
-        })),
-      )
-      .run();
-  });
+  const rows = targets.map((target) => ({
+    userId,
+    dimension,
+    key: target.key,
+    weightBp: target.weightBp,
+  }));
+
+  // One batch, which D1 runs as a single transaction. That is the whole point
+  // here: a delete that lands without its inserts would leave the dimension
+  // with no targets at all. Chunked because a set of 25 targets already binds
+  // more variables than D1 allows in one statement.
+  await db.batch([
+    db
+      .delete(allocationTargets)
+      .where(and(eq(allocationTargets.userId, userId), eq(allocationTargets.dimension, dimension))),
+    ...chunkForInsert(rows, 4).map((chunk) => db.insert(allocationTargets).values(chunk)),
+  ]);
   return { ok: true };
 };
 
 /** What every read view needs: the allocation, the targets, and the drift between them. */
-const situation = (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
-  const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
-  const cash = withAvailability(
+const situation = async (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
+  const { txns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
+  const cash = await withAvailability(
     db,
     userId,
     valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),
     on,
   );
   const allocation = allocateBy(txns, instruments, prices, on, dimension, cash);
-  const targets = storedTargets(db, userId, dimension);
+  const targets = await storedTargets(db, userId, dimension);
   return { txns, instruments, prices, targets, report: driftFor({ allocation, targets }) };
 };
 
@@ -152,13 +157,13 @@ const asRowView = (row: DriftRow): DriftRowView => ({
   untargeted: row.untargeted,
 });
 
-export const driftReportFor = (
+export const driftReportFor = async (
   db: Db,
   userId: string,
   dimension: Dimension,
   on: IsoDate,
-): DriftView => {
-  const { report } = situation(db, userId, dimension, on);
+): Promise<DriftView> => {
+  const { report } = await situation(db, userId, dimension, on);
   return {
     dimension,
     rows: report.rows.map(asRowView),
@@ -167,14 +172,14 @@ export const driftReportFor = (
   };
 };
 
-export const depositPlanFor = (
+export const depositPlanFor = async (
   db: Db,
   userId: string,
   dimension: Dimension,
   on: IsoDate,
   depositEur: Money,
-): readonly DepositView[] => {
-  const { report, targets } = situation(db, userId, dimension, on);
+): Promise<readonly DepositView[]> => {
+  const { report, targets } = await situation(db, userId, dimension, on);
   return allocateDeposit({
     rows: report.rows,
     targets,
@@ -200,13 +205,13 @@ type SliceHolding = {
  * Built from the same `sliceKeyFor` the allocation itself uses, so the plan and
  * the drift table cannot disagree about what a slice contains.
  */
-const holdingsBySlice = (
+const holdingsBySlice = async (
   db: Db,
   userId: string,
   dimension: Dimension,
   on: IsoDate,
-): Map<string, SliceHolding[]> => {
-  const { txns, instruments, prices } = loadPortfolio(db, userId);
+): Promise<Map<string, SliceHolding[]>> => {
+  const { txns, instruments, prices } = await loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
   const costs = costBasisPerInstrument(txns, on);
   const bySlice = new Map<string, SliceHolding[]>();
@@ -233,14 +238,14 @@ const holdingsBySlice = (
   return bySlice;
 };
 
-export const rebalancePlanFor = (
+export const rebalancePlanFor = async (
   db: Db,
   userId: string,
   dimension: Dimension,
   on: IsoDate,
-): PlanView => {
-  const { report } = situation(db, userId, dimension, on);
-  const bySlice = holdingsBySlice(db, userId, dimension, on);
+): Promise<PlanView> => {
+  const { report } = await situation(db, userId, dimension, on);
+  const bySlice = await holdingsBySlice(db, userId, dimension, on);
 
   /**
    * What a slice-level sale would realise. A slice names no instrument, so the
@@ -286,14 +291,10 @@ export const rebalancePlanFor = (
   };
 };
 
-export const feeReportFor = (db: Db, userId: string): readonly FeeYearView[] => {
-  const { txns } = loadPortfolio(db, userId);
+export const feeReportFor = async (db: Db, userId: string): Promise<readonly FeeYearView[]> => {
+  const { txns } = await loadPortfolio(db, userId);
   const ostAccountIds = new Set(
-    db
-      .select()
-      .from(accounts)
-      .where(eq(accounts.userId, userId))
-      .all()
+    (await db.select().from(accounts).where(eq(accounts.userId, userId)).all())
       .filter((account) => account.accountType === "ost")
       .map((account) => account.id),
   );

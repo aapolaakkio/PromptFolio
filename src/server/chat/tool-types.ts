@@ -2,9 +2,8 @@ import { z } from "zod";
 
 import type { Dimension } from "../../core/allocation.ts";
 import type { IsoDate } from "../../core/types.ts";
-import type { getDb } from "../db/index.ts";
 
-export type Db = ReturnType<typeof getDb>["db"];
+export type { Db } from "../db/index.ts";
 
 export const IsoDateSchema = z
   .string()
@@ -82,5 +81,6 @@ export type ChatTool = {
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodType<ToolArgs>;
-  readonly run: (input: ToolArgs) => ToolResult;
+  /** Async because every one of these reads D1, which is async. */
+  readonly run: (input: ToolArgs) => Promise<ToolResult>;
 };

@@ -116,7 +116,7 @@ test("reports a column-count mismatch as a problem without discarding the good r
   expect(problems[0]!.message).toMatch(/rivi 3/i);
 });
 
-test("still throws when the file has no usable header row", () => {
+test("still throws when the file has no usable header row", async () => {
   expect(() => parseCsv(new TextEncoder().encode("\n1;2;3\n").buffer, utf8Semicolon)).toThrow(
     /otsikkorivi/i,
   );

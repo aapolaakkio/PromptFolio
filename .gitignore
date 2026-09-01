@@ -18,4 +18,12 @@ vite-env.d.ts
 e2e/.tmp/
 test-results/
 playwright-report/
-.output/
+
+# Generated: `wrangler types` (run by `pnpm run typecheck`).
+worker-configuration.d.ts
+
+# Local D1 and Worker state.
+.wrangler/
+
+# Local Worker secrets for `vite dev`.
+.dev.vars

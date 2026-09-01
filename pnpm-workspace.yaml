@@ -4,6 +4,7 @@ allowBuilds:
   esbuild: true
   prisma: false
   simple-git-hooks: false
+  workerd: true
 
 minimumReleaseAge: 1440
 

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
 
 import { EUR } from "../../core/money.ts";
@@ -11,7 +11,7 @@ import { EUR } from "../../core/money.ts";
 // strings, and on the two properties every result must carry -- the date it is
 // good for, and whether any price behind it is stale.
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let saveTargets: (typeof import("../rebalance.ts"))["saveTargets"];
 let addRules: (typeof import("../spending/rules.ts"))["addRules"];
 let buildChatTools: (typeof import("./tools.ts"))["buildChatTools"];
@@ -21,7 +21,7 @@ let snapshots: (typeof import("../db/schema.ts"))["snapshots"];
 let snapshotRows: (typeof import("../db/schema.ts"))["snapshotRows"];
 
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).auth;
+  auth = (await import("../auth.ts")).getAuth();
   saveTargets = (await import("../rebalance.ts")).saveTargets;
   addRules = (await import("../spending/rules.ts")).addRules;
   buildChatTools = (await import("./tools.ts")).buildChatTools;
@@ -56,24 +56,26 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
 const randomIsin = (): string =>
   `FI${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
-const createAccount = (userId: string, name = "Nordnet"): number =>
-  openAccountRow(getDb().db, userId, CreateAccount.parse({ name, broker: "nordnet" })).id;
+const createAccount = async (userId: string, name = "Nordnet"): Promise<number> =>
+  (await openAccountRow(db, userId, CreateAccount.parse({ name, broker: "nordnet" }))).id;
 
 /** A bank account, the only kind a statement's spending may land on. */
-const createBankAccount = (userId: string): number =>
-  openAccountRow(
-    getDb().db,
-    userId,
-    CreateAccount.parse({
-      name: "OP käyttötili",
-      broker: "op",
-      kind: "bank",
-      accountType: "current",
-    }),
+const createBankAccount = async (userId: string): Promise<number> =>
+  (
+    await openAccountRow(
+      db,
+      userId,
+      CreateAccount.parse({
+        name: "OP käyttötili",
+        broker: "op",
+        kind: "bank",
+        accountType: "current",
+      }),
+    )
   ).id;
 
 const createInstrument = async (cookie: string, name: string): Promise<number> => {
-  const response = addInstrument(getDb().db, {
+  const response = await addInstrument(db, {
     isin: randomIsin(),
     ticker: null,
     name,
@@ -85,9 +87,9 @@ const createInstrument = async (cookie: string, name: string): Promise<number> =
 };
 
 /** 10 units at 10,00 EUR, so a later price of 12,00 makes the maths checkable by eye. */
-const buy = (accountId: number, instrumentId: number, date: string): void => {
-  getDb()
-    .db.insert(transactions)
+const buy = async (accountId: number, instrumentId: number, date: string): Promise<void> => {
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId,
@@ -105,9 +107,9 @@ const buy = (accountId: number, instrumentId: number, date: string): void => {
     .run();
 };
 
-const deposit = (accountId: number, date: string, minor: number): void => {
-  getDb()
-    .db.insert(transactions)
+const deposit = async (accountId: number, date: string, minor: number): Promise<void> => {
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -126,9 +128,14 @@ const deposit = (accountId: number, date: string, minor: number): void => {
 };
 
 /** One card payment on a bank account, as a statement import would write it. */
-const spend = (accountId: number, note: string, minor: number, date: string): void => {
-  getDb()
-    .db.insert(transactions)
+const spend = async (
+  accountId: number,
+  note: string,
+  minor: number,
+  date: string,
+): Promise<void> => {
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -148,9 +155,14 @@ const spend = (accountId: number, note: string, minor: number, date: string): vo
 };
 
 /** Money arriving on a bank account, with the text a statement would carry. */
-const receive = (accountId: number, note: string, minor: number, date: string): void => {
-  getDb()
-    .db.insert(transactions)
+const receive = async (
+  accountId: number,
+  note: string,
+  minor: number,
+  date: string,
+): Promise<void> => {
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId: null,
@@ -169,9 +181,9 @@ const receive = (accountId: number, note: string, minor: number, date: string): 
     .run();
 };
 
-const price = (instrumentId: number, date: string, minor: number): void => {
-  getDb()
-    .db.insert(prices)
+const price = async (instrumentId: number, date: string, minor: number): Promise<void> => {
+  await db
+    .insert(prices)
     .values({
       instrumentId,
       date,
@@ -184,15 +196,22 @@ const price = (instrumentId: number, date: string, minor: number): void => {
 };
 
 /** A broker's holdings statement, as an import would have written it. */
-const statement = (accountId: number, instrumentId: number, units: number, asOf: string): void => {
-  const snapshot = getDb()
-    .db.insert(snapshots)
-    .values({ accountId, asOf, source: "manual" })
-    .returning({ id: snapshots.id })
-    .all()[0];
+const statement = async (
+  accountId: number,
+  instrumentId: number,
+  units: number,
+  asOf: string,
+): Promise<void> => {
+  const snapshot = (
+    await db
+      .insert(snapshots)
+      .values({ accountId, asOf, source: "manual" })
+      .returning({ id: snapshots.id })
+      .all()
+  )[0];
   if (!snapshot) throw new Error("snapshot insert returned nothing");
-  getDb()
-    .db.insert(snapshotRows)
+  await db
+    .insert(snapshotRows)
     .values({
       snapshotId: snapshot.id,
       instrumentId,
@@ -205,7 +224,7 @@ const statement = (accountId: number, instrumentId: number, units: number, asOf:
     .run();
 };
 
-type Tools = ReturnType<typeof buildChatTools>;
+type Tools = Awaited<ReturnType<typeof buildChatTools>>;
 const toolNamed = (tools: Tools, name: string): Tools[number] => {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new Error(`No tool named ${name}`);
@@ -222,15 +241,15 @@ const seed = async (): Promise<{
   userId: string;
 }> => {
   const { userId, cookie } = await signUp(`chat-${crypto.randomUUID()}@example.com`);
-  const accountId = createAccount(userId);
-  const bankAccountId = createBankAccount(userId);
+  const accountId = await createAccount(userId);
+  const bankAccountId = await createBankAccount(userId);
   const instrumentId = await createInstrument(cookie, "Testirahasto");
-  deposit(accountId, "2026-01-01", 100_000);
-  buy(accountId, instrumentId, "2026-01-02");
-  price(instrumentId, "2026-01-02", 1000);
-  price(instrumentId, "2026-06-01", 1200);
+  await deposit(accountId, "2026-01-01", 100_000);
+  await buy(accountId, instrumentId, "2026-01-02");
+  await price(instrumentId, "2026-01-02", 1000);
+  await price(instrumentId, "2026-06-01", 1200);
   return {
-    tools: buildChatTools(getDb().db, userId),
+    tools: buildChatTools(db, userId),
     instrumentId,
     accountId,
     bankAccountId,
@@ -244,7 +263,7 @@ describe("get_holdings", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_holdings").run({ on: "2026-06-01" }) as {
+    const result = (await toolNamed(tools, "get_holdings").run({ on: "2026-06-01" })) as {
       asOf: string;
       stale: boolean;
       holdings: Array<{ name: string; quantity: string; costEur: string; valueEur: string }>;
@@ -261,7 +280,7 @@ describe("get_holdings", () => {
 
   test("refuses a date that is not YYYY-MM-DD rather than guessing one", async () => {
     const { tools } = await seed();
-    expect(() => toolNamed(tools, "get_holdings").run({ on: "1.6.2026" })).toThrow();
+    await expect(toolNamed(tools, "get_holdings").run({ on: "1.6.2026" })).rejects.toThrow();
   });
 
   test("refuses an unknown argument, so a hallucinated parameter cannot pass silently", async () => {
@@ -280,7 +299,9 @@ describe("scoping", () => {
     await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = mine.find((t) => t.name === "get_holdings")?.run({ on: "2026-06-01" }) as {
+    const result = (await mine
+      .find((t) => t.name === "get_holdings")
+      ?.run({ on: "2026-06-01" })) as {
       holdings: unknown[];
     };
     // The other user's seed created its own instrument and transactions in the
@@ -294,7 +315,7 @@ describe("scoping", () => {
     await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(mine, "get_instruments").run({}) as { instruments: unknown[] };
+    const result = (await toolNamed(mine, "get_instruments").run({})) as { instruments: unknown[] };
     expect(result.instruments).toHaveLength(1);
   });
 });
@@ -304,7 +325,7 @@ describe("get_cash", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_cash").run({ on: "2026-06-01" }) as {
+    const result = (await toolNamed(tools, "get_cash").run({ on: "2026-06-01" })) as {
       asOf: string;
       totalEur: string;
       balances: Array<{ account: string; currency: string; amount: string }>;
@@ -321,7 +342,7 @@ describe("get_cash", () => {
   test("get_holdings names the same cash total, so worth needs no arithmetic in prose", async () => {
     const { tools } = await seed();
     // SAFETY: as above.
-    const holdings = toolNamed(tools, "get_holdings").run({ on: "2026-06-01" }) as {
+    const holdings = (await toolNamed(tools, "get_holdings").run({ on: "2026-06-01" })) as {
       cashEur: string;
     };
     expect(holdings.cashEur).toBe("900.00");
@@ -333,10 +354,13 @@ describe("get_allocation", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_allocation").run({
+    const result = (await toolNamed(tools, "get_allocation").run({
       on: "2026-06-01",
       dimension: "currency",
-    }) as { dimension: string; slices: Array<{ label: string; valueEur: string; weight: number }> };
+    })) as {
+      dimension: string;
+      slices: Array<{ label: string; valueEur: string; weight: number }>;
+    };
 
     expect(result.dimension).toBe("currency");
     // 120,00 of holding plus the 900,00 the deposit left uninvested: cash is
@@ -350,10 +374,10 @@ describe("get_returns", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_returns").run({
+    const result = (await toolNamed(tools, "get_returns").run({
       from: "2026-01-01",
       to: "2026-06-01",
-    }) as { from: string; to: string; valueEur: string; twr: number | null; mwr: number | null };
+    })) as { from: string; to: string; valueEur: string; twr: number | null; mwr: number | null };
 
     expect(result.from).toBe("2026-01-01");
     expect(result.to).toBe("2026-06-01");
@@ -369,10 +393,10 @@ describe("get_value_series", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_value_series").run({
+    const result = (await toolNamed(tools, "get_value_series").run({
       from: "2026-01-01",
       to: "2026-06-01",
-    }) as { points: Array<{ date: string; valueEur: string }> };
+    })) as { points: Array<{ date: string; valueEur: string }> };
 
     expect(result.points.length).toBeLessThanOrEqual(60);
     expect(result.points[0]?.date).toBe("2026-01-01");
@@ -386,7 +410,7 @@ describe("get_transactions", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_transactions").run({ limit: 1 }) as {
+    const result = (await toolNamed(tools, "get_transactions").run({ limit: 1 })) as {
       returned: number;
       truncated: boolean;
       transactions: Array<{ date: string; type: string; instrument: string | null }>;
@@ -404,10 +428,10 @@ describe("payload limits", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_value_series").run({
+    const result = (await toolNamed(tools, "get_value_series").run({
       from: "2020-01-01",
       to: "2026-06-01",
-    }) as { points: Array<{ date: string }> };
+    })) as { points: Array<{ date: string }> };
 
     expect(result.points.length).toBeLessThanOrEqual(60);
     expect(result.points.at(-1)?.date).toBe("2026-06-01");
@@ -416,10 +440,10 @@ describe("payload limits", () => {
   test("returns 25 transactions by default and says the answer was cut short", async () => {
     const { tools, accountId, instrumentId } = await seed();
     for (let day = 1; day <= 28; day += 1) {
-      buy(accountId, instrumentId, `2026-03-${String(day).padStart(2, "0")}`);
+      await buy(accountId, instrumentId, `2026-03-${String(day).padStart(2, "0")}`);
     }
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_transactions").run({}) as {
+    const result = (await toolNamed(tools, "get_transactions").run({})) as {
       returned: number;
       truncated: boolean;
     };
@@ -432,16 +456,16 @@ describe("payload limits", () => {
 describe("get_spending", () => {
   test("returns totals already added up, per category", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
-    spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3120, "2026-03-02");
-    spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -1850, "2026-03-03");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3120, "2026-03-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -1850, "2026-03-03");
 
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_spending").run({
+    const result = (await toolNamed(tools, "get_spending").run({
       from: "2026-01-01",
       to: "2026-12-31",
-    }) as {
+    })) as {
       totalEur: string;
       groups: Array<{ label: string; totalEur: string; count: number }>;
       uncategorisedShare: number;
@@ -456,15 +480,15 @@ describe("get_spending", () => {
 
   test("groups by counterparty when asked", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -1785, "2026-03-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -1785, "2026-03-02");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_spending").run({
+    const result = (await toolNamed(tools, "get_spending").run({
       from: "2026-01-01",
       to: "2026-12-31",
       groupBy: "counterparty",
-    }) as { groups: Array<{ label: string; totalEur: string }> };
+    })) as { groups: Array<{ label: string; totalEur: string }> };
 
     expect(result.groups[0]?.label).toBe("K-MARKET ESIMERKKI");
     expect(result.groups[0]?.totalEur).toBe("-60.00");
@@ -474,16 +498,19 @@ describe("get_spending", () => {
 describe("get_uncategorised_spending", () => {
   test("names the merchants no rule matched, so the model can propose a class", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
-    spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -1000, "2026-03-02");
-    spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -500, "2026-03-03");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -1000, "2026-03-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -500, "2026-03-03");
 
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_uncategorised_spending").run({
+    const result = (await toolNamed(tools, "get_uncategorised_spending").run({
       from: "2026-01-01",
       to: "2026-12-31",
-    }) as { totalEur: string; merchants: Array<{ name: string; totalEur: string; count: number }> };
+    })) as {
+      totalEur: string;
+      merchants: Array<{ name: string; totalEur: string; count: number }>;
+    };
 
     // The recognised grocery shop is not here; the unknown one is, summed.
     expect(result.merchants).toHaveLength(1);
@@ -497,10 +524,10 @@ describe("calculate", () => {
   test("adds exactly, which is the point of doing it here rather than in prose", async () => {
     const { tools } = await seed();
     // SAFETY: as above.
-    const result = toolNamed(tools, "calculate").run({
+    const result = (await toolNamed(tools, "calculate").run({
       operation: "sum",
       values: ["0.10", "0.20"],
-    }) as { result: string; working: string };
+    })) as { result: string; working: string };
 
     expect(result.result).toBe("0.30");
     expect(result.working).toBe("0.10 + 0.20 = 0.30");
@@ -509,10 +536,10 @@ describe("calculate", () => {
   test("returns a bad calculation as a message the model can act on", async () => {
     const { tools } = await seed();
     // SAFETY: as above.
-    const result = toolNamed(tools, "calculate").run({
+    const result = (await toolNamed(tools, "calculate").run({
       operation: "divide",
       values: ["10.00", "0"],
-    }) as { error?: string };
+    })) as { error?: string };
 
     // A thrown tool kills the turn; a message lets the model say what happened.
     expect(result.error).toContain("Nollalla");
@@ -524,7 +551,7 @@ describe("get_instruments", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
     // lines above in tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_instruments").run({}) as {
+    const result = (await toolNamed(tools, "get_instruments").run({})) as {
       instruments: Array<{ name: string; kind: string; currency: string }>;
     };
     expect(result.instruments).toEqual([
@@ -538,7 +565,7 @@ describe("get_tax_year", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
     // tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_tax_year").run({ year: 2026 }) as {
+    const result = (await toolNamed(tools, "get_tax_year").run({ year: 2026 })) as {
       year: number;
       availableYears: readonly number[];
       taxableGainEur: string;
@@ -559,7 +586,7 @@ describe("get_tax_year", () => {
     const { tools } = await seed();
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
     // tools.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_tax_year").run({}) as {
+    const result = (await toolNamed(tools, "get_tax_year").run({})) as {
       year: number;
       availableYears: readonly number[];
     };
@@ -577,7 +604,7 @@ describe("get_drift", () => {
       const { tools } = await seed();
       // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
       // tools.ts; the assertion only names the fields read below.
-      const result = toolNamed(tools, "get_drift").run({}) as {
+      const result = (await toolNamed(tools, "get_drift").run({})) as {
         asOf: string;
         groupBy: string;
         totalEur: string;
@@ -596,7 +623,7 @@ describe("get_drift", () => {
   test("carries the fee report with withheld tax kept apart", async () => {
     const { tools } = await seed();
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_drift").run({}) as {
+    const result = (await toolNamed(tools, "get_drift").run({})) as {
       fees: readonly { year: number; kulutEur: string; pidätettyVeroEur: string }[];
     };
 
@@ -609,15 +636,15 @@ describe("get_drift", () => {
 describe("get_cash_flow", () => {
   test("splits a period into what came in, what went out, and what was left", async () => {
     const { tools, bankAccountId } = await seed();
-    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-01");
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-03-02");
+    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-03-02");
 
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
     // tools-money.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "get_cash_flow").run({
+    const result = (await toolNamed(tools, "get_cash_flow").run({
       from: "2026-03-01",
       to: "2026-03-31",
-    }) as {
+    })) as {
       incomeEur: string;
       spendingEur: string;
       leftoverEur: string;
@@ -634,14 +661,14 @@ describe("get_cash_flow", () => {
 
   test("says so when the period spent more than it earned", async () => {
     const { tools, bankAccountId } = await seed();
-    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 10_000, "2026-04-01");
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -30_000, "2026-04-02");
+    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 10_000, "2026-04-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -30_000, "2026-04-02");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_cash_flow").run({
+    const result = (await toolNamed(tools, "get_cash_flow").run({
       from: "2026-04-01",
       to: "2026-04-30",
-    }) as { leftoverEur: string; spentMoreThanEarned: boolean };
+    })) as { leftoverEur: string; spentMoreThanEarned: boolean };
 
     // Reported as a positive figure with a flag, never as a negative "left
     // over", which reads as money in the account.
@@ -653,14 +680,14 @@ describe("get_cash_flow", () => {
 describe("get_spending_trend", () => {
   test("gives a month per row so a trend can be seen without twelve calls", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-02-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-02-10");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_spending_trend").run({
+    const result = (await toolNamed(tools, "get_spending_trend").run({
       from: "2026-01-01",
       to: "2026-02-28",
-    }) as { months: readonly { month: string; expensesEur: string }[] };
+    })) as { months: readonly { month: string; expensesEur: string }[] };
 
     expect(result.months.map((month) => month.month)).toEqual(["2026-01", "2026-02"]);
     // Expenses are reported as a positive magnitude, as `monthlyFlows` states.
@@ -670,15 +697,15 @@ describe("get_spending_trend", () => {
 
   test("follows one category when asked for one", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
-    spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -5_000, "2026-01-11");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -5_000, "2026-01-11");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_spending_trend").run({
+    const result = (await toolNamed(tools, "get_spending_trend").run({
       from: "2026-01-01",
       to: "2026-01-31",
       category: "ruoka",
-    }) as { category: string; label: string; months: readonly { totalEur: string }[] };
+    })) as { category: string; label: string; months: readonly { totalEur: string }[] };
 
     expect(result.label).toBe("Ruokakauppa");
     expect(result.months[0]?.totalEur).toBe("100.00");
@@ -698,7 +725,7 @@ describe("get_deposit_plan", () => {
     const { tools } = await seed();
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_deposit_plan").run({ amountEur: "1000.00" }) as {
+    const result = (await toolNamed(tools, "get_deposit_plan").run({ amountEur: "1000.00" })) as {
       depositEur: string;
       allocations: readonly { label: string; amountEur: string }[];
       note: string;
@@ -714,11 +741,11 @@ describe("get_deposit_plan", () => {
   test("splits the money toward the target once one is set", async () => {
     const { tools, userId } = await seed();
     // 100 % of one slice, in basis points, as the server function stores it.
-    const saved = saveTargets(getDb().db, userId, "kind", [{ key: "fund", weightBp: 10_000 }]);
+    const saved = await saveTargets(db, userId, "kind", [{ key: "fund", weightBp: 10_000 }]);
     expect(saved.ok).toBe(true);
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_deposit_plan").run({ amountEur: "500.00" }) as {
+    const result = (await toolNamed(tools, "get_deposit_plan").run({ amountEur: "500.00" })) as {
       allocations: readonly { label: string; amountEur: string }[];
       note: string;
     };
@@ -743,14 +770,14 @@ describe("get_deposit_plan", () => {
 describe("get_transaction_class", () => {
   test("shows the class a row was given and why it was left out", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
-    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-05-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
+    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-05-02");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_transaction_class").run({
+    const result = (await toolNamed(tools, "get_transaction_class").run({
       from: "2026-05-01",
       to: "2026-05-31",
-    }) as {
+    })) as {
       transactions: readonly {
         text: string;
         categoryLabel: string;
@@ -770,15 +797,15 @@ describe("get_transaction_class", () => {
 
   test("searches the text, so one payee can be asked about by name", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
-    spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3_120, "2026-05-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3_120, "2026-05-02");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_transaction_class").run({
+    const result = (await toolNamed(tools, "get_transaction_class").run({
       from: "2026-05-01",
       to: "2026-05-31",
       search: "lidl",
-    }) as { count: number; transactions: readonly { text: string }[] };
+    })) as { count: number; transactions: readonly { text: string }[] };
 
     expect(result.count).toBe(1);
     expect(result.transactions[0]?.text).toContain("LIDL");
@@ -790,13 +817,13 @@ describe("get_transaction_class", () => {
 describe("save_spending_rules", () => {
   test("stores a rule for a payee the ledger actually holds", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
 
     // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
     // tools-rules.ts; the assertion only names the fields read below.
-    const result = toolNamed(tools, "save_spending_rules").run({
+    const result = (await toolNamed(tools, "save_spending_rules").run({
       rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
-    }) as { added: readonly { pattern: string; label: string; matches: number }[] };
+    })) as { added: readonly { pattern: string; label: string; matches: number }[] };
 
     expect(result.added).toHaveLength(1);
     expect(result.added[0]?.label).toBe("Ruokakauppa");
@@ -805,10 +832,10 @@ describe("save_spending_rules", () => {
 
     // And the rule is live: the same payment now reads as groceries.
     // SAFETY: as above -- get_spending's literal is fixed in tools.ts.
-    const spending = toolNamed(tools, "get_spending").run({
+    const spending = (await toolNamed(tools, "get_spending").run({
       from: "2026-07-01",
       to: "2026-07-31",
-    }) as { groups: readonly { label: string }[] };
+    })) as { groups: readonly { label: string }[] };
     expect(spending.groups.some((group) => group.label === "Ruokakauppa")).toBe(true);
   });
 
@@ -819,9 +846,9 @@ describe("save_spending_rules", () => {
     // talk the model into a rule, the rule would still have to name a merchant
     // this ledger holds -- and this one does not.
     // SAFETY: as above.
-    const result = toolNamed(tools, "save_spending_rules").run({
+    const result = (await toolNamed(tools, "save_spending_rules").run({
       rules: [{ pattern: "KEKSITTY KAUPPA", category: "ruoka" }],
-    }) as { added: readonly unknown[]; skipped: readonly string[] };
+    })) as { added: readonly unknown[]; skipped: readonly string[] };
 
     expect(result.added).toEqual([]);
     expect(result.skipped).toContain("KEKSITTY KAUPPA");
@@ -841,16 +868,16 @@ describe("save_spending_rules", () => {
 describe("update_spending_rule and remove_spending_rule", () => {
   test("corrects a rule it wrote itself", async () => {
     const { tools, bankAccountId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
-    toolNamed(tools, "save_spending_rules").run({
+    await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+    await toolNamed(tools, "save_spending_rules").run({
       rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
     });
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "update_spending_rule").run({
+    const result = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "OUTOKAUPPA",
       category: "ravintolat",
-    }) as { changed: boolean; from: string; to: string };
+    })) as { changed: boolean; from: string; to: string };
 
     expect(result.changed).toBe(true);
     expect(result.from).toBe("Ruokakauppa");
@@ -859,20 +886,20 @@ describe("update_spending_rule and remove_spending_rule", () => {
 
   test("will not touch a rule the user wrote", async () => {
     const { tools, bankAccountId, userId } = await seed();
-    spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
     // The user's own decision, stored the way the Kulutus page stores it.
-    addRules(getDb().db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
+    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
 
     // SAFETY: as above.
     // SAFETY: as above.
-    const changed = toolNamed(tools, "update_spending_rule").run({
+    const changed = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "OUTOKAUPPA",
       category: "ravintolat",
-    }) as { changed: boolean; reason: string };
+    })) as { changed: boolean; reason: string };
     // SAFETY: as above.
-    const removed = toolNamed(tools, "remove_spending_rule").run({
+    const removed = (await toolNamed(tools, "remove_spending_rule").run({
       pattern: "OUTOKAUPPA",
-    }) as { removed: boolean; reason: string };
+    })) as { removed: boolean; reason: string };
 
     expect(changed.changed).toBe(false);
     expect(changed.reason).toBe("owned-by-user");
@@ -884,10 +911,10 @@ describe("update_spending_rule and remove_spending_rule", () => {
     const { tools } = await seed();
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "update_spending_rule").run({
+    const result = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "K-MARKET",
       category: "vapaa-aika",
-    }) as { changed: boolean; from: string };
+    })) as { changed: boolean; from: string };
 
     expect(result.changed).toBe(true);
     expect(result.from).toBe("Ruokakauppa");
@@ -897,9 +924,9 @@ describe("update_spending_rule and remove_spending_rule", () => {
     const { tools } = await seed();
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "remove_spending_rule").run({
+    const result = (await toolNamed(tools, "remove_spending_rule").run({
       pattern: "EI TÄLLAISTA",
-    }) as { removed: boolean; reason: string };
+    })) as { removed: boolean; reason: string };
 
     expect(result.removed).toBe(false);
     expect(result.reason).toBe("no-such-rule");
@@ -909,10 +936,10 @@ describe("update_spending_rule and remove_spending_rule", () => {
 describe("get_spending_rules", () => {
   test("lists the rules and says which ones are the user's own", async () => {
     const { tools, userId } = await seed();
-    addRules(getDb().db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
+    await addRules(db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_spending_rules").run({ search: "OMA SÄÄNTÖ" }) as {
+    const result = (await toolNamed(tools, "get_spending_rules").run({ search: "OMA SÄÄNTÖ" })) as {
       count: number;
       bySource: { user: number };
       rules: readonly { pattern: string; label: string; source: string }[];
@@ -930,7 +957,7 @@ describe("get_reconciliation", () => {
     const { tools } = await seed();
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+    const result = (await toolNamed(tools, "get_reconciliation").run({})) as {
       accounts: readonly { account: string; checkedAgainst: string | null; differences: number }[];
       unchecked: readonly string[];
       note: string;
@@ -947,10 +974,10 @@ describe("get_reconciliation", () => {
   test("names the holdings whose derived quantity disagrees with the statement", async () => {
     const { tools, accountId, instrumentId } = await seed();
     // The ledger derives 10 units from its transactions; the broker says 12.
-    statement(accountId, instrumentId, 12, "2026-06-01");
+    await statement(accountId, instrumentId, 12, "2026-06-01");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+    const result = (await toolNamed(tools, "get_reconciliation").run({})) as {
       accounts: readonly {
         account: string;
         checkedAgainst: string | null;
@@ -973,7 +1000,7 @@ describe("get_reconciliation", () => {
     const { tools } = await seed();
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_reconciliation").run({}) as {
+    const result = (await toolNamed(tools, "get_reconciliation").run({})) as {
       accounts: readonly { account: string }[];
     };
 
@@ -985,14 +1012,14 @@ describe("get_recurring_payments", () => {
   test("finds a monthly bill and what it costs in a year", async () => {
     const { tools, bankAccountId } = await seed();
     for (const date of ["2026-04-05", "2026-05-05", "2026-06-05"]) {
-      spend(bankAccountId, "TILISIIRTO — SUORATOISTO OY", -1_299, date);
+      await spend(bankAccountId, "TILISIIRTO — SUORATOISTO OY", -1_299, date);
     }
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_recurring_payments").run({
+    const result = (await toolNamed(tools, "get_recurring_payments").run({
       from: "2026-01-01",
       to: "2026-06-30",
-    }) as {
+    })) as {
       payments: readonly { payee: string; cadence: string; annualEur: string; active: boolean }[];
     };
 
@@ -1006,13 +1033,13 @@ describe("get_recurring_payments", () => {
 describe("get_net_worth_series", () => {
   test("adds the bank balances the value series leaves out", async () => {
     const { tools, bankAccountId } = await seed();
-    receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 50_000, "2026-01-03");
+    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 50_000, "2026-01-03");
 
     // SAFETY: as above.
-    const result = toolNamed(tools, "get_net_worth_series").run({
+    const result = (await toolNamed(tools, "get_net_worth_series").run({
       from: "2026-01-01",
       to: "2026-06-01",
-    }) as {
+    })) as {
       points: readonly { date: string; positionsEur: string; cashEur: string; totalEur: string }[];
     };
 

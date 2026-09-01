@@ -6,11 +6,9 @@ import { z } from "zod";
 import { EUR, parseMoney } from "../core/money.ts";
 import { assertAccountOwned } from "./accounts.ts";
 import { currencyField } from "./currency-field.ts";
-import { getDb } from "./db/index.ts";
+import { db } from "./db/index.ts";
 import { accounts, transactions } from "./db/schema.ts";
 import { fxRateOn } from "./fx.ts";
-
-const { db } = getDb();
 
 const IsoDateSchema = z
   .string()
@@ -47,10 +45,10 @@ const signedMinor = (type: z.infer<typeof CashEntry>["type"], amount: bigint): b
   type === "WITHDRAWAL" ? -amount : amount;
 
 /** Every manual row on one account: what a person typed, never an import's. */
-export const listCashEntries = (userId: string, accountId: number) => {
-  assertAccountOwned(userId, accountId);
+export const listCashEntries = async (userId: string, accountId: number) => {
+  await assertAccountOwned(userId, accountId);
 
-  const rows = db
+  const rows = await db
     .select({
       id: transactions.id,
       type: transactions.type,
@@ -83,8 +81,8 @@ export const listCashEntries = (userId: string, accountId: number) => {
 };
 
 /** Records one manual movement, refusing a second opening balance per currency. */
-export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) => {
-  assertAccountOwned(userId, body.accountId);
+export const addCashEntry = async (userId: string, body: z.infer<typeof CashEntry>) => {
+  await assertAccountOwned(userId, body.accountId);
 
   const minor = signedMinor(body.type, parseMoney(body.amount, body.currency).minor);
 
@@ -93,7 +91,7 @@ export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) =>
   // with -- and nothing downstream could tell that had happened. Correcting
   // one means deleting it and entering the right figure.
   if (body.type === "OPENING_BALANCE") {
-    const existing = db
+    const existing = await db
       .select({ id: transactions.id })
       .from(transactions)
       .where(
@@ -116,7 +114,7 @@ export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) =>
   // row: without one the amount cannot be valued, and storing a marker rate
   // would put a wrong number into every euro total that reads it.
   const fxRateEur =
-    body.currency === EUR ? 100_000_000 : fxRateOn(db, body.currency, body.tradeDate);
+    body.currency === EUR ? 100_000_000 : await fxRateOn(db, body.currency, body.tradeDate);
   if (fxRateEur === null) {
     throw new HttpError(
       400,
@@ -131,7 +129,7 @@ export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) =>
     .update(["manual", body.accountId, body.type, body.tradeDate, minor, body.currency].join("|"))
     .digest("hex");
 
-  const existing = db
+  const existing = await db
     .select({ id: transactions.id })
     .from(transactions)
     .where(
@@ -140,7 +138,7 @@ export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) =>
     .get();
   if (existing) throw new HttpError(409, "Sama tapahtuma on jo kirjattu");
 
-  const created = db
+  const created = await db
     .insert(transactions)
     .values({
       accountId: body.accountId,
@@ -159,17 +157,18 @@ export const addCashEntry = (userId: string, body: z.infer<typeof CashEntry>) =>
     })
     .returning()
     .get();
+  if (created === undefined) throw new HttpError(500, "Tapahtuman tallennus epäonnistui");
 
   return { id: created.id };
 };
 
 /** Removes a manual row, and only a manual one. */
-export const removeCashEntry = (userId: string, id: number) => {
+export const removeCashEntry = async (userId: string, id: number) => {
   // Ownership through the account, and only ever a row this route could have
   // written: an imported transaction belongs to its broker's record, and
   // deleting one here would silently desynchronise the ledger from the file
   // it came from. Undoing an import is a separate, whole-import operation.
-  const row = db
+  const row = await db
     .select({ id: transactions.id, importId: transactions.importId })
     .from(transactions)
     .innerJoin(accounts, eq(accounts.id, transactions.accountId))
@@ -180,6 +179,6 @@ export const removeCashEntry = (userId: string, id: number) => {
     throw new HttpError(400, "Tuotua tapahtumaa ei voi poistaa täältä");
   }
 
-  db.delete(transactions).where(eq(transactions.id, id)).run();
+  await db.delete(transactions).where(eq(transactions.id, id)).run();
   return { ok: true };
 };

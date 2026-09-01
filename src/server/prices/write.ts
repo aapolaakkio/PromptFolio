@@ -1,14 +1,12 @@
 import { and, desc, eq, lt } from "drizzle-orm";
 
 import type { Currency } from "../../core/money.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { pendingPriceRejections, prices } from "../db/schema.ts";
 import type { FetchedPrice } from "./types.ts";
 
-type Db = ReturnType<typeof getDb>["db"];
-
-// A transaction callback's `tx` is not assignable to `Db`, so a helper called
-// with it needs a type both satisfy structurally.
+// The helpers below only ever read and write; naming that keeps them callable
+// with anything database-shaped.
 type TxDb = Pick<Db, "select" | "insert" | "delete">;
 
 export type WriteOutcome = {
@@ -57,7 +55,10 @@ type PendingRejection = {
   readonly streak: number;
 };
 
-const pendingRejectionFor = (tx: TxDb, instrumentId: number): PendingRejection | undefined =>
+const pendingRejectionFor = (
+  tx: TxDb,
+  instrumentId: number,
+): Promise<PendingRejection | undefined> =>
   tx
     .select({
       close: pendingPriceRejections.close,
@@ -68,20 +69,22 @@ const pendingRejectionFor = (tx: TxDb, instrumentId: number): PendingRejection |
     .where(eq(pendingPriceRejections.instrumentId, instrumentId))
     .get();
 
-const clearPendingRejection = (tx: TxDb, instrumentId: number): void => {
-  tx.delete(pendingPriceRejections)
+const clearPendingRejection = async (tx: TxDb, instrumentId: number): Promise<void> => {
+  await tx
+    .delete(pendingPriceRejections)
     .where(eq(pendingPriceRejections.instrumentId, instrumentId))
     .run();
 };
 
 /** Records `point` as the (possibly new) pending candidate, at `streak` confirmations so far. */
-const recordPendingRejection = (
+const recordPendingRejection = async (
   tx: TxDb,
   instrumentId: number,
   point: FetchedPrice,
   streak: number,
-): void => {
-  tx.insert(pendingPriceRejections)
+): Promise<void> => {
+  await tx
+    .insert(pendingPriceRejections)
     .values({
       instrumentId,
       date: point.date,
@@ -103,7 +106,7 @@ const mostRecentPriceBefore = (
   tx: TxDb,
   instrumentId: number,
   date: string,
-): StoredPrice | undefined =>
+): Promise<StoredPrice | undefined> =>
   tx
     .select({ close: prices.close, currency: prices.currency, date: prices.date })
     .from(prices)
@@ -112,8 +115,14 @@ const mostRecentPriceBefore = (
     .limit(1)
     .get();
 
-const upsertPrice = (tx: TxDb, instrumentId: number, source: string, point: FetchedPrice): void => {
-  tx.insert(prices)
+const upsertPrice = async (
+  tx: TxDb,
+  instrumentId: number,
+  source: string,
+  point: FetchedPrice,
+): Promise<void> => {
+  await tx
+    .insert(prices)
     .values({
       instrumentId,
       date: point.date,
@@ -139,25 +148,25 @@ const upsertPrice = (tx: TxDb, instrumentId: number, source: string, point: Fetc
  * fix. Every automated caller omits the option, so scraped output is still
  * fully checked, and `requirePositiveMinor` still runs either way.
  */
-const acceptUnconditionally = (
+const acceptUnconditionally = async (
   tx: TxDb,
   instrumentId: number,
   source: string,
   point: FetchedPrice,
-): "written" => {
-  upsertPrice(tx, instrumentId, source, point);
-  clearPendingRejection(tx, instrumentId);
+): Promise<"written"> => {
+  await upsertPrice(tx, instrumentId, source, point);
+  await clearPendingRejection(tx, instrumentId);
   return "written";
 };
 
 /** Decides one point against the stored baseline and any pending streak. */
-const resolvePoint = (
+const resolvePoint = async (
   tx: TxDb,
   instrumentId: number,
   source: string,
   point: FetchedPrice,
-): "written" | "rejected" | "reBaselined" => {
-  const baseline = mostRecentPriceBefore(tx, instrumentId, point.date);
+): Promise<"written" | "rejected" | "reBaselined"> => {
+  const baseline = await mostRecentPriceBefore(tx, instrumentId, point.date);
   const plausibleVsBaseline =
     !baseline ||
     baseline.currency !== point.currency ||
@@ -165,12 +174,12 @@ const resolvePoint = (
 
   if (plausibleVsBaseline) {
     // Accepting normally unsticks the instrument, so a pending streak is moot.
-    upsertPrice(tx, instrumentId, source, point);
-    clearPendingRejection(tx, instrumentId);
+    await upsertPrice(tx, instrumentId, source, point);
+    await clearPendingRejection(tx, instrumentId);
     return "written";
   }
 
-  const pending = pendingRejectionFor(tx, instrumentId);
+  const pending = await pendingRejectionFor(tx, instrumentId);
   const continuesPendingStreak =
     pending &&
     pending.currency === point.currency &&
@@ -178,19 +187,19 @@ const resolvePoint = (
 
   if (!continuesPendingStreak) {
     // A fresh anomaly, unrelated to whatever was pending: count from 1 again.
-    recordPendingRejection(tx, instrumentId, point, 1);
+    await recordPendingRejection(tx, instrumentId, point, 1);
     return "rejected";
   }
 
   const streak = pending.streak + 1;
   if (streak < RE_BASELINE_CONFIRMATIONS) {
-    recordPendingRejection(tx, instrumentId, point, streak);
+    await recordPendingRejection(tx, instrumentId, point, streak);
     return "rejected";
   }
 
   // Enough consistent readings at this scale: it is the real new baseline.
-  upsertPrice(tx, instrumentId, source, point);
-  clearPendingRejection(tx, instrumentId);
+  await upsertPrice(tx, instrumentId, source, point);
+  await clearPendingRejection(tx, instrumentId);
   return "reBaselined";
 };
 
@@ -205,31 +214,35 @@ const resolvePoint = (
  * dropped. The first price ever stored has no baseline and is always accepted,
  * as is a point in a different currency than the baseline.
  */
-export const writePrices = (
+export const writePrices = async (
   db: Db,
   instrumentId: number,
   source: string,
   points: readonly FetchedPrice[],
   opts: { readonly skipPlausibilityCheck?: boolean } = {},
-): WriteOutcome => {
+): Promise<WriteOutcome> => {
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
 
   let written = 0;
   let rejectedImplausible = 0;
   let reBaselined = 0;
-  db.transaction((tx) => {
-    for (const point of sorted) {
-      const outcome = opts.skipPlausibilityCheck
-        ? acceptUnconditionally(tx, instrumentId, source, point)
-        : resolvePoint(tx, instrumentId, source, point);
-      if (outcome === "written") written++;
-      else if (outcome === "reBaselined") {
-        written++;
-        reBaselined++;
-      } else {
-        rejectedImplausible++;
-      }
+  // ponytail: no transaction -- D1 rejects BEGIN, and each point has to see
+  // what the point before it wrote, which `db.batch()` cannot express. So each
+  // statement auto-commits: a failure part-way leaves the earlier points
+  // written. Prices are idempotent upserts, so re-running the fetch repairs it.
+  // Upgrade path if that is not good enough: decide the whole run in memory
+  // against one read of the history, then write it as a single batch.
+  for (const point of sorted) {
+    const outcome = opts.skipPlausibilityCheck
+      ? await acceptUnconditionally(db, instrumentId, source, point)
+      : await resolvePoint(db, instrumentId, source, point);
+    if (outcome === "written") written++;
+    else if (outcome === "reBaselined") {
+      written++;
+      reBaselined++;
+    } else {
+      rejectedImplausible++;
     }
-  });
+  }
   return { written, rejectedImplausible, reBaselined };
 };

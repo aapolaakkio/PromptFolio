@@ -9,13 +9,13 @@ let categoriseWith: (typeof import("./rules.ts"))["categoriseWith"];
 let matchRule: (typeof import("./rules.ts"))["matchRule"];
 let removeRule: (typeof import("./rules.ts"))["removeRule"];
 let rulesFor: (typeof import("./rules.ts"))["rulesFor"];
-let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
-let auth: (typeof import("../auth.ts"))["auth"];
+let db: (typeof import("../db/index.ts"))["db"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
 beforeAll(async () => {
   ({ addRules, categoriseWith, matchRule, removeRule, rulesFor } = await import("./rules.ts"));
-  db = (await import("../db/index.ts")).getDb().db;
-  auth = (await import("../auth.ts")).auth;
+  db = (await import("../db/index.ts")).db;
+  auth = (await import("../auth.ts")).getAuth();
 });
 
 let next = 0;
@@ -37,21 +37,21 @@ const makeUser = async (): Promise<string> => {
 describe("rulesFor", () => {
   test("seeds the built-in merchants the first time, and only the first time", async () => {
     const userId = await makeUser();
-    const seeded = rulesFor(db, userId);
+    const seeded = await rulesFor(db, userId);
     expect(seeded.length).toBeGreaterThan(50);
     expect(seeded.every((rule) => rule.source === "seed")).toBe(true);
 
     // A rule the owner deletes must stay deleted; re-seeding would undo them.
-    removeRule(db, userId, "LIDL");
-    expect(rulesFor(db, userId).some((rule) => rule.pattern === "LIDL")).toBe(false);
+    await removeRule(db, userId, "LIDL");
+    expect((await rulesFor(db, userId)).some((rule) => rule.pattern === "LIDL")).toBe(false);
   });
 
   test("keeps one user's rules out of another's", async () => {
     const mine = await makeUser();
     const theirs = await makeUser();
-    addRules(db, mine, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "user");
+    await addRules(db, mine, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "user");
 
-    expect(rulesFor(db, theirs).some((rule) => rule.pattern === "PIENI PUOTI")).toBe(false);
+    expect((await rulesFor(db, theirs)).some((rule) => rule.pattern === "PIENI PUOTI")).toBe(false);
   });
 });
 
@@ -77,7 +77,7 @@ describe("matchRule", () => {
 describe("addRules", () => {
   test("refuses a category that does not exist", async () => {
     const userId = await makeUser();
-    const { added, rejected } = addRules(
+    const { added, rejected } = await addRules(
       db,
       userId,
       [{ pattern: "PIENI PUOTI", category: "kryptovaluutat" }],
@@ -91,21 +91,23 @@ describe("addRules", () => {
   test("refuses a pattern too short to identify anything", async () => {
     const userId = await makeUser();
     // "OY" would match half the businesses in Finland.
-    expect(addRules(db, userId, [{ pattern: "OY", category: "ruoka" }], "ai").added).toEqual([]);
+    expect(
+      (await addRules(db, userId, [{ pattern: "OY", category: "ruoka" }], "ai")).added,
+    ).toEqual([]);
   });
 
   test("leaves an existing rule alone rather than replacing it", async () => {
     const userId = await makeUser();
-    addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
-    addRules(db, userId, [{ pattern: "pieni puoti", category: "ruoka" }], "ai");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
+    await addRules(db, userId, [{ pattern: "pieni puoti", category: "ruoka" }], "ai");
 
-    expect(categoriseWith("PIENI PUOTI OY", rulesFor(db, userId))).toBe("vapaa-aika");
+    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("vapaa-aika");
   });
 
   test("records who decided, so a guess can be told from an answer", async () => {
     const userId = await makeUser();
-    addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "ai");
-    const stored = rulesFor(db, userId).find((rule) => rule.pattern === "PIENI PUOTI");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "ai");
+    const stored = (await rulesFor(db, userId)).find((rule) => rule.pattern === "PIENI PUOTI");
 
     expect(stored?.source).toBe("ai");
   });
@@ -114,10 +116,10 @@ describe("addRules", () => {
 describe("removeRule", () => {
   test("removes only the named rule, and says when there was none", async () => {
     const userId = await makeUser();
-    const before = rulesFor(db, userId).length;
+    const before = (await rulesFor(db, userId)).length;
 
-    expect(removeRule(db, userId, "lidl")).toBe(true);
-    expect(removeRule(db, userId, "EI TÄLLAISTA")).toBe(false);
-    expect(rulesFor(db, userId)).toHaveLength(before - 1);
+    expect(await removeRule(db, userId, "lidl")).toBe(true);
+    expect(await removeRule(db, userId, "EI TÄLLAISTA")).toBe(false);
+    expect(await rulesFor(db, userId)).toHaveLength(before - 1);
   });
 });

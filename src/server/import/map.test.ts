@@ -131,7 +131,7 @@ const rawRow = (line: number, values: Record<string, string>): RawRow => {
   return { line, values, cells };
 };
 
-test("normalises both date formats to ISO", () => {
+test("normalises both date formats to ISO", async () => {
   expect(normaliseDate("2025-01-10", "iso")).toBe("2025-01-10");
   expect(normaliseDate("15.01.2025", "fi")).toBe("2025-01-15");
   expect(() => normaliseDate("32.01.2025", "fi")).toThrow();

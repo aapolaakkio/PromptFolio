@@ -26,10 +26,8 @@ import {
 import type { PriceLookup } from "../core/returns.ts";
 import { isPriceStale } from "../core/staleness.ts";
 import type { Instrument, IsoDate, Txn } from "../core/types.ts";
-import type { getDb } from "./db/index.ts";
+import type { Db } from "./db/index.ts";
 import { accounts, fxRates, instruments, prices, transactions } from "./db/schema.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /**
  * Rebuilds core money from a stored row. The schema's currency type is a free,
@@ -104,18 +102,15 @@ export type Portfolio = {
  * `core` never sees a database row: this is the one module that translates
  * between storage integers and `Money`/`Quantity`/`FxRate`.
  */
-export const loadPortfolio = (db: Db, userId: string): Portfolio => {
-  const ownedAccountIds = db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(eq(accounts.userId, userId))
-    .all()
-    .map((row) => row.id);
+export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> => {
+  const ownedAccountIds = (
+    await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.userId, userId)).all()
+  ).map((row) => row.id);
 
   const txnRows =
     ownedAccountIds.length === 0
       ? []
-      : db
+      : await db
           .select()
           .from(transactions)
           .where(inArray(transactions.accountId, ownedAccountIds))
@@ -125,11 +120,12 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   // Loaded before the transactions because a row's `unit_price` is denominated
   // in its instrument's currency, not in the row's own (see below).
   const instrumentCurrencies = new Map(
-    db
-      .select({ id: instruments.id, currency: instruments.currency })
-      .from(instruments)
-      .all()
-      .map((row) => [row.id, parseCurrency(row.currency)]),
+    (
+      await db
+        .select({ id: instruments.id, currency: instruments.currency })
+        .from(instruments)
+        .all()
+    ).map((row) => [row.id, parseCurrency(row.currency)]),
   );
 
   const txns: Txn[] = txnRows.map((row) => ({
@@ -159,25 +155,21 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
     note: row.note,
   }));
 
-  const instrumentList: Instrument[] = db
-    .select()
-    .from(instruments)
-    .all()
-    .map((row) => ({
-      id: row.id,
-      isin: row.isin,
-      ticker: row.ticker,
-      name: row.name,
-      kind: row.kind,
-      currency: parseCurrency(row.currency),
-      priceSource: row.priceSource,
-      sourceKey: row.sourceKey,
-    }));
+  const instrumentList: Instrument[] = (await db.select().from(instruments).all()).map((row) => ({
+    id: row.id,
+    isin: row.isin,
+    ticker: row.ticker,
+    name: row.name,
+    kind: row.kind,
+    currency: parseCurrency(row.currency),
+    priceSource: row.priceSource,
+    sourceKey: row.sourceKey,
+  }));
 
-  const priceRows = db.select().from(prices).orderBy(asc(prices.date)).all();
+  const priceRows = await db.select().from(prices).orderBy(asc(prices.date)).all();
   const pricesByInstrument = groupBy(priceRows, (row) => row.instrumentId);
 
-  const fxRows = db.select().from(fxRates).orderBy(asc(fxRates.date)).all();
+  const fxRows = await db.select().from(fxRates).orderBy(asc(fxRates.date)).all();
   const fxByCurrency = groupBy(fxRows, (row) => row.currency);
 
   const nextPriceDateAfter = (instrumentId: number, date: IsoDate): IsoDate | null =>
@@ -206,20 +198,24 @@ export const loadPortfolio = (db: Db, userId: string): Portfolio => {
   };
 
   const creditAccountIds = new Set(
-    db
-      .select({ id: accounts.id, accountType: accounts.accountType })
-      .from(accounts)
-      .where(eq(accounts.userId, userId))
-      .all()
+    (
+      await db
+        .select({ id: accounts.id, accountType: accounts.accountType })
+        .from(accounts)
+        .where(eq(accounts.userId, userId))
+        .all()
+    )
       .filter((row) => row.accountType === "credit")
       .map((row) => row.id),
   );
 
-  const bankAccountIds = db
-    .select({ id: accounts.id, kind: accounts.kind })
-    .from(accounts)
-    .where(eq(accounts.userId, userId))
-    .all()
+  const bankAccountIds = (
+    await db
+      .select({ id: accounts.id, kind: accounts.kind })
+      .from(accounts)
+      .where(eq(accounts.userId, userId))
+      .all()
+  )
     .filter((row) => row.kind === "bank")
     .map((row) => row.id);
   const isBank = new Set(bankAccountIds);
@@ -313,8 +309,8 @@ const explainValuationFailure = (
  * one unmatched disposal marks only its own row unknown. Refusing the sale at
  * import time would be wrong: pages arrive newest first.
  */
-export const holdingsFor = (db: Db, userId: string, on: IsoDate): HoldingView[] => {
-  const { txns, instruments: all, prices: lookup } = loadPortfolio(db, userId);
+export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<HoldingView[]> => {
+  const { txns, instruments: all, prices: lookup } = await loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
   const costs = costBasisPerInstrument(txns, on);
 
@@ -447,23 +443,24 @@ export type CashView = {
  * terms nobody entered is locked with an unknown release date, which is the
  * honest reading and safer than treating it as spendable.
  */
-export const withAvailability = (
+export const withAvailability = async (
   db: Db,
   userId: string,
   balances: readonly ValuedCash[],
   on: IsoDate,
-): ValuedCash[] => {
+): Promise<ValuedCash[]> => {
   const terms = new Map(
-    db
-      .select({
-        id: accounts.id,
-        accountType: accounts.accountType,
-        maturityDate: accounts.maturityDate,
-      })
-      .from(accounts)
-      .where(eq(accounts.userId, userId))
-      .all()
-      .map((row) => [row.id, row]),
+    (
+      await db
+        .select({
+          id: accounts.id,
+          accountType: accounts.accountType,
+          maturityDate: accounts.maturityDate,
+        })
+        .from(accounts)
+        .where(eq(accounts.userId, userId))
+        .all()
+    ).map((row) => [row.id, row]),
   );
 
   return balances.map((balance) => {
@@ -478,18 +475,19 @@ export const withAvailability = (
   });
 };
 
-export const cashFor = (db: Db, userId: string, on: IsoDate): CashReport => {
-  const { cashTxns, prices } = loadPortfolio(db, userId);
+export const cashFor = async (db: Db, userId: string, on: IsoDate): Promise<CashReport> => {
+  const { cashTxns, prices } = await loadPortfolio(db, userId);
   const names = new Map(
-    db
-      .select({ id: accounts.id, name: accounts.name })
-      .from(accounts)
-      .where(eq(accounts.userId, userId))
-      .all()
-      .map((row) => [row.id, row.name]),
+    (
+      await db
+        .select({ id: accounts.id, name: accounts.name })
+        .from(accounts)
+        .where(eq(accounts.userId, userId))
+        .all()
+    ).map((row) => [row.id, row.name]),
   );
 
-  const valued = withAvailability(
+  const valued = await withAvailability(
     db,
     userId,
     valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on),

@@ -3,16 +3,14 @@ import { z } from "zod";
 
 import { CATEGORY_LABELS } from "../../server/spending/categories.ts";
 import { addRules, removeRule, rulesFor } from "../../server/spending/rules.ts";
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { authed } from "./guard.ts";
-
-const { db } = getDb();
 
 /** The rules a person's spending is read through, with the categories to pick from. */
 export const getSpendingRules = createServerFn()
   .middleware([authed])
-  .handler(({ context }) => ({
-    rules: rulesFor(db, context.userId),
+  .handler(async ({ context }) => ({
+    rules: await rulesFor(db, context.userId),
     categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
   }));
 
@@ -40,7 +38,9 @@ export const saveSpendingRules = createServerFn({ method: "POST" })
 export const deleteSpendingRule = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(z.object({ pattern: z.string().min(1) }))
-  .handler(({ data, context }) => {
-    if (!removeRule(db, context.userId, data.pattern)) throw new Error("Sääntöä ei löydy");
+  .handler(async ({ data, context }) => {
+    if (!(await removeRule(db, context.userId, data.pattern))) {
+      throw new Error("Sääntöä ei löydy");
+    }
     return { ok: true };
   });

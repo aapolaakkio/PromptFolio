@@ -9,7 +9,7 @@ import { eur } from "../lib/format.ts";
 import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 /**
- * Matches `GET /api/allocation`'s actual JSON shape (`src/server/api/portfolio.ts`):
+ * Matches `allocationView`'s actual shape (`src/server/views/portfolio.ts`):
  * `key` (a stable id -- kind code, currency code, account id or instrument id),
  * `label` (the Finnish display name) and `valueEur` (a decimal string, never `value`).
  */

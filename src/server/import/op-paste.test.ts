@@ -54,7 +54,7 @@ test("Yhteensä is always the last currency-shaped value, never recomputed", asy
   expect(myynti.values["Yhteensä"]).toBe("44,55   EUR"); // 15 * 3.10 - 0.45 = 46.05, not this
 });
 
-test("throws when the header block doesn't match (not an OP paste at all)", () => {
+test("throws when the header block doesn't match (not an OP paste at all)", async () => {
   expect(() => parseOpPaste("Id\tKauppapäivä\nfoo\n")).toThrow(/otsikkoa/i);
   expect(() => parseOpPaste("")).toThrow(/otsikkoa/i);
 });

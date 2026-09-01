@@ -2,7 +2,7 @@ import { redirect } from "@tanstack/react-router";
 import { createMiddleware } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 
-import { auth } from "../../server/auth.ts";
+import { getAuth } from "../../server/auth.ts";
 import { HttpError } from "../../server/errors.ts";
 
 /**
@@ -24,7 +24,7 @@ import { HttpError } from "../../server/errors.ts";
  * boundary, where seroval could not serialise it and turned a 401 into a 500.
  */
 export const authed = createMiddleware({ type: "function" }).server(async ({ next }) => {
-  const session = await auth.api.getSession({ headers: getRequest().headers });
+  const session = await getAuth().api.getSession({ headers: getRequest().headers });
   if (!session?.user?.id) throw redirect({ to: "/login" });
   return next({ context: { userId: session.user.id } });
 });

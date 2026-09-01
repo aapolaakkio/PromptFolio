@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 
 import { EUR } from "../../core/money.ts";
-import { testDb } from "../db/index.ts";
+import { testDb } from "../db/test-db.ts";
 import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
@@ -12,15 +12,16 @@ import type { Draft, DraftTxn } from "./map.ts";
 /**
  * Mirrors commit.test.ts's own `seed`/`draftTxn`/`draftOf` helpers -- this file exercises the
  * same `commitDraft` these tests do, immediately followed by `backfillCommittedInstruments`,
- * exactly as `src/server/api/imports.ts`'s two commit routes wire the two together. A fresh,
+ * exactly as `src/server/import/service.ts`'s two commit paths wire the two together. A fresh,
  * isolated `testDb()` per test (not the process-wide shared handle `imports.test.ts` uses) is
  * deliberate here too: `backfillCommittedInstruments` takes `db` as an explicit parameter
  * (like `commitDraft`), so it needs no HTTP layer, real auth, or a random ISIN to stay isolated
  * from every other test file sharing that process-wide database.
  */
-const seed = () => {
-  const { db } = testDb();
-  db.insert(user)
+const seed = async () => {
+  const { db } = await testDb();
+  await db
+    .insert(user)
     .values({
       id: "u1",
       name: "Testi",
@@ -30,12 +31,12 @@ const seed = () => {
       updatedAt: new Date(),
     })
     .run();
-  const account = db
+  const account = await db
     .insert(accounts)
     .values({ userId: "u1", name: "Nordnet", broker: "nordnet", baseCurrency: EUR })
     .returning()
     .get();
-  const instrument = db
+  const instrument = await db
     .insert(instruments)
     .values({
       isin: "FI0009000681",
@@ -80,7 +81,7 @@ const commitArgs = (accountId: number, draft: Draft) => ({
   draft,
 });
 
-const mustNotBeCalled = (): Promise<Response> => {
+const mustNotBeCalled = async (): Promise<Response> => {
   throw new Error("must not be called");
 };
 
@@ -98,18 +99,18 @@ const onePointAt2020_06_15: FetchImpl = async () =>
   });
 
 test("does nothing, and touches no network, when the committed draft has no instrument rows", async () => {
-  const { db, accountId } = seed();
+  const { db, accountId } = await seed();
   const draft = draftOf([draftTxn({ accountId })]); // a plain deposit, instrumentId stays null
   await commitDraft(db, commitArgs(accountId, draft));
 
   await expect(
     backfillCommittedInstruments(db, draft, { fetchImpl: mustNotBeCalled }),
   ).resolves.toBeUndefined();
-  expect(db.select().from(prices).all()).toHaveLength(0);
+  expect(await db.select().from(prices).all()).toHaveLength(0);
 });
 
 test("backfills the instrument a fresh commit just gave an earliest transaction date", async () => {
-  const { db, accountId, instrumentId } = seed();
+  const { db, accountId, instrumentId } = await seed();
   const draft = draftOf([
     draftTxn({
       accountId,
@@ -125,13 +126,13 @@ test("backfills the instrument a fresh commit just gave an earliest transaction 
 
   await backfillCommittedInstruments(db, draft, { fetchImpl: onePointAt2020_06_15 });
 
-  const rows = db.select().from(prices).where(eq(prices.instrumentId, instrumentId)).all();
+  const rows = await db.select().from(prices).where(eq(prices.instrumentId, instrumentId)).all();
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ date: "2020-06-15", close: 300 });
 });
 
 test("re-importing the same rows (all skipped as duplicates) still triggers backfill -- how a pre-existing holding catches up without waiting for the nightly sweep", async () => {
-  const { db, accountId, instrumentId } = seed();
+  const { db, accountId, instrumentId } = await seed();
   const draft = draftOf([
     draftTxn({
       accountId,
@@ -160,7 +161,7 @@ test("re-importing the same rows (all skipped as duplicates) still triggers back
 });
 
 test("never rejects when the price source fails -- the commit it followed must not be reported as failed", async () => {
-  const { db, accountId, instrumentId } = seed();
+  const { db, accountId, instrumentId } = await seed();
   const draft = draftOf([
     draftTxn({
       accountId,
@@ -184,7 +185,7 @@ test("never rejects when the price source fails -- the commit it followed must n
     backfillCommittedInstruments(db, draft, { fetchImpl: throwing }),
   ).resolves.toBeUndefined();
 
-  const log = db
+  const log = await db
     .select()
     .from(priceFetchLog)
     .where(eq(priceFetchLog.instrumentId, instrumentId))
@@ -193,11 +194,11 @@ test("never rejects when the price source fails -- the commit it followed must n
   expect(log[0]!.ok).toBe(false);
   expect(log[0]!.message).toContain("Yahoo on poissa käytöstä");
   // The committed transaction itself is untouched by the failed backfill.
-  expect(db.select().from(transactions).all()).toHaveLength(1);
+  expect(await db.select().from(transactions).all()).toHaveLength(1);
 });
 
 test("deduplicates repeated instrument ids across a draft's rows into a single fetch", async () => {
-  const { db, accountId, instrumentId } = seed();
+  const { db, accountId, instrumentId } = await seed();
   const draft = draftOf([
     draftTxn({
       accountId,

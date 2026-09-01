@@ -1,23 +1,23 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
-import { getDb } from "./db/index.ts";
+import { db } from "./db/index.ts";
 import { addInstrument } from "./instruments/store.ts";
 
 import { EUR } from "../core/money.ts";
 
 // Exercises rebalanceRoutes against a real migrated database and a real Better
-// Auth session, following portfolio.test.ts's setup: the shared getDb() handle
+// Auth session, following portfolio.test.ts's setup: the shared database
 // is already pinned to a migrated in-memory database by ../test-setup.ts, so
 // this file must not call resetDbHandleForTests() or migrate() itself. Every
 // identity is derived from a fresh crypto.randomUUID(), because the database is
 // shared with every other test file in the process.
 
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let rebalance: typeof import("./rebalance.ts");
 let toBasisPoints: (percent: string) => number;
 
 beforeAll(async () => {
-  auth = (await import("./auth.ts")).auth;
+  auth = (await import("./auth.ts")).getAuth();
   rebalance = await import("./rebalance.ts");
   const { BASIS_POINTS } = await import("../core/rebalance/targets.ts");
   toBasisPoints = (percent) => Math.round(Number(percent.replace(",", ".")) * (BASIS_POINTS / 100));
@@ -58,7 +58,7 @@ type TargetsBody = {
 /** Saves a set the way the server function does: percentages to basis points. */
 const putTargets = (userId: string, body: TargetsBody) =>
   rebalance.saveTargets(
-    getDb().db,
+    db,
     userId,
     body.dimension,
     body.targets.map((target) => ({
@@ -70,7 +70,7 @@ const putTargets = (userId: string, body: TargetsBody) =>
 describe("PUT /api/targets", () => {
   test("refuses a set that does not sum to 100 %, naming the total", async () => {
     const { userId } = await signUp();
-    const result = putTargets(userId, {
+    const result = await putTargets(userId, {
       dimension: "kind",
       targets: [
         { key: "stock", weightPercent: "60" },
@@ -100,7 +100,7 @@ describe("PUT /api/targets", () => {
       ],
     });
 
-    const targets = rebalance.targetsFor(getDb().db, userId, "kind");
+    const targets = await rebalance.targetsFor(db, userId, "kind");
 
     // Accumulating would leave a set summing to 200 %, refused on the next read
     // after the write had already happened.
@@ -123,7 +123,7 @@ describe("PUT /api/targets", () => {
       targets: [{ key: "stock", weightPercent: "100" }],
     });
 
-    expect(rebalance.targetsFor(getDb().db, stranger.userId, "kind")).toEqual([]);
+    expect(await rebalance.targetsFor(db, stranger.userId, "kind")).toEqual([]);
   });
 
   // "refuses an anonymous caller" is gone with the route: every server function
@@ -137,14 +137,14 @@ describe("the read routes", () => {
     const { userId } = await signUp();
     const { prices, transactions } = await import("./db/schema.ts");
 
-    const { id: accountId } = openAccountRow(
-      getDb().db,
+    const { id: accountId } = await openAccountRow(
+      db,
       userId,
       CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }),
     );
 
     const isin = `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
-    const { id: instrumentId } = addInstrument(getDb().db, {
+    const { id: instrumentId } = await addInstrument(db, {
       isin,
       ticker: "TST",
       name: "Test Co",
@@ -154,8 +154,8 @@ describe("the read routes", () => {
       sourceKey: isin,
     });
 
-    getDb()
-      .db.insert(transactions)
+    await db
+      .insert(transactions)
       .values({
         accountId,
         instrumentId,
@@ -173,8 +173,8 @@ describe("the read routes", () => {
         importId: null,
       })
       .run();
-    getDb()
-      .db.insert(prices)
+    await db
+      .insert(prices)
       .values({
         instrumentId,
         date: "2025-06-02",
@@ -194,7 +194,7 @@ describe("the read routes", () => {
       targets: [{ key: "stock", weightPercent: "100" }],
     });
 
-    const body = rebalance.driftReportFor(getDb().db, userId, "kind", "2025-06-02");
+    const body = await rebalance.driftReportFor(db, userId, "kind", "2025-06-02");
 
     // 10 shares at 20,00 -- the whole portfolio, and exactly on a 100 % target.
     expect(body.totalEur).toBe("200.00");
@@ -204,7 +204,7 @@ describe("the read routes", () => {
   test("a fee report counts the commission paid on a purchase", async () => {
     const { userId } = await seed();
 
-    const years = rebalance.feeReportFor(getDb().db, userId);
+    const years = await rebalance.feeReportFor(db, userId);
 
     expect(years[0]!.year).toBe(2025);
     expect(years[0]!.tradeFeesEur).toBe("5.00");

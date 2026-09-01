@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { EUR, type Currency } from "../../core/money.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { imports, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { ensureFxRate, fxRateOn } from "../fx.ts";
@@ -23,7 +23,6 @@ export type CommitResult = {
 export type UndoResult = { readonly deleted: number };
 
 // Type-only, so importing this module never opens a database.
-type Db = ReturnType<typeof getDb>["db"];
 
 // A transaction callback's `tx` is not assignable to `Db`, but shares every
 // query method, so picking the ones used here gives a type both satisfy --
@@ -42,9 +41,9 @@ const isTxnType = (value: string): value is TxnType =>
  * unresolved, which must never reach the ledger: this replaces it with a real
  * rate on or before the trade date, or throws.
  */
-const resolveFxRate = (tx: TxDb, row: DraftTxn): number => {
+const resolveFxRate = async (tx: TxDb, row: DraftTxn): Promise<number> => {
   if (row.currency === EUR || row.fxRateEur !== 0) return row.fxRateEur;
-  const rate = fxRateOn(tx, row.currency, row.tradeDate);
+  const rate = await fxRateOn(tx, row.currency, row.tradeDate);
   if (rate === null) {
     throw new HttpError(
       400,
@@ -60,7 +59,7 @@ const existingRow = (
   accountId: number,
   row: DraftTxn,
   hash: string,
-): { id: number; note: string | null } | undefined =>
+): Promise<{ id: number; note: string | null } | undefined> =>
   tx
     .select({ id: transactions.id, note: transactions.note })
     .from(transactions)
@@ -85,13 +84,17 @@ const existingRow = (
  * the same period can word a row differently, and the first one imported is no
  * less authoritative than the second.
  */
-const enrichNote = (
+const enrichNote = async (
   tx: TxDb,
   existing: { id: number; note: string | null },
   row: DraftTxn,
-): boolean => {
+): Promise<boolean> => {
   if (existing.note !== null || row.note === null) return false;
-  tx.update(transactions).set({ note: row.note }).where(eq(transactions.id, existing.id)).run();
+  await tx
+    .update(transactions)
+    .set({ note: row.note })
+    .where(eq(transactions.id, existing.id))
+    .run();
   return true;
 };
 
@@ -112,20 +115,22 @@ const storedContentHash = (row: DraftTxn, accountId: number): string => {
 };
 
 /** Inserts one draft row, or reports it as a skip if it's a duplicate. Throws on an invalid row. */
-const insertRow = (
+const insertRow = async (
   tx: TxDb,
   accountId: number,
   importId: number,
   row: DraftTxn,
-): "inserted" | "skipped" | "enriched" => {
+  fxRateEur: number,
+): Promise<"inserted" | "skipped" | "enriched"> => {
   if (!isTxnType(row.type)) {
     throw new HttpError(400, `Tuntematon tapahtumatyyppi: ${row.type} (rivi ${row.line})`);
   }
   const hash = storedContentHash(row, accountId);
-  const existing = existingRow(tx, accountId, row, hash);
-  if (existing !== undefined) return enrichNote(tx, existing, row) ? "enriched" : "skipped";
+  const existing = await existingRow(tx, accountId, row, hash);
+  if (existing !== undefined) return (await enrichNote(tx, existing, row)) ? "enriched" : "skipped";
 
-  tx.insert(transactions)
+  await tx
+    .insert(transactions)
     .values({
       accountId,
       instrumentId: row.instrumentId,
@@ -137,7 +142,7 @@ const insertRow = (
       fee: row.fee,
       tax: row.tax,
       currency: row.currency,
-      fxRateEur: resolveFxRate(tx, row),
+      fxRateEur,
       externalId: row.externalId,
       note: row.note,
       contentHash: hash,
@@ -148,10 +153,10 @@ const insertRow = (
 };
 
 /**
- * One ECB fetch per still-unresolved currency, before the transaction opens --
- * the fetch is a network call and the transaction callback is synchronous, so an
- * await cannot live inside it. One per currency, not per row: the daily file
- * takes no date, so a second attempt would repeat the same call.
+ * One ECB fetch per still-unresolved currency, before any row is written, so a
+ * network call never sits between two of this import's inserts. One per
+ * currency, not per row: the daily file takes no date, so a second attempt
+ * would repeat the same call.
  */
 const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): Promise<void> => {
   const attempted = new Set<Currency>();
@@ -159,7 +164,7 @@ const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): P
     if (row.currency === EUR || row.fxRateEur !== 0) continue;
     if (attempted.has(row.currency)) continue;
     attempted.add(row.currency);
-    if (fxRateOn(db, row.currency, row.tradeDate) !== null) continue;
+    if ((await fxRateOn(db, row.currency, row.tradeDate)) !== null) continue;
     await ensureFxRate(db, row.currency, row.tradeDate, fetchImpl);
   }
 };
@@ -167,9 +172,10 @@ const ensureDraftFxRates = async (db: Db, draft: Draft, fetchImpl: FetchImpl): P
 /**
  * Commits a parsed import into the append-only ledger.
  *
- * Every insert happens in one SQLite transaction, and a row that fails throws out
- * of the callback uncaught, which is what rolls the whole thing back. Nothing
- * here may catch that error before it leaves the callback.
+ * The inserts are no longer one transaction -- see the loop below for why D1
+ * cannot express this one -- so a row that fails leaves the rows before it
+ * written. The import record is what makes that recoverable: undo it and
+ * re-import. Nothing here may catch that error and carry on regardless.
  */
 export const commitDraft = async (
   db: Db,
@@ -197,41 +203,58 @@ export const commitDraft = async (
 
   await ensureDraftFxRates(db, draft, args.fetchImpl ?? fetch);
 
+  // Every refusal is decided before anything is written. A row can only fail
+  // on an unknown type or a missing FX rate, and both are known up front, so a
+  // rejected commit leaves the ledger untouched -- what the transaction this
+  // replaced used to buy. D1 has no transaction to offer: it rejects BEGIN, and
+  // `insertRow` reads before it writes with each row able to see the one
+  // before it, which `db.batch` cannot express.
+  const resolved: { row: DraftTxn; fxRateEur: number }[] = [];
+  for (const row of draft.txns) {
+    if (!isTxnType(row.type)) {
+      throw new HttpError(400, `Tuntematon tapahtumatyyppi: ${row.type} (rivi ${row.line})`);
+    }
+    resolved.push({ row, fxRateEur: await resolveFxRate(db, row) });
+  }
+
   let inserted = 0;
   let skipped = 0;
   let enriched = 0;
-  let importId = 0;
 
-  db.transaction((tx) => {
-    const created = tx
-      .insert(imports)
-      .values({
-        userId: args.userId,
-        kind: args.kind,
-        filename: args.filename,
-        sha256: args.sha256,
-        status: "committed",
-        rowCount: draft.txns.length,
-      })
-      .returning()
-      .get();
-    importId = created.id;
+  const created = await db
+    .insert(imports)
+    .values({
+      userId: args.userId,
+      kind: args.kind,
+      filename: args.filename,
+      sha256: args.sha256,
+      status: "committed",
+      rowCount: draft.txns.length,
+    })
+    .returning()
+    .get();
+  if (created === undefined) throw new HttpError(500, "Tuontitietueen luonti epäonnistui");
+  const importId = created.id;
 
-    for (const row of draft.txns) {
-      const outcome = insertRow(tx, args.accountId, importId, row);
-      if (outcome === "inserted") inserted++;
-      else if (outcome === "enriched") enriched++;
-      else skipped++;
-    }
+  // ponytail: each statement auto-commits, so a database error part-way leaves
+  // an import whose stored counts are never written. Undo it and re-import.
+  // Upgrade path: mark the record "pending" first and flip it to "committed"
+  // in the final update, so a part-written import is identifiable.
+  for (const { row, fxRateEur } of resolved) {
+    const outcome = await insertRow(db, args.accountId, importId, row, fxRateEur);
+    if (outcome === "inserted") inserted++;
+    else if (outcome === "enriched") enriched++;
+    else skipped++;
+  }
 
-    // The outcome of the loop above, not derivable from the draft: a duplicate is
-    // only found by attempting the row. Stored because neither an undone import's
-    // rows nor a skipped row survives to be counted later.
-    tx.update(imports)
-      .set({ insertedCount: inserted, skippedCount: skipped })
-      .where(eq(imports.id, importId))
-      .run();
-  });
+  // The outcome of the loop above, not derivable from the draft: a duplicate is
+  // only found by attempting the row. Stored because neither an undone import's
+  // rows nor a skipped row survives to be counted later.
+  await db
+    .update(imports)
+    .set({ insertedCount: inserted, skippedCount: skipped })
+    .where(eq(imports.id, importId))
+    .run();
 
   return { importId, inserted, skipped, enriched };
 };
@@ -242,12 +265,12 @@ export const commitDraft = async (
  * Not narrowed to disposals on purpose: the ledger is append-only, so an undo
  * that turns out to be unsafe cannot be corrected the way a refusal can.
  */
-const hasLaterDependent = (
+const hasLaterDependent = async (
   tx: TxDb,
   row: { accountId: number; instrumentId: number; tradeDate: string },
   importId: number,
-): boolean => {
-  const later = tx
+): Promise<boolean> => {
+  const later = await tx
     .select({ id: transactions.id })
     .from(transactions)
     .where(
@@ -269,8 +292,11 @@ const hasLaterDependent = (
  * later transaction might depend on the units it introduced, when the import
  * belongs to another user, or when it has already been undone.
  */
-export const undoImport = (db: Db, args: { userId: string; importId: number }): UndoResult => {
-  const record = db
+export const undoImport = async (
+  db: Db,
+  args: { userId: string; importId: number },
+): Promise<UndoResult> => {
+  const record = await db
     .select()
     .from(imports)
     .where(and(eq(imports.id, args.importId), eq(imports.userId, args.userId)))
@@ -278,33 +304,35 @@ export const undoImport = (db: Db, args: { userId: string; importId: number }): 
   if (!record) throw new HttpError(404, "Tuontia ei löydy");
   if (record.status === "undone") throw new HttpError(409, "Tuonti on jo peruttu");
 
-  let deleted = 0;
-  db.transaction((tx) => {
-    const rows = tx
-      .select()
-      .from(transactions)
-      .where(eq(transactions.importId, args.importId))
-      .all();
+  const rows = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.importId, args.importId))
+    .all();
 
-    for (const row of rows) {
-      if (row.instrumentId === null) continue;
-      const dependency = {
-        accountId: row.accountId,
-        instrumentId: row.instrumentId,
-        tradeDate: row.tradeDate,
-      };
-      if (hasLaterDependent(tx, dependency, args.importId)) {
-        throw new HttpError(
-          409,
-          "Tuontia ei voi perua: myöhempi tapahtuma käyttää sen tuomia osuuksia",
-        );
-      }
+  // Every refusal is decided before anything is written, so a rejected undo
+  // still touches nothing -- which is what the old transaction bought here.
+  for (const row of rows) {
+    if (row.instrumentId === null) continue;
+    const dependency = {
+      accountId: row.accountId,
+      instrumentId: row.instrumentId,
+      tradeDate: row.tradeDate,
+    };
+    if (await hasLaterDependent(db, dependency, args.importId)) {
+      throw new HttpError(
+        409,
+        "Tuontia ei voi perua: myöhempi tapahtuma käyttää sen tuomia osuuksia",
+      );
     }
+  }
 
-    deleted = rows.length;
-    tx.delete(transactions).where(eq(transactions.importId, args.importId)).run();
-    tx.update(imports).set({ status: "undone" }).where(eq(imports.id, args.importId)).run();
-  });
+  // One batch, which D1 runs as a single transaction: rows deleted without the
+  // import being marked undone would leave an import that cannot be undone again.
+  await db.batch([
+    db.delete(transactions).where(eq(transactions.importId, args.importId)),
+    db.update(imports).set({ status: "undone" }).where(eq(imports.id, args.importId)),
+  ]);
 
-  return { deleted };
+  return { deleted: rows.length };
 };

@@ -2,7 +2,7 @@ import { readBytes, readText } from "../files.ts";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { eq } from "drizzle-orm";
 import { EUR } from "../../core/money.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { instruments } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -12,12 +12,12 @@ import { NORDNET } from "../import/brokers.ts";
 
 // This file exercises the import service (preview/commit/undo) and
 // detectBrokerConfig against a real, migrated database and a real Better
-// Auth session, mirroring src/server/api/accounts.test.ts's setup —
+// Auth session, mirroring src/server/accounts.test.ts's setup —
 // including its reliance on ../test-setup.ts (a vitest.config.ts [test]
-// preload script) to have already pinned the shared getDb() handle to a
+// preload script) to have already pinned the shared database to a
 // migrated in-memory database before this file's own code runs. This file
 // must NOT call resetDbHandleForTests(), set DATABASE_PATH, or call
-// getDb()/migrate() itself — see test-setup.ts's comment for why.
+// the shared database itself — see test-setup.ts's comment for why.
 //
 // Per-test data is scoped by a fresh crypto.randomUUID()-derived email (and
 // therefore a fresh account/instrument set per test) rather than relying
@@ -26,14 +26,14 @@ import { NORDNET } from "../import/brokers.ts";
 
 type Service = typeof import("./service.ts");
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: Service;
 let detectBrokerConfig: Service["detectBrokerConfig"];
 let UndoInput: Service["UndoInput"];
 let PasteBody: Service["PasteBody"];
 
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).auth;
+  auth = (await import("../auth.ts")).getAuth();
   service = await import("./service.ts");
   UndoInput = service.UndoInput;
   PasteBody = service.PasteBody;
@@ -84,20 +84,20 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
 
-const openAccount = (userId: string, broker: "nordnet" | "op" = "nordnet"): number =>
-  openAccountRow(getDb().db, userId, CreateAccount.parse({ name: "Test tili", broker })).id;
+const openAccount = async (userId: string, broker: "nordnet" | "op" = "nordnet"): Promise<number> =>
+  (await openAccountRow(db, userId, CreateAccount.parse({ name: "Test tili", broker }))).id;
 
-const registerNokia = (): void => {
+const registerNokia = async (): Promise<void> => {
   // Every test file shares one database, so Nokia may already be registered by
   // another. The route this replaced answered 409 and the caller ignored it.
-  const existing = getDb()
-    .db.select()
+  const existing = await db
+    .select()
     .from(instruments)
     .where(eq(instruments.isin, "FI0009000681"))
     .get();
   if (existing) return;
 
-  addInstrument(getDb().db, {
+  await addInstrument(db, {
     isin: "FI0009000681",
     ticker: "NOKIA.HE",
     name: "Nokia",
@@ -266,7 +266,7 @@ describe("detectBrokerConfig", () => {
 describe("POST /api/imports/preview", () => {
   test("refuses a file covering two accounts, naming them, instead of merging them", async () => {
     const { userId } = await signUp(`imp-multi-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
 
     const response = await answer(() =>
       service.previewUpload(
@@ -297,7 +297,7 @@ describe("POST /api/imports/preview", () => {
   test("rejects an account the caller does not own", async () => {
     const owner = await signUp(`imp-preview-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-preview-stranger-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(owner.userId);
+    const accountId = await openAccount(owner.userId);
 
     const response = await answer(() =>
       service.previewUpload(stranger.userId, uploadForm(csvFile(`${NORDNET_HEADER}\n`), accountId)),
@@ -307,7 +307,7 @@ describe("POST /api/imports/preview", () => {
 
   test("rejects a request with no file", async () => {
     const { userId } = await signUp(`imp-preview-nofile-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(undefined, accountId)),
     );
@@ -324,7 +324,7 @@ describe("POST /api/imports/preview", () => {
 
   test("rejects an oversized file with 413", async () => {
     const { userId } = await signUp(`imp-preview-huge-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
     const huge = csvFile(`${NORDNET_HEADER}\n${"x".repeat(6 * 1024 * 1024)}`);
     const response = await answer(() => service.previewUpload(userId, uploadForm(huge, accountId)));
     expect(response.status).toBe(413);
@@ -332,7 +332,7 @@ describe("POST /api/imports/preview", () => {
 
   test("rejects a CSV whose broker cannot be identified", async () => {
     const { userId } = await signUp(`imp-preview-unknown-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(csvFile("Date;Amount\n2025-01-01;5\n"), accountId)),
     );
@@ -345,7 +345,7 @@ describe("POST /api/imports/preview", () => {
 
   test("previews a real Nordnet export and reports the unresolved isins", async () => {
     const { userId } = await signUp(`imp-preview-ok-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
     const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await answer(() =>
       service.previewUpload(userId, uploadForm(binaryFile(nordnetBytesFile), accountId)),
@@ -377,7 +377,7 @@ describe("POST /api/imports/commit", () => {
   test("rejects an account the caller does not own", async () => {
     const owner = await signUp(`imp-commit-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-commit-stranger-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(owner.userId);
+    const accountId = await openAccount(owner.userId);
     const response = await answer(() =>
       service.commitUpload(stranger.userId, uploadForm(csvFile(`${NORDNET_HEADER}\n`), accountId)),
     );
@@ -386,7 +386,7 @@ describe("POST /api/imports/commit", () => {
 
   test("refuses to commit a draft with an unresolved isin", async () => {
     const { userId } = await signUp(`imp-commit-unknown-isin-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
     const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
     const response = await answer(() =>
       service.commitUpload(userId, uploadForm(binaryFile(nordnetBytesFile), accountId)),
@@ -400,8 +400,8 @@ describe("POST /api/imports/commit", () => {
 
   test("commits a clean EUR-only export and undoes it", async () => {
     const { userId } = await signUp(`imp-commit-ok-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
-    registerNokia();
+    const accountId = await openAccount(userId);
+    await registerNokia();
     const row = nordnetRow({
       id: "2001",
       date: "2025-01-10",
@@ -436,32 +436,30 @@ describe("POST /api/imports/commit", () => {
     // No fetchImpl is injected anywhere in this test -- the route has no way to accept one
     // (matching how ensureDraftFxRates's ECB fetch is never stubbed through the route either;
     // see this describe block's other EUR-only tests), so the fire-and-forget backfill this
-    // commit triggers (src/server/api/imports.ts's `fireBackfill`) hits the real global fetch,
+    // commit triggers (src/server/import/service.ts's `fireBackfill`) hits the real global fetch,
     // which src/server/test-network-guard.ts replaces with one that always throws. This proves
     // the constraint end to end: a commit whose own rows are all perfectly valid must not be
     // reported as failed just because the price source its backfill needs is unreachable.
     const { userId } = await signUp(
       `imp-commit-backfill-isolated-${crypto.randomUUID()}@example.com`,
     );
-    const accountId = openAccount(userId);
-    registerNokia();
+    const accountId = await openAccount(userId);
+    await registerNokia();
 
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { instruments, priceFetchLog } = await import("../db/schema.ts");
     const { asc, eq } = await import("drizzle-orm");
-    const { db } = getDb();
     // SAFETY: registerNokia() above always creates (or has already created, in an earlier
     // test sharing this process-wide database) exactly this instrument.
-    const nokia = getDb()
-      .db.select()
+    const nokia = await db
+      .select()
       .from(instruments)
       .where(eq(instruments.isin, "FI0009000681"))
-      .get()!;
-    const logCountBefore = db
-      .select()
-      .from(priceFetchLog)
-      .where(eq(priceFetchLog.instrumentId, nokia.id))
-      .all().length;
+      .get();
+    if (nokia === undefined) throw new Error("registerNokia() did not create the instrument");
+    const logCountBefore = (
+      await db.select().from(priceFetchLog).where(eq(priceFetchLog.instrumentId, nokia.id)).all()
+    ).length;
 
     const row = nordnetRow({
       id: "2002",
@@ -484,16 +482,20 @@ describe("POST /api/imports/commit", () => {
     expect(commitBody.inserted).toBe(1);
 
     // The fire-and-forget backfill is not awaited by the route (that's the whole point --
-    // see fireBackfill's own comment), so give its one synchronous-throw-turned-rejection a
-    // moment to settle before asserting on its effect.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    const logAfter = db
-      .select()
-      .from(priceFetchLog)
-      .where(eq(priceFetchLog.instrumentId, nokia.id))
-      .orderBy(asc(priceFetchLog.id))
-      .all();
+    // see fireBackfill's own comment), so poll for its effect rather than sleep a fixed
+    // time: through the D1 proxy the refused fetch takes more than a tick to be logged.
+    const readLog = () =>
+      db
+        .select()
+        .from(priceFetchLog)
+        .where(eq(priceFetchLog.instrumentId, nokia.id))
+        .orderBy(asc(priceFetchLog.id))
+        .all();
+    let logAfter = await readLog();
+    for (let tries = 0; tries < 100 && logAfter.length <= logCountBefore; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      logAfter = await readLog();
+    }
     expect(logAfter.length).toBeGreaterThan(logCountBefore);
     const newest = logAfter[logAfter.length - 1]!;
     expect(newest.ok).toBe(false);
@@ -507,8 +509,8 @@ describe("POST /api/imports/:id/undo", () => {
   test("rejects undoing an import belonging to another user", async () => {
     const owner = await signUp(`imp-undo-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-undo-stranger-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(owner.userId);
-    registerNokia();
+    const accountId = await openAccount(owner.userId);
+    await registerNokia();
     const row = nordnetRow({ id: "3001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
     const commitResponse = await answer(() =>
       service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
@@ -550,9 +552,9 @@ const randomIsin = (country = "FI"): string =>
   `${country}${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
 /** Registers an instrument by name with a fresh random ISIN -- how the review screen resolves an OP row. */
-const registerByName = (name: string): void => {
+const registerByName = async (name: string): Promise<void> => {
   // Throws on a duplicate, which is what the caller wants to hear about.
-  addInstrument(getDb().db, {
+  await addInstrument(db, {
     isin: randomIsin(),
     ticker: null,
     name,
@@ -567,7 +569,7 @@ describe("POST /api/imports/op-paste/preview", () => {
   test("rejects an account the caller does not own", async () => {
     const owner = await signUp(`imp-paste-preview-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-paste-preview-stranger-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(owner.userId, "op");
+    const accountId = await openAccount(owner.userId, "op");
     const text = await opPasteText();
     const response = await answer(() => service.previewPaste(stranger.userId, { text, accountId }));
     expect(response.status).toBe(404);
@@ -575,7 +577,7 @@ describe("POST /api/imports/op-paste/preview", () => {
 
   test("rejects a request with no text", async () => {
     const { userId } = await signUp(`imp-paste-preview-notext-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId, "op");
+    const accountId = await openAccount(userId, "op");
     expect(PasteBody.safeParse({ accountId }).success).toBe(false);
   });
 
@@ -588,7 +590,7 @@ describe("POST /api/imports/op-paste/preview", () => {
     const { userId } = await signUp(
       `imp-paste-preview-badheader-${crypto.randomUUID()}@example.com`,
     );
-    const accountId = openAccount(userId, "op");
+    const accountId = await openAccount(userId, "op");
     const response = await answer(() =>
       service.previewPaste(userId, { text: "not an OP paste\n", accountId: accountId }),
     );
@@ -601,7 +603,7 @@ describe("POST /api/imports/op-paste/preview", () => {
 
   test("previews the real OP paste fixture and reports both name-only unresolved instruments", async () => {
     const { userId } = await signUp(`imp-paste-preview-ok-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId, "op");
+    const accountId = await openAccount(userId, "op");
     const text = await opPasteText();
     const response = await answer(() =>
       service.previewPaste(userId, { text, accountId: accountId }),
@@ -630,7 +632,7 @@ describe("POST /api/imports/op-paste/preview", () => {
 describe("POST /api/imports/op-paste/commit", () => {
   test("refuses to commit while an OP instrument is still unresolved", async () => {
     const { userId } = await signUp(`imp-paste-commit-unknown-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId, "op");
+    const accountId = await openAccount(userId, "op");
     const text = await opPasteText();
     const response = await answer(() =>
       service.commitPaste(userId, { text, accountId: accountId }),
@@ -645,11 +647,11 @@ describe("POST /api/imports/op-paste/commit", () => {
 
   test("resolving both instruments by name clears them from a fresh preview, then commit and undo both work", async () => {
     const { userId } = await signUp(`imp-paste-commit-ok-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId, "op");
+    const accountId = await openAccount(userId, "op");
     const text = await opPasteText();
 
-    registerByName("OP-MAAILMA INDEKSI A");
-    registerByName("ESIMERKKI OYJ");
+    await registerByName("OP-MAAILMA INDEKSI A");
+    await registerByName("ESIMERKKI OYJ");
 
     // Proves the knownNames resolution, not just that commit happens to
     // succeed: a second preview of the exact same paste text must now
@@ -690,7 +692,7 @@ describe("GET /api/imports", () => {
   test("never lists another user's imports", async () => {
     const owner = await signUp(`imp-list-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-list-stranger-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(owner.userId);
+    const accountId = await openAccount(owner.userId);
     const row = nordnetRow({ id: "4001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
     await answer(() => service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)));
     const ownerList = await answer(() => service.listImports(owner.userId));
@@ -708,7 +710,7 @@ describe("GET /api/imports", () => {
 
   test("reports broker kind, filename, insert/skip counts, undone status and newest-first order", async () => {
     const { userId } = await signUp(`imp-list-ok-${crypto.randomUUID()}@example.com`);
-    const accountId = openAccount(userId);
+    const accountId = await openAccount(userId);
 
     const first = nordnetRow({
       id: "5001",

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { getDb } from "./db/index.ts";
+import { db } from "./db/index.ts";
 import {
   CreateAccount,
   listAccounts,
@@ -54,22 +54,23 @@ test("never leaks an unexpected error message to the client", async () => {
 
 // --- http.ts must not transitively import auth.ts or touch a database ---
 //
-// auth-guard.ts (and therefore auth.ts) opens a database connection and
-// throws at import time when BETTER_AUTH_SECRET is missing. http.ts is
-// meant to be usable by any route module without paying that cost, so
-// HttpError is re-exported from errors.ts, not auth-guard.ts. Proved here
-// in a real child process (not a same-process dynamic import) so module
-// caching from earlier tests in this same process can't hide a transitive
-// import: a child process that only imports http.ts, with no
-// BETTER_AUTH_SECRET set and pointed at an empty cwd, must both exit 0 and
-// create no database file on disk.
+// auth-guard.ts (and therefore auth.ts) reads the database binding and
+// refuses without a real BETTER_AUTH_SECRET. http.ts is meant to be usable by
+// any route module without paying that cost, so HttpError is re-exported from
+// errors.ts, not auth-guard.ts. Proved in a real child process (not a
+// same-process dynamic import) so module caching from earlier tests cannot
+// hide a transitive import.
+//
+// Plain Node is the point of the check now, not just its method: `db/index.ts`
+// imports `cloudflare:workers`, which only the Worker runtime and vitest's
+// alias resolve. A child process that imports http.ts and exits 0 is proof
+// that http.ts reaches neither.
 test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database", () => {
   const httpPath = new URL("./http.ts", import.meta.url).pathname;
-  const envWithoutSecret = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => key !== "BETTER_AUTH_SECRET" && key !== "DATABASE_PATH",
-    ),
-  );
+  // Blanked rather than deleted: `wrangler types` declares these on
+  // NodeJS.ProcessEnv as required strings, and an empty secret is what
+  // resolveAuthSecret refuses anyway.
+  const envWithoutSecret: NodeJS.ProcessEnv = { ...process.env, BETTER_AUTH_SECRET: "" };
   const scratchCwd = mkdtempSync(join(tmpdir(), "promptfolio-http-import-"));
   try {
     const result = spawnSync(
@@ -89,7 +90,7 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
   }
 });
 
-// --- accountRoutes / assertAccountOwned (src/server/api/accounts.ts) ---
+// --- account functions / assertAccountOwned (src/server/accounts.ts) ---
 //
 // These need a real, migrated database and a real Better Auth session, so
 // auth.ts and accounts.ts are imported dynamically from beforeAll (import
@@ -98,13 +99,13 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
 // src/server/auth.test.ts.
 //
 // This file must NOT call resetDbHandleForTests(), set DATABASE_PATH, or
-// call getDb()/migrate() itself: ../test-setup.ts (a vitest.config.ts
+// call the shared database itself: ../test-setup.ts (a vitest.config.ts
 // `[test] preload` script, see its own comment for the full story) has
 // already done all of that, deterministically, before this file's own
 // code runs — regardless of file scheduling. auth.ts is a process-wide ES
 // module singleton (whichever code imports it first anywhere in the
 // process wins for the rest of the run), so this file simply trusts that
-// the shared getDb() handle already points at a migrated in-memory
+// the shared database already points at a migrated in-memory
 // database and dynamically imports auth.ts/accounts.ts, both of which
 // bind to that same handle at their own first import. Duplicating that
 // setup here (an earlier version of this file did) is exactly what caused
@@ -112,13 +113,13 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
 // file's independent reset desynced it from this one — see
 // task-9-report.md's fix-up report.
 
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let assertAccountOwned: (typeof import("./accounts.ts"))["assertAccountOwned"];
 
 beforeAll(async () => {
   const authModule = await import("./auth.ts");
   const accountsModule = await import("./accounts.ts");
-  auth = authModule.auth;
+  auth = authModule.getAuth();
   assertAccountOwned = accountsModule.assertAccountOwned;
 });
 
@@ -153,18 +154,18 @@ describe("listAccounts", () => {
     const owner = await signUp(`owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`stranger-${crypto.randomUUID()}@example.com`);
 
-    openAccountRow(
-      getDb().db,
+    await openAccountRow(
+      db,
       owner.userId,
       CreateAccount.parse({ name: "Nordnet AOT", broker: "nordnet" }),
     );
-    openAccountRow(
-      getDb().db,
+    await openAccountRow(
+      db,
       stranger.userId,
       CreateAccount.parse({ name: "OP tili", broker: "op" }),
     );
 
-    const body = listAccounts(getDb().db, owner.userId);
+    const body = await listAccounts(db, owner.userId);
     expect(body).toEqual([expect.objectContaining({ name: "Nordnet AOT", userId: owner.userId })]);
   });
 });
@@ -175,8 +176,8 @@ describe("openAccount", () => {
 
   test("creates an account owned by the caller and defaults baseCurrency to EUR", async () => {
     const { userId } = await signUp(`creator-${crypto.randomUUID()}@example.com`);
-    const body = openAccountRow(
-      getDb().db,
+    const body = await openAccountRow(
+      db,
       userId,
       CreateAccount.parse({ name: "Danske", broker: "danske" }),
     );
@@ -191,7 +192,7 @@ describe("openAccount", () => {
     const result = CreateAccount.safeParse({ name: "", broker: "not-a-real-broker" });
 
     expect(result.success).toBe(false);
-    const fields = result.success ? [] : result.error.issues.map((issue) => issue.path[0]);
+    const fields = result.success ? [] : result.error.issues.map((issue) => String(issue.path[0]));
     expect(fields.sort()).toEqual(["broker", "name"]);
   });
 
@@ -199,8 +200,8 @@ describe("openAccount", () => {
   // currency must accept any real ISO 4217 code, not just EUR/USD.
   test("creates an account with an explicit non-EUR/USD ISO base currency (SEK)", async () => {
     const { userId } = await signUp(`sek-account-${crypto.randomUUID()}@example.com`);
-    const body = openAccountRow(
-      getDb().db,
+    const body = await openAccountRow(
+      db,
       userId,
       CreateAccount.parse({ name: "Avanza", broker: "other", baseCurrency: "SEK" }),
     );
@@ -211,7 +212,7 @@ describe("openAccount", () => {
     const result = CreateAccount.safeParse({ name: "x", broker: "other", baseCurrency: "12" });
 
     expect(result.success).toBe(false);
-    const fields = result.success ? [] : result.error.issues.map((issue) => issue.path[0]);
+    const fields = result.success ? [] : result.error.issues.map((issue) => String(issue.path[0]));
     expect(fields).toContain("baseCurrency");
   });
 });
@@ -219,70 +220,72 @@ describe("openAccount", () => {
 describe("assertAccountOwned", () => {
   test("does not throw for an account owned by the given user", async () => {
     const { userId } = await signUp(`assert-owned-${crypto.randomUUID()}@example.com`);
-    const created = openAccountRow(
-      getDb().db,
+    const created = await openAccountRow(
+      db,
       userId,
       CreateAccount.parse({ name: "Spankki", broker: "spankki" }),
     );
 
-    expect(() => assertAccountOwned(userId, created.id)).not.toThrow();
+    await expect(assertAccountOwned(userId, created.id)).resolves.toBeUndefined();
   });
 
   test("throws a 404 HttpError for an account owned by someone else", async () => {
     const owner = await signUp(`assert-other-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`assert-other-stranger-${crypto.randomUUID()}@example.com`);
-    const created = openAccountRow(
-      getDb().db,
+    const created = await openAccountRow(
+      db,
       owner.userId,
       CreateAccount.parse({ name: "Nordnet ASA", broker: "nordnet" }),
     );
-    expect(() => assertAccountOwned(stranger.userId, created.id)).toThrow(
+    await expect(assertAccountOwned(stranger.userId, created.id)).rejects.toThrow(
       expect.objectContaining({ status: 404 }),
     );
   });
 
-  test("throws a 404 HttpError for an account id that does not exist", () => {
-    expect(() => assertAccountOwned("nobody", 999_999)).toThrow(
+  test("throws a 404 HttpError for an account id that does not exist", async () => {
+    await expect(assertAccountOwned("nobody", 999_999)).rejects.toThrow(
       expect.objectContaining({ status: 404 }),
     );
   });
 });
 
 /** Creates an account and returns its id; this file otherwise posts inline. */
-const createAccount = (userId: string, body: { name: string; broker: string }): number =>
-  openAccountRow(getDb().db, userId, CreateAccount.parse(body)).id;
+const createAccount = async (
+  userId: string,
+  body: { name: string; broker: string },
+): Promise<number> => (await openAccountRow(db, userId, CreateAccount.parse(body))).id;
 
 describe("updateAccount", () => {
   const rename = (userId: string, id: number, name: string) =>
-    updateAccount(getDb().db, userId, id, UpdateAccount.parse({ name }));
+    updateAccount(db, userId, id, UpdateAccount.parse({ name }));
 
   // The no-session case is the authed middleware's, on every server function
   // that touches the ledger. It cannot be skipped by calling one.
 
   test("renames an account the caller owns", async () => {
     const { userId } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
-    const id = createAccount(userId, { name: "Vanha nimi", broker: "nordnet" });
+    const id = await createAccount(userId, { name: "Vanha nimi", broker: "nordnet" });
 
-    expect(rename(userId, id, "Nordnet OST").name).toBe("Nordnet OST");
+    expect((await rename(userId, id, "Nordnet OST")).name).toBe("Nordnet OST");
   });
 
   test("refuses an account belonging to someone else, as 404 rather than 403", async () => {
     const owner = await signUp(`rename-owner-${crypto.randomUUID()}@example.com`);
-    const id = createAccount(owner.userId, { name: "Omistajan tili", broker: "op" });
+    const id = await createAccount(owner.userId, { name: "Omistajan tili", broker: "op" });
     const stranger = await signUp(`rename-stranger-${crypto.randomUUID()}@example.com`);
 
     // Not found rather than forbidden: a stranger learns nothing, not even
     // that the account exists.
-    expect(() => rename(stranger.userId, id, "Kaapattu")).toThrow();
+    await expect(rename(stranger.userId, id, "Kaapattu")).rejects.toThrow();
 
     // And the name is untouched.
-    const rows = listAccounts(getDb().db, owner.userId);
+    const rows = await listAccounts(db, owner.userId);
     expect(rows.find((row) => row.id === id)?.name).toBe("Omistajan tili");
   });
 
   test("refuses an empty name", async () => {
     const { userId } = await signUp(`rename-empty-${crypto.randomUUID()}@example.com`);
-    createAccount(userId, { name: "Tili", broker: "op" });
+    await createAccount(userId, { name: "Tili", broker: "op" });
 
     expect(UpdateAccount.safeParse({ name: "   " }).success).toBe(false);
   });
@@ -291,13 +294,13 @@ describe("updateAccount", () => {
   // interpreted under; changing either after rows exist would reinterpret them.
   test("cannot change the broker or the base currency", async () => {
     const { userId } = await signUp(`rename-fixed-${crypto.randomUUID()}@example.com`);
-    const id = createAccount(userId, { name: "Tili", broker: "op" });
+    const id = await createAccount(userId, { name: "Tili", broker: "op" });
 
     // The schema drops them: broker and base currency are facts the stored
     // transactions were already interpreted under, so changing either after
     // rows exist would reinterpret them.
-    const updated = updateAccount(
-      getDb().db,
+    const updated = await updateAccount(
+      db,
       userId,
       id,
       UpdateAccount.parse({ name: "Tili", broker: "nordnet", baseCurrency: "USD" }),
@@ -313,8 +316,8 @@ describe("updateAccount", () => {
 test("stores an account type at creation, and leaves it null when unstated", async () => {
   const { userId } = await signUp(`type-create-${crypto.randomUUID()}@example.com`);
 
-  const withType = openAccountRow(
-    getDb().db,
+  const withType = await openAccountRow(
+    db,
     userId,
     CreateAccount.parse({
       name: "Nordnet OST",
@@ -324,8 +327,8 @@ test("stores an account type at creation, and leaves it null when unstated", asy
   );
   expect(withType.accountType).toBe("ost");
 
-  const without = openAccountRow(
-    getDb().db,
+  const without = await openAccountRow(
+    db,
     userId,
     CreateAccount.parse({ name: "Tuntematon", broker: "op" }),
   );
@@ -335,24 +338,24 @@ test("stores an account type at creation, and leaves it null when unstated", asy
 
 test("changes the account type without touching the name, and can clear it", async () => {
   const { userId } = await signUp(`type-patch-${crypto.randomUUID()}@example.com`);
-  const created = openAccountRow(
-    getDb().db,
+  const created = await openAccountRow(
+    db,
     userId,
     CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }),
   );
   const id = created.id;
   const patch = (body: { name?: string; accountType?: "aot" | "ost" | "other" | null }) =>
-    updateAccount(getDb().db, userId, id, UpdateAccount.parse(body));
+    updateAccount(db, userId, id, UpdateAccount.parse(body));
 
-  const typed = patch({ accountType: "ost" });
+  const typed = await patch({ accountType: "ost" });
   expect(typed.accountType).toBe("ost");
   expect(typed.name).toBe("Nordnet");
 
-  const renamed = patch({ name: "Nordnet OST" });
+  const renamed = await patch({ name: "Nordnet OST" });
   expect(renamed.accountType).toBe("ost");
   expect(renamed.name).toBe("Nordnet OST");
 
-  const cleared = patch({ accountType: null });
+  const cleared = await patch({ accountType: null });
   expect(cleared.accountType).toBeNull();
 
   // An empty change is refused rather than treated as a no-op: it means the
@@ -365,9 +368,9 @@ test("refuses a bank account type on a brokerage account, and the reverse", asyn
 
   // "A brokerage account that is a savings account" is not a typo with an
   // obvious fix, so it is refused rather than corrected.
-  expect(() =>
+  await expect(
     openAccountRow(
-      getDb().db,
+      db,
       userId,
       CreateAccount.parse({
         name: "Sekava",
@@ -375,11 +378,11 @@ test("refuses a bank account type on a brokerage account, and the reverse", asyn
         accountType: "savings",
       }),
     ),
-  ).toThrow();
+  ).rejects.toThrow();
 
-  expect(() =>
+  await expect(
     openAccountRow(
-      getDb().db,
+      db,
       userId,
       CreateAccount.parse({
         name: "Sekava",
@@ -388,14 +391,14 @@ test("refuses a bank account type on a brokerage account, and the reverse", asyn
         accountType: "ost",
       }),
     ),
-  ).toThrow();
+  ).rejects.toThrow();
 });
 
 test("defaults an account to brokerage, which is what every earlier one was", async () => {
   const { userId } = await signUp(`kind-default-${crypto.randomUUID()}@example.com`);
 
-  const created = openAccountRow(
-    getDb().db,
+  const created = await openAccountRow(
+    db,
     userId,
     CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }),
   );
@@ -405,15 +408,17 @@ test("defaults an account to brokerage, which is what every earlier one was", as
 
 test("refuses to move an account's type to the other kind's set after creation", async () => {
   const { userId } = await signUp(`kind-patch-${crypto.randomUUID()}@example.com`);
-  const id = openAccountRow(
-    getDb().db,
-    userId,
-    CreateAccount.parse({ name: "OP käyttötili", broker: "op", kind: "bank" }),
+  const id = (
+    await openAccountRow(
+      db,
+      userId,
+      CreateAccount.parse({ name: "OP käyttötili", broker: "op", kind: "bank" }),
+    )
   ).id;
 
   // A bank account cannot become an arvo-osuustili by editing its type: the
   // kind decides which types are allowed, and the kind does not change.
-  expect(() =>
-    updateAccount(getDb().db, userId, id, UpdateAccount.parse({ accountType: "aot" })),
-  ).toThrow();
+  await expect(
+    updateAccount(db, userId, id, UpdateAccount.parse({ accountType: "aot" })),
+  ).rejects.toThrow();
 });

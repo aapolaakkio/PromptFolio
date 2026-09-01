@@ -1,22 +1,18 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // The suite runs in Node, which has no `cloudflare:workers`. The
+      // stand-in serves wrangler's own binding proxy, so `db` and every env
+      // read work unchanged against a real local D1.
+      "cloudflare:workers": resolve(import.meta.dirname, "src/server/test-cloudflare-env.ts"),
+    },
+  },
   test: {
     environment: "node",
-    // Vite has a BASE_URL of its own -- the public base path, "/" -- and it
-    // reaches process.env, where this app reads its own BASE_URL and hands it
-    // to Better Auth, which rejects "/" as not a URL. Pinned here rather than
-    // left to collide, and pinned rather than read from a developer's .env: a
-    // suite whose result depends on an untracked file is not a suite.
-    env: {
-      BASE_URL: "http://localhost:3000",
-      // Present so the classification path runs at all: the code skips it when
-      // there is no key. It was passing only because the runner loaded the developer's
-      // own .env, which made the suite's result depend on an untracked file --
-      // and on a real key sitting in the environment of every test run. The
-      // network guard in setupFiles is what stops it reaching Anthropic.
-      ANTHROPIC_API_KEY: "test-key-never-used",
-    },
     // Pins the shared getDb() handle to a
     // migrated in-memory database before any test file's own code runs, and
     // replace the global fetch with one that throws. Both are process-wide, so

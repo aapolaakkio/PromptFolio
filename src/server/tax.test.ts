@@ -4,15 +4,15 @@ import { EUR } from "../core/money.ts";
 
 // Covers the OST valuation and the view mapping in src/server/tax.ts, which
 // the route-level tests in api/tax.test.ts do not reach. Same setup rules as
-// every other server test: the shared getDb() handle is already pinned to a
+// every other server test: the shared database is already pinned to a
 // migrated in-memory database by ./test-setup.ts, and every identity here is
 // derived from a fresh crypto.randomUUID().
 
-let auth: (typeof import("./auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let taxYearFor: (typeof import("./tax.ts"))["taxYearFor"];
 
 beforeAll(async () => {
-  auth = (await import("./auth.ts")).auth;
+  auth = (await import("./auth.ts")).getAuth();
   taxYearFor = (await import("./tax.ts")).taxYearFor;
 });
 
@@ -42,48 +42,53 @@ type Seeded = { userId: string; accountId: number; instrumentId: number };
  * with a dividend paid into an ordinary account alongside it.
  */
 const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Seeded> => {
-  const { getDb } = await import("./db/index.ts");
+  const { db } = await import("./db/index.ts");
   const { accounts, instruments, prices, transactions } = await import("./db/schema.ts");
-  const { db } = getDb();
   const userId = await signUp();
 
-  const accountId = db
-    .insert(accounts)
-    .values({
-      userId,
-      name: "OST",
-      broker: "nordnet",
-      accountType: "ost",
-      kind: "brokerage",
-    })
-    .returning({ id: accounts.id })
-    .all()[0]!.id;
-  const ordinaryId = db
-    .insert(accounts)
-    .values({
-      userId,
-      name: "AOT",
-      broker: "nordnet",
-      accountType: "aot",
-      kind: "brokerage",
-    })
-    .returning({ id: accounts.id })
-    .all()[0]!.id;
+  const accountId = (
+    await db
+      .insert(accounts)
+      .values({
+        userId,
+        name: "OST",
+        broker: "nordnet",
+        accountType: "ost",
+        kind: "brokerage",
+      })
+      .returning({ id: accounts.id })
+      .all()
+  )[0]!.id;
+  const ordinaryId = (
+    await db
+      .insert(accounts)
+      .values({
+        userId,
+        name: "AOT",
+        broker: "nordnet",
+        accountType: "aot",
+        kind: "brokerage",
+      })
+      .returning({ id: accounts.id })
+      .all()
+  )[0]!.id;
 
   const isin = `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
-  const instrumentId = db
-    .insert(instruments)
-    .values({
-      isin,
-      ticker: "OST",
-      name: "Ost Co",
-      kind: "stock",
-      currency: EUR,
-      priceSource: "manual",
-      sourceKey: isin,
-    })
-    .returning({ id: instruments.id })
-    .all()[0]!.id;
+  const instrumentId = (
+    await db
+      .insert(instruments)
+      .values({
+        isin,
+        ticker: "OST",
+        name: "Ost Co",
+        kind: "stock",
+        currency: EUR,
+        priceSource: "manual",
+        sourceKey: isin,
+      })
+      .returning({ id: instruments.id })
+      .all()
+  )[0]!.id;
 
   const row = (o2: {
     accountId: number;
@@ -109,7 +114,8 @@ const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Se
     importId: null,
   });
 
-  db.insert(transactions)
+  await db
+    .insert(transactions)
     .values([
       row({
         accountId,
@@ -143,7 +149,8 @@ const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Se
 
   if (o.priced) {
     // 10 shares at 200,00 -> 2 000,00 on the account, against 1 000,00 paid in.
-    db.insert(prices)
+    await db
+      .insert(prices)
       .values({
         instrumentId,
         date: "2025-06-02",
@@ -161,9 +168,9 @@ const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Se
 describe("taxYearFor", () => {
   test("apportions an OST withdrawal and names the account", async () => {
     const { userId } = await seedOst({ priced: true });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    const report = taxYearFor(getDb().db, userId, 2025);
+    const report = await taxYearFor(db, userId, 2025);
     const ost = report.ost[0]!;
 
     expect(ost.accountName).toBe("OST");
@@ -187,10 +194,10 @@ describe("taxYearFor", () => {
     // non-trading day look like a gap and offered to "fix" holdings that were
     // fine. A real Sunday withdrawal is what surfaced it.
     const { userId, instrumentId } = await seedOst({ priced: false, withdrawnOn: "2025-06-08" });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
     const { prices } = await import("./db/schema.ts");
-    const { db } = getDb();
-    db.insert(prices)
+    await db
+      .insert(prices)
       .values({
         instrumentId,
         // The Friday before that Sunday.
@@ -202,7 +209,7 @@ describe("taxYearFor", () => {
       })
       .run();
 
-    const withdrawal = taxYearFor(db, userId, 2025).ost[0]!.withdrawals[0]!;
+    const withdrawal = (await taxYearFor(db, userId, 2025)).ost[0]!.withdrawals[0]!;
 
     expect(withdrawal.taxableEur).not.toBeNull();
     expect(withdrawal.pricedFrom).toBeNull();
@@ -210,9 +217,9 @@ describe("taxYearFor", () => {
 
   test("names the unpriced instrument instead of guessing a withdrawal's tax", async () => {
     const { userId } = await seedOst({ priced: false });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    const withdrawal = taxYearFor(getDb().db, userId, 2025).ost[0]!.withdrawals[0]!;
+    const withdrawal = (await taxYearFor(db, userId, 2025)).ost[0]!.withdrawals[0]!;
 
     expect(withdrawal.taxableEur).toBeNull();
     expect(withdrawal.blockedBy).toContain("Ost Co");
@@ -223,9 +230,9 @@ describe("taxYearFor", () => {
 
   test("reports a dividend's taxable share and flags the missing withholding", async () => {
     const { userId } = await seedOst({ priced: true });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    const report = taxYearFor(getDb().db, userId, 2025);
+    const report = await taxYearFor(db, userId, 2025);
 
     expect(report.dividends).toHaveLength(1);
     expect(report.dividends[0]!.instrument).toBe("Ost Co");
@@ -239,8 +246,8 @@ describe("taxYearFor", () => {
 
   test("leaves an OST sale out of the taxable disposals", async () => {
     const { userId } = await seedOst({ priced: true });
-    const { getDb } = await import("./db/index.ts");
+    const { db } = await import("./db/index.ts");
 
-    expect(taxYearFor(getDb().db, userId, 2025).disposals).toEqual([]);
+    expect((await taxYearFor(db, userId, 2025)).disposals).toEqual([]);
   });
 });

@@ -5,14 +5,12 @@ import { reconcile, type SnapshotPosition } from "../../core/reconcile.ts";
 import { EUR, formatQuantity, parseQuantity } from "../../core/money.ts";
 import type { Txn } from "../../core/types.ts";
 import { assertAccountOwned } from "../accounts.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { instruments, snapshotRows, snapshots, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { decodeHoldingsFile, parseHoldingsPaste } from "../import/holdings-paste.ts";
 import { parseOpWebHoldings } from "../import/op-holdings-paste.ts";
-
-const { db } = getDb();
 
 /**
  * A fund name reduced to what two spellings of the same fund share: brokers
@@ -89,9 +87,9 @@ export const AccountQuery = z.object({ accountId: z.number().int().positive() })
 export const SnapshotQuery = z.object({ snapshotId: z.number().int().positive() });
 export const AdjustInput = z.intersection(SnapshotQuery, Adjust);
 
-export const listSnapshots = (userId: string, accountId: number) => {
-  assertAccountOwned(userId, accountId);
-  return db
+export const listSnapshots = async (userId: string, accountId: number) => {
+  await assertAccountOwned(userId, accountId);
+  return await db
     .select()
     .from(snapshots)
     .where(eq(snapshots.accountId, accountId))
@@ -99,76 +97,80 @@ export const listSnapshots = (userId: string, accountId: number) => {
     .all();
 };
 
-export const createSnapshot = (userId: string, body: z.infer<typeof CreateSnapshot>) => {
+export const createSnapshot = async (userId: string, body: z.infer<typeof CreateSnapshot>) => {
   const input = CreateSnapshot.parse(body);
-  assertAccountOwned(userId, input.accountId);
+  await assertAccountOwned(userId, input.accountId);
 
   // Every row must name an instrument that exists, or the reconciliation would
   // silently drop it and report a clean statement that never was.
   const known = new Set(
-    db
-      .select({ id: instruments.id })
-      .from(instruments)
-      .where(
-        inArray(
-          instruments.id,
-          input.rows.map((row) => row.instrumentId),
-        ),
-      )
-      .all()
-      .map((row) => row.id),
+    (
+      await db
+        .select({ id: instruments.id })
+        .from(instruments)
+        .where(
+          inArray(
+            instruments.id,
+            input.rows.map((row) => row.instrumentId),
+          ),
+        )
+        .all()
+    ).map((row) => row.id),
   );
   const unknown = input.rows.find((row) => !known.has(row.instrumentId));
   if (unknown !== undefined) {
     throw new HttpError(400, `Arvopaperia ${unknown.instrumentId} ei ole olemassa`);
   }
 
-  return db.transaction((tx) => {
-    const snapshot = tx
-      .insert(snapshots)
-      .values({ accountId: input.accountId, asOf: input.asOf, source: input.source })
-      .returning()
-      .get();
+  // ponytail: two steps, not one transaction. The rows need the snapshot's
+  // generated id, which only exists once its insert has run, and D1 has no
+  // interactive transaction to read it inside. The rows are still one batch,
+  // so the failure left behind is a snapshot with no rows -- visible and
+  // re-importable -- rather than a half-filled one.
+  const snapshot = await db
+    .insert(snapshots)
+    .values({ accountId: input.accountId, asOf: input.asOf, source: input.source })
+    .returning()
+    .get();
+  if (snapshot === undefined) throw new HttpError(500, "Tilannevedoksen luonti epäonnistui");
 
-    for (const row of input.rows) {
-      tx.insert(snapshotRows)
-        .values({
-          snapshotId: snapshot.id,
-          instrumentId: row.instrumentId,
-          quantity: Number(parseQuantity(row.quantity).scaled),
-          nav: row.nav === undefined ? 0 : toMinor(row.nav, "NAV"),
-          marketValue:
-            row.marketValue === undefined ? 0 : toMinor(row.marketValue, "Markkina-arvo"),
-        })
-        .run();
-    }
-    return snapshot;
-  });
-};
-
-const ownedSnapshot = (userId: string, snapshotId: number) => {
-  const snapshot = db.select().from(snapshots).where(eq(snapshots.id, snapshotId)).get();
-  if (!snapshot) throw new HttpError(404, "Tilannevedosta ei löydy");
-  assertAccountOwned(userId, snapshot.accountId);
+  if (input.rows.length > 0) {
+    const rows = input.rows.map((row) =>
+      db.insert(snapshotRows).values({
+        snapshotId: snapshot.id,
+        instrumentId: row.instrumentId,
+        quantity: Number(parseQuantity(row.quantity).scaled),
+        nav: row.nav === undefined ? 0 : toMinor(row.nav, "NAV"),
+        marketValue: row.marketValue === undefined ? 0 : toMinor(row.marketValue, "Markkina-arvo"),
+      }),
+    );
+    // SAFETY: `db.batch` is typed as a non-empty tuple; the length check above
+    // is what establishes `rows` is non-empty here.
+    await db.batch(rows as [(typeof rows)[number], ...typeof rows]);
+  }
   return snapshot;
 };
 
-const statedRows = (snapshotId: number): SnapshotPosition[] =>
-  db
-    .select()
-    .from(snapshotRows)
-    .where(eq(snapshotRows.snapshotId, snapshotId))
-    .all()
-    .map((row) => ({ instrumentId: row.instrumentId, quantity: { scaled: BigInt(row.quantity) } }));
+const ownedSnapshot = async (userId: string, snapshotId: number) => {
+  const snapshot = await db.select().from(snapshots).where(eq(snapshots.id, snapshotId)).get();
+  if (!snapshot) throw new HttpError(404, "Tilannevedosta ei löydy");
+  await assertAccountOwned(userId, snapshot.accountId);
+  return snapshot;
+};
 
-export const reconcileSnapshot = (userId: string, snapshotId: number) => {
-  const snapshot = ownedSnapshot(userId, snapshotId);
-  const stated = statedRows(snapshotId);
+const statedRows = async (snapshotId: number): Promise<SnapshotPosition[]> =>
+  (await db.select().from(snapshotRows).where(eq(snapshotRows.snapshotId, snapshotId)).all()).map(
+    (row) => ({ instrumentId: row.instrumentId, quantity: { scaled: BigInt(row.quantity) } }),
+  );
+
+export const reconcileSnapshot = async (userId: string, snapshotId: number) => {
+  const snapshot = await ownedSnapshot(userId, snapshotId);
+  const stated = await statedRows(snapshotId);
 
   // Only this account's transactions: a statement covers one account, and
   // comparing it against the whole portfolio would report every holding
   // elsewhere as a difference.
-  const { txns, instruments: known } = loadPortfolio(db, userId);
+  const { txns, instruments: known } = await loadPortfolio(db, userId);
   const ownTxns: Txn[] = txns.filter((t) => t.accountId === snapshot.accountId);
   const nameOf = new Map(known.map((i) => [i.id, i.name]));
 
@@ -192,7 +194,7 @@ export const reconcileSnapshot = (userId: string, snapshotId: number) => {
   };
 };
 
-const proposalFrom = (
+const proposalFrom = async (
   userId: string,
   asOf: string,
   parsed: {
@@ -200,7 +202,7 @@ const proposalFrom = (
     problems: ReadonlyArray<{ line: number; message: string; raw: string }>;
   },
 ) => {
-  const { instruments: known } = loadPortfolio(db, userId);
+  const { instruments: known } = await loadPortfolio(db, userId);
   const byName = new Map(known.map((i) => [normalise(i.name), i.id]));
   return {
     asOf,
@@ -263,22 +265,22 @@ export const proposeFromPaste = (userId: string, body: z.infer<typeof PasteSnaps
  * adjusting transaction it produced deliberately does not -- an adjustment is a
  * ledger entry the user chose to make, and tidying up must not retract it.
  */
-export const deleteSnapshot = (userId: string, snapshotId: number) => {
-  ownedSnapshot(userId, snapshotId);
-  db.delete(snapshots).where(eq(snapshots.id, snapshotId)).run();
+export const deleteSnapshot = async (userId: string, snapshotId: number) => {
+  await ownedSnapshot(userId, snapshotId);
+  await db.delete(snapshots).where(eq(snapshots.id, snapshotId)).run();
   return { deleted: snapshotId };
 };
 
-export const adjustSnapshotRow = (
+export const adjustSnapshotRow = async (
   userId: string,
   snapshotId: number,
   body: z.infer<typeof Adjust>,
 ) => {
   const input = Adjust.parse(body);
-  const snapshot = ownedSnapshot(userId, snapshotId);
-  const stated = statedRows(snapshotId);
+  const snapshot = await ownedSnapshot(userId, snapshotId);
+  const stated = await statedRows(snapshotId);
 
-  const { txns } = loadPortfolio(db, userId);
+  const { txns } = await loadPortfolio(db, userId);
   const own = txns.filter((t) => t.accountId === snapshot.accountId);
   const row = reconcile(own, stated, snapshot.asOf).find(
     (candidate) => candidate.instrumentId === input.instrumentId,
@@ -289,7 +291,7 @@ export const adjustSnapshotRow = (
   // index means adjusting the same row twice is a conflict, not a silent
   // duplicate.
   const externalId = `adjustment:${snapshotId}:${input.instrumentId}`;
-  const existing = db
+  const existing = await db
     .select({ id: transactions.id })
     .from(transactions)
     .where(

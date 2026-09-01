@@ -58,15 +58,15 @@ describe("calculate", () => {
     );
   });
 
-  test("refuses something that is not a number rather than treating it as zero", () => {
+  test("refuses something that is not a number rather than treating it as zero", async () => {
     expect(() => calculate({ operation: "sum", values: ["noin sata"] })).toThrow(/ei kelpaa/);
   });
 
-  test("refuses division by zero instead of returning an infinity", () => {
+  test("refuses division by zero instead of returning an infinity", async () => {
     expect(() => calculate({ operation: "divide", values: ["10.00", "0"] })).toThrow(/Nollalla/);
   });
 
-  test("refuses an empty calculation", () => {
+  test("refuses an empty calculation", async () => {
     expect(() => calculate({ operation: "sum", values: [] })).toThrow(/vähintään yksi/);
   });
 

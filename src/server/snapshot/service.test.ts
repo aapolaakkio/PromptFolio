@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
 
 import { EUR } from "../../core/money.ts";
@@ -11,15 +11,15 @@ import { z, ZodError } from "zod";
 // tests care about two things: that a statement round-trips intact, and that
 // the reconciliation reports differences without touching any transaction.
 // Mirrors portfolio.test.ts's setup, including its reliance on ../test-setup.ts
-// (a vitest.config.ts `[test] preload`) having pinned the shared getDb() handle to a
+// (a vitest.config.ts `[test] preload`) having pinned the shared database to a
 // migrated in-memory database before this file's own code runs.
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: typeof import("./service.ts");
 let transactions: (typeof import("../db/schema.ts"))["transactions"];
 
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).auth;
+  auth = (await import("../auth.ts")).getAuth();
   service = await import("./service.ts");
   transactions = (await import("../db/schema.ts")).transactions;
 });
@@ -77,13 +77,13 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
 const randomIsin = (): string =>
   `SE${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
-const createAccount = (userId: string): number =>
-  openAccountRow(getDb().db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }))
+const createAccount = async (userId: string): Promise<number> =>
+  (await openAccountRow(db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" })))
     .id;
 
-const createInstrument = (): number => {
+const createInstrument = async (): Promise<number> => {
   const isin = randomIsin();
-  const response = addInstrument(getDb().db, {
+  const response = await addInstrument(db, {
     isin,
     ticker: null,
     name: "Test Fund",
@@ -94,9 +94,14 @@ const createInstrument = (): number => {
   return response.id;
 };
 
-const buy = (accountId: number, instrumentId: number, qty: string, date: string): void => {
-  getDb()
-    .db.insert(transactions)
+const buy = async (
+  accountId: number,
+  instrumentId: number,
+  qty: string,
+  date: string,
+): Promise<void> => {
+  await db
+    .insert(transactions)
     .values({
       accountId,
       instrumentId,
@@ -130,14 +135,14 @@ type SnapshotRequest = {
 const postSnapshot = (userId: string, body: SnapshotRequest) =>
   answer(() => service.createSnapshot(userId, body));
 
-const reconcileOf = (userId: string, id: number) =>
+const reconcileOf = async (userId: string, id: number) =>
   answer(() => service.reconcileSnapshot(userId, id));
 
 describe("POST /api/snapshots", () => {
   test("refuses an account belonging to someone else, as 404 rather than 403", async () => {
     const owner = await signUp(`snap-owner-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(owner.userId);
-    const instrumentId = createInstrument();
+    const accountId = await createAccount(owner.userId);
+    const instrumentId = await createInstrument();
     const stranger = await signUp(`snap-stranger-${crypto.randomUUID()}@example.com`);
 
     const response = await postSnapshot(stranger.userId, {
@@ -152,7 +157,7 @@ describe("POST /api/snapshots", () => {
 
   test("refuses a row naming an instrument that does not exist", async () => {
     const { userId } = await signUp(`snap-unknown-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
+    const accountId = await createAccount(userId);
     const response = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -165,7 +170,7 @@ describe("POST /api/snapshots", () => {
 
   test("refuses a statement with no rows at all", async () => {
     const { userId } = await signUp(`snap-empty-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
+    const accountId = await createAccount(userId);
     const response = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -177,8 +182,8 @@ describe("POST /api/snapshots", () => {
 
   test("stores a fractional quantity without losing precision", async () => {
     const { userId } = await signUp(`snap-frac-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
 
     const created = await postSnapshot(userId, {
       accountId,
@@ -207,9 +212,9 @@ describe("POST /api/snapshots", () => {
 describe("GET /api/snapshots/:id/reconcile", () => {
   test("reports no differences when the ledger agrees with the statement", async () => {
     const { userId } = await signUp(`rec-agree-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
-    buy(accountId, instrumentId, "10000000", "2026-01-05"); // 10 units, scaled 1e6
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    await buy(accountId, instrumentId, "10000000", "2026-01-05"); // 10 units, scaled 1e6
 
     const created = await postSnapshot(userId, {
       accountId,
@@ -238,11 +243,11 @@ describe("GET /api/snapshots/:id/reconcile", () => {
 
   test("reports the difference, and changes nothing in the ledger", async () => {
     const { userId } = await signUp(`rec-diff-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
-    buy(accountId, instrumentId, "10000000", "2026-01-05");
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    await buy(accountId, instrumentId, "10000000", "2026-01-05");
 
-    const before = getDb().db.select().from(transactions).all().length;
+    const before = (await db.select().from(transactions).all()).length;
     const created = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -262,17 +267,17 @@ describe("GET /api/snapshots/:id/reconcile", () => {
     expect(body.differences).toBe(1);
     expect(body.rows[0]!.delta).toBe("5.000000");
     // The whole point: reconciling reports, it never writes.
-    expect(getDb().db.select().from(transactions).all().length).toBe(before);
+    expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
   test("compares only the statement's own account", async () => {
     const { userId } = await signUp(`rec-scope-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const otherAccountId = createAccount(userId);
-    const instrumentId = createInstrument();
-    const elsewhereId = createInstrument();
-    buy(accountId, instrumentId, "10000000", "2026-01-05");
-    buy(otherAccountId, elsewhereId, "7000000", "2026-01-05");
+    const accountId = await createAccount(userId);
+    const otherAccountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    const elsewhereId = await createInstrument();
+    await buy(accountId, instrumentId, "10000000", "2026-01-05");
+    await buy(otherAccountId, elsewhereId, "7000000", "2026-01-05");
 
     const created = await postSnapshot(userId, {
       accountId,
@@ -293,8 +298,8 @@ describe("GET /api/snapshots/:id/reconcile", () => {
 
   test("refuses a snapshot belonging to someone else", async () => {
     const owner = await signUp(`rec-owner-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(owner.userId);
-    const instrumentId = createInstrument();
+    const accountId = await createAccount(owner.userId);
+    const instrumentId = await createInstrument();
     const created = await postSnapshot(owner.userId, {
       accountId,
       asOf: "2026-06-30",
@@ -324,9 +329,9 @@ describe("POST /api/snapshots/:id/adjust", () => {
 
   const setup = async (statementQty: string, ledgerQty: string | null) => {
     const { userId } = await signUp(`adj-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
-    if (ledgerQty !== null) buy(accountId, instrumentId, ledgerQty, "2026-01-05");
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    if (ledgerQty !== null) void buy(accountId, instrumentId, ledgerQty, "2026-01-05");
     const created = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -421,8 +426,8 @@ describe("DELETE /api/snapshots/:id", () => {
 
   test("removes the statement and its rows", async () => {
     const { userId } = await signUp(`del-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
     const created = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -439,9 +444,9 @@ describe("DELETE /api/snapshots/:id", () => {
 
   test("an adjustment the statement produced survives its deletion", async () => {
     const { userId } = await signUp(`del-adj-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(userId);
-    const instrumentId = createInstrument();
-    buy(accountId, instrumentId, "10000000", "2026-01-05");
+    const accountId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    await buy(accountId, instrumentId, "10000000", "2026-01-05");
     const created = await postSnapshot(userId, {
       accountId,
       asOf: "2026-06-30",
@@ -458,17 +463,17 @@ describe("DELETE /api/snapshots/:id", () => {
       }),
     );
 
-    const before = getDb().db.select().from(transactions).all().length;
+    const before = (await db.select().from(transactions).all()).length;
     expect((await remove(userId, snapshot.id)).status).toBe(200);
     // Tidying up a statement must never retract a ledger entry the user chose
     // to make -- that would change holdings as a side effect.
-    expect(getDb().db.select().from(transactions).all().length).toBe(before);
+    expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
   test("refuses a statement belonging to someone else", async () => {
     const owner = await signUp(`del-owner-${crypto.randomUUID()}@example.com`);
-    const accountId = createAccount(owner.userId);
-    const instrumentId = createInstrument();
+    const accountId = await createAccount(owner.userId);
+    const instrumentId = await createInstrument();
     const created = await postSnapshot(owner.userId, {
       accountId,
       asOf: "2026-06-30",
@@ -493,7 +498,7 @@ describe("POST /api/snapshots/paste", () => {
 
   test("proposes the pasted rows without storing anything", async () => {
     const { userId } = await signUp(`paste-${crypto.randomUUID()}@example.com`);
-    const before = getDb().db.select().from(transactions).all().length;
+    const before = (await db.select().from(transactions).all()).length;
 
     const response = await paste(userId, {
       asOf: "2026-06-30",
@@ -506,12 +511,12 @@ describe("POST /api/snapshots/paste", () => {
     };
     expect(body.rows[0]!.quantity).toBe("27.4431");
     expect(body.rows[0]!.marketValueEur).toBe("10072.72");
-    expect(getDb().db.select().from(transactions).all().length).toBe(before);
+    expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
   test("suggests an instrument matching by name", async () => {
     const { userId } = await signUp(`paste-match-${crypto.randomUUID()}@example.com`);
-    const created = addInstrument(getDb().db, {
+    const created = await addInstrument(db, {
       isin: randomIsin(),
       ticker: null,
       name: "Paste Match Fund",
@@ -567,7 +572,7 @@ describe("POST /api/snapshots/csv", () => {
     return bytes.buffer as ArrayBuffer;
   };
 
-  const upload = (userId: string, body: ArrayBuffer, asOf = "2026-06-30") => {
+  const upload = async (userId: string, body: ArrayBuffer, asOf = "2026-06-30") => {
     const form = new FormData();
     form.set("file", new File([body], "omistukset.csv", { type: "text/csv" }));
     form.set("asOf", asOf);
@@ -582,7 +587,7 @@ describe("POST /api/snapshots/csv", () => {
   // Nordnet writes UTF-16LE; read as UTF-8 the file is a run of null bytes.
   test("reads a UTF-16 export and proposes its rows", async () => {
     const { userId } = await signUp(`csv-${crypto.randomUUID()}@example.com`);
-    const before = getDb().db.select().from(transactions).all().length;
+    const before = (await db.select().from(transactions).all()).length;
 
     const response = await upload(userId, utf16le(CSV));
     expect(response.status).toBe(200);
@@ -595,7 +600,7 @@ describe("POST /api/snapshots/csv", () => {
     expect(body.rows[0]!.quantity).toBe("27.4431");
     expect(body.rows[0]!.marketValueEur).toBe("10072.72");
     // A preview stores nothing.
-    expect(getDb().db.select().from(transactions).all().length).toBe(before);
+    expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
   test("reads a plain UTF-8 export too, since not every broker writes UTF-16", async () => {

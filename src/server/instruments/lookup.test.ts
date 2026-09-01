@@ -1,4 +1,5 @@
 import { readText } from "../files.ts";
+import { urlOf } from "../prices/types.ts";
 import { describe, expect, test } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
@@ -457,7 +458,7 @@ describe("name search, company-form suffix", () => {
     // SAFETY: as in stubFetch above -- only a URL is ever passed and only the
     // Response is read, which `typeof fetch` cannot express structurally.
     const stub = (async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = urlOf(input);
       if (url.includes("op.fi")) return new Response("", { status: 404 });
       if (url.includes("finance/search")) {
         const term = new URL(url).searchParams.get("q") ?? "";

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { EUR, parseMoney } from "../../core/money.ts";
 import { BASIS_POINTS } from "../../core/rebalance/targets.ts";
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import {
   depositPlanFor,
   driftReportFor,
@@ -13,8 +13,6 @@ import {
   targetsFor,
 } from "../../server/rebalance.ts";
 import { authed, readable } from "./guard.ts";
-
-const { db } = getDb();
 
 const Dimension = z.enum(["kind", "currency", "account", "instrument"]);
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
@@ -56,8 +54,8 @@ export const saveTargetAllocation = createServerFn({ method: "POST" })
         .max(200),
     }),
   )
-  .handler(({ data, context }) => {
-    const result = saveTargets(
+  .handler(async ({ data, context }) => {
+    const result = await saveTargets(
       db,
       context.userId,
       data.dimension,

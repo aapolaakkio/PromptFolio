@@ -4,14 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "start": "node .output/server/index.mjs",
     "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
+    "preview": "vite build && wrangler dev",
+    "cf-typegen": "wrangler types --env-file .env.example",
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply promptfolio --remote",
+    "db:migrate:local": "wrangler d1 migrations apply promptfolio --local",
     "test": "vitest run",
     "test:cov": "vitest run --coverage",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix --fix-suggestions",
+    "typecheck": "pnpm run cf-typegen && tsc --noEmit",
+    "lint": "oxlint --type-aware",
+    "lint:fix": "oxlint --type-aware --fix --fix-suggestions",
     "fmt": "oxfmt src e2e '!src/web/routeTree.gen.ts'",
     "fmt:check": "oxfmt --check src e2e '!src/web/routeTree.gen.ts'",
     "check": "pnpm run lint && pnpm run fmt:check && pnpm run typecheck && pnpm run test:cov",
@@ -21,7 +25,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
     "@better-auth/drizzle-adapter": "1.7.2",
-    "@node-rs/argon2": "^2.1.0",
     "@tanstack/charts": "^0.16.0",
     "@tanstack/react-charts": "^0.16.0",
     "@tanstack/react-query": "^5.102.8",
@@ -31,11 +34,11 @@
     "drizzle-orm": "1.0.0-rc.5-169397b",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "tailwindcss": "^4.3.3",
     "unpdf": "^1.8.1",
     "zod": "^4.5.2"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.54.2",
     "@oxlint/plugins": "1.80.0",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
@@ -45,13 +48,15 @@
     "@vitest/coverage-v8": "^4.1.11",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "lint-staged": "^17.4.1",
-    "nitro": "3.0.260610-beta",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
+    "oxlint-tsgolint": "^7.0.2001",
     "simple-git-hooks": "^2.14.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.1"
   },
   "simple-git-hooks": {
     "pre-commit": "NODE_OPTIONS='--experimental-strip-types' pnpm exec lint-staged"

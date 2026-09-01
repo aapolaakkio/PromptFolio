@@ -6,7 +6,7 @@ import {
   UpdateAccount,
 } from "../accounts.ts";
 import { cashView, spendingView } from "../views/portfolio.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { removeRule, rulesFor } from "../spending/rules.ts";
 import { beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
@@ -18,13 +18,13 @@ import { HttpError } from "../errors.ts";
 
 type BankService = typeof import("./bank-service.ts");
 
-let auth: (typeof import("../auth.ts"))["auth"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let bank: BankService;
 let setClassifierClient: BankService["_setClassifierClient"];
 let undoImport: (typeof import("./service.ts"))["undo"];
 
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).auth;
+  auth = (await import("../auth.ts")).getAuth();
   bank = await import("./bank-service.ts");
   setClassifierClient = bank._setClassifierClient;
   undoImport = (await import("./service.ts")).undo;
@@ -115,7 +115,7 @@ const BalanceSchema = z.object({
 
 const BANK_TYPES = new Set(["current", "savings", "fixed_term"]);
 
-const openAccount = (userId: string, accountType: string | null): number => {
+const openAccount = async (userId: string, accountType: string | null): Promise<number> => {
   const body =
     accountType === null
       ? { name: "Nordnet", broker: "nordnet" }
@@ -125,7 +125,7 @@ const openAccount = (userId: string, accountType: string | null): number => {
           kind: BANK_TYPES.has(accountType) ? "bank" : "brokerage",
           accountType,
         };
-  return openAccountRow(getDb().db, userId, CreateAccount.parse(body)).id;
+  return (await openAccountRow(db, userId, CreateAccount.parse(body))).id;
 };
 
 const statement = async (): Promise<ArrayBuffer> =>
@@ -150,12 +150,13 @@ const preview = async (userId: string, accountId: number, bytes?: ArrayBuffer) =
 const commit = async (userId: string, accountId: number, bytes?: ArrayBuffer) =>
   answer(async () => bank.commitBankStatementUpload(userId, await uploadForm(accountId, bytes)));
 
-const cashTotal = (userId: string, on: string): string => cashView(getDb().db, userId, on).totalEur;
+const cashTotal = async (userId: string, on: string): Promise<string> =>
+  (await cashView(db, userId, on)).totalEur;
 
 describe("POST /api/imports/bank/preview", () => {
   test("summarises the file without writing anything", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     const body = PreviewSchema.parse((await preview(userId, accountId)).body);
 
@@ -167,12 +168,12 @@ describe("POST /api/imports/bank/preview", () => {
     expect(body.totalOutEur).toBe("-1102.05");
     expect(body.sample[0]?.type).toBe("WITHDRAWAL");
     // Nothing committed.
-    expect(cashTotal(userId, "2026-06-01")).toBe("0.00");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("0.00");
   });
 
   test("refuses a brokerage account, where spending would corrupt the returns", async () => {
     const { userId } = await signUp();
-    const brokerage = openAccount(userId, "aot");
+    const brokerage = await openAccount(userId, "aot");
 
     const response = await preview(userId, brokerage);
     expect(response.status).toBe(400);
@@ -181,14 +182,14 @@ describe("POST /api/imports/bank/preview", () => {
 
   test("refuses an unclassified account rather than guessing it is a bank one", async () => {
     const { userId } = await signUp();
-    const unclassified = openAccount(userId, null);
+    const unclassified = await openAccount(userId, null);
 
     expect((await preview(userId, unclassified)).status).toBe(400);
   });
 
   test("refuses a file that is not a statement it knows", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     const bytes = bytesOf("a;b\n1;2\n");
 
     const response = await preview(userId, accountId, bytes);
@@ -200,34 +201,34 @@ describe("POST /api/imports/bank/preview", () => {
 describe("POST /api/imports/bank/commit", () => {
   test("writes every row, and skips them all on a second import of the same file", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     const first = CommitSchema.parse((await commit(userId, accountId)).body);
     expect(first.inserted).toBe(5);
     expect(first.skipped).toBe(0);
     // -42,15 + 2750,00 - 1000,00 + 12,34 - 59,90
-    expect(cashTotal(userId, "2026-06-01")).toBe("1660.29");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
 
     const second = CommitSchema.parse((await commit(userId, accountId)).body);
     expect(second.inserted).toBe(0);
     expect(second.skipped).toBe(5);
     // The balance is unchanged, which is the whole point of the archive id.
-    expect(cashTotal(userId, "2026-06-01")).toBe("1660.29");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
   });
 
   test("the whole file can be undone as one import", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     const committed = CommitSchema.parse((await commit(userId, accountId)).body);
 
     const undone = await answer(() => undoImport(userId, committed.importId));
     expect(undone.status).toBe(200);
-    expect(cashTotal(userId, "2026-06-01")).toBe("0.00");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("0.00");
   });
 
   test("imports the readable rows and reports the one it could not read", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     const text = new TextDecoder().decode(await statement());
     const broken = text.replace('"2026-01-02";"2026-01-02"', '"2.1.2026";"2026-01-02"');
 
@@ -244,7 +245,7 @@ describe("POST /api/accounts/:id/balance", () => {
 
   test("derives the balance the statements do not reach back to", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     await commit(userId, accountId);
 
     // The bank says 9 000,00 today; the imported rows account for 1 660,29 of
@@ -256,36 +257,36 @@ describe("POST /api/accounts/:id/balance", () => {
     expect(body.derivedFromRowsEur).toBe("1660.29");
     expect(body.openingBalanceEur).toBe("7339.71");
     expect(body.openingBalanceDate).toBe("2025-08-31");
-    expect(cashTotal(userId, "2026-06-01")).toBe("9000.00");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("9000.00");
   });
 
   test("re-running it replaces the opening balance instead of stacking corrections", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     await commit(userId, accountId);
 
     await setBalance(userId, accountId, "2026-06-01", "9000.00");
     await setBalance(userId, accountId, "2026-06-01", "11000.00");
 
-    expect(cashTotal(userId, "2026-06-01")).toBe("11000.00");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("11000.00");
   });
 
   test("reports agreement as a zero difference, which is the check", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     await commit(userId, accountId);
 
     const body = BalanceSchema.parse(
       (await setBalance(userId, accountId, "2026-06-01", "1660.29")).body,
     );
     expect(body.openingBalanceEur).toBe("0.00");
-    expect(cashTotal(userId, "2026-06-01")).toBe("1660.29");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
   });
 
   test("refuses someone else's account, as 404", async () => {
     const owner = await signUp();
     const stranger = await signUp();
-    const accountId = openAccount(owner.userId, "current");
+    const accountId = await openAccount(owner.userId, "current");
 
     const response = await setBalance(stranger.cookie, accountId, "2026-06-01", "100.00");
     expect(response.status).toBe(404);
@@ -298,7 +299,7 @@ describe("a PDF statement", () => {
 
   test("is read, and says it was checked against its own printed balances", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     const body = PreviewSchema.parse((await preview(userId, accountId, await pdf())).body);
 
@@ -310,19 +311,19 @@ describe("a PDF statement", () => {
 
   test("brings its own opening balance, so nothing has to be typed in", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await pdf())).body);
 
     expect(body.inserted).toBe(2);
     // 1 500,00 opening - 25,90 + 100,00 = 1 574,10, the printed closing balance.
     expect(body.reconciliation?.differenceEur).toBe("0.00");
-    expect(cashTotal(userId, "2026-12-31")).toBe("1574.10");
+    expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
 
   test("re-importing it leaves the balance where it was", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     await commit(userId, accountId, await pdf());
 
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await pdf())).body);
@@ -330,7 +331,7 @@ describe("a PDF statement", () => {
     expect(second.inserted).toBe(0);
     expect(second.skipped).toBe(2);
     expect(second.reconciliation?.differenceEur).toBe("0.00");
-    expect(cashTotal(userId, "2026-12-31")).toBe("1574.10");
+    expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
 
   test("refuses one whose rows do not add up to its own closing balance", async () => {
@@ -353,7 +354,7 @@ describe("a PDF statement", () => {
 describe("a PDF this app cannot read", () => {
   test("is refused with the reason, not as a generic server error", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     // A valid PDF that is not a statement: the parser's complaint has to reach
     // the owner, since "Palvelinvirhe" tells them nothing about what to do.
     const notAStatement = await readBytes(
@@ -388,7 +389,7 @@ describe("importing several statements for one account", () => {
 
   test("a later statement does not overwrite an opening balance that reaches further back", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     await commit(userId, accountId, await earlier());
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await later())).body);
@@ -397,12 +398,12 @@ describe("importing several statements for one account", () => {
     // own opening while the earlier rows remain would count that period twice.
     expect(second.reconciliation?.openingBalanceWritten).toBe(false);
     expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
-    expect(cashTotal(userId, "2026-12-31")).toBe("1574.10");
+    expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
 
   test("a statement reaching further back does replace it", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     await commit(userId, accountId, await later());
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await earlier())).body);
@@ -410,17 +411,17 @@ describe("importing several statements for one account", () => {
     expect(second.reconciliation?.openingBalanceWritten).toBe(true);
     expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
     // Same total whichever order they arrive in, which is the point.
-    expect(cashTotal(userId, "2026-12-31")).toBe("1574.10");
+    expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
 
   test("re-importing the same statement leaves the balance untouched", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     await commit(userId, accountId, await earlier());
     await commit(userId, accountId, await earlier());
 
-    expect(cashTotal(userId, "2026-12-31")).toBe("1500.00");
+    expect(await cashTotal(userId, "2026-12-31")).toBe("1500.00");
   });
 });
 
@@ -429,15 +430,15 @@ describe("a fixed-term deposit's maturity date", () => {
     readBytes(`${import.meta.dirname}/../import/fixtures/op-fixed-term-sample.pdf`);
 
   const accountRow = async (accountId: number) => {
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { accounts } = await import("../db/schema.ts");
     const { eq } = await import("drizzle-orm");
-    return getDb().db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+    return db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   };
 
   test("is taken from the statement onto an account that has none", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "fixed_term");
+    const accountId = await openAccount(userId, "fixed_term");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
 
@@ -448,13 +449,8 @@ describe("a fixed-term deposit's maturity date", () => {
 
   test("never overwrites one the owner already recorded, and reports the disagreement", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "fixed_term");
-    updateAccount(
-      getDb().db,
-      userId,
-      accountId,
-      UpdateAccount.parse({ maturityDate: "2027-12-31" }),
-    );
+    const accountId = await openAccount(userId, "fixed_term");
+    await updateAccount(db, userId, accountId, UpdateAccount.parse({ maturityDate: "2027-12-31" }));
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
 
@@ -467,7 +463,7 @@ describe("a fixed-term deposit's maturity date", () => {
 
   test("is not written onto a current account, where it would mean nothing", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
 
@@ -477,10 +473,10 @@ describe("a fixed-term deposit's maturity date", () => {
 
   test("makes the deposit's cash read as locked without any further input", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "fixed_term");
+    const accountId = await openAccount(userId, "fixed_term");
     await commit(userId, accountId, await depositPdf());
 
-    const body = cashView(getDb().db, userId, "2026-06-01");
+    const body = await cashView(db, userId, "2026-06-01");
 
     expect(body.lockedEur).toBe("5000.00");
     expect(body.availableEur).toBe("0.00");
@@ -547,15 +543,15 @@ describe("classifying an import's new merchants", () => {
       replying('{"rules":[{"pattern":"ESIMERKKI VAKUUTUS","category":"vakuutukset"}]}'),
     );
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     // Reading the rules is what seeds them for a new account; deleting before
     // that would match nothing and the seed would put the pattern straight back.
-    rulesFor(getDb().db, userId);
+    await rulesFor(db, userId);
     // The seed rules already know the word "VAKUUTUS", so it is removed first:
     // classification only ever runs on merchants no rule covers, and this is
     // what one looks like.
-    removeRule(getDb().db, userId, "VAKUUTUS");
+    await removeRule(db, userId, "VAKUUTUS");
 
     const body = ClassifiedSchema.parse((await commit(userId, accountId)).body);
 
@@ -563,7 +559,7 @@ describe("classifying an import's new merchants", () => {
     expect(body.classified?.error).toBeNull();
 
     // ...and the rule holds for the next question about spending.
-    const spending = spendingView(getDb().db, userId, "2025-01-01", "2026-12-31", "category", 15);
+    const spending = await spendingView(db, userId, "2025-01-01", "2026-12-31", "category", 15);
     expect(spending.groups.some((group) => group.key === "vakuutukset")).toBe(true);
 
     setClassifierClient(null);
@@ -584,9 +580,9 @@ describe("classifying an import's new merchants", () => {
       },
     } as Parameters<typeof setClassifierClient>[0]);
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
-    rulesFor(getDb().db, userId);
-    removeRule(getDb().db, userId, "VAKUUTUS");
+    const accountId = await openAccount(userId, "current");
+    await rulesFor(db, userId);
+    await removeRule(db, userId, "VAKUUTUS");
 
     const response = await commit(userId, accountId);
     const body = ClassifiedSchema.parse(response.body);
@@ -594,7 +590,7 @@ describe("classifying an import's new merchants", () => {
     // The rows are in; only the classification failed, and it says so.
     expect(response.status).toBe(200);
     expect(body.classified?.error).toBe("upstream unavailable");
-    expect(cashTotal(userId, "2026-06-01")).toBe("1660.29");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
 
     setClassifierClient(null);
   });
@@ -602,11 +598,11 @@ describe("classifying an import's new merchants", () => {
 
 describe("a statement that knows more than the one already imported", () => {
   const noteOf = async (externalId: string): Promise<string | null> => {
-    const { getDb } = await import("../db/index.ts");
+    const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
     const { eq } = await import("drizzle-orm");
-    const row = getDb()
-      .db.select({ note: transactions.note })
+    const row = await db
+      .select({ note: transactions.note })
       .from(transactions)
       .where(eq(transactions.externalId, externalId))
       .get();
@@ -615,7 +611,7 @@ describe("a statement that knows more than the one already imported", () => {
 
   test("fills in a payee the first file left blank, without doubling the row", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
 
     // OP's CSV leaves the payee column empty for some card payments; its PDF
     // names the shop, and both carry the same archive id.
@@ -644,12 +640,12 @@ describe("a statement that knows more than the one already imported", () => {
     expect(second.enriched).toBe(1);
     expect(await noteOf("20250910ESIM00000009")).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
     // The balance is untouched: this is the same row, better described.
-    expect(cashTotal(userId, "2026-06-01")).toBe("-7.27");
+    expect(await cashTotal(userId, "2026-06-01")).toBe("-7.27");
   });
 
   test("never overwrites a payee that is already there", async () => {
     const { userId } = await signUp();
-    const accountId = openAccount(userId, "current");
+    const accountId = await openAccount(userId, "current");
     await commit(userId, accountId);
 
     const second = CommitSchema.parse((await commit(userId, accountId)).body);

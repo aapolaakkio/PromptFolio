@@ -14,14 +14,14 @@ let classifyNewMerchants: (typeof import("./classify.ts"))["classifyNewMerchants
 let unknownMerchants: (typeof import("./classify.ts"))["unknownMerchants"];
 let rulesFor: (typeof import("./rules.ts"))["rulesFor"];
 let categoriseWith: (typeof import("./rules.ts"))["categoriseWith"];
-let db: ReturnType<(typeof import("../db/index.ts"))["getDb"]>["db"];
-let auth: (typeof import("../auth.ts"))["auth"];
+let db: (typeof import("../db/index.ts"))["db"];
+let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
 beforeAll(async () => {
   ({ classifyNewMerchants, unknownMerchants } = await import("./classify.ts"));
   ({ rulesFor, categoriseWith } = await import("./rules.ts"));
-  db = (await import("../db/index.ts")).getDb().db;
-  auth = (await import("../auth.ts")).auth;
+  db = (await import("../db/index.ts")).db;
+  auth = (await import("../auth.ts")).getAuth();
 });
 
 let next = 0;
@@ -106,7 +106,7 @@ const ACCOUNTS = new Set([1]);
 describe("unknownMerchants", () => {
   test("names each unrecognised shop once, without the per-payment noise around it", async () => {
     const userId = await makeUser();
-    const rules = rulesFor(db, userId);
+    const rules = await rulesFor(db, userId);
     const merchants = unknownMerchants(
       [
         spend("PKORTTIMAKSU — PIENI PUOTI OY", "-12.00"),
@@ -123,7 +123,7 @@ describe("unknownMerchants", () => {
 
   test("ignores money coming in, which is not spending to classify", async () => {
     const userId = await makeUser();
-    const rules = rulesFor(db, userId);
+    const rules = await rulesFor(db, userId);
     expect(unknownMerchants([spend("TUNTEMATON LÄHETTÄJÄ", "1000.00")], rules, ACCOUNTS)).toEqual(
       [],
     );
@@ -131,7 +131,7 @@ describe("unknownMerchants", () => {
 
   test("ignores accounts the import did not touch", async () => {
     const userId = await makeUser();
-    const rules = rulesFor(db, userId);
+    const rules = await rulesFor(db, userId);
     expect(unknownMerchants([spend("PIENI PUOTI OY", "-12.00")], rules, new Set([99]))).toEqual([]);
   });
 });
@@ -149,7 +149,9 @@ describe("classifyNewMerchants", () => {
     });
 
     expect(result).toEqual({ asked: 1, added: 1, rejected: 0, error: null });
-    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", rulesFor(db, userId))).toBe("ruoka");
+    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", await rulesFor(db, userId))).toBe(
+      "ruoka",
+    );
   });
 
   test("reads a reply wrapped in prose or a code fence", async () => {
@@ -177,7 +179,7 @@ describe("classifyNewMerchants", () => {
 
     expect(result.added).toBe(0);
     expect(result.rejected).toBe(1);
-    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", rulesFor(db, userId))).toBe("muu");
+    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", await rulesFor(db, userId))).toBe("muu");
   });
 
   test("refuses a pattern no merchant in this import carries", async () => {
@@ -197,7 +199,7 @@ describe("classifyNewMerchants", () => {
   test("never overwrites a rule already stored", async () => {
     const userId = await makeUser();
     const { addRules } = await import("./rules.ts");
-    addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
 
     await classifyNewMerchants(db, userId, {
       txns,
@@ -207,7 +209,7 @@ describe("classifyNewMerchants", () => {
     });
 
     // The person's own answer stands.
-    expect(categoriseWith("PIENI PUOTI OY", rulesFor(db, userId))).toBe("vapaa-aika");
+    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("vapaa-aika");
   });
 
   test("asks nothing when every merchant is already covered", async () => {

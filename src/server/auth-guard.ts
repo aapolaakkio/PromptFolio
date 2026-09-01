@@ -1,4 +1,4 @@
-import { auth } from "./auth.ts";
+import { getAuth } from "./auth.ts";
 import { HttpError } from "./errors.ts";
 
 /**
@@ -8,7 +8,7 @@ import { HttpError } from "./errors.ts";
  * or path is never inferred from the request alone.
  */
 export const requireUser = async (request: Request): Promise<{ userId: string }> => {
-  const session = await auth.api.getSession({ headers: request.headers });
+  const session = await getAuth().api.getSession({ headers: request.headers });
   if (!session?.user?.id) throw new HttpError(401, "Kirjautuminen vaaditaan");
   return { userId: session.user.id };
 };

@@ -2,12 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { currencyField } from "../../server/currency-field.ts";
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { lookupInstrument } from "../../server/instruments/lookup.ts";
 import { addInstrument, listInstruments } from "../../server/instruments/store.ts";
 import { authed, readable } from "./guard.ts";
-
-const { db } = getDb();
 
 const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen");
 

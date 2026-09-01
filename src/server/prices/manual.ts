@@ -1,13 +1,11 @@
 import { eq } from "drizzle-orm";
 
 import { parseCurrency, parseMoney } from "../../core/money.ts";
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { requirePositiveMinor } from "./types.ts";
 import { writePrices } from "./write.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /**
  * Records a price a person typed, for a holding nothing can fetch.
@@ -16,11 +14,11 @@ type Db = ReturnType<typeof getDb>["db"];
  * US-listed share is quoted in dollars, and reading its price as euros would
  * value the whole holding wrong without anything looking odd.
  */
-export const recordManualPrice = (
+export const recordManualPrice = async (
   db: Db,
   input: { readonly instrumentId: number; readonly date: string; readonly price: string },
 ) => {
-  const instrument = db
+  const instrument = await db
     .select()
     .from(instruments)
     .where(eq(instruments.id, input.instrumentId))
@@ -46,7 +44,7 @@ export const recordManualPrice = (
   // for why a human-entered correction must bypass the scraper-plumbing
   // plausibility guard and its multi-day re-baseline streak, rather than risk a
   // legitimate fix being silently (or repeatedly) rejected.
-  const outcome = writePrices(
+  const outcome = await writePrices(
     db,
     instrument.id,
     "manual",

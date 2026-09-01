@@ -1,12 +1,10 @@
 import { and, asc, desc, eq, lte } from "drizzle-orm";
 
 import { EUR, type Currency } from "../core/money.ts";
-import type { getDb } from "./db/index.ts";
+import type { Db } from "./db/index.ts";
 import { fxRates, instruments, transactions } from "./db/schema.ts";
 import { fetchEcbRates, type EcbRow } from "./fx-ecb.ts";
 import type { FetchImpl } from "./prices/types.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
 
 /**
  * How far back the nightly refresh asks for. Long enough to cover a run missed over a long
@@ -26,36 +24,45 @@ const isoDaysAgo = (days: number): string =>
  * on-demand path C1b needs) so both write through the exact same defense-in-depth EUR
  * guard and conflict handling.
  */
-const insertFxRates = (db: Db, rows: readonly EcbRow[]): number => {
-  let inserted = 0;
-  db.transaction((tx) => {
-    for (const row of rows) {
-      // Defense in depth: parseEcbCsv already excludes EUR, but a
-      // meaningless EUR/EUR row must never reach this table under any
-      // circumstance -- checked again at the write boundary rather than
-      // trusted transitively from the parser.
-      if (row.currency === EUR) continue;
-      const result = tx
+const insertFxRates = async (db: Db, rows: readonly EcbRow[]): Promise<number> => {
+  const statements = rows
+    // Defense in depth: parseEcbCsv already excludes EUR, but a meaningless
+    // EUR/EUR row must never reach this table under any circumstance --
+    // checked again at the write boundary rather than trusted transitively
+    // from the parser.
+    .filter((row) => row.currency !== EUR)
+    .map((row) =>
+      db
         .insert(fxRates)
         .values({ date: row.date, currency: row.currency, rateEur: row.rateEur })
         .onConflictDoNothing()
-        .run();
-      if (result.changes > 0) inserted++;
-    }
-  });
-  return inserted;
+        // How the insert reports whether it happened. D1 has no interactive
+        // transaction, so a batched statement cannot be asked for its row
+        // count afterwards -- an empty `returning` is the conflict.
+        .returning({ date: fxRates.date }),
+    );
+  if (statements.length === 0) return 0;
+
+  // One batch, which D1 runs as a single transaction: a failure rolls the
+  // whole set back, the same guarantee the old `db.transaction` gave.
+  //
+  // SAFETY: `db.batch` is typed as a non-empty tuple to stop a caller passing
+  // `[]`; `statements` is an array of the same element type, and the
+  // `length === 0` return above is what establishes it is non-empty here.
+  const results = await db.batch(statements as [(typeof statements)[number], ...typeof statements]);
+  return results.reduce((count, inserted) => count + inserted.length, 0);
 };
 
 /**
  * The newest rate for `currency` on or before `date`, or null. Takes only the
  * `select` method, so a caller inside a transaction can pass `tx` straight in.
  */
-export const fxRateOn = (
+export const fxRateOn = async (
   db: Pick<Db, "select">,
   currency: Currency,
   date: string,
-): number | null => {
-  const row = db
+): Promise<number | null> => {
+  const row = await db
     .select()
     .from(fxRates)
     .where(and(eq(fxRates.currency, currency), lte(fxRates.date, date)))
@@ -81,16 +88,12 @@ export const refreshFxRates = async (
 ): Promise<{ inserted: number }> => {
   const fetchImpl = opts.fetchImpl ?? fetch;
 
-  const txnCurrencies = db
-    .selectDistinct({ currency: transactions.currency })
-    .from(transactions)
-    .all()
-    .map((row) => row.currency);
-  const instrumentCurrencies = db
-    .selectDistinct({ currency: instruments.currency })
-    .from(instruments)
-    .all()
-    .map((row) => row.currency);
+  const txnCurrencies = (
+    await db.selectDistinct({ currency: transactions.currency }).from(transactions).all()
+  ).map((row) => row.currency);
+  const instrumentCurrencies = (
+    await db.selectDistinct({ currency: instruments.currency }).from(instruments).all()
+  ).map((row) => row.currency);
   const held = [...new Set([...txnCurrencies, ...instrumentCurrencies])].filter(
     (currency) => currency !== EUR,
   );
@@ -102,7 +105,7 @@ export const refreshFxRates = async (
   // needs whatever ECB published since the last run. backfillFxRates owns reaching back
   // to the ledger's own earliest date.
   const rows = await fetchEcbRates(fetchImpl, wanted, isoDaysAgo(REFRESH_WINDOW_DAYS));
-  const inserted = insertFxRates(db, rows);
+  const inserted = await insertFxRates(db, rows);
   return { inserted };
 };
 
@@ -119,10 +122,10 @@ const bumpEarliest = (map: Map<Currency, string>, currency: Currency, date: stri
  * position's first transaction. A currency appearing only on an instrument
  * nobody holds has no range to value and is absent.
  */
-const earliestNeededDateByCurrency = (db: Db): Map<Currency, string> => {
+const earliestNeededDateByCurrency = async (db: Db): Promise<Map<Currency, string>> => {
   const byCurrency = new Map<Currency, string>();
 
-  for (const row of db
+  for (const row of await db
     .select({ currency: transactions.currency, tradeDate: transactions.tradeDate })
     .from(transactions)
     .all()) {
@@ -130,7 +133,7 @@ const earliestNeededDateByCurrency = (db: Db): Map<Currency, string> => {
     bumpEarliest(byCurrency, row.currency, row.tradeDate);
   }
 
-  for (const row of db
+  for (const row of await db
     .select({ currency: instruments.currency, tradeDate: transactions.tradeDate })
     .from(transactions)
     .innerJoin(instruments, eq(transactions.instrumentId, instruments.id))
@@ -149,8 +152,12 @@ const earliestNeededDateByCurrency = (db: Db): Map<Currency, string> => {
  * every ordinary night after the first real backfill completes, exactly the way that
  * function's own doc comment describes for prices.
  */
-const needsFxBackfill = (db: Db, currency: Currency, earliestNeeded: string): boolean => {
-  const earliestRow = db
+const needsFxBackfill = async (
+  db: Db,
+  currency: Currency,
+  earliestNeeded: string,
+): Promise<boolean> => {
+  const earliestRow = await db
     .select({ date: fxRates.date })
     .from(fxRates)
     .where(eq(fxRates.currency, currency))
@@ -182,9 +189,13 @@ export const backfillFxRates = async (
 ): Promise<BackfillFxResult> => {
   const fetchImpl = opts.fetchImpl ?? fetch;
 
-  const pending = [...earliestNeededDateByCurrency(db)].filter(([currency, earliestNeeded]) =>
-    needsFxBackfill(db, currency, earliestNeeded),
-  );
+  // Sequential rather than a Promise.all: D1 charges per statement either way,
+  // and a currency list is short. Keeping the order makes a failure reproducible.
+  const pending: [Currency, string][] = [];
+  for (const [currency, earliestNeeded] of await earliestNeededDateByCurrency(db)) {
+    if (await needsFxBackfill(db, currency, earliestNeeded))
+      pending.push([currency, earliestNeeded]);
+  }
   if (pending.length === 0) return { inserted: 0, currencies: 0 };
 
   const wanted = new Set<string>(pending.map(([currency]) => currency));
@@ -194,7 +205,7 @@ export const backfillFxRates = async (
   if (since === null) return { inserted: 0, currencies: 0 };
 
   const rows = await fetchEcbRates(fetchImpl, wanted, since);
-  const inserted = insertFxRates(db, rows);
+  const inserted = await insertFxRates(db, rows);
   return { inserted, currencies: pending.length };
 };
 
@@ -217,15 +228,15 @@ export const ensureFxRate = async (
   date: string,
   fetchImpl: FetchImpl,
 ): Promise<number | null> => {
-  const existing = fxRateOn(db, currency, date);
+  const existing = await fxRateOn(db, currency, date);
   if (existing !== null) return existing;
 
   try {
     // One ranged request covers both cases the old daily/historical two-step handled: a
     // recent trade and a back-dated one differ only in how far back `date` reaches.
     const rows = await fetchEcbRates(fetchImpl, new Set([currency]), date);
-    insertFxRates(db, rows);
-    return fxRateOn(db, currency, date);
+    await insertFxRates(db, rows);
+    return await fxRateOn(db, currency, date);
   } catch {
     return null;
   }

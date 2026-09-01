@@ -1,7 +1,7 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
-import { getDb } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { addInstrument, listInstruments } from "./store.ts";
 
 // What api/instruments.test.ts checked through HTTP, checked here against the
@@ -12,20 +12,14 @@ import { addInstrument, listInstruments } from "./store.ts";
 const EUR = parseCurrency("EUR");
 const SEK = parseCurrency("SEK");
 
-let db: ReturnType<typeof getDb>["db"];
-
-beforeAll(() => {
-  db = getDb().db;
-});
-
 const randomIsin = (): string =>
   `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
 describe("addInstrument", () => {
-  test("registers one and hands back the stored row", () => {
+  test("registers one and hands back the stored row", async () => {
     const isin = randomIsin();
 
-    const created = addInstrument(db, {
+    const created = await addInstrument(db, {
       isin,
       ticker: "KNEBV.HE",
       name: "Kone",
@@ -39,7 +33,7 @@ describe("addInstrument", () => {
     expect(created.name).toBe("Kone");
   });
 
-  test("refuses a duplicate ISIN, naming it", () => {
+  test("refuses a duplicate ISIN, naming it", async () => {
     const isin = randomIsin();
     const row = {
       isin,
@@ -50,14 +44,14 @@ describe("addInstrument", () => {
       priceSource: "manual" as const,
       sourceKey: isin,
     };
-    addInstrument(db, row);
+    await addInstrument(db, row);
 
     // The ISIN is in the message because it is what the person is looking at
     // when they hit this: a broker row they were trying to resolve.
-    expect(() => addInstrument(db, row)).toThrow(isin);
+    await expect(addInstrument(db, row)).rejects.toThrow(isin);
   });
 
-  test("refuses a duplicate name when there is no ISIN to match on", () => {
+  test("refuses a duplicate name when there is no ISIN to match on", async () => {
     // A delisted share or a corporate-action line has no ISIN any registry
     // will give up, so the name is the only thing left to match.
     const name = `Manuaalinen ${crypto.randomUUID()}`;
@@ -68,15 +62,15 @@ describe("addInstrument", () => {
       currency: EUR,
       priceSource: "manual" as const,
     };
-    addInstrument(db, row);
+    await addInstrument(db, row);
 
-    expect(() => addInstrument(db, row)).toThrow(name);
+    await expect(addInstrument(db, row)).rejects.toThrow(name);
   });
 
-  test("keeps a non-EUR currency as its own", () => {
+  test("keeps a non-EUR currency as its own", async () => {
     const isin = randomIsin();
 
-    const created = addInstrument(db, {
+    const created = await addInstrument(db, {
       isin,
       ticker: null,
       name: `Ruotsalainen ${isin}`,
@@ -89,9 +83,9 @@ describe("addInstrument", () => {
     expect(created.currency).toBe(SEK);
   });
 
-  test("falls back to the ISIN, then the name, for a missing source key", () => {
+  test("falls back to the ISIN, then the name, for a missing source key", async () => {
     const isin = randomIsin();
-    const byIsin = addInstrument(db, {
+    const byIsin = await addInstrument(db, {
       isin,
       ticker: null,
       name: `Ilman avainta ${isin}`,
@@ -100,7 +94,7 @@ describe("addInstrument", () => {
       priceSource: "manual",
     });
     const name = `Nimellä ${crypto.randomUUID()}`;
-    const byName = addInstrument(db, {
+    const byName = await addInstrument(db, {
       ticker: null,
       name,
       kind: "fund",
@@ -114,12 +108,12 @@ describe("addInstrument", () => {
 });
 
 describe("listInstruments", () => {
-  test("returns what any signed-in member can see, which is all of them", () => {
+  test("returns what any signed-in member can see, which is all of them", async () => {
     // Instruments are shared reference data: two household members'
     // transactions reference the same Nokia share, so there is nothing to
     // scope per user and nothing to leak between them.
     const isin = randomIsin();
-    addInstrument(db, {
+    await addInstrument(db, {
       isin,
       ticker: null,
       name: `Jaettu ${isin}`,
@@ -129,6 +123,6 @@ describe("listInstruments", () => {
       sourceKey: isin,
     });
 
-    expect(listInstruments(db).some((row) => row.isin === isin)).toBe(true);
+    expect((await listInstruments(db)).some((row) => row.isin === isin)).toBe(true);
   });
 });

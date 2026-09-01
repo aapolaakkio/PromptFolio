@@ -40,10 +40,13 @@ export type ValuePoint = {
  * tell a fresh price from a carried-forward one, so `priceDateOn` reports what the
  * returned price is dated: staleness is `priceDateOn(...) !== date`.
  */
+// Function properties, not method shorthand: every implementation is a closure
+// over its own data with no `this`, and callers pass `prices.fxOn` around as a
+// plain function. Method syntax would claim a receiver none of them has.
 export type PriceLookup = {
-  priceOn(instrumentId: number, date: IsoDate): Money | null;
-  priceDateOn(instrumentId: number, date: IsoDate): IsoDate | null;
-  fxOn(currency: Currency, date: IsoDate): FxRate | null;
+  priceOn: (instrumentId: number, date: IsoDate) => Money | null;
+  priceDateOn: (instrumentId: number, date: IsoDate) => IsoDate | null;
+  fxOn: (currency: Currency, date: IsoDate) => FxRate | null;
 };
 
 const DAY_MS = 86_400_000;

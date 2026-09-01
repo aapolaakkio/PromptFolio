@@ -1,6 +1,7 @@
+import { env } from "cloudflare:workers";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { getDb } from "../../../../server/db/index.ts";
+import { db } from "../../../../server/db/index.ts";
 import { runScheduledRefresh } from "../../../../server/prices/refresh.ts";
 
 /**
@@ -16,7 +17,7 @@ import { runScheduledRefresh } from "../../../../server/prices/refresh.ts";
  * refuses every call rather than leaving the endpoint open.
  */
 const authorised = (request: Request): boolean => {
-  const secret = process.env.CRON_SECRET;
+  const secret = env.CRON_SECRET;
   if (secret === undefined || secret === "") return false;
   return request.headers.get("authorization") === `Bearer ${secret}`;
 };
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/api/cron/refresh")({
         if (!authorised(request)) {
           return Response.json({ error: "Ei oikeuksia" }, { status: 401 });
         }
-        await runScheduledRefresh(getDb().db);
+        await runScheduledRefresh(db);
         return Response.json({ ok: true });
       },
     },

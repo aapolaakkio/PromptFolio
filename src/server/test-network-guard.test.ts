@@ -9,6 +9,6 @@ import { expect, test } from "vitest";
  * that happened to hold on the day this was written.
  */
 
-test("the real global fetch is replaced with one that throws, not silently reaches the network", () => {
+test("the real global fetch is replaced with one that throws, not silently reaches the network", async () => {
   expect(() => fetch("https://example.com")).toThrow(/network blocked in tests/);
 });

@@ -66,15 +66,15 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
       "luokista. Käytä get_uncategorised_spending tai get_transaction_class ensin ja tallenna " +
       "vain nimiä jotka näkyivät niiden tuloksissa. Kerro käyttäjälle mitä tallensit.",
     schema: SaveRules,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { rules } = SaveRules.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       // The same guard the import-time classifier applies: a pattern must occur
       // in a payee this ledger holds and nothing yet classifies. A model that
       // invents a merchant, or repeats one out of a statement's own text,
       // writes no rule.
-      const unknown = unknownMerchants(txns, rulesFor(db, userId), bank).map((name) =>
+      const unknown = unknownMerchants(txns, await rulesFor(db, userId), bank).map((name) =>
         name.toUpperCase(),
       );
       const grounded: { pattern: string; category: string }[] = [];
@@ -88,10 +88,10 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
         }
       }
 
-      const { added, rejected } = addRules(db, userId, grounded, "ai");
+      const { added, rejected } = await addRules(db, userId, grounded, "ai");
       // What each new rule now catches, so an answer can say what changed
       // rather than only that something did.
-      const after = rulesFor(db, userId);
+      const after = await rulesFor(db, userId);
       const matched = (pattern: string): number =>
         txns.filter(
           (txn) =>
@@ -126,12 +126,12 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
       "jotka käyttäjä on itse tehnyt -- ne kuuluvat hänelle, ja niistä on kerrottava että ne " +
       "pitää muuttaa Kulutus-sivulla.",
     schema: ChangeRule,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { pattern, category } = ChangeRule.parse(input);
       // SAFETY: `category` comes from `CategoryEnum`, built from the same label
       // table `isCategory` reads -- the check is here so the type follows.
       if (!isCategory(category)) return { changed: false, reason: "unknown-category" };
-      const result = recategoriseRule(db, userId, pattern, category);
+      const result = await recategoriseRule(db, userId, pattern, category);
 
       if (!result.ok) {
         return {
@@ -159,9 +159,9 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
       "Poistaa säännön, joka osuu liian laajasti tai on väärin. Ei koske käyttäjän itse tekemiin " +
       "sääntöihin. Poiston jälkeen osumat palaavat luokkaan Muu.",
     schema: DropRule,
-    run: (input): ToolResult => {
+    run: async (input): Promise<ToolResult> => {
       const { pattern } = DropRule.parse(input);
-      const result = retractRule(db, userId, pattern);
+      const result = await retractRule(db, userId, pattern);
 
       if (!result.ok) {
         return {

@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { z } from "zod";
 
 import {
@@ -10,8 +10,6 @@ import {
   UpdateAccount,
 } from "../../server/accounts.ts";
 import { authed, readable } from "./guard.ts";
-
-const { db } = getDb();
 
 /** Every account the signed-in person owns, brokerage and bank alike. */
 export const getAccounts = createServerFn()
@@ -29,5 +27,5 @@ export const editAccount = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(z.object({ id: z.number().int().positive(), changes: UpdateAccount }))
   .handler(({ data, context }) =>
-    readable(() => updateAccount(getDb().db, context.userId, data.id, data.changes)),
+    readable(() => updateAccount(db, context.userId, data.id, data.changes)),
   );

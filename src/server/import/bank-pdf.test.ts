@@ -61,7 +61,7 @@ describe("parseOpStatementText", () => {
     expect(new Set(rows.map((row) => row.externalId)).size).toBe(rows.length);
   });
 
-  test("refuses a document with no balance lines rather than importing rows alone", () => {
+  test("refuses a document with no balance lines rather than importing rows alone", async () => {
     expect(() =>
       parseOpStatementText("29.8.2025 −13,61 PKORTTIMAKSU 1 202508 J\nKAUPPA\n"),
     ).toThrow(/alku- ja loppusaldoa/);
@@ -104,7 +104,7 @@ describe("extractStatementText", () => {
   test("refuses a scan rather than reporting a statement with no transactions", async () => {
     // A PDF with no text layer parses to nothing, which would otherwise look
     // exactly like a statement covering a quiet month.
-    expect(extractStatementText(await pdf("scanned-no-text.pdf"))).rejects.toThrow(
+    await expect(extractStatementText(await pdf("scanned-no-text.pdf"))).rejects.toThrow(
       /ei sisällä tekstiä/,
     );
   });

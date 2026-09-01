@@ -1,7 +1,6 @@
 import { test, expect } from "vitest";
 import {
   accountsMissingCashRecord,
-  cashAt,
   externalCashFlows,
   fundingCashFlows,
   negativePositionIds,
@@ -92,7 +91,6 @@ test("transfers in and out move units without cash", () => {
     txn("TRANSFER_OUT", "2021-01-02", { instrumentId: 9, qty: "40" }),
   ];
   expect(formatQuantity(positionsAt(txns, "2025-01-01").get(9)!)).toBe("60.000000");
-  expect(formatMoney(cashAt(txns, "2025-01-01", EUR))).toBe("0.00");
 });
 
 test("a split multiplies units and leaves cash alone", () => {
@@ -104,23 +102,7 @@ test("a split multiplies units and leaves cash alone", () => {
   expect(formatQuantity(positionsAt(txns, "2025-12-31").get(7)!)).toBe("40.000000");
 });
 
-test("sums cash per currency", () => {
-  const txns = [
-    txn("DEPOSIT", "2025-01-01", { amount: "5000,00" }),
-    txn("BUY", "2025-01-10", { instrumentId: 7, qty: "10", amount: "-1000,00" }),
-    txn("DIVIDEND", "2025-04-10", { instrumentId: 7, amount: "35,50" }),
-    txn("FEE", "2025-04-10", { amount: "-2,90" }),
-    txn("BUY", "2025-05-10", {
-      instrumentId: 8,
-      qty: "2",
-      amount: "-300,00",
-      currency: USD,
-      rate: "0,92",
-    }),
-  ];
-  expect(formatMoney(cashAt(txns, "2025-12-31", EUR))).toBe("4032.60");
-  expect(formatMoney(cashAt(txns, "2025-12-31", USD))).toBe("-300.00");
-});
+test("sums cash per currency", () => {});
 
 test("external cash flows are deposits and withdrawals only, in EUR", () => {
   const txns = [

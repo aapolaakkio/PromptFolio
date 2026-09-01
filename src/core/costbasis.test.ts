@@ -301,7 +301,8 @@ test("each account keeps its own open lots, while the instrument's total still s
   expect(
     buildLots(txns)
       .open.map((lot) => lot.accountId)
-      .sort(),
+      // Numeric, not the default string order, which would put 10 before 2.
+      .sort((a, b) => a - b),
   ).toEqual([1, 2]);
   // A position spans accounts even though tax does not, so the holdings view's
   // per-instrument total must not change with this split.

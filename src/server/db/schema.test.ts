@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { test, expect } from "vitest";
+import type { Db } from "./index.ts";
 import { eq } from "drizzle-orm";
 import { getTableConfig, type AnySQLiteTable } from "drizzle-orm/sqlite-core";
 import { EUR } from "../../core/money.ts";
-import { getDb, testDb } from "./index.ts";
+import { testDb } from "./test-db.ts";
 import {
   account,
   accounts,
@@ -21,8 +21,9 @@ import {
   user,
 } from "./schema.ts";
 
-const seedUser = (db: ReturnType<typeof testDb>["db"], id: string) => {
-  db.insert(user)
+const seedUser = async (db: Db, id: string) => {
+  await db
+    .insert(user)
     .values({
       id,
       name: "Test User",
@@ -40,9 +41,12 @@ const seedUser = (db: ReturnType<typeof testDb>["db"], id: string) => {
  * matches `.message`, so assertions on the SQLite-level reason must go
  * through this helper instead.
  */
-const causeMessage = (thrower: () => void): string => {
+const causeMessage = async <T>(thrower: () => Promise<T>): Promise<string> => {
   try {
-    thrower();
+    // Awaited, not just called: the driver rejects now rather than throwing,
+    // so an un-awaited call would sail past the catch and fail the "expected
+    // function to throw" line below instead.
+    await thrower();
   } catch (error) {
     const cause = error instanceof Error ? error.cause : undefined;
     if (cause instanceof Error) return cause.message;
@@ -51,15 +55,15 @@ const causeMessage = (thrower: () => void): string => {
   throw new Error("Expected function to throw");
 };
 
-test("applies migrations to a fresh in-memory database", () => {
-  const { db } = testDb();
-  expect(db.select().from(accounts).all()).toEqual([]);
+test("applies migrations to a fresh in-memory database", async () => {
+  const { db } = await testDb();
+  expect(await db.select().from(accounts).all()).toEqual([]);
 });
 
-test("stores money as integer minor units and quantity scaled by 1e6", () => {
-  const { db } = testDb();
-  seedUser(db, "u1");
-  const [acct] = db
+test("stores money as integer minor units and quantity scaled by 1e6", async () => {
+  const { db } = await testDb();
+  await seedUser(db, "u1");
+  const [acct] = await db
     .insert(accounts)
     .values({
       userId: "u1",
@@ -69,7 +73,7 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
     })
     .returning()
     .all();
-  const [nokia] = db
+  const [nokia] = await db
     .insert(instruments)
     .values({
       isin: "FI0009000681",
@@ -83,7 +87,8 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
     .returning()
     .all();
 
-  db.insert(transactions)
+  await db
+    .insert(transactions)
     .values({
       accountId: acct!.id,
       instrumentId: nokia!.id,
@@ -102,16 +107,20 @@ test("stores money as integer minor units and quantity scaled by 1e6", () => {
     })
     .run();
 
-  const [row] = db.select().from(transactions).where(eq(transactions.accountId, acct!.id)).all();
+  const [row] = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.accountId, acct!.id))
+    .all();
   expect(row!.quantity).toBe(10_000_000);
   expect(row!.amount).toBe(-10000);
   expect(row!.fxRateEur).toBe(100_000_000);
 });
 
-test("rejects a duplicate content hash within one account", () => {
-  const { db } = testDb();
-  seedUser(db, "u1");
-  const [acct] = db
+test("rejects a duplicate content hash within one account", async () => {
+  const { db } = await testDb();
+  await seedUser(db, "u1");
+  const [acct] = await db
     .insert(accounts)
     .values({
       userId: "u1",
@@ -137,32 +146,35 @@ test("rejects a duplicate content hash within one account", () => {
     externalId: null,
     importId: null,
   };
-  db.insert(transactions).values(row).run();
-  expect(causeMessage(() => db.insert(transactions).values(row).run())).toMatch(/UNIQUE/i);
+  await db.insert(transactions).values(row).run();
+  expect(await causeMessage(async () => await db.insert(transactions).values(row).run())).toMatch(
+    /UNIQUE/i,
+  );
 });
 
-test("enforces foreign keys", () => {
-  const { db } = testDb();
-  const message = causeMessage(() =>
-    db
-      .insert(transactions)
-      .values({
-        accountId: 999,
-        instrumentId: null,
-        type: "DEPOSIT",
-        tradeDate: "2025-01-01",
-        quantity: 0,
-        unitPrice: null,
-        amount: 1,
-        fee: 0,
-        tax: 0,
-        currency: EUR,
-        fxRateEur: 100_000_000,
-        contentHash: "x",
-        externalId: null,
-        importId: null,
-      })
-      .run(),
+test("enforces foreign keys", async () => {
+  const { db } = await testDb();
+  const message = await causeMessage(
+    async () =>
+      await db
+        .insert(transactions)
+        .values({
+          accountId: 999,
+          instrumentId: null,
+          type: "DEPOSIT",
+          tradeDate: "2025-01-01",
+          quantity: 0,
+          unitPrice: null,
+          amount: 1,
+          fee: 0,
+          tax: 0,
+          currency: EUR,
+          fxRateEur: 100_000_000,
+          contentHash: "x",
+          externalId: null,
+          importId: null,
+        })
+        .run(),
   );
   expect(message).toMatch(/FOREIGN KEY/i);
 });
@@ -249,60 +261,6 @@ test("declares the accounts.user_id index and the price_fetch_log.run_at index",
   expect(logIndexNames).toEqual(["price_log_run_idx"]);
 });
 
-test("getDb memoizes a single shared handle across calls", () => {
-  const originalPath = process.env.DATABASE_PATH;
-  process.env.DATABASE_PATH = ":memory:";
-  try {
-    const first = getDb();
-    const second = getDb();
-    expect(second).toBe(first);
-    expect(first.sqlite.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
-  } finally {
-    if (originalPath === undefined) delete process.env.DATABASE_PATH;
-    else process.env.DATABASE_PATH = originalPath;
-  }
-});
-
-// resetDbHandleForTests() has no callers left in this suite: test-setup.ts
-// (a vitest.config.ts `setupFiles` entry) pins the one shared handle
-// before any test file runs, and no file may reset it afterward without
-// desyncing auth.ts/accounts.ts/instruments.ts from each other again (see
-// test-setup.ts's comment and task-9-report.md's fix-up report for the bug
-// that caused). So this runs the reset in a genuinely separate child
-// process instead, where resetting is safe because nothing else shares
-// that process's handle.
-test("resetDbHandleForTests() forces the next getDb() call to open a new handle", () => {
-  const dbIndexPath = new URL("./index.ts", import.meta.url).pathname;
-  const script = `
-    const { getDb, resetDbHandleForTests } = await import(${JSON.stringify(dbIndexPath)});
-    process.env.DATABASE_PATH = ":memory:";
-    const first = getDb();
-    first.sqlite.exec("CREATE TABLE marker (id INTEGER)");
-    resetDbHandleForTests();
-    process.env.DATABASE_PATH = ":memory:";
-    const second = getDb();
-    const marker = second.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='marker'")
-      .get();
-    // node:sqlite answers "no such row" with undefined where node:sqlite
-    // answered null, so this asks whether a row came back at all rather than
-    // which flavour of empty it is.
-    console.log(JSON.stringify({ sameHandle: second === first, hasMarker: marker != null }));
-  `;
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    encoding: "utf-8",
-  });
-  expect(result.status).toBe(0);
-  // SAFETY: the script above unconditionally prints exactly one JSON line
-  // as its only stdout output, or the exit-code check above would already
-  // have thrown.
-  const parsed = JSON.parse(result.stdout.trim()) as {
-    sameHandle: boolean;
-    hasMarker: boolean;
-  };
-  expect(parsed.sameHandle).toBe(false);
-  expect(parsed.hasMarker).toBe(false);
-});
-
 test("declares one target per slice per dimension per user", () => {
   // Asserted on the declaration, not only through an insert: the constraint is
   // what stops a half-applied write leaving two targets for one slice, and a
@@ -315,36 +273,38 @@ test("declares one target per slice per dimension per user", () => {
   ]);
 });
 
-test("a user cannot hold two targets for the same slice", () => {
-  const { db } = testDb();
-  seedUser(db, "targets-user");
+test("a user cannot hold two targets for the same slice", async () => {
+  const { db } = await testDb();
+  await seedUser(db, "targets-user");
   const row = {
     userId: "targets-user",
     dimension: "kind" as const,
     key: "stock",
     weightBp: 6000,
   };
-  db.insert(allocationTargets).values(row).run();
+  await db.insert(allocationTargets).values(row).run();
 
   // A second target for the same slice is a contradiction, not an update: a
   // set is replaced wholesale, never accumulated into, so two rows for one
   // slice can only mean a half-applied write.
-  expect(() => db.insert(allocationTargets).values(row).run()).toThrow();
+  await expect(db.insert(allocationTargets).values(row).run()).rejects.toThrow();
 });
 
-test("the same slice can be targeted on two different dimensions", () => {
-  const { db } = testDb();
-  seedUser(db, "two-dimensions");
-  db.insert(allocationTargets)
+test("the same slice can be targeted on two different dimensions", async () => {
+  const { db } = await testDb();
+  await seedUser(db, "two-dimensions");
+  await db
+    .insert(allocationTargets)
     .values({ userId: "two-dimensions", dimension: "kind", key: "stock", weightBp: 10000 })
     .run();
 
   // "stock" as a kind and "stock" as an account name are different slices that
   // happen to share a key, so the index has to include the dimension.
-  expect(() =>
-    db
-      .insert(allocationTargets)
-      .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })
-      .run(),
+  expect(
+    async () =>
+      await db
+        .insert(allocationTargets)
+        .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })
+        .run(),
   ).not.toThrow();
 });

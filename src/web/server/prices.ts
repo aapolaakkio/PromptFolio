@@ -2,11 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { isRealCalendarDate } from "../../server/calendar-date.ts";
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { recordManualPrice } from "../../server/prices/manual.ts";
 import { authed, readable } from "./guard.ts";
-
-const { db } = getDb();
 
 /**
  * What a person may type into the price form.

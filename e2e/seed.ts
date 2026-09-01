@@ -1,6 +1,3 @@
-import { mkdirSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-
 import { EUR } from "../src/core/money.ts";
 
 /** ISINs the Nordnet fixture names, which an import refuses to commit without. */
@@ -16,32 +13,25 @@ const FIXTURE_INSTRUMENTS = [
 ] as const;
 
 /**
- * A database of its own for the browser tests: deleted, migrated and given the
- * instruments the fixture import needs. Nothing else is seeded -- the account
- * and the owner are created through the pages, which is the point of the run.
+ * Gives the local D1 the instruments the fixture import needs. Nothing else is
+ * seeded -- the account and the owner are created through the pages, which is
+ * the point of the run.
+ *
+ * The database itself is not created or migrated here any more: that is
+ * `pnpm run db:migrate:local`, against the D1 the Vite plugin serves.
  */
 const seed = async (): Promise<void> => {
-  const path = resolve("./e2e/.tmp/e2e.db");
-  mkdirSync(dirname(path), { recursive: true });
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(`${path}${suffix}`, { force: true });
-
-  const { openDb, migrate } = await import("../src/server/db/index.ts");
+  const { db } = await import("../src/server/db/index.ts");
   const { addInstrument } = await import("../src/server/instruments/store.ts");
 
-  const handle = openDb(path);
-  try {
-    migrate(handle.db);
-    for (const instrument of FIXTURE_INSTRUMENTS) {
-      addInstrument(handle.db, {
-        ...instrument,
-        ticker: null,
-        currency: EUR,
-        priceSource: "manual",
-        sourceKey: instrument.isin,
-      });
-    }
-  } finally {
-    handle.sqlite.close();
+  for (const instrument of FIXTURE_INSTRUMENTS) {
+    await addInstrument(db, {
+      ...instrument,
+      ticker: null,
+      currency: EUR,
+      priceSource: "manual",
+      sourceKey: instrument.isin,
+    });
   }
 };
 

@@ -109,6 +109,6 @@ test("a row with the wrong number of figures is reported, not absorbed", () => {
   expect(holdings.map((h) => h.name)).toEqual(["ESIMERKKI INDEKSI A"]);
 });
 
-test("text that is not OP's holdings view is refused", () => {
+test("text that is not OP's holdings view is refused", async () => {
   expect(() => parseOpWebHoldings("Kuitti\nKiitos\n12,34")).toThrow(/ei tunnistettu/);
 });

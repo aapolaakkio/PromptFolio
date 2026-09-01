@@ -2,13 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { EUR } from "../core/money.ts";
 import { currencyField } from "./currency-field.ts";
-import { getDb } from "./db/index.ts";
+import { type Db, db } from "./db/index.ts";
 import { accounts } from "./db/schema.ts";
 import { HttpError } from "./errors.ts";
 
-type Db = ReturnType<typeof getDb>["db"];
-
-const { db: sharedDb } = getDb();
+const sharedDb = db;
 
 const accountKind = z.enum(["brokerage", "bank"]);
 
@@ -122,8 +120,8 @@ export const CreateAccount = z.object({
  * response a missing account gives, so "not yours" cannot be told from "does not
  * exist". Anything taking an account id from a caller must run this first.
  */
-export const assertAccountOwned = (userId: string, accountId: number): void => {
-  const owned = sharedDb
+export const assertAccountOwned = async (userId: string, accountId: number): Promise<void> => {
+  const owned = await sharedDb
     .select({ id: accounts.id })
     .from(accounts)
     .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
@@ -132,15 +130,15 @@ export const assertAccountOwned = (userId: string, accountId: number): void => {
 };
 
 /** Every account this person owns. */
-export const listAccounts = (db: Db, userId: string) => {
-  return db.select().from(accounts).where(eq(accounts.userId, userId)).all();
+export const listAccounts = async (db: Db, userId: string) => {
+  return await db.select().from(accounts).where(eq(accounts.userId, userId)).all();
 };
 
 /** Opens one, refusing a type that does not match its kind or its terms. */
-export const openAccount = (db: Db, userId: string, body: z.infer<typeof CreateAccount>) => {
+export const openAccount = async (db: Db, userId: string, body: z.infer<typeof CreateAccount>) => {
   assertTypeMatchesKind(body.kind, body.accountType);
   assertTermsMatchType(body.accountType, body);
-  const created = db
+  const created = await db
     .insert(accounts)
     .values({
       name: body.name,
@@ -158,13 +156,13 @@ export const openAccount = (db: Db, userId: string, body: z.infer<typeof CreateA
 };
 
 /** Renames one, or changes its type and deposit terms. */
-export const updateAccount = (
+export const updateAccount = async (
   db: Db,
   userId: string,
   accountId: number,
   body: z.infer<typeof UpdateAccount>,
 ) => {
-  assertAccountOwned(userId, accountId);
+  await assertAccountOwned(userId, accountId);
 
   // Only the fields the request actually carried: an absent `name` must not
   // blank the stored one, and an absent type must not clear it. An explicit
@@ -172,7 +170,7 @@ export const updateAccount = (
   // Terms are checked against the type the account will HAVE after this
   // request, not the one it had before: setting type and maturity together
   // in one PATCH is the normal way to record a new deposit.
-  const current = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+  const current = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   // The kind is fixed at creation: an account's transactions were imported
   // and interpreted under it, and a brokerage account turned into a bank one
   // would take its holdings out of the return figures with no trace.

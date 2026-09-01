@@ -1,17 +1,15 @@
 import { asc, eq } from "drizzle-orm";
 
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { instruments, priceFetchLog, prices, transactions } from "../db/schema.ts";
 import { backfillFxRates, refreshFxRates } from "../fx.ts";
 import { sourceFor } from "./registry.ts";
 import type { FetchImpl, FetchedPrice } from "./types.ts";
 import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write.ts";
 
-type Db = ReturnType<typeof getDb>["db"];
-
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-const logAttempt = (
+const logAttempt = async (
   db: Db,
   args: {
     readonly source: string;
@@ -19,8 +17,9 @@ const logAttempt = (
     readonly ok: boolean;
     readonly message: string;
   },
-): void => {
-  db.insert(priceFetchLog)
+): Promise<void> => {
+  await db
+    .insert(priceFetchLog)
     .values({
       source: args.source,
       instrumentId: args.instrumentId,
@@ -51,7 +50,7 @@ export const refreshPrices = async (
   let ok = 0;
   let failed = 0;
 
-  for (const instrument of db.select().from(instruments).all()) {
+  for (const instrument of await db.select().from(instruments).all()) {
     if (instrument.priceSource === "manual") continue;
     const source = sourceFor(instrument.priceSource);
 
@@ -62,7 +61,7 @@ export const refreshPrices = async (
         to: asOf,
         fetchImpl: opts.fetchImpl,
       });
-      const { written, rejectedImplausible, reBaselined } = writePrices(
+      const { written, rejectedImplausible, reBaselined } = await writePrices(
         db,
         instrument.id,
         source.id,
@@ -79,11 +78,11 @@ export const refreshPrices = async (
         console.warn(
           `Hintasarja uudelleenperustettu: ${source.id} instrumentille ${instrument.id}`,
         );
-        logAttempt(db, { source: source.id, instrumentId: instrument.id, ok: true, message });
+        await logAttempt(db, { source: source.id, instrumentId: instrument.id, ok: true, message });
         ok++;
       } else if (rejectedImplausible > 0) {
         failed++;
-        logAttempt(db, {
+        await logAttempt(db, {
           source: source.id,
           instrumentId: instrument.id,
           ok: false,
@@ -93,7 +92,7 @@ export const refreshPrices = async (
         });
       } else {
         ok++;
-        logAttempt(db, {
+        await logAttempt(db, {
           source: source.id,
           instrumentId: instrument.id,
           ok: true,
@@ -102,7 +101,7 @@ export const refreshPrices = async (
       }
     } catch (cause) {
       failed++;
-      logAttempt(db, {
+      await logAttempt(db, {
         source: source.id,
         instrumentId: instrument.id,
         ok: false,
@@ -140,10 +139,14 @@ export const backfillInstrument = async (
   instrumentId: number,
   opts: { fetchImpl?: FetchImpl; today?: string } = {},
 ): Promise<BackfillResult> => {
-  const instrument = db.select().from(instruments).where(eq(instruments.id, instrumentId)).get();
+  const instrument = await db
+    .select()
+    .from(instruments)
+    .where(eq(instruments.id, instrumentId))
+    .get();
   if (!instrument || instrument.priceSource === "manual") return { inserted: 0, incomplete: false };
 
-  const earliest = db
+  const earliest = await db
     .select({ tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(eq(transactions.instrumentId, instrumentId))
@@ -165,7 +168,7 @@ export const backfillInstrument = async (
       fetchImpl: opts.fetchImpl,
     });
   } catch (cause) {
-    logAttempt(db, {
+    await logAttempt(db, {
       source: source.id,
       instrumentId,
       ok: false,
@@ -174,7 +177,7 @@ export const backfillInstrument = async (
     return { inserted: 0, incomplete: true };
   }
 
-  const { written, rejectedImplausible, reBaselined } = writePrices(
+  const { written, rejectedImplausible, reBaselined } = await writePrices(
     db,
     instrumentId,
     source.id,
@@ -218,7 +221,7 @@ export const backfillInstrument = async (
   // of the process, not an unrelated failure.
   const ok = reBaselined > 0 ? !incomplete : !incomplete && rejectedImplausible === 0;
 
-  logAttempt(db, { source: source.id, instrumentId, ok, message: parts.join("; ") });
+  await logAttempt(db, { source: source.id, instrumentId, ok, message: parts.join("; ") });
 
   return { inserted: written, incomplete };
 };
@@ -236,14 +239,18 @@ const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund"]);
  * transaction. Re-running a full backfill for one that already reaches back
  * would be a wasted request every night.
  */
-const needsBackfill = (db: Db, instrumentId: number): boolean => {
-  const instrument = db.select().from(instruments).where(eq(instruments.id, instrumentId)).get();
+const needsBackfill = async (db: Db, instrumentId: number): Promise<boolean> => {
+  const instrument = await db
+    .select()
+    .from(instruments)
+    .where(eq(instruments.id, instrumentId))
+    .get();
   if (!instrument) return false;
   if (instrument.priceSource === "manual" || NEVER_BACKFILLABLE.has(instrument.priceSource)) {
     return false;
   }
 
-  const earliestTxn = db
+  const earliestTxn = await db
     .select({ tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(eq(transactions.instrumentId, instrumentId))
@@ -252,7 +259,7 @@ const needsBackfill = (db: Db, instrumentId: number): boolean => {
     .get();
   if (!earliestTxn) return false;
 
-  const earliestPrice = db
+  const earliestPrice = await db
     .select({ date: prices.date })
     .from(prices)
     .where(eq(prices.instrumentId, instrumentId))
@@ -294,7 +301,7 @@ export const backfillMany = async (
   let errored = 0;
 
   for (const instrumentId of new Set(instrumentIds)) {
-    if (!needsBackfill(db, instrumentId)) continue;
+    if (!(await needsBackfill(db, instrumentId))) continue;
     attempted++;
     try {
       const result = await backfillInstrument(db, instrumentId, opts);
@@ -344,11 +351,9 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
   try {
     // Any instrument whose history still falls short: one imported before this
     // sweep existed, or whose backfill on import failed or never ran.
-    const allInstrumentIds = db
-      .select({ id: instruments.id })
-      .from(instruments)
-      .all()
-      .map((row) => row.id);
+    const allInstrumentIds = (await db.select({ id: instruments.id }).from(instruments).all()).map(
+      (row) => row.id,
+    );
     const result = await backfillMany(db, allInstrumentIds);
     if (result.attempted > 0) {
       console.log(

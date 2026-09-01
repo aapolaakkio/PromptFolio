@@ -11,7 +11,9 @@ import { readable } from "./guard.ts";
  * answer is false, and creating refuses once it is true, so there is no window
  * after the first visit in which a stranger could claim the instance.
  */
-export const getSetupState = createServerFn().handler(() => ({ hasUsers: hasAnyUser() }));
+export const getSetupState = createServerFn().handler(async () => ({
+  hasUsers: await hasAnyUser(),
+}));
 
 export const createFirstAccount = createServerFn({ method: "POST" })
   .validator(CreateFirstUser)

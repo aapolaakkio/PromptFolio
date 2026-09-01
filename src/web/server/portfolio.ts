@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import { getDb } from "../../server/db/index.ts";
+import { db } from "../../server/db/index.ts";
 import { holdingsFor } from "../../server/valuation.ts";
 import {
   allocationView,
@@ -15,8 +15,6 @@ import {
   valueSeriesView,
 } from "../../server/views/portfolio.ts";
 import { authed } from "./guard.ts";
-
-const { db } = getDb();
 
 const IsoDate = z
   .string()

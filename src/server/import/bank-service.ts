@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { createHash } from "node:crypto";
 import { readUpload } from "./upload.ts";
 import { and, asc, eq } from "drizzle-orm";
@@ -16,16 +17,12 @@ import {
   type PdfStatement,
 } from "./bank-pdf.ts";
 import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep.ts";
-import { getDb } from "../db/index.ts";
+import { type Db, db } from "../db/index.ts";
 import { accounts, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { CHAT_MODEL, createClient, type ToolRunnerClient } from "../chat/runner.ts";
 import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.ts";
-
-type Db = ReturnType<typeof getDb>["db"];
-
-const { db } = getDb();
 
 /** Every bank format the app can read. A file is matched against each in turn. */
 // The card log is tried first: its signature is the stricter of the two, and an
@@ -111,8 +108,8 @@ const detect = (bytes: ArrayBuffer): BankStatementConfig => {
  * A statement belongs on a bank account. Loading a year of card payments onto a
  * brokerage one would put spending into the ledger the returns are computed from.
  */
-const assertBankAccount = (accountId: number): void => {
-  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+const assertBankAccount = async (accountId: number): Promise<void> => {
+  const account = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   if (account?.kind !== "bank") {
     throw new HttpError(400, "Tiliote voidaan tuoda vain pankkitilille");
   }
@@ -141,10 +138,10 @@ const classifyImportedSpending = async (
   userId: string,
   accountId: number,
 ): Promise<ClassifyResult | null> => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
 
-  const { txns } = loadPortfolio(db, userId);
+  const { txns } = await loadPortfolio(db, userId);
   return classifyNewMerchants(db, userId, {
     txns,
     accountIds: new Set([accountId]),
@@ -166,8 +163,12 @@ type MaturityOutcome = {
   readonly maturityConflict: string | null;
 };
 
-const recordMaturity = (db: Db, accountId: number, statement: PdfStatement): MaturityOutcome => {
-  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+const recordMaturity = async (
+  db: Db,
+  accountId: number,
+  statement: PdfStatement,
+): Promise<MaturityOutcome> => {
+  const account = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   const stated = statement.maturityDate;
   if (stated === null || account === undefined) {
     return { maturityDate: account?.maturityDate ?? null, maturityConflict: null };
@@ -178,7 +179,7 @@ const recordMaturity = (db: Db, accountId: number, statement: PdfStatement): Mat
     return { maturityDate: null, maturityConflict: null };
   }
   if (account.maturityDate === null) {
-    db.update(accounts).set({ maturityDate: stated }).where(eq(accounts.id, accountId)).run();
+    await db.update(accounts).set({ maturityDate: stated }).where(eq(accounts.id, accountId)).run();
     return { maturityDate: stated, maturityConflict: null };
   }
   return {
@@ -201,12 +202,12 @@ type Reconciliation = {
   readonly openingBalanceDate: string;
 };
 
-const reconcileToStatement = (
+const reconcileToStatement = async (
   db: Db,
   accountId: number,
   statement: PdfStatement,
-): Reconciliation => {
-  const existing = db
+): Promise<Reconciliation> => {
+  const existing = await db
     .select({ id: transactions.id, tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(
@@ -228,33 +229,35 @@ const reconcileToStatement = (
   const reachesFurtherBack = existing === undefined || statement.from < existing.tradeDate;
 
   if (reachesFurtherBack) {
-    db.transaction((tx) => {
-      if (existing) tx.delete(transactions).where(eq(transactions.id, existing.id)).run();
-      // Written even when it is zero. "The account held nothing on 31.12.2024"
-      // is a fact, and the row is what carries its date -- without it, the next
-      // statement imported finds no opening balance and writes its own later
-      // one over a history that already reaches further back.
-      tx.insert(transactions)
-        .values({
-          accountId,
-          instrumentId: null,
-          type: "OPENING_BALANCE",
-          tradeDate: statement.from,
-          quantity: 0,
-          unitPrice: null,
-          amount: Number(statement.openingBalance.minor),
-          fee: 0,
-          tax: 0,
-          currency: EUR,
-          fxRateEur: 100_000_000,
-          contentHash: `opening:${accountId}:EUR`,
-          note: `Alkusaldo tiliotteelta ${statement.from}`,
-        })
-        .run();
+    // Written even when it is zero. "The account held nothing on 31.12.2024"
+    // is a fact, and the row is what carries its date -- without it, the next
+    // statement imported finds no opening balance and writes its own later
+    // one over a history that already reaches further back.
+    const replacement = db.insert(transactions).values({
+      accountId,
+      instrumentId: null,
+      type: "OPENING_BALANCE",
+      tradeDate: statement.from,
+      quantity: 0,
+      unitPrice: null,
+      amount: Number(statement.openingBalance.minor),
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: `opening:${accountId}:EUR`,
+      note: `Alkusaldo tiliotteelta ${statement.from}`,
     });
+
+    // One batch, which D1 runs as a single transaction. The delete must not
+    // land without the insert: an account with no opening balance at all
+    // values its whole history from nothing.
+    await (existing
+      ? db.batch([db.delete(transactions).where(eq(transactions.id, existing.id)), replacement])
+      : db.batch([replacement]));
   }
 
-  const rows = db
+  const rows = await db
     .select({ amount: transactions.amount, tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(eq(transactions.accountId, accountId))
@@ -294,8 +297,8 @@ export const BalanceInput = z
 
 export const previewBankStatement = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
-  assertAccountOwned(userId, accountId);
-  assertBankAccount(accountId);
+  await assertAccountOwned(userId, accountId);
+  await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
   const { bank, rows, problems, statement } = await readStatement(bytes);
@@ -333,22 +336,29 @@ export const previewBankStatement = async (userId: string, form: FormData) => {
 
 export const commitBankStatementUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
-  assertAccountOwned(userId, accountId);
-  assertBankAccount(accountId);
+  await assertAccountOwned(userId, accountId);
+  await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
   const { rows, problems, statement } = await readStatement(bytes);
   if (rows.length === 0) throw new HttpError(400, "Tiedostosta ei löytynyt yhtään tapahtumaa");
 
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
-  const result = commitBankStatement(db, { userId, accountId, filename: file.name, sha256, rows });
+  const result = await commitBankStatement(db, {
+    userId,
+    accountId,
+    filename: file.name,
+    sha256,
+    rows,
+  });
 
   // A PDF states what the account held before its first row, so the opening
   // balance is written from the statement instead of being asked for. The
   // ledger's own balance is then compared against the printed closing one: they
   // agree unless this account already held rows for the same period.
-  const reconciliation = statement === null ? null : reconcileToStatement(db, accountId, statement);
-  const maturity = statement === null ? null : recordMaturity(db, accountId, statement);
+  const reconciliation =
+    statement === null ? null : await reconcileToStatement(db, accountId, statement);
+  const maturity = statement === null ? null : await recordMaturity(db, accountId, statement);
 
   // Whatever this file named that no rule covers is put to the model once, and
   // what it proposes becomes rules for next time. Failure is reported rather
@@ -373,15 +383,15 @@ export const commitBankStatementUpload = async (userId: string, form: FormData) 
  * today's figure and writes the opening balance that closes the gap. Run again,
  * a difference of zero means every imported row still adds up.
  */
-export const setAccountBalance = (userId: string, body: z.infer<typeof BalanceInput>) => {
+export const setAccountBalance = async (userId: string, body: z.infer<typeof BalanceInput>) => {
   const { accountId, on, balance } = BalanceInput.parse(body);
-  assertAccountOwned(userId, accountId);
+  await assertAccountOwned(userId, accountId);
 
   const stated = parseMoney(balance, EUR);
-  const { txns } = loadPortfolio(db, userId);
+  const { txns } = await loadPortfolio(db, userId);
   const ownRows = txns.filter((txn) => txn.accountId === accountId);
 
-  const existingOpening = db
+  const existingOpening = await db
     .select()
     .from(transactions)
     .where(
@@ -403,7 +413,7 @@ export const setAccountBalance = (userId: string, body: z.infer<typeof BalanceIn
 
   // The day before the account's first recorded movement: the balance belongs
   // to the period the statements do not cover, not inside it.
-  const firstRow = db
+  const firstRow = await db
     .select({ tradeDate: transactions.tradeDate })
     .from(transactions)
     .where(eq(transactions.accountId, accountId))
@@ -411,30 +421,32 @@ export const setAccountBalance = (userId: string, body: z.infer<typeof BalanceIn
     .get();
   const openingDate = dayBefore(firstRow?.tradeDate ?? on);
 
-  db.transaction((tx) => {
-    if (existingOpening) {
-      tx.delete(transactions).where(eq(transactions.id, existingOpening.id)).run();
-    }
-    // Recorded even at zero: the row carries the date the account's known
-    // history starts from.
-    tx.insert(transactions)
-      .values({
-        accountId,
-        instrumentId: null,
-        type: "OPENING_BALANCE",
-        tradeDate: openingDate,
-        quantity: 0,
-        unitPrice: null,
-        amount: Number(opening.minor),
-        fee: 0,
-        tax: 0,
-        currency: EUR,
-        fxRateEur: 100_000_000,
-        contentHash: `opening:${accountId}:EUR`,
-        note: `Alkusaldo, johdettu saldosta ${formatMoney(stated)} (${on})`,
-      })
-      .run();
+  // Recorded even at zero: the row carries the date the account's known
+  // history starts from.
+  const replacement = db.insert(transactions).values({
+    accountId,
+    instrumentId: null,
+    type: "OPENING_BALANCE",
+    tradeDate: openingDate,
+    quantity: 0,
+    unitPrice: null,
+    amount: Number(opening.minor),
+    fee: 0,
+    tax: 0,
+    currency: EUR,
+    fxRateEur: 100_000_000,
+    contentHash: `opening:${accountId}:EUR`,
+    note: `Alkusaldo, johdettu saldosta ${formatMoney(stated)} (${on})`,
   });
+
+  // One batch, which D1 runs as a single transaction: the delete must not land
+  // without the insert that replaces it.
+  await (existingOpening
+    ? db.batch([
+        db.delete(transactions).where(eq(transactions.id, existingOpening.id)),
+        replacement,
+      ])
+    : db.batch([replacement]));
 
   return {
     on,

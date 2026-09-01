@@ -1,15 +1,13 @@
-import type { getDb } from "../db/index.ts";
+import type { Db } from "../db/index.ts";
 import { backfillFxRates } from "../fx.ts";
 import { backfillMany } from "../prices/refresh.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import type { Draft } from "./map.ts";
 
-type Db = ReturnType<typeof getDb>["db"];
-
 /**
  * The import-commit trigger for backfill (spec §10 item 7 / §6 "Backfill": "on first import of
  * an instrument, fetch history back to its earliest transaction"). Called by
- * `src/server/api/imports.ts` right after `commitDraft` resolves, for every commit route (CSV
+ * `src/server/import/service.ts` right after `commitDraft` resolves, for every commit path (CSV
  * and OP-paste alike) -- this is the one moment an instrument's earliest transaction date is
  * actually known, since a row can only commit once its instrument already exists (an unknown
  * ISIN refuses the whole commit -- see commit.ts's `unknownIsins` check), and a commit is what

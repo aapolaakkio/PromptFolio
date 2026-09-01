@@ -69,15 +69,15 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Nykyiset omistukset: määrä, hankintameno, markkina-arvo, tuotto ja paino. " +
       "Anna 'on' jos haluat tilanteen menneeltä päivältä.",
     schema: OnDate,
-    run: (input) => {
+    run: async (input) => {
       const { on = today() } = OnDate.parse(input);
-      const rows = holdingsFor(db, userId, on);
+      const rows = await holdingsFor(db, userId, on);
       return {
         asOf: on,
         stale: rows.some((row) => row.stale),
         // Named here so an answer about total worth does not have to add cash in
         // prose -- which the system prompt forbids. get_cash breaks it down.
-        cashEur: cashFor(db, userId, on).totalEur,
+        cashEur: (await cashFor(db, userId, on)).totalEur,
         holdings: rows.map((row) => ({
           name: row.name,
           isin: row.isin,
@@ -102,9 +102,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "olevan rahan ja määräaikaistalletukset, joita ei voi nostaa ennen eräpäivää. " +
       "Käteinen on mukana salkun arvossa ja jakaumassa, mutta ei tuottoluvuissa.",
     schema: OnDate,
-    run: (input) => {
+    run: async (input) => {
       const { on = today() } = OnDate.parse(input);
-      const { rows, totalEur, availableEur, lockedEur } = cashFor(db, userId, on);
+      const { rows, totalEur, availableEur, lockedEur } = await cashFor(db, userId, on);
       return {
         asOf: on,
         totalEur,
@@ -136,9 +136,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Omistusten jakauma valitulla ulottuvuudella: kind (laji), currency (valuutta), " +
       "account (tili) tai instrument (arvopaperi).",
     schema: Allocation,
-    run: (input) => {
+    run: async (input) => {
       const { on = today(), dimension = "kind" } = Allocation.parse(input);
-      const { txns, cashTxns, instruments, prices } = loadPortfolio(db, userId);
+      const { txns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
       const cash = valueCash(cashBalancesAt(cashTxns, on), prices.fxOn, on);
       const { slices, excludedInstrumentIds } = allocateBy(
         txns,
@@ -167,11 +167,11 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Tuottoluvut: aikapainotettu (twr) ja oma tuotto (xirr, rahapainotettu), " +
       "sekä salkun arvo jakson lopussa.",
     schema: Range,
-    run: (input) => {
+    run: async (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
       // Invested rows only: a bank account's spending is not portfolio
       // performance (see valuation.ts's `Portfolio.investedTxns`).
-      const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
       const final = series.at(-1);
       const twrFlows = investedCashFlows(investedTxns).filter(
@@ -209,9 +209,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Salkun arvon kehitys jaksolla. Palauttaa enintään 60 pistettä tasavälein, " +
       "eli pitkältä jaksolta noin kuukausittain.",
     schema: Range,
-    run: (input) => {
+    run: async (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
-      const { investedTxns, instruments, prices } = loadPortfolio(db, userId);
+      const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
       // Thinned rather than truncated: a truncated series would answer "how did
       // it develop" with only its beginning. 60 points is what a sentence about
@@ -235,13 +235,13 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Tapahtumat aikajärjestyksessä, uusimmat ensin. Rajaa 'from'/'to' päivillä ja " +
       "'limit' määrällä (oletus 25, enintään 200).",
     schema: Transactions,
-    run: (input) => {
+    run: async (input) => {
       const {
         from = "1900-01-01",
         to = today(),
         limit = DEFAULT_TXN_LIMIT,
       } = Transactions.parse(input);
-      const { txns, instruments } = loadPortfolio(db, userId);
+      const { txns, instruments } = await loadPortfolio(db, userId);
       const byId = new Map(instruments.map((i) => [i.id, i.name]));
       const rows = txns
         .filter((t) => t.tradeDate >= from && t.tradeDate <= to)
@@ -273,7 +273,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "esim. ruoka, ravintolat, liikenne) tai counterparty (saajittain). Summat on " +
       "laskettu valmiiksi -- älä laske niitä itse yhteen.",
     schema: Spending,
-    run: (input) => {
+    run: async (input) => {
       const {
         from = "1900-01-01",
         to = today(),
@@ -283,12 +283,12 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       // Bank rows only, minus the movements: a share purchase is money leaving
       // too, and counting it -- or a transfer to savings, or the credit card
       // bill -- would report the year's biggest movement as its biggest expense.
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       const moved = notSpendingIds(txns, bank);
       const summary = summariseSpending(
         txns.filter((txn) => bank.has(txn.accountId) && !moved.has(txn.id)),
-        { from, to, by: groupBy, limit, rules: rulesFor(db, userId) },
+        { from, to, by: groupBy, limit, rules: await rulesFor(db, userId) },
       );
       return {
         from: summary.from,
@@ -314,11 +314,11 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Maksut, joita sääntöpohjainen luokittelu ei tunnistanut (luokka Muu), saajittain " +
       "ja summattuna. Käytä tätä kun haluat arvioida itse mihin ne kuuluvat.",
     schema: Spending,
-    run: (input) => {
+    run: async (input) => {
       const { from = "1900-01-01", to = today(), limit = 30 } = Spending.parse(input);
-      const { txns, bankAccountIds } = loadPortfolio(db, userId);
+      const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
-      const rules = rulesFor(db, userId);
+      const rules = await rulesFor(db, userId);
       const moved = notSpendingIds(txns, bank);
       const summary = summariseSpending(
         txns.filter(
@@ -352,12 +352,16 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "Laskee tarkasti sentin tarkkuudella: sum, subtract, multiply, divide, percent, average. " +
       "Käytä tätä aina kun johdat luvun toisista luvuista -- älä laske päässäsi.",
     schema: Calculation,
+    // The one tool that touches no data at all, but it shares `ChatTool`'s
+    // async shape with the rest rather than making the type a union of two.
     run: (input) => {
       const { operation, values } = Calculation.parse(input);
       try {
-        return calculate({ operation, values });
+        return Promise.resolve(calculate({ operation, values }));
       } catch (cause) {
-        return { error: cause instanceof Error ? cause.message : "Laskenta epäonnistui" };
+        return Promise.resolve({
+          error: cause instanceof Error ? cause.message : "Laskenta epäonnistui",
+        });
       }
     },
   },
@@ -366,9 +370,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     name: "get_instruments",
     description: "Rekisteröidyt arvopaperit: nimi, ISIN, laji, valuutta ja hintalähde.",
     schema: NoArgs,
-    run: (input) => {
+    run: async (input) => {
       NoArgs.parse(input);
-      const { txns, instruments } = loadPortfolio(db, userId);
+      const { txns, instruments } = await loadPortfolio(db, userId);
       // The instrument registry is shared across the household by design (one
       // ISIN, one row), so it is narrowed here to what this user's own ledger
       // actually references -- chat must not name a fund only someone else owns.
@@ -393,13 +397,13 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "sekä kulut vuosittain. by: kind (oletus), currency, account tai instrument. " +
       "Älä ehdota kauppoja -- kerro ero ja mitä sen korjaaminen vaatisi.",
     schema: Grouping,
-    run: (input) => {
+    run: async (input) => {
       const { by = "kind" } = Grouping.parse(input);
       const on = today();
       // Reads through the same functions the Tasapaino screen calls, so chat
       // and the screen cannot disagree about how far off the portfolio is.
-      const drift = driftReportFor(db, userId, by, on);
-      const fees = feeReportFor(db, userId);
+      const drift = await driftReportFor(db, userId, by, on);
+      const fees = await feeReportFor(db, userId);
       return {
         asOf: on,
         groupBy: by,
@@ -435,9 +439,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       "pääomatulon veroprosentti riippuu myös tuloista joita sovellus ei näe. Ilman " +
       "vuotta palautetaan viimeisin vuosi jolla on verotettavia tapahtumia.",
     schema: TaxYear,
-    run: (input) => {
+    run: async (input) => {
       const { year } = TaxYear.parse(input);
-      const years = taxYearsFor(db, userId);
+      const years = await taxYearsFor(db, userId);
       // A ledger with no taxable event at all still answers, for the year we
       // are in: an empty report is the true answer to "what do I owe on 2026",
       // and `availableYears` says which years have anything in them.
@@ -445,7 +449,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
 
       // Reads through the same function the Verot screen calls, so chat and
       // the screen cannot disagree about a figure someone files on.
-      const report = taxYearFor(db, userId, chosen);
+      const report = await taxYearFor(db, userId, chosen);
       return {
         year: report.year,
         availableYears: years,
