@@ -1,6 +1,4 @@
-import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import { z, ZodError } from "zod";
 
 import { HttpError } from "../errors.ts";
@@ -9,11 +7,7 @@ import { HttpError } from "../errors.ts";
 // who is allowed to read what. The model itself is scripted (see runner.test.ts
 // for why): no key, no network, no cost.
 
-type ToolRunnerClient = (typeof import("./runner.ts"))["createClient"] extends (
-  apiKey: string,
-) => infer C
-  ? C
-  : never;
+type ChatClient = ReturnType<(typeof import("./runner.ts"))["createClient"]>;
 
 type Conversations = typeof import("./conversations.ts");
 
@@ -46,67 +40,20 @@ const signUp = async (): Promise<string> => {
   return body.user.id;
 };
 
-/**
- * The one field of a `BetaMessage` this route reads is `content`; the rest are
- * the API's own constants, filled in so the fake is a real message rather than
- * a cast. Shared with runner.test.ts's reasoning -- see that file.
- */
-const assistantSaying = (text: string): BetaMessage => ({
-  id: "msg_test",
-  type: "message",
-  role: "assistant",
-  model: "claude-sonnet-5",
-  content: [{ type: "text", text, citations: null }],
-  stop_reason: "end_turn",
-  stop_sequence: null,
-  container: null,
-  context_management: null,
-  diagnostics: null,
-  stop_details: null,
-  usage: {
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_creation_input_tokens: null,
-    cache_read_input_tokens: null,
-    cache_creation: null,
-    server_tool_use: null,
-    service_tier: null,
-    fallback_credit: null,
-    inference_geo: null,
-    iterations: null,
-    output_tokens_details: null,
-    speed: null,
-  },
-});
+/** One reply with no tool calls: the model answering in words. */
+const assistantSaying = (text: string) => ({ text, toolCalls: [] });
 
 /** Replies with one fixed sentence, whatever it is asked. */
-const scriptedClient = (text = "Salkun arvo on 120,00 EUR."): ToolRunnerClient => ({
-  beta: {
-    messages: {
-      toolRunner: () => ({
-        async *[Symbol.asyncIterator]() {
-          yield assistantSaying(text);
-        },
-      }),
-    },
-  },
+const scriptedClient = (text = "Salkun arvo on 120,00 EUR."): ChatClient => ({
+  run: () => Promise.resolve(assistantSaying(text)),
 });
 
-/** Fails the way the SDK does when the key is refused: mid-iteration. */
-const failingClient = (): ToolRunnerClient => ({
-  beta: {
-    messages: {
-      toolRunner: () => ({
-        // oxlint-disable-next-line require-yield -- the point is that it throws
-        async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
-          throw new Error("api key rejected by https://internal.example/v1");
-        },
-      }),
-    },
-  },
+/** Fails the way the binding does when the service refuses: the call rejects. */
+const failingClient = (): ChatClient => ({
+  run: () => Promise.reject(new Error("api key rejected by https://internal.example/v1")),
 });
 
-type AskBody = { message: string; conversationId?: number };
+type AskBody = Parameters<Conversations["startTurn"]>[1];
 
 const never = new AbortController().signal;
 
@@ -202,24 +149,38 @@ describe("startTurn", () => {
   });
 });
 
+describe("choosing a model", () => {
+  test("the picked model answers the turn, and one not on the list is refused", async () => {
+    let asked: string | null = null;
+    setChatClient({
+      run: (params) => {
+        asked = params.model;
+        return Promise.resolve(assistantSaying("ok"));
+      },
+    });
+    const userId = await signUp();
+
+    await eventsOf(await turn(userId, { message: "moi", model: "@cf/openai/gpt-oss-20b" }));
+    expect(asked).toBe("@cf/openai/gpt-oss-20b");
+
+    // The server function validates with the same schema before startTurn runs.
+    expect(chat.Ask.safeParse({ message: "moi", model: "@cf/evil/model" }).success).toBe(false);
+  });
+});
+
 describe("a client that goes away mid-turn", () => {
   test("stops the model loop and reports nothing, instead of throwing into the log", async () => {
-    // Counts how far the loop got: an aborted turn must stop pulling messages
-    // from the model, not run to the end and discard the result.
+    // Counts how far the loop got: an aborted turn must stop asking the model,
+    // not run the tool loop to the end and discard the result.
     let pulled = 0;
     setChatClient({
-      beta: {
-        messages: {
-          toolRunner: (_params, options) => ({
-            async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
-              expect(options?.signal).toBeDefined();
-              pulled += 1;
-              yield assistantSaying("Ensimmäinen osa.");
-              pulled += 1;
-              yield assistantSaying("Toinen osa.");
-            },
-          }),
-        },
+      run: (_params, options) => {
+        expect(options?.signal).toBeDefined();
+        pulled += 1;
+        return Promise.resolve({
+          text: "",
+          toolCalls: [{ id: "c", name: "get_holdings", arguments: "{}" }],
+        });
       },
     });
     const userId = await signUp();
@@ -258,23 +219,6 @@ describe("a client that closes the stream", () => {
         "assistant",
       ]),
     );
-  });
-});
-
-describe("configuration", () => {
-  test("refuses with 503 when the instance has no API key, instead of failing mid-stream", async () => {
-    setChatClient(null);
-    // The key is a Worker binding now, not `process.env`, so this pokes the
-    // binding the server actually reads. Empty is what "unset" looks like
-    // there: wrangler.jsonc has no way to express an absent var.
-    const previous = env.ANTHROPIC_API_KEY;
-    env.ANTHROPIC_API_KEY = "";
-    try {
-      const userId = await signUp();
-      expect(await statusOf(() => turn(userId, { message: "moi" }))).toBe(503);
-    } finally {
-      env.ANTHROPIC_API_KEY = previous;
-    }
   });
 });
 

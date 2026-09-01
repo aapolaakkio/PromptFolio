@@ -1,16 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import type {
-  BetaMessage,
-  BetaMessageParam,
-  BetaTextBlockParam,
-} from "@anthropic-ai/sdk/resources/beta";
-import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
+import { env } from "cloudflare:workers";
+import { z } from "zod";
+import type { JSONSchema } from "zod/v4/core";
 
-import type { ChatTool, ToolArgs } from "./tools.ts";
+import { DEFAULT_CHAT_MODEL } from "./models.ts";
+import type { ChatTool } from "./tools.ts";
 
-export const CHAT_MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 4096;
+/** Tool rounds in one turn. A model still calling tools past this is circling, not working. */
+const MAX_ROUNDS = 10;
 
 /**
  * What the assistant is allowed to be. The rules are not politeness: a
@@ -39,133 +36,221 @@ export type ChatEvent =
   | { readonly type: "answer"; readonly text: string }
   | { readonly type: "error"; readonly message: string };
 
-/**
- * The subset of the SDK this module actually uses. Depending on the shape
- * rather than the class is what lets the tests drive the whole loop -- tool
- * dispatch, event order, text extraction -- against a scripted client, with no
- * API key and no network. `test-network-guard.ts` makes an accidental real call
- * throw rather than quietly bill the user.
- */
-export type TurnParams = {
-  model: string;
-  max_tokens: number;
-  system: string | BetaTextBlockParam[];
-  messages: BetaMessageParam[];
-  tools: BetaRunnableTool<ToolArgs>[];
-  /** Adaptive for a conversation; disabled for a classification, which is a lookup. */
-  thinking: { type: "adaptive" } | { type: "disabled" };
-};
+export type ToolCall = { readonly id: string; readonly name: string; readonly arguments: string };
 
-/**
- * Where the cache of the request's stable head ends.
- *
- * A turn re-sends the whole prompt, every schema and the entire conversation,
- * and only the tail differs -- so without a breakpoint the same thousands of
- * tokens are billed again on every question and every step of a tool loop.
- *
- * It goes on the system block because the prefix is tools, then system, then
- * messages: marking system caches the schemas with it, and those are identical
- * for every user.
- */
-const CACHE = { cache_control: { type: "ephemeral" } } as const;
+/** What one model call gives back: text, tool calls, or both. */
+export type ModelReply = { readonly text: string; readonly toolCalls: readonly ToolCall[] };
 
-const cachedSystem = (): BetaTextBlockParam[] => [{ type: "text", text: SYSTEM_PROMPT, ...CACHE }];
+export type ChatMessage =
+  | { readonly role: "system" | "user"; readonly content: string }
+  | {
+      readonly role: "assistant";
+      readonly content: string;
+      readonly tool_calls?: readonly ToolCall[];
+    }
+  | { readonly role: "tool"; readonly content: string; readonly tool_call_id: string };
 
-/**
- * The conversation with its tail marked, so the follow-up question hits it. This
- * turn's messages are a prefix of the next turn's, and it matters most in the
- * long threads carrying a dozen tool results forward.
- */
-const cachedMessages = (
-  messages: readonly { role: "user" | "assistant"; content: string }[],
-): BetaMessageParam[] =>
-  messages.map((message, index) => ({
-    role: message.role,
-    content:
-      index === messages.length - 1
-        ? [{ type: "text" as const, text: message.content, ...CACHE }]
-        : message.content,
-  }));
-
-type TurnOptions = { signal?: AbortSignal };
-
-export type ToolRunnerClient = {
-  readonly beta: {
-    readonly messages: {
-      readonly toolRunner: (
-        params: TurnParams,
-        options?: TurnOptions,
-      ) => AsyncIterable<BetaMessage>;
-    };
+export type ToolDefinition = {
+  readonly type: "function";
+  readonly function: {
+    readonly name: string;
+    readonly description: string;
+    readonly parameters: JSONSchema.BaseSchema;
   };
 };
 
-export const createClient = (apiKey: string): ToolRunnerClient => new Anthropic({ apiKey });
-
-const textOf = (message: BetaMessage): string =>
-  message.content
-    .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
-    .map((block) => block.text)
-    .join("")
-    .trim();
+export type TurnParams = {
+  readonly model: string;
+  readonly max_tokens: number;
+  readonly messages: readonly ChatMessage[];
+  readonly tools: readonly ToolDefinition[];
+};
 
 /**
- * One turn, yielding an event per tool dispatched and one answer at the end. The
- * loop is the SDK's; the events exist so an answer can be traced to the data
- * behind it, and so a reader sees progress rather than a blank screen.
+ * The one call the runner needs. A shape rather than the binding itself, so the
+ * tests drive the whole loop -- tool dispatch, event order, what goes back to
+ * the model -- against a scripted model, with no account and no cost.
  */
-export async function* runTurn(
-  client: ToolRunnerClient,
-  tools: readonly ChatTool[],
-  messages: readonly { role: "user" | "assistant"; content: string }[],
-  signal?: AbortSignal,
-): AsyncGenerator<ChatEvent> {
-  const runnable = tools.map((tool) =>
-    betaZodTool({
+export type ChatClient = {
+  readonly run: (params: TurnParams, options?: { signal?: AbortSignal }) => Promise<ModelReply>;
+};
+
+/** Qwen thinks out loud between these tags when allowed to; the reader never should see it. */
+const stripThinking = (text: string): string =>
+  text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+const toApiMessages = (messages: readonly ChatMessage[]): ChatCompletionMessageParam[] =>
+  messages.map((message): ChatCompletionMessageParam => {
+    if (message.role !== "assistant") return message;
+    if (message.tool_calls === undefined) return { role: "assistant", content: message.content };
+    return {
+      role: "assistant",
+      content: message.content,
+      tool_calls: message.tool_calls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    };
+  });
+
+const FunctionCall = z.object({
+  id: z.string(),
+  type: z.literal("function"),
+  function: z.object({ name: z.string(), arguments: z.string() }),
+});
+
+/**
+ * What a model call may come back as. Newer models answer in the chat
+ * completions shape; older ones in Workers AI's own, where a tool call has no
+ * id and its arguments are already an object. Parsed rather than trusted, since
+ * the binding types a model's reply by its name, and the name is chosen per turn.
+ */
+const ModelOutput = z.union([
+  z.object({
+    choices: z.array(
+      z.object({
+        message: z.object({
+          content: z.string().nullish(),
+          tool_calls: z.array(z.union([FunctionCall, z.object({ type: z.string() })])).optional(),
+        }),
+      }),
+    ),
+  }),
+  z.object({
+    response: z.string().nullish(),
+    tool_calls: z
+      .array(
+        z.object({
+          name: z.string(),
+          // An object from the older models; the runner hands arguments on as text either way.
+          arguments: z.union([z.string(), z.json().transform((value) => JSON.stringify(value))]),
+        }),
+      )
+      .optional(),
+  }),
+]);
+
+const toReply = (parsed: z.infer<typeof ModelOutput>): ModelReply => {
+  if ("choices" in parsed) {
+    const message = parsed.choices[0]?.message;
+    return {
+      text: stripThinking(message?.content ?? ""),
+      toolCalls: (message?.tool_calls ?? []).flatMap((call) =>
+        "function" in call
+          ? [{ id: call.id, name: call.function.name, arguments: call.function.arguments }]
+          : [],
+      ),
+    };
+  }
+  return {
+    text: stripThinking(parsed.response ?? ""),
+    toolCalls: (parsed.tool_calls ?? []).map((call, index) => ({
+      id: `call_${index}`,
+      name: call.name,
+      arguments: call.arguments,
+    })),
+  };
+};
+
+/** Workers AI, through the Worker's own binding: no key, no URL, billed to the account. */
+export const createClient = (): ChatClient => ({
+  run: async (params, options) => {
+    const inputs: ChatCompletionsInput = {
+      messages: toApiMessages(params.messages),
+      tools: [...params.tools],
+      max_tokens: params.max_tokens,
+      // Answers, not deliberation: the tool loop is where the work happens,
+      // and thinking tokens are billed like any other.
+      chat_template_kwargs: { enable_thinking: false },
+    };
+    const output = await env.AI.run(
+      params.model,
+      inputs,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+    return toReply(ModelOutput.parse(output));
+  },
+});
+
+/** The tools as the model sees them: name, purpose, and the JSON schema of what they take. */
+export const toolDefinitions = (tools: readonly ChatTool[]): ToolDefinition[] =>
+  tools.map((tool) => ({
+    type: "function",
+    function: {
       name: tool.name,
       description: tool.description,
-      inputSchema: tool.schema,
-      // The SDK hands tool results back to the model as text, so results are
-      // serialised here. Failures are returned as a message rather than thrown:
-      // a thrown tool kills the whole turn, whereas a message lets the model say
-      // what it could not find out.
-      run: async (args: ToolArgs) => {
-        try {
-          return JSON.stringify(await tool.run(args));
-        } catch (cause) {
-          return JSON.stringify({
-            error: cause instanceof Error ? cause.message : "Työkalu epäonnistui",
-          });
-        }
-      },
-    }),
-  );
-
-  let last = "";
-  // The signal is the client's: when the browser drops the connection, the
-  // in-flight request is cancelled rather than run to completion. A tool loop
-  // that nobody is reading still costs tokens, and a long answer is exactly the
-  // kind a user gives up on.
-  const runner = client.beta.messages.toolRunner(
-    {
-      model: CHAT_MODEL,
-      max_tokens: MAX_TOKENS,
-      system: cachedSystem(),
-      messages: cachedMessages(messages),
-      tools: runnable,
-      thinking: { type: "adaptive" },
+      parameters: z.toJSONSchema(tool.schema, { io: "input", unrepresentable: "any" }),
     },
-    signal ? { signal } : undefined,
-  );
+  }));
 
-  for await (const message of runner) {
+/**
+ * Runs one tool call and returns what the model reads. Every failure -- a name
+ * the model invented, arguments the schema refuses, a tool that throws -- comes
+ * back as a message rather than an exception: a thrown tool would kill the
+ * whole turn, whereas a message lets the model say what it could not find out.
+ */
+const runTool = async (tools: readonly ChatTool[], call: ToolCall): Promise<string> => {
+  const tool = tools.find((candidate) => candidate.name === call.name);
+  if (tool === undefined) return JSON.stringify({ error: `Tuntematon työkalu: ${call.name}` });
+  try {
+    const raw: unknown = JSON.parse(call.arguments.trim() === "" ? "{}" : call.arguments);
+    return JSON.stringify(await tool.run(tool.schema.parse(raw)));
+  } catch (cause) {
+    return JSON.stringify({
+      error: cause instanceof Error ? cause.message : "Työkalu epäonnistui",
+    });
+  }
+};
+
+/**
+ * One turn, yielding an event per tool dispatched and one answer at the end.
+ * The loop is ours: ask, run whatever the model called, hand the results back,
+ * until it answers in words. The events exist so an answer can be traced to
+ * the data behind it, and so a reader sees progress rather than a blank screen.
+ */
+export async function* runTurn(
+  client: ChatClient,
+  tools: readonly ChatTool[],
+  history: readonly { role: "user" | "assistant"; content: string }[],
+  signal?: AbortSignal,
+  model: string = DEFAULT_CHAT_MODEL,
+): AsyncGenerator<ChatEvent> {
+  const definitions = toolDefinitions(tools);
+  let messages: readonly ChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, ...history];
+  let last = "";
+  let answered = false;
+
+  for (let round = 0; round < MAX_ROUNDS && !answered; round++) {
+    // The signal is the client's: when the browser drops the connection, the
+    // in-flight request is cancelled rather than run to completion. A tool
+    // loop that nobody is reading still costs tokens.
+    const reply = await client.run(
+      { model, max_tokens: MAX_TOKENS, messages, tools: definitions },
+      signal ? { signal } : undefined,
+    );
     if (signal?.aborted === true) return;
-    for (const block of message.content) {
-      if (block.type === "tool_use") yield { type: "tool", name: block.name };
+    if (reply.text !== "") last = reply.text;
+    if (reply.toolCalls.length === 0) {
+      answered = true;
+      break;
     }
-    const text = textOf(message);
-    if (text !== "") last = text;
+    messages = [
+      ...messages,
+      { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
+    ];
+    for (const call of reply.toolCalls) {
+      yield { type: "tool", name: call.name };
+      messages = [
+        ...messages,
+        { role: "tool", tool_call_id: call.id, content: await runTool(tools, call) },
+      ];
+    }
   }
 
-  yield { type: "answer", text: last };
+  yield {
+    type: "answer",
+    text:
+      answered || last !== "" ? last : "En saanut vastausta valmiiksi: työkalukutsuja tuli liikaa.",
+  };
 }

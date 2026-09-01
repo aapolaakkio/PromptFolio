@@ -1,35 +1,29 @@
-import { env } from "cloudflare:workers";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "../db/index.ts";
 import { chatMessages, conversations } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
-import { runTurn, type ChatEvent, type ToolRunnerClient, createClient } from "./runner.ts";
+import { CHAT_MODEL_IDS, DEFAULT_CHAT_MODEL } from "./models.ts";
+import { runTurn, type ChatEvent, type ChatClient, createClient } from "./runner.ts";
 import { buildChatTools } from "./tools.ts";
 
 export const Ask = z
   .object({
     conversationId: z.number().int().positive().optional(),
     message: z.string().trim().min(1, "Kysymys ei voi olla tyhjä").max(2000),
+    /** Which model answers this turn: the picker on the chat page, for trying them out. */
+    model: z.enum(CHAT_MODEL_IDS).optional(),
   })
   .strict();
 
 export const ConversationId = z.object({ id: z.number().int().positive() });
 
-/**
- * Built per turn rather than at import time so the server still starts without
- * a key: chat is one feature of a portfolio app, not a precondition for opening
- * it. Tests inject their own client and never reach this path.
- */
-const resolveClient = (): ToolRunnerClient => {
-  const apiKey = env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista");
-  return createClient(apiKey);
-};
+/** Tests inject their own client and never reach the binding. */
+const resolveClient = (): ChatClient => createClient();
 
-let clientOverride: ToolRunnerClient | null = null;
-export const _setChatClient = (client: ToolRunnerClient | null): void => {
+let clientOverride: ChatClient | null = null;
+export const _setChatClient = (client: ChatClient | null): void => {
   clientOverride = client;
 };
 
@@ -98,7 +92,7 @@ export const startTurn = async (
   input: z.infer<typeof Ask>,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> => {
-  const { conversationId, message } = Ask.parse(input);
+  const { conversationId, message, model = DEFAULT_CHAT_MODEL } = Ask.parse(input);
   const client = clientOverride ?? resolveClient();
 
   const conversation =
@@ -139,7 +133,7 @@ export const startTurn = async (
       };
       send({ type: "conversation", id: conversation.id });
       try {
-        for await (const event of runTurn(client, tools, history, signal)) {
+        for await (const event of runTurn(client, tools, history, signal, model)) {
           if (event.type === "tool") used.push(event.name);
           if (event.type === "answer") {
             await db

@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { createHash } from "node:crypto";
 import { readUpload } from "./upload.ts";
 import { and, asc, eq } from "drizzle-orm";
@@ -21,7 +20,8 @@ import { type Db, db } from "../db/index.ts";
 import { accounts, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
-import { CHAT_MODEL, createClient, type ToolRunnerClient } from "../chat/runner.ts";
+import { DEFAULT_CHAT_MODEL } from "../chat/models.ts";
+import { createClient, type ChatClient } from "../chat/runner.ts";
 import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.ts";
 
 /** Every bank format the app can read. A file is matched against each in turn. */
@@ -138,21 +138,18 @@ const classifyImportedSpending = async (
   userId: string,
   accountId: number,
 ): Promise<ClassifyResult | null> => {
-  const apiKey = env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-
   const { txns } = await loadPortfolio(db, userId);
   return classifyNewMerchants(db, userId, {
     txns,
     accountIds: new Set([accountId]),
-    client: classifierClient ?? createClient(apiKey),
-    model: CHAT_MODEL,
+    client: classifierClient ?? createClient(),
+    model: DEFAULT_CHAT_MODEL,
   });
 };
 
 /** Injected by tests, so classification never reaches the real API. */
-let classifierClient: ToolRunnerClient | null = null;
-export const _setClassifierClient = (client: ToolRunnerClient | null): void => {
+let classifierClient: ChatClient | null = null;
+export const _setClassifierClient = (client: ChatClient | null): void => {
   classifierClient = client;
 };
 

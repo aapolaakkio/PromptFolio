@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Txn } from "../../core/types.ts";
 import type { Db } from "../db/index.ts";
-import type { ToolRunnerClient } from "../chat/runner.ts";
+import type { ChatClient } from "../chat/runner.ts";
 import { CATEGORY_LABELS } from "./categories.ts";
 import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules.ts";
 
@@ -99,7 +99,7 @@ export const classifyNewMerchants = async (
   args: {
     txns: readonly Txn[];
     accountIds: ReadonlySet<number>;
-    client: ToolRunnerClient;
+    client: ChatClient;
     model: string;
   },
 ): Promise<ClassifyResult> => {
@@ -108,29 +108,24 @@ export const classifyNewMerchants = async (
   if (merchants.length === 0) return { asked: 0, added: 0, rejected: 0, error: null };
 
   try {
-    const runner = args.client.beta.messages.toolRunner({
+    const reply = await args.client.run({
       model: args.model,
       // Room for a rule per merchant and then some. At 2048 a full batch's JSON
       // was cut off mid-object, which parsed to nothing and reported as "no new
       // rules" -- a silent failure that looked like a quiet success.
       max_tokens: 8192,
-      system: "Olet luokittelija. Vastaat pelkällä JSONilla, ilman selityksiä tai koodilohkoja.",
-      messages: [{ role: "user", content: promptFor(merchants) }],
+      messages: [
+        {
+          role: "system",
+          content:
+            "Olet luokittelija. Vastaat pelkällä JSONilla, ilman selityksiä tai koodilohkoja.",
+        },
+        { role: "user", content: promptFor(merchants) },
+      ],
       tools: [],
-      // No extended thinking: this is a lookup from a name to one of a dozen
-      // labels, and the budget is better spent on the answer than on reasoning
-      // about it.
-      thinking: { type: "disabled" },
     });
 
-    let reply = "";
-    for await (const message of runner) {
-      for (const block of message.content) {
-        if (block.type === "text") reply += block.text;
-      }
-    }
-
-    const parsed = parseProposals(reply);
+    const parsed = parseProposals(reply.text);
     const upper = merchants.map((name) => name.toUpperCase());
     const proposals = parsed.filter((proposal) =>
       upper.some((name) => name.includes(proposal.pattern.trim().toUpperCase())),

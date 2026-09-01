@@ -57,7 +57,8 @@ pnpm run dev
 ```
 
 `pnpm run dev` applies every migration to a local D1 under `.wrangler/state` before serving, and
-`pnpm run preview` does the same for the production build. Migrations are additive and
+`pnpm run preview` does the same for the production build. The assistant runs on Workers AI even
+locally, so run `pnpm exec wrangler login` once; without it every other screen still works. Migrations are additive and
 idempotent, so re-running them against a current database is a no-op.
 
 ### On Cloudflare
@@ -93,13 +94,12 @@ curl -s localhost:3000/api/auth/sign-up/email \
 
 ## Configuration
 
-| Variable             | Default                     | Purpose                                                                                                                                                              |
-| -------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET` | _(none — refuses to serve)_ | Session signing key, ≥32 characters. No fallback and no usable example value: a default secret in a self-hosted financial app is a silent authentication bypass.     |
-| `BASE_URL`           | `http://localhost:3000`     | Where the app is reached                                                                                                                                             |
-| `ALLOW_SIGNUP`       | `false`                     | Opens `POST /api/auth/sign-up/email`. Read once at boot.                                                                                                             |
-| `CRON_SECRET`        | _(none)_                    | Authorises a hand-run `POST /api/cron/refresh`. Empty refuses every call.                                                                                            |
-| `ANTHROPIC_API_KEY`  | _(none)_                    | Enables the assistant and the import-time classification of new payees. Without it, chat answers 503 and classification is skipped silently — everything else works. |
+| Variable             | Default                     | Purpose                                                                                                                                                          |
+| -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET` | _(none — refuses to serve)_ | Session signing key, ≥32 characters. No fallback and no usable example value: a default secret in a self-hosted financial app is a silent authentication bypass. |
+| `BASE_URL`           | `http://localhost:3000`     | Where the app is reached                                                                                                                                         |
+| `ALLOW_SIGNUP`       | `false`                     | Opens `POST /api/auth/sign-up/email`. Read once at boot.                                                                                                         |
+| `CRON_SECRET`        | _(none)_                    | Authorises a hand-run `POST /api/cron/refresh`. Empty refuses every call.                                                                                        |
 
 ## Getting data in
 
@@ -256,8 +256,9 @@ exist, the pattern must occur in a payee the import actually contained, and a ru
 is never replaced. Each rule records who decided — `seed`, `ai`, or `user` — and you can edit or
 delete any of them on **Kulutus**.
 
-Both features cost money (cents per question or import) and send the relevant figures to
-Anthropic's API. Leave `ANTHROPIC_API_KEY` unset and neither runs.
+Both run on [Workers AI](https://developers.cloudflare.com/workers-ai/) through the Worker's own
+`AI` binding, on the model named in `src/server/chat/runner.ts`. There is no key to set; usage is
+billed to the Cloudflare account, and the relevant figures go to Cloudflare, not to a third party.
 
 ## Tax figures
 

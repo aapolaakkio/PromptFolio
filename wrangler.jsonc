@@ -7,6 +7,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "main": "@tanstack/react-start/server-entry",
   "observability": { "enabled": true },
+  // The assistant and the payee classifier run on Workers AI through this.
+  "ai": { "binding": "AI" },
   "d1_databases": [
     {
       "binding": "DB",

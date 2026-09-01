@@ -1,9 +1,8 @@
 import { beforeAll, describe, expect, test } from "vitest";
-import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 
 import { EUR, parseMoney } from "../../core/money.ts";
 import type { IsoDate, Txn } from "../../core/types.ts";
-import type { ToolRunnerClient } from "../chat/runner.ts";
+import type { ChatClient } from "../chat/runner.ts";
 
 // The model is allowed to teach the app new spending rules here, which makes
 // this the one place where a wrong answer becomes stored data. These tests are
@@ -57,49 +56,10 @@ const spend = (note: string, amount: string, tradeDate: IsoDate = "2026-03-01"):
   note,
 });
 
-/**
- * SAFETY: only `beta.messages.toolRunner` is reached in this path, and the
- * object below implements exactly that; the rest of the SDK's surface is not
- * touched, so it is narrowed to the client type rather than reconstructed.
- */
-const replying = (text: string): ToolRunnerClient =>
-  ({
-    beta: {
-      messages: {
-        toolRunner: () => ({
-          async *[Symbol.asyncIterator]() {
-            yield {
-              id: "msg",
-              type: "message",
-              role: "assistant",
-              model: "test",
-              content: [{ type: "text", text, citations: null }],
-              stop_reason: "end_turn",
-              stop_sequence: null,
-              container: null,
-              context_management: null,
-              diagnostics: null,
-              stop_details: null,
-              usage: {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: null,
-                cache_read_input_tokens: null,
-                cache_creation: null,
-                server_tool_use: null,
-                service_tier: null,
-                fallback_credit: null,
-                inference_geo: null,
-                iterations: null,
-                output_tokens_details: null,
-                speed: null,
-              },
-            } satisfies BetaMessage;
-          },
-        }),
-      },
-    },
-  }) as ToolRunnerClient;
+/** A model that answers with one fixed text, whatever it is asked. */
+const replying = (text: string): ChatClient => ({
+  run: () => Promise.resolve({ text, toolCalls: [] }),
+});
 
 const ACCOUNTS = new Set([1]);
 
@@ -226,19 +186,9 @@ describe("classifyNewMerchants", () => {
 
   test("reports a model it could not reach, rather than failing the import", async () => {
     const userId = await makeUser();
-    // SAFETY: as with `replying` above -- one method, implemented here.
-    const failing = {
-      beta: {
-        messages: {
-          toolRunner: () => ({
-            // eslint-disable-next-line require-yield
-            async *[Symbol.asyncIterator](): AsyncGenerator<BetaMessage> {
-              throw new Error("upstream unavailable");
-            },
-          }),
-        },
-      },
-    } as ToolRunnerClient;
+    const failing: ChatClient = {
+      run: () => Promise.reject(new Error("upstream unavailable")),
+    };
 
     const result = await classifyNewMerchants(db, userId, {
       txns,

@@ -17,7 +17,8 @@ export default defineConfig({
     tanstackStart({
       srcDirectory: "src/web",
       // Relative to srcDirectory, not to the project root.
-      router: { routesDirectory: "app" },
+      // Tests live next to the routes; the generator must not read them as routes.
+      router: { routesDirectory: "app", routeFileIgnorePattern: "\\.test\\." },
     }),
     react(),
     tailwind(),

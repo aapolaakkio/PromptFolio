@@ -15,7 +15,9 @@ import { getPlatformProxy } from "wrangler";
  * constant, so whichever module loads first would otherwise decide what every
  * later caller sees.
  */
-const proxy = await getPlatformProxy<Cloudflare.Env>({ persist: false });
+// No remote bindings: the AI binding would otherwise open a session to
+// Cloudflare at startup, and the suite must run without an account.
+const proxy = await getPlatformProxy<Cloudflare.Env>({ persist: false, remoteBindings: false });
 
 /**
  * The vars are pinned rather than taken from wrangler.jsonc or a developer's
@@ -27,9 +29,13 @@ export const env: Cloudflare.Env = Object.assign(proxy.env, {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BASE_URL: "http://localhost:3000",
   ALLOW_SIGNUP: "true",
-  // Present so the classification path runs at all -- the code skips it when
-  // there is no key. test-network-guard.ts is what stops it reaching Anthropic.
-  ANTHROPIC_API_KEY: "test-key-never-used",
+  // The real binding would reach Workers AI. A test that wants a model scripts
+  // one; everything else gets the same refusal test-network-guard.ts gives fetch.
+  AI: {
+    run: () => {
+      throw new Error("network blocked in tests: Workers AI");
+    },
+  },
   CRON_SECRET: "test-cron-secret",
 });
 

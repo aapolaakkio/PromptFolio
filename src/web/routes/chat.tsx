@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "../markdown/Markdown.tsx";
 import { getConversationMessages, getConversations, removeConversation } from "../server/chat.ts";
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL, type ChatModel } from "../../server/chat/models.ts";
 import { askChat } from "./chat-stream.ts";
+
+const isChatModel = (value: string): value is ChatModel =>
+  CHAT_MODELS.some((model) => model.id === value);
 
 type Turn = { readonly role: "user" | "assistant"; readonly content: string };
 
@@ -55,6 +59,7 @@ export const ChatPage = () => {
   const [tools, setTools] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [model, setModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
 
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -100,7 +105,8 @@ export const ChatPage = () => {
     setPending([{ role: "user", content: message }]);
 
     try {
-      const request = conversationId === null ? { message } : { message, conversationId };
+      const request =
+        conversationId === null ? { message, model } : { message, conversationId, model };
       for await (const event of askChat(request)) {
         if (event.type === "conversation") setConversationId(event.id);
         if (event.type === "tool") setTools((previous) => [...previous, event.name]);
@@ -227,6 +233,22 @@ export const ChatPage = () => {
             Kysy
           </button>
         </form>
+        <label className="mt-2 text-sm text-muted">
+          Malli
+          <select
+            value={model}
+            disabled={busy}
+            onChange={(event) => {
+              if (isChatModel(event.target.value)) setModel(event.target.value);
+            }}
+          >
+            {CHAT_MODELS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
     </section>
   );

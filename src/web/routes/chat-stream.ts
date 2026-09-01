@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ChatModel } from "../../server/chat/models.ts";
 import { askTurn } from "../server/chat.ts";
 
 /**
@@ -37,7 +38,7 @@ export const takeEvents = (buffer: string) => {
   return { events, rest };
 };
 
-type AskBody = { message: string; conversationId?: number };
+type AskBody = { message: string; conversationId?: number; model?: ChatModel };
 type Turn = (body: AskBody) => Promise<Response>;
 
 // `fetch` under the hood rather than `EventSource` because the question travels

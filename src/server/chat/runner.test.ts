@@ -1,72 +1,38 @@
 import { describe, expect, test } from "vitest";
-import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import { z } from "zod";
 
+import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import {
   runTurn,
   SYSTEM_PROMPT,
+  toolDefinitions,
+  type ChatClient,
   type ChatEvent,
-  type ToolRunnerClient,
+  type ModelReply,
   type TurnParams,
 } from "./runner.ts";
 import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
 
-// The whole loop is exercised against a scripted client: no API key, no
-// network, no cost. `test-network-guard.ts` (a vitest setup file) makes an
-// un-stubbed fetch throw, so a regression that reached the real API would fail
-// this file rather than quietly bill the user.
+// The whole loop is exercised against a scripted model: no account, no
+// network, no cost. `test-cloudflare-env.ts` replaces the AI binding with one
+// that throws, so a regression that reached the real service would fail this
+// file rather than quietly bill the user.
 
-/**
- * A whole `BetaMessage`, built from just the content blocks a test cares about.
- * The rest of the fields are the API's own constants, filled in here so the
- * scripted client hands the runner exactly the type the SDK would.
- */
-const message = (content: BetaMessage["content"]): BetaMessage => ({
-  id: "msg_test",
-  type: "message",
-  role: "assistant",
-  model: "claude-sonnet-5",
-  content,
-  stop_reason: "end_turn",
-  stop_sequence: null,
-  container: null,
-  context_management: null,
-  diagnostics: null,
-  stop_details: null,
-  usage: {
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_creation_input_tokens: null,
-    cache_read_input_tokens: null,
-    cache_creation: null,
-    server_tool_use: null,
-    service_tier: null,
-    fallback_credit: null,
-    inference_geo: null,
-    iterations: null,
-    output_tokens_details: null,
-    speed: null,
-  },
+const says = (text: string): ModelReply => ({ text, toolCalls: [] });
+const calls = (...names: string[]): ModelReply => ({
+  text: "",
+  toolCalls: names.map((name, index) => ({ id: `call_${index}`, name, arguments: "{}" })),
 });
 
-/** What the runner sent to the SDK, captured so a test can assert on it. */
-type Seen = { params: TurnParams | null };
+/** Every request the runner made, so a test can assert on what the model saw. */
+type Seen = { requests: TurnParams[] };
 
-const clientYielding = (
-  messages: BetaMessage[],
-  seen: Seen = { params: null },
-): ToolRunnerClient => ({
-  beta: {
-    messages: {
-      toolRunner: (params: TurnParams) => {
-        seen.params = params;
-        return {
-          async *[Symbol.asyncIterator]() {
-            yield* messages;
-          },
-        };
-      },
-    },
+const scripted = (replies: ModelReply[], seen: Seen = { requests: [] }): ChatClient => ({
+  run: (params) => {
+    seen.requests.push(params);
+    const reply = replies[seen.requests.length - 1];
+    if (reply === undefined) throw new Error("scripted model ran out of replies");
+    return Promise.resolve(reply);
   },
 });
 
@@ -85,10 +51,7 @@ const stubTool = (name: string, run: (args: ToolArgs) => Promise<ToolResult>): C
 
 describe("runTurn", () => {
   test("reports each tool the model called, then the final answer", async () => {
-    const client = clientYielding([
-      message([{ type: "tool_use", id: "t1", name: "get_holdings", input: {} }]),
-      message([{ type: "text", text: "Salkun arvo on 120,00 EUR.", citations: null }]),
-    ]);
+    const client = scripted([calls("get_holdings"), says("Salkun arvo on 120,00 EUR.")]);
 
     const events = await drain(
       runTurn(
@@ -105,55 +68,42 @@ describe("runTurn", () => {
   });
 
   test("sends the model the rules that forbid it doing its own arithmetic", async () => {
-    const seen: Seen = { params: null };
-    const client = clientYielding([message([{ type: "text", text: "ok", citations: null }])], seen);
+    const seen: Seen = { requests: [] };
+    await drain(runTurn(scripted([says("ok")], seen), [], [{ role: "user", content: "moi" }]));
 
-    await drain(runTurn(client, [], [{ role: "user", content: "moi" }]));
-
-    expect(seen.params?.system).toEqual([
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    expect(seen.requests[0]?.model).toBe(DEFAULT_CHAT_MODEL);
+    expect(seen.requests[0]?.messages).toEqual([
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "moi" },
     ]);
-    expect(seen.params?.model).toBe("claude-sonnet-5");
-    expect(seen.params?.thinking).toEqual({ type: "adaptive" });
   });
 
-  test("marks the head and the tail of the request as cacheable", async () => {
-    const seen: Seen = { params: null };
-    const client = clientYielding([message([{ type: "text", text: "ok", citations: null }])], seen);
+  test("hands a tool's result back to the model as JSON, under the call that asked for it", async () => {
+    const seen: Seen = { requests: [] };
+    const client = scripted([calls("get_holdings"), says("ok")], seen);
 
     await drain(
       runTurn(
         client,
-        [],
-        [
-          { role: "user", content: "eka" },
-          { role: "assistant", content: "vastaus" },
-          { role: "user", content: "toka" },
-        ],
+        [stubTool("get_holdings", () => Promise.resolve({ asOf: "2026-06-01" }))],
+        [{ role: "user", content: "moi" }],
       ),
     );
 
-    // The head: system carries the breakpoint, and the prefix is ordered tools
-    // then system, so the tool schemas are cached with it.
-    expect(seen.params?.system).toEqual([
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ]);
-    // The tail: only the newest message is marked. Marking an earlier one would
-    // cache a prefix the next turn no longer ends at.
-    expect(seen.params?.messages[0]?.content).toBe("eka");
-    expect(seen.params?.messages[1]?.content).toBe("vastaus");
-    expect(seen.params?.messages[2]?.content).toEqual([
-      { type: "text", text: "toka", cache_control: { type: "ephemeral" } },
+    expect(seen.requests[1]?.messages.slice(2)).toEqual([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "call_0", name: "get_holdings", arguments: "{}" }],
+      },
+      { role: "tool", tool_call_id: "call_0", content: '{"asOf":"2026-06-01"}' },
     ]);
   });
 
   test("keeps the last text when the model speaks before and after a tool call", async () => {
-    const client = clientYielding([
-      message([
-        { type: "text", text: "Katson.", citations: null },
-        { type: "tool_use", id: "t", name: "get_returns", input: {} },
-      ]),
-      message([{ type: "text", text: "Tuotto oli 20,00 %.", citations: null }]),
+    const client = scripted([
+      { text: "Katson.", toolCalls: [{ id: "t", name: "get_returns", arguments: "{}" }] },
+      says("Tuotto oli 20,00 %."),
     ]);
 
     const events = await drain(
@@ -167,32 +117,105 @@ describe("runTurn", () => {
     const failing = stubTool("get_holdings", () => {
       throw new Error("Päivämäärä on virheellinen");
     });
-    const seen: Seen = { params: null };
-    const client = clientYielding(
-      [message([{ type: "text", text: "En saanut lukua.", citations: null }])],
+    const seen: Seen = { requests: [] };
+
+    const events = await drain(
+      runTurn(scripted([calls("get_holdings"), says("En saanut lukua.")], seen), [failing], []),
+    );
+
+    expect(seen.requests[1]?.messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "call_0",
+      content: JSON.stringify({ error: "Päivämäärä on virheellinen" }),
+    });
+    expect(events.at(-1)).toEqual({ type: "answer", text: "En saanut lukua." });
+  });
+
+  test("refuses a tool the model invented, and arguments the schema does not accept", async () => {
+    const seen: Seen = { requests: [] };
+    const client = scripted(
+      [
+        {
+          text: "",
+          toolCalls: [
+            { id: "a", name: "make_money", arguments: "{}" },
+            { id: "b", name: "get_holdings", arguments: '{"asOf": 12}' },
+          ],
+        },
+        says("ok"),
+      ],
+      seen,
+    );
+    const strict = stubTool("get_holdings", () => Promise.resolve({}));
+
+    await drain(runTurn(client, [strict], []));
+
+    const results = seen.requests[1]?.messages.filter((m) => m.role === "tool") ?? [];
+    expect(results[0]?.content).toBe(JSON.stringify({ error: "Tuntematon työkalu: make_money" }));
+    expect(results[1]?.content).toContain("error");
+  });
+
+  test("gives up after ten rounds of tool calls instead of looping for ever", async () => {
+    const seen: Seen = { requests: [] };
+    const endless = scripted(
+      Array.from({ length: 20 }, () => calls("get_holdings")),
       seen,
     );
 
-    await drain(runTurn(client, [failing], []));
-
-    // The SDK-side runnable is what the model actually calls, so the failure
-    // path is checked through it rather than through our own tool object.
-    const result = await seen.params?.tools[0]?.run({});
-    expect(result).toBe(JSON.stringify({ error: "Päivämäärä on virheellinen" }));
-  });
-
-  test("serialises a tool's result as the JSON the model reads", async () => {
-    const seen: Seen = { params: null };
-    const client = clientYielding([message([{ type: "text", text: "ok", citations: null }])], seen);
-
-    await drain(
-      runTurn(
-        client,
-        [stubTool("get_holdings", () => Promise.resolve({ asOf: "2026-06-01" }))],
-        [],
-      ),
+    const events = await drain(
+      runTurn(endless, [stubTool("get_holdings", () => Promise.resolve({}))], []),
     );
 
-    expect(await seen.params?.tools[0]?.run({})).toBe('{"asOf":"2026-06-01"}');
+    expect(seen.requests).toHaveLength(10);
+    expect(events.at(-1)).toEqual({
+      type: "answer",
+      text: "En saanut vastausta valmiiksi: työkalukutsuja tuli liikaa.",
+    });
+  });
+
+  test("asks the model it was given, when one was", async () => {
+    const seen: Seen = { requests: [] };
+    await drain(runTurn(scripted([says("ok")], seen), [], [], undefined, "@cf/openai/gpt-oss-20b"));
+
+    expect(seen.requests[0]?.model).toBe("@cf/openai/gpt-oss-20b");
+  });
+
+  test("stops asking once the reader has gone", async () => {
+    const seen: Seen = { requests: [] };
+    const abort = new AbortController();
+    abort.abort();
+
+    const events = await drain(
+      runTurn(scripted([calls("get_holdings"), says("ok")], seen), [], [], abort.signal),
+    );
+
+    expect(seen.requests).toHaveLength(1);
+    expect(events).toEqual([]);
+  });
+});
+
+describe("toolDefinitions", () => {
+  test("describes a tool the way the model expects, schema included", () => {
+    const tool: ChatTool = {
+      name: "get_returns",
+      description: "Tuotto",
+      schema: z.object({ on: z.string().optional() }).strict(),
+      run: () => Promise.resolve({}),
+    };
+
+    expect(toolDefinitions([tool])).toEqual([
+      {
+        type: "function",
+        function: {
+          name: "get_returns",
+          description: "Tuotto",
+          parameters: expect.objectContaining({
+            type: "object",
+            properties: { on: { type: "string" } },
+            additionalProperties: false,
+          }),
+        },
+      },
+    ]);
   });
 });

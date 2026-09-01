@@ -484,48 +484,10 @@ describe("a fixed-term deposit's maturity date", () => {
 });
 
 describe("classifying an import's new merchants", () => {
-  /**
-   * SAFETY: the classifier reaches only `beta.messages.toolRunner`, which this
-   * implements; nothing else of the SDK's surface is touched.
-   */
-  const replying = (text: string) =>
-    ({
-      beta: {
-        messages: {
-          toolRunner: () => ({
-            async *[Symbol.asyncIterator]() {
-              yield {
-                id: "msg",
-                type: "message",
-                role: "assistant",
-                model: "test",
-                content: [{ type: "text", text, citations: null }],
-                stop_reason: "end_turn",
-                stop_sequence: null,
-                container: null,
-                context_management: null,
-                diagnostics: null,
-                stop_details: null,
-                usage: {
-                  input_tokens: 0,
-                  output_tokens: 0,
-                  cache_creation_input_tokens: null,
-                  cache_read_input_tokens: null,
-                  cache_creation: null,
-                  server_tool_use: null,
-                  service_tier: null,
-                  fallback_credit: null,
-                  inference_geo: null,
-                  iterations: null,
-                  output_tokens_details: null,
-                  speed: null,
-                },
-              };
-            },
-          }),
-        },
-      },
-    }) as Parameters<typeof setClassifierClient>[0];
+  /** A model that answers with one fixed text, whatever it is asked. */
+  const replying = (text: string): Parameters<typeof setClassifierClient>[0] => ({
+    run: () => Promise.resolve({ text, toolCalls: [] }),
+  });
 
   const ClassifiedSchema = z.object({
     classified: z
@@ -566,19 +528,7 @@ describe("classifying an import's new merchants", () => {
   });
 
   test("an import still succeeds when the classifier cannot be reached", async () => {
-    // SAFETY: as with `replying` above -- one method, implemented here.
-    setClassifierClient({
-      beta: {
-        messages: {
-          toolRunner: () => ({
-            // eslint-disable-next-line require-yield
-            async *[Symbol.asyncIterator]() {
-              throw new Error("upstream unavailable");
-            },
-          }),
-        },
-      },
-    } as Parameters<typeof setClassifierClient>[0]);
+    setClassifierClient({ run: () => Promise.reject(new Error("upstream unavailable")) });
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
     await rulesFor(db, userId);
