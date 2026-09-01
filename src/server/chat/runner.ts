@@ -66,6 +66,14 @@ export type TurnParams = {
   readonly max_tokens: number;
   readonly messages: readonly ChatMessage[];
   readonly tools: readonly ToolDefinition[];
+  /**
+   * JSON mode, for a reading rather than a conversation. Workers AI's own
+   * shape: the schema goes in directly, not wrapped the OpenAI way.
+   */
+  readonly response_format?: {
+    readonly type: "json_schema";
+    readonly json_schema: JSONSchema.BaseSchema;
+  };
 };
 
 /**
@@ -284,9 +292,13 @@ export const createClient = (): ChatClient => ({
       // screen until the whole answer exists.
       stream: true,
     };
+    const inputs =
+      params.response_format === undefined
+        ? base
+        : { ...base, response_format: params.response_format };
     const output = await env.AI.run(
       params.model,
-      base,
+      inputs,
       options?.signal ? { signal: options.signal } : undefined,
     );
     // The binding types a streamed reply as a plain object; at runtime it is

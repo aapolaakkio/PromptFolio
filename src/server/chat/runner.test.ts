@@ -195,6 +195,27 @@ describe("runTurn", () => {
   });
 });
 
+describe("createClient inputs", () => {
+  test("a response_format travels to the binding untouched", async () => {
+    const seen: TurnParams[] = [];
+    const client: ChatClient = {
+      run: (params) => {
+        seen.push(params);
+        return Promise.resolve(says("{}"));
+      },
+    };
+    const schema = z.toJSONSchema(z.object({ ok: z.boolean() }));
+    await client.run({
+      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      max_tokens: 64,
+      messages: [{ role: "user", content: "moi" }],
+      tools: [],
+      response_format: { type: "json_schema", json_schema: schema },
+    });
+    expect(seen[0]?.response_format).toEqual({ type: "json_schema", json_schema: schema });
+  });
+});
+
 describe("toolDefinitions", () => {
   test("describes a tool the way the model expects, schema included", () => {
     const tool: ChatTool = {
