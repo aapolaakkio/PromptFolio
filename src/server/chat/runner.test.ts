@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
+import { env } from "cloudflare:workers";
 
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import {
+  createClient,
   readStream,
   runTurn,
   SYSTEM_PROMPT,
@@ -196,23 +198,41 @@ describe("runTurn", () => {
 });
 
 describe("createClient inputs", () => {
-  test("a response_format travels to the binding untouched", async () => {
-    const seen: TurnParams[] = [];
-    const client: ChatClient = {
-      run: (params) => {
-        seen.push(params);
-        return Promise.resolve(says("{}"));
+  test("createClient forwards a response_format to the binding, and omits it when absent", async () => {
+    const seen: { response_format?: unknown }[] = [];
+    const previous = env.AI;
+    Object.assign(env, {
+      AI: {
+        run: (_model: string, inputs: { response_format?: unknown }) => {
+          seen.push(inputs);
+          return Promise.resolve({ response: "{}" });
+        },
       },
-    };
-    const schema = z.toJSONSchema(z.object({ ok: z.boolean() }));
-    await client.run({
-      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      max_tokens: 64,
-      messages: [{ role: "user", content: "moi" }],
-      tools: [],
-      response_format: { type: "json_schema", json_schema: schema },
     });
-    expect(seen[0]?.response_format).toEqual({ type: "json_schema", json_schema: schema });
+    try {
+      const schema = z.toJSONSchema(z.object({ ok: z.boolean() }));
+      const client = createClient();
+      await client.run({
+        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [],
+        response_format: { type: "json_schema", json_schema: schema },
+      });
+      await client.run({
+        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [],
+      });
+      expect(seen[0]?.response_format).toEqual({
+        type: "json_schema",
+        json_schema: schema,
+      });
+      expect(seen[1]).not.toHaveProperty("response_format");
+    } finally {
+      Object.assign(env, { AI: previous });
+    }
   });
 });
 
