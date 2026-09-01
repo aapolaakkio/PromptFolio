@@ -6,6 +6,10 @@
  * owner reviews, and its checks live with each flow.
  */
 
+import { z } from "zod";
+
+import type { ChatClient } from "../chat/runner.ts";
+
 export type PdfPage = { readonly number: number; readonly text: string };
 
 const NO_TEXT = "PDF ei sisällä tekstiä (skannattu kuva?); tuo tapahtumat CSV-muodossa";
@@ -50,4 +54,217 @@ export const batchPages = (
   }
   if (current.length > 0) batches.push(current);
   return batches;
+};
+
+export const PDF_READ_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+/** Room for a few hundred rows of JSON. */
+const MAX_TOKENS = 8192;
+
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A decimal as printed, sign allowed, dot or comma; parsed by each flow with core/money. */
+const Decimal = z.string().regex(/^-?\d+([.,]\d+)?$/);
+
+export type ReadProblem = { readonly line: number; readonly text: string };
+const Problems = z.array(z.object({ line: z.number().int(), text: z.string() }));
+
+/** One batch's answer: header facts are nullable because a middle page has none. */
+const BankBatch = z.object({
+  from: IsoDate.nullable(),
+  to: IsoDate.nullable(),
+  openingBalance: Decimal.nullable(),
+  closingBalance: Decimal.nullable(),
+  maturityDate: IsoDate.nullable(),
+  rows: z.array(
+    z.object({
+      date: IsoDate,
+      amount: Decimal,
+      counterparty: z.string(),
+      message: z.string(),
+      reference: z.string().nullable(),
+    }),
+  ),
+  problems: Problems,
+});
+
+export const BankReading = BankBatch.extend({
+  from: IsoDate,
+  to: IsoDate,
+  openingBalance: Decimal,
+  closingBalance: Decimal,
+});
+export type BankReading = z.infer<typeof BankReading>;
+
+const HoldingsBatch = z.object({
+  asOf: IsoDate.nullable(),
+  totalValue: Decimal.nullable(),
+  holdings: z.array(
+    z.object({
+      name: z.string().min(1),
+      isin: z.string().nullable(),
+      quantity: Decimal,
+      marketValue: Decimal,
+      currency: z.string().length(3),
+    }),
+  ),
+  problems: Problems,
+});
+export const HoldingsReading = HoldingsBatch.extend({ asOf: IsoDate });
+export type HoldingsReading = z.infer<typeof HoldingsReading>;
+
+export const TransactionsReading = z.object({
+  transactions: z.array(
+    z.object({
+      date: IsoDate,
+      type: z.enum([
+        "BUY",
+        "SELL",
+        "DIVIDEND",
+        "DEPOSIT",
+        "WITHDRAWAL",
+        "FEE",
+        "TRANSFER_IN",
+        "TRANSFER_OUT",
+        "INTEREST",
+      ]),
+      name: z.string(),
+      isin: z.string().nullable(),
+      quantity: Decimal,
+      unitPrice: Decimal.nullable(),
+      amount: Decimal,
+      fee: Decimal,
+      tax: Decimal,
+      currency: z.string().length(3),
+    }),
+  ),
+  problems: Problems,
+});
+export type TransactionsReading = z.infer<typeof TransactionsReading>;
+
+const UNREADABLE = "Malli ei palauttanut luettavaa vastausta";
+
+const RULES = [
+  "Kopioi luvut täsmälleen kuten ne on painettu, muuttamatta desimaaleja. Negatiivinen summa tarkoittaa rahan lähtemistä.",
+  "Päivämäärät muodossa YYYY-MM-DD.",
+  "Jos et saa riviä luettua varmasti, jätä se pois ja lisää se problems-listaan painettuine tekstineen. Älä arvaa.",
+  "Älä koskaan keksi ISIN-koodia: jos sitä ei ole painettu, anna null.",
+  "Kenttä jota tällä sivulla ei ole, on null.",
+  "Vastaa pelkällä JSON-oliolla.",
+].join("\n");
+
+const PROMPTS = {
+  bank: "Tämä on pankin tiliotteen tekstisisältö. Poimi jakso, alku- ja loppusaldo, mahdollinen eräpäivä, ja jokainen tilitapahtuma (päivä, summa etumerkkeineen, maksunsaaja tai maksaja, viesti, arkistointitunnus).",
+  holdings:
+    "Tämä on arvopaperisäilytyksen tai salkun omistusotteen tekstisisältö. Poimi otteen päivä, mahdollinen painettu kokonaisarvo, ja jokainen omistus (nimi, ISIN jos painettu, määrä, markkina-arvo, valuutta).",
+  transactions:
+    "Tämä on välittäjän tapahtumaluettelon tekstisisältö. Poimi jokainen tapahtuma: päivä, laji (BUY, SELL, DIVIDEND, DEPOSIT, WITHDRAWAL, FEE, TRANSFER_IN, TRANSFER_OUT tai INTEREST), arvopaperin nimi, ISIN jos painettu, määrä, yksikköhinta, kokonaissumma etumerkkeineen, kulut, vero ja valuutta.",
+} as const;
+
+/**
+ * One batch to the model, parsed with the batch schema. A reply that is not
+ * JSON, or not this JSON, is refused: a figure the schema did not vouch for
+ * must not reach a preview.
+ */
+const ask = async <T>(
+  client: ChatClient,
+  schema: z.ZodType<T>,
+  prompt: string,
+  batch: readonly PdfPage[],
+): Promise<T> => {
+  const text = batch.map((page) => `--- sivu ${page.number} ---\n${page.text}`).join("\n\n");
+  const reply = await client.run({
+    model: PDF_READ_MODEL,
+    max_tokens: MAX_TOKENS,
+    messages: [
+      { role: "system", content: `${prompt}\n\n${RULES}` },
+      { role: "user", content: text },
+    ],
+    tools: [],
+    response_format: { type: "json_schema", json_schema: z.toJSONSchema(schema) },
+  });
+  const start = reply.text.indexOf("{");
+  const end = reply.text.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error(UNREADABLE);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(reply.text.slice(start, end + 1));
+  } catch {
+    throw new Error(UNREADABLE);
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new Error(UNREADABLE);
+  return parsed.data;
+};
+
+/** The whole document as batches, each read in turn. `maxWords` is for tests. */
+const readBatches = async <T>(
+  pages: readonly PdfPage[],
+  client: ChatClient,
+  schema: z.ZodType<T>,
+  prompt: string,
+  maxWords?: number,
+): Promise<T[]> => {
+  const out: T[] = [];
+  for (const batch of batchPages(pages, maxWords))
+    out.push(await ask(client, schema, prompt, batch));
+  return out;
+};
+
+const firstNonNull = <T>(values: readonly (T | null)[]): T | null =>
+  values.find((value): value is T => value !== null) ?? null;
+
+export const readBankPdf = async (
+  pages: readonly PdfPage[],
+  client: ChatClient,
+  maxWords?: number,
+): Promise<BankReading> => {
+  const batches = await readBatches(pages, client, BankBatch, PROMPTS.bank, maxWords);
+  // Opening facts are printed at the top, closing ones at the bottom: the
+  // first batch that has them wins for one, the last for the other.
+  const merged = {
+    from: firstNonNull(batches.map((b) => b.from)),
+    openingBalance: firstNonNull(batches.map((b) => b.openingBalance)),
+    to: firstNonNull([...batches].reverse().map((b) => b.to)),
+    closingBalance: firstNonNull([...batches].reverse().map((b) => b.closingBalance)),
+    maturityDate: firstNonNull(batches.map((b) => b.maturityDate)),
+    rows: batches.flatMap((b) => b.rows),
+    problems: batches.flatMap((b) => b.problems),
+  };
+  const parsed = BankReading.safeParse(merged);
+  if (!parsed.success) throw new Error(UNREADABLE);
+  return parsed.data;
+};
+
+export const readHoldingsPdf = async (
+  pages: readonly PdfPage[],
+  client: ChatClient,
+  maxWords?: number,
+): Promise<HoldingsReading> => {
+  const batches = await readBatches(pages, client, HoldingsBatch, PROMPTS.holdings, maxWords);
+  const merged = {
+    asOf: firstNonNull(batches.map((b) => b.asOf)),
+    totalValue: firstNonNull(batches.map((b) => b.totalValue)),
+    holdings: batches.flatMap((b) => b.holdings),
+    problems: batches.flatMap((b) => b.problems),
+  };
+  const parsed = HoldingsReading.safeParse(merged);
+  if (!parsed.success) throw new Error(UNREADABLE);
+  return parsed.data;
+};
+
+export const readTransactionsPdf = async (
+  pages: readonly PdfPage[],
+  client: ChatClient,
+  maxWords?: number,
+): Promise<TransactionsReading> => {
+  const batches = await readBatches(
+    pages,
+    client,
+    TransactionsReading,
+    PROMPTS.transactions,
+    maxWords,
+  );
+  return {
+    transactions: batches.flatMap((b) => b.transactions),
+    problems: batches.flatMap((b) => b.problems),
+  };
 };
