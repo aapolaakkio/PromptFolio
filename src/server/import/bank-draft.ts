@@ -33,6 +33,8 @@ export const BankDraft = z
             type: z.enum(["DEPOSIT", "WITHDRAWAL", "INTEREST"]),
             amountEur: Amount,
             counterparty: z.string(),
+            /** The bank's own transaction-type text (e.g. "PKORTTIMAKSU"). Empty for a PDF row. */
+            label: z.string(),
             message: z.string(),
             externalId: z.string().nullable(),
           })
@@ -76,11 +78,41 @@ export const bankDraftFromReading = (reading: BankReading): BankDraft => ({
     type: rowType(row.amount, row.message),
     amountEur: asEur(row.amount),
     counterparty: row.counterparty.trim(),
+    // A PDF prints no separate transaction-type column, only counterparty
+    // and message.
+    label: "",
     message: row.message.trim(),
     externalId: row.reference,
   })),
   problems: reading.problems,
 });
+
+/**
+ * Splits a CSV-stored note back into label and message, using the
+ * counterparty already carried on `BankRow` to place the cut: `noteOf`
+ * below always joins label, counterparty, message in that order, dropping
+ * empty parts, so when the counterparty is non-empty it appears in the note
+ * verbatim, with the label (if any) before it and the message (if any)
+ * after. Rebuilding through `noteOf` then reproduces the note exactly.
+ */
+const splitNote = (note: string, counterparty: string) => {
+  if (counterparty === "") return { label: "", message: note };
+  if (note === counterparty) return { label: "", message: "" };
+  const between = ` — ${counterparty} — `;
+  const middle = note.indexOf(between);
+  if (middle !== -1) {
+    return { label: note.slice(0, middle), message: note.slice(middle + between.length) };
+  }
+  const before = `${counterparty} — `;
+  if (note.startsWith(before)) return { label: "", message: note.slice(before.length) };
+  const after = ` — ${counterparty}`;
+  if (note.endsWith(after))
+    return { label: note.slice(0, note.length - after.length), message: "" };
+  // The stored note does not contain the counterparty as its own segment --
+  // not something `bank-statement.ts` produces, but kept safe rather than
+  // dropping text: the whole note becomes the message.
+  return { label: "", message: note };
+};
 
 /** A CSV parse into the same draft, so one preview serves both formats. */
 export const bankDraftFromRows = (
@@ -89,14 +121,15 @@ export const bankDraftFromRows = (
 ): BankDraft => ({
   statement: null,
   rows: rows.map((row) => {
-    const [counterparty = "", ...rest] = row.note.split(" — ");
+    const { label, message } = splitNote(row.note, row.counterparty);
     return {
       line: row.line,
       date: row.date,
       type: row.type,
       amountEur: formatMoney({ minor: row.amount, currency: EUR }),
       counterparty: row.counterparty,
-      message: row.counterparty === counterparty ? rest.join(" — ") : row.note,
+      label,
+      message,
       externalId: row.externalId,
     };
   }),
@@ -104,13 +137,16 @@ export const bankDraftFromRows = (
 });
 
 /**
- * The ledger's note format for a PDF-read row: counterparty and message
- * joined with " — ", dropping an empty half. This mirrors
- * `bank-statement.ts`'s `noteOf`, minus the label it joins first -- a PDF
- * row has no label column to fold in.
+ * The ledger's note format: label, counterparty and message joined with
+ * " — ", dropping any empty part. Mirrors `bank-statement.ts`'s own
+ * `noteOf` (not exported, so not reusable directly) exactly, so a CSV row's
+ * note survives the round trip through a draft unchanged.
  */
-const noteOf = (counterparty: string, message: string): string =>
-  [counterparty, message].filter((part) => part !== "").join(" — ");
+const noteOf = (label: string, counterparty: string, message: string): string =>
+  [label, counterparty, message]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join(" — ");
 
 /** The ledger's rows from an edited draft. A bad amount names its row. */
 export const bankRowsFromDraft = (draft: BankDraft): BankRow[] =>
@@ -127,7 +163,7 @@ export const bankRowsFromDraft = (draft: BankDraft): BankRow[] =>
       type: row.type,
       amount,
       counterparty: row.counterparty,
-      note: noteOf(row.counterparty, row.message),
+      note: noteOf(row.label, row.counterparty, row.message),
       externalId: row.externalId,
     };
   });
@@ -135,7 +171,9 @@ export const bankRowsFromDraft = (draft: BankDraft): BankRow[] =>
 /**
  * Opening balance plus every row must reach the closing balance. Shown live in
  * the preview and enforced on commit; null when the draft came from a CSV,
- * which prints no balances to check against.
+ * which prints no balances to check against. Throws the same `HttpError` as
+ * `bankRowsFromDraft` when a row's hand-edited amount is not a number --
+ * the preview surfaces that as the row's own error rather than a balance.
  */
 export const checkBankDraft = (draft: BankDraft): { ok: boolean; differenceEur: string } | null => {
   if (draft.statement === null) return null;

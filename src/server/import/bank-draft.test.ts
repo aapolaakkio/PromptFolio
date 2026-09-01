@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 
+import type { BankRow } from "./bank-statement.ts";
 import {
   BankDraft,
   bankDraftFromReading,
@@ -86,6 +87,7 @@ describe("bankRowsFromDraft", () => {
           type: "DEPOSIT",
           amountEur: "paljon",
           counterparty: "",
+          label: "",
           message: "",
           externalId: null,
         },
@@ -93,5 +95,36 @@ describe("bankRowsFromDraft", () => {
       problems: [],
     });
     expect(() => bankRowsFromDraft(draft)).toThrow(/Rivi 4/);
+  });
+});
+
+// `bank-statement.ts`'s own note format, reproduced here so a test failure
+// points at the round trip rather than a copy of its private `noteOf`.
+const csvNote = (label: string, counterparty: string, message: string): string =>
+  [label, counterparty, message]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join(" — ");
+
+const bankRow = (note: string, counterparty: string): BankRow => ({
+  line: 1,
+  date: "2025-09-01",
+  type: "WITHDRAWAL",
+  amount: -1000n,
+  counterparty,
+  note,
+  externalId: null,
+});
+
+describe("bankDraftFromRows then bankRowsFromDraft", () => {
+  test.each([
+    ["label, counterparty and message all present", "PKORTTIMAKSU", "K-MARKET ESIMERKKI", "OSTOS"],
+    ["an empty message", "PKORTTIMAKSU", "K-MARKET ESIMERKKI", ""],
+    ["an empty label, the PDF shape", "", "K-MARKET ESIMERKKI", "OSTOS"],
+  ])("round-trips a note with %s", (_case, label, counterparty, message) => {
+    const note = csvNote(label, counterparty, message);
+    const draft = bankDraftFromRows([bankRow(note, counterparty)], []);
+    const rows = bankRowsFromDraft(draft);
+    expect(rows[0]?.note).toBe(note);
   });
 });
