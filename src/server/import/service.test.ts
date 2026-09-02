@@ -5,7 +5,7 @@ import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
 import { instruments, transactions } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
 import { NORDNET } from "../import/brokers.ts";
@@ -746,6 +746,13 @@ describe("a broker PDF", () => {
     problems: [],
   };
 
+  // The scripted client is set per test below; reset afterwards so a later
+  // test in this file that uploads a PDF-shaped file never silently reuses
+  // whichever reading the last PDF test scripted.
+  afterEach(() => {
+    service._setReaderClient(null);
+  });
+
   test("previews through the reader and commits like any draft", async () => {
     service._setReaderClient({
       run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
@@ -799,6 +806,47 @@ describe("a broker PDF", () => {
     expect(committed.status).toBe(200);
     const stored = await db.select().from(transactions).all();
     expect(stored.at(-1)?.amount).toBe(-50_000);
+  });
+
+  test("an edited row cannot move itself to another account", async () => {
+    service._setReaderClient({
+      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
+    });
+    const { userId } = await signUp(`imp-pdf-foreign-account-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    const otherAccountId = await openAccount(userId);
+    await registerNokia();
+    const bytes = await readBytes(`${import.meta.dirname}/fixtures/op-statement-sample.pdf`);
+    const form = new FormData();
+    form.set("file", new File([bytes], "tapahtumat.pdf"));
+    form.set("accountId", String(accountId));
+    const previewed = await answer(() => service.previewUpload(userId, form));
+    // SAFETY: a 200 preview carries the draft, in the same shape commitPreviewed's own cast trusts.
+    const body = previewed.body as {
+      filename: string;
+      sha256: string;
+      txns: DraftBody["txns"];
+      problems: DraftBody["problems"];
+      unknownIsins: DraftBody["unknownIsins"];
+    };
+    // The row claims a different account than the request names -- the
+    // request's accountId must win, proving commitDraftBody's overwrite
+    // (not just trusting whatever the edited row carries).
+    const edited = {
+      ...body,
+      txns: [{ ...body.txns[0], accountId: otherAccountId }],
+    };
+    const committed = await commitPreviewed(
+      userId,
+      { status: 200, body: edited },
+      accountId,
+      "pdf",
+    );
+    expect(committed.status).toBe(200);
+    const stored = await db.select().from(transactions).all();
+    const last = stored.at(-1);
+    expect(last?.accountId).toBe(accountId);
+    expect(last?.accountId).not.toBe(otherAccountId);
   });
 });
 
