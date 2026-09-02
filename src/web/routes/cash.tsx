@@ -3,7 +3,7 @@ import { getAccounts } from "../server/accounts.ts";
 import { useState } from "react";
 
 import {
-  commitBankImport,
+  commitBankDraftImport,
   previewBankImport,
   recordAccountBalance,
 } from "../server/bank-imports.ts";
@@ -20,8 +20,41 @@ import {
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { getCash } from "../server/portfolio.ts";
 import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
+import { bankBalanceCheck, problemToRow } from "./draft-edit.ts";
+import { type Column, DraftTable } from "./DraftTable.tsx";
 
-type BankCommitResult = Awaited<ReturnType<typeof commitBankImport>>;
+type BankCommitResult = Awaited<ReturnType<typeof commitBankDraftImport>>;
+type BankPreview = Awaited<ReturnType<typeof previewBankImport>>;
+type BankDraftRow = BankPreview["draft"]["rows"][number];
+
+const BANK_COLUMNS: readonly Column<BankDraftRow>[] = [
+  { key: "date", label: "Päivä", kind: "date" },
+  {
+    key: "type",
+    label: "Laji",
+    kind: "select",
+    options: [
+      { value: "DEPOSIT", label: "Pano" },
+      { value: "WITHDRAWAL", label: "Otto" },
+      { value: "INTEREST", label: "Korko" },
+    ],
+  },
+  { key: "amountEur", label: "Summa", kind: "decimal", numeric: true },
+  { key: "counterparty", label: "Vastapuoli", kind: "text" },
+  { key: "message", label: "Viesti", kind: "text" },
+];
+
+/**
+ * A row the reader could not make sense of, as a blank row carrying the
+ * printed text, so the owner fills it in rather than losing it.
+ */
+const rowFromProblem = (problem: {
+  readonly line: number;
+  readonly text: string;
+}): BankDraftRow => ({
+  ...problemToRow(problem),
+  label: "",
+});
 
 /** What a person can record by hand, as the ledger stores it. */
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
@@ -40,6 +73,7 @@ export const CashPage = () => {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [drafts, setDrafts] = useState<{ name: string; preview: BankPreview }[]>([]);
   const [imported, setImported] = useState<{ name: string; data: BankCommitResult }[]>([]);
   const [balance, setBalance] = useState("");
   const [showNewAccount, setShowNewAccount] = useState(false);
@@ -63,6 +97,12 @@ export const CashPage = () => {
     queryFn: () => getCashEntries({ data: { accountId: chosen ?? 0 } }),
   });
 
+  // A statement whose rows no longer reach its own closing balance would be
+  // refused by the server; the button says so before the round trip.
+  const balancesAgree = drafts.every(
+    (entry) => bankBalanceCheck(entry.preview.draft)?.ok !== false,
+  );
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["cash"] });
     void queryClient.invalidateQueries({ queryKey: ["cash-entries"] });
@@ -78,7 +118,26 @@ export const CashPage = () => {
           data: await previewBankImport({ data: formFor(file) }),
         })),
       ),
-    onMutate: () => setImported([]),
+    onMutate: () => {
+      setImported([]);
+      setDrafts([]);
+    },
+    // Every problem the reader reported becomes a blank row to fill in, so the
+    // preview holds the whole statement and nothing is silently dropped.
+    onSuccess: (results) =>
+      setDrafts(
+        results.map(({ name, data }) => ({
+          name,
+          preview: {
+            ...data,
+            draft: {
+              ...data.draft,
+              rows: [...data.draft.rows, ...data.draft.problems.map(rowFromProblem)],
+              problems: [],
+            },
+          },
+        })),
+      ),
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
@@ -87,19 +146,28 @@ export const CashPage = () => {
   // ids guarantee, so a retry of the whole selection is safe.
   const commit = useMutation({
     mutationFn: async () => {
-      for (const file of files) {
+      for (const entry of drafts) {
         try {
-          const data = await commitBankImport({ data: formFor(file) });
-          setImported((prev) => [...prev, { name: file.name, data }]);
+          const data = await commitBankDraftImport({
+            data: {
+              // SAFETY: the buttons below are disabled while no account is chosen.
+              accountId: chosen ?? 0,
+              filename: entry.preview.filename,
+              sha256: entry.preview.sha256,
+              draft: entry.preview.draft,
+            },
+          });
+          setImported((prev) => [...prev, { name: entry.name, data }]);
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : "Tuonti epäonnistui";
-          throw new Error(`${file.name}: ${message}`);
+          throw new Error(`${entry.name}: ${message}`);
         }
       }
     },
     onSuccess: () => {
       setError(null);
       preview.reset();
+      setDrafts([]);
       setFiles([]);
     },
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
@@ -248,6 +316,7 @@ export const CashPage = () => {
               onChange={(event) => {
                 setFiles(Array.from(event.target.files ?? []));
                 setImported([]);
+                setDrafts([]);
                 preview.reset();
               }}
             />
@@ -261,62 +330,67 @@ export const CashPage = () => {
               </button>
               <button
                 type="button"
-                disabled={!preview.data || commit.isPending}
+                disabled={drafts.length === 0 || commit.isPending || !balancesAgree}
                 onClick={() => commit.mutate()}
               >
                 {commit.isPending
                   ? "Tuodaan…"
-                  : files.length > 1
-                    ? `Tuo ${files.length} tiedostoa`
+                  : drafts.length > 1
+                    ? `Tuo ${drafts.length} tiedostoa`
                     : "Tuo"}
               </button>
             </div>
 
-            {preview.data?.map(({ name, data }, index) => (
-              <div key={`${index}-${name}`} className="grid gap-2">
-                {preview.data.length > 1 && <h3>{name}</h3>}
-                <p>
-                  {data.draft.rows.length} tapahtumaa {fiDate(data.draft.rows[0]?.date ?? "")}–
-                  {fiDate(data.draft.rows.at(-1)?.date ?? "")}.
-                </p>
-                {data.draft.statement !== null && (
-                  <p className="text-muted text-sm">
-                    Tiliote ilmoittaa saldoksi {eur(data.draft.statement.openingBalanceEur)} →{" "}
-                    {eur(data.draft.statement.closingBalanceEur)}
-                    {data.check !== null && data.check.ok ? ", ja rivit täsmäävät siihen" : ""}.
-                    Alkusaldo kirjataan automaattisesti.
-                    {data.draft.statement.maturityDate !== null &&
-                      ` Erääntyy ${fiDate(data.draft.statement.maturityDate)}.`}
-                  </p>
-                )}
-                {data.draft.problems.length > 0 && (
-                  <p className="text-loss text-sm">
-                    {data.draft.problems.length} riviä ei voitu lukea; muut tuodaan.
-                  </p>
-                )}
-                {/* A statement runs to hundreds of rows; the preview scrolls
-                    inside its own box rather than pushing the import button off
-                    the screen. The rows are not yet editable here -- that
-                    lands with the screen that reviews the draft directly. */}
-                <div className="max-h-80 overflow-auto rounded border border-line">
-                  <table>
-                    <tbody>
-                      {data.draft.rows.slice(0, 10).map((row) => (
-                        <tr key={row.line}>
-                          <td>{fiDate(row.date)}</td>
-                          <td className="text-right">{eur(row.amountEur)}</td>
-                          <td className="text-muted">
-                            {[row.label, row.counterparty, row.message]
-                              .filter((part) => part !== "")
-                              .join(" — ")}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {drafts.map((entry, index) => {
+              const check = bankBalanceCheck(entry.preview.draft);
+              return (
+                <div key={`${index}-${entry.name}`} className="grid gap-2">
+                  {drafts.length > 1 && <h3>{entry.name}</h3>}
+                  {entry.preview.draft.statement !== null && (
+                    <p className="text-muted text-sm">
+                      Tiliote {fiDate(entry.preview.draft.statement.from)}–
+                      {fiDate(entry.preview.draft.statement.to)}, saldo{" "}
+                      {eur(entry.preview.draft.statement.openingBalanceEur)} →{" "}
+                      {eur(entry.preview.draft.statement.closingBalanceEur)}. Alkusaldo kirjataan
+                      automaattisesti.
+                    </p>
+                  )}
+                  {check !== null && (
+                    <p className={check.ok ? "text-gain text-sm" : "text-loss text-sm"}>
+                      {check.ok
+                        ? "Rivit täsmäävät loppusaldoon."
+                        : `Rivit eivät täsmää loppusaldoon: ero ${check.differenceEur} €.`}
+                    </p>
+                  )}
+                  <DraftTable
+                    rows={entry.preview.draft.rows}
+                    columns={BANK_COLUMNS}
+                    blank={(): BankDraftRow => ({
+                      line: entry.preview.draft.rows.length + 1,
+                      date: "",
+                      type: "DEPOSIT",
+                      amountEur: "",
+                      counterparty: "",
+                      label: "",
+                      message: "",
+                      externalId: null,
+                    })}
+                    onChange={(rows) =>
+                      setDrafts((current) =>
+                        current.map((d, at) =>
+                          at === index
+                            ? {
+                                ...d,
+                                preview: { ...d.preview, draft: { ...d.preview.draft, rows } },
+                              }
+                            : d,
+                        ),
+                      )
+                    }
+                  />
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {imported.map(({ name, data }, index) => (
               <div key={`${index}-${name}`}>
