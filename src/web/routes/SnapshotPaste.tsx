@@ -4,19 +4,33 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   proposeSnapshotFromCsv,
   proposeSnapshotFromPaste,
+  proposeSnapshotFromPdf,
   saveSnapshot,
 } from "../server/snapshots.ts";
-import { eur, qty } from "../lib/format.ts";
 import { getInstruments } from "../server/instruments.ts";
+import { holdingsTotalCheck } from "./draft-edit.ts";
+import { type Column, DraftTable } from "./DraftTable.tsx";
+
+/** A proposed holding as the table edits it; the instrument id travels as text. */
+type HoldingRow = {
+  readonly line: number;
+  readonly name: string;
+  readonly quantity: string;
+  readonly marketValueEur: string;
+  readonly instrumentId: string;
+};
+
+const isPdf = (file: File): boolean =>
+  file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
 /**
- * Takes a broker's holdings table as pasted text and proposes the snapshot it
- * describes.
+ * Takes a broker's holdings -- a file, a pasted table, or a statement PDF --
+ * and proposes the snapshot it describes.
  *
- * Two shapes arrive here and the server tells them apart: a CSV or spreadsheet
- * copy, which is tab-separated with a header row, and a table copied from a web
- * page, which is one value per line. The user should not have to know which
- * kind they are holding.
+ * Three shapes arrive here and the server tells them apart: a CSV or
+ * spreadsheet copy, which is tab-separated with a header row; a table copied
+ * from a web page, which is one value per line; and a PDF, which the model
+ * reads. The user should not have to know which kind they are holding.
  *
  * Nothing is stored until every row is pointed at an instrument. A statement
  * names its holdings the way the broker prints them, so an unmatched row is
@@ -35,7 +49,9 @@ export const SnapshotPaste = ({
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [asOf, setAsOf] = useState("");
-  const [mapping, setMapping] = useState<Record<string, number | null>>({});
+  const [rows, setRows] = useState<HoldingRow[]>([]);
+  /** What a PDF statement printed as its own total, when it printed one. */
+  const [statedTotalEur, setStatedTotalEur] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const instruments = useQuery({
@@ -43,29 +59,68 @@ export const SnapshotPaste = ({
     queryFn: () => getInstruments(),
   });
 
-  // Two sources, one preview: a broker that exports a holdings file (Nordnet)
-  // and one that does not (OP), where the table is copied off the page instead.
+  // Three sources, one preview: a broker that exports a holdings file (Nordnet),
+  // one that does not (OP), where the table is copied off the page, and a
+  // downloaded statement PDF, which the model reads. A PDF carries its own date
+  // and its own printed total, so neither has to be typed in.
   const preview = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      if (file !== null && isPdf(file)) {
+        const form = new FormData();
+        form.set("file", file);
+        const read = await proposeSnapshotFromPdf({ data: form });
+        return { ...read, statedTotalEur: read.statedTotalEur };
+      }
       if (file !== null) {
         const form = new FormData();
         form.set("file", file);
         form.set("asOf", asOf);
-        return proposeSnapshotFromCsv({ data: form });
+        return { ...(await proposeSnapshotFromCsv({ data: form })), statedTotalEur: null };
       }
-      return proposeSnapshotFromPaste({ data: { asOf, text } });
+      return {
+        ...(await proposeSnapshotFromPaste({ data: { asOf, text } })),
+        statedTotalEur: null,
+      };
     },
     onSuccess: (result) => {
       setError(null);
-      setMapping(Object.fromEntries(result.rows.map((row) => [row.name, row.instrumentId])));
+      setAsOf(result.asOf);
+      setStatedTotalEur(result.statedTotalEur);
+      setRows(
+        result.rows.map((row, index) => ({
+          line: index + 1,
+          name: row.name,
+          quantity: row.quantity,
+          marketValueEur: row.marketValueEur,
+          instrumentId: row.instrumentId === null ? "" : String(row.instrumentId),
+        })),
+      );
     },
     onError: (cause) => {
       setError(cause instanceof Error ? cause.message : "Taulukon luku epäonnistui");
     },
   });
 
-  const rows = preview.data?.rows ?? [];
-  const unmapped = rows.filter((row) => (mapping[row.name] ?? null) === null).length;
+  const unmapped = rows.filter((row) => row.instrumentId === "").length;
+  const totalCheck = holdingsTotalCheck(rows, statedTotalEur);
+
+  const columns: readonly Column<HoldingRow>[] = [
+    { key: "name", label: "Otteella", kind: "text" },
+    { key: "quantity", label: "Määrä", kind: "decimal", numeric: true },
+    { key: "marketValueEur", label: "Arvo", kind: "decimal", numeric: true },
+    {
+      key: "instrumentId",
+      label: "Arvopaperi täällä",
+      kind: "select",
+      options: [
+        { value: "", label: "— valitse —" },
+        ...(instruments.data ?? []).map((instrument) => ({
+          value: String(instrument.id),
+          label: instrument.name,
+        })),
+      ],
+    },
+  ];
 
   const save = useMutation({
     mutationFn: () =>
@@ -73,9 +128,10 @@ export const SnapshotPaste = ({
         data: {
           accountId,
           asOf,
-          source: "manual" as const,
+          source: file !== null && isPdf(file) ? ("pdf" as const) : ("manual" as const),
+          statedTotalEur,
           rows: rows.map((row) => ({
-            instrumentId: mapping[row.name] ?? 0,
+            instrumentId: Number(row.instrumentId),
             quantity: row.quantity,
             marketValue: row.marketValueEur,
           })),
@@ -86,6 +142,8 @@ export const SnapshotPaste = ({
       preview.reset();
       setText("");
       setFile(null);
+      setRows([]);
+      setStatedTotalEur(null);
       void queryClient.invalidateQueries({ queryKey: ["snapshots", accountId] });
       onCreated(snapshot.id);
     },
@@ -108,10 +166,10 @@ export const SnapshotPaste = ({
       </label>
 
       <label className="mt-3 block">
-        Välittäjän tiedosto (esim. Nordnetin CSV)
+        Välittäjän tiedosto (CSV) tai omistusote (PDF)
         <input
           type="file"
-          accept=".csv,text/csv,text/plain"
+          accept=".csv,.pdf,text/csv,text/plain,application/pdf"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
       </label>
@@ -129,7 +187,12 @@ export const SnapshotPaste = ({
       <button
         type="button"
         className="mt-3"
-        disabled={(file === null && text.trim() === "") || asOf === "" || preview.isPending}
+        disabled={
+          (file === null && text.trim() === "") ||
+          // A PDF carries its own date; everything else needs one typed in.
+          (asOf === "" && !(file !== null && isPdf(file))) ||
+          preview.isPending
+        }
         onClick={() => preview.mutate()}
       >
         {preview.isPending ? "Luetaan…" : file !== null ? "Lue tiedosto" : "Lue taulukko"}
@@ -149,57 +212,44 @@ export const SnapshotPaste = ({
             </p>
           )}
 
-          <div className="mt-3 max-h-112 overflow-auto rounded border border-line">
-            <table>
-              <thead className="sticky top-0 bg-surface">
-                <tr>
-                  <th>Otteella</th>
-                  <th className="num">Määrä</th>
-                  <th className="num">Arvo</th>
-                  <th>Arvopaperi täällä</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.name}>
-                    <td>{row.name}</td>
-                    <td className="num">{qty(row.quantity)}</td>
-                    <td className="num">{eur(row.marketValueEur)}</td>
-                    <td>
-                      <select
-                        value={mapping[row.name] ?? ""}
-                        onChange={(e) =>
-                          setMapping((current) => ({
-                            ...current,
-                            [row.name]: e.target.value === "" ? null : Number(e.target.value),
-                          }))
-                        }
-                      >
-                        <option value="">— valitse —</option>
-                        {(instruments.data ?? []).map((instrument) => (
-                          <option key={instrument.id} value={instrument.id}>
-                            {instrument.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {totalCheck !== null && (
+            <p className={totalCheck.ok ? "text-gain mt-3 text-sm" : "text-loss mt-3 text-sm"}>
+              {totalCheck.ok
+                ? `Rivit täsmäävät otteen kokonaisarvoon ${statedTotalEur} €.`
+                : `Rivit eivät täsmää otteen kokonaisarvoon: ero ${totalCheck.differenceEur} €.`}
+            </p>
+          )}
+
+          <div className="mt-3">
+            <DraftTable
+              rows={rows}
+              columns={columns}
+              onChange={setRows}
+              blank={(): HoldingRow => ({
+                line: rows.length + 1,
+                name: "",
+                quantity: "",
+                marketValueEur: "",
+                instrumentId: "",
+              })}
+            />
           </div>
 
           <button
             type="button"
             className="mt-4"
-            disabled={unmapped > 0 || rows.length === 0 || save.isPending}
+            disabled={
+              unmapped > 0 || rows.length === 0 || totalCheck?.ok === false || save.isPending
+            }
             onClick={() => save.mutate()}
           >
             {save.isPending
               ? "Tallennetaan…"
               : unmapped > 0
                 ? `Yhdistä vielä ${unmapped} riviä`
-                : "Tallenna ote"}
+                : totalCheck?.ok === false
+                  ? "Korjaa rivit ennen tallennusta"
+                  : "Tallenna ote"}
           </button>
         </>
       )}
