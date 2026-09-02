@@ -307,6 +307,23 @@ describe("POST /api/imports/bank/commit", () => {
   });
 });
 
+// cash.tsx still uploads through commitBankStatementUpload; kept working so it
+// keeps compiling until the screen moves onto commitBankDraftImport. This is
+// a smoke test for that wrapper, not a second copy of the commit suite above.
+describe("the legacy commitBankStatementUpload wrapper", () => {
+  test("commits the upload directly, without going through a preview", async () => {
+    const { userId } = await signUp();
+    const accountId = await openAccount(userId, "current");
+
+    const body = CommitSchema.parse(
+      await bank.commitBankStatementUpload(userId, await uploadForm(accountId)),
+    );
+
+    expect(body.inserted).toBe(5);
+    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
+  });
+});
+
 describe("POST /api/accounts/:id/balance", () => {
   const setBalance = (userId: string, accountId: number, on: string, balance: string) =>
     answer(() => bank.setAccountBalance(userId, { accountId, on, balance }));
