@@ -25,7 +25,10 @@ export const DraftBody = z
             amount: z.number().int(),
             fee: z.number().int(),
             tax: z.number().int(),
-            currency: z.string().length(3).transform(parseCurrency),
+            currency: z
+              .string()
+              .regex(/^[A-Z]{3}$/, "Valuuttakoodin on oltava kolme isoa kirjainta")
+              .transform(parseCurrency),
             fxRateEur: z.number().int().nonnegative(),
             externalId: z.string().nullable(),
             note: z.string().nullable(),
@@ -48,15 +51,16 @@ export const DraftBody = z
         .object({
           isin: z.string().nullable(),
           name: z.string(),
-          currency: z.string().length(3).transform(parseCurrency),
+          currency: z
+            .string()
+            .regex(/^[A-Z]{3}$/, "Valuuttakoodin on oltava kolme isoa kirjainta")
+            .transform(parseCurrency),
         })
         .strict(),
     ),
   })
   .strict();
 export type DraftBody = z.infer<typeof DraftBody>;
-
-const decimal = (text: string): string => text.replace(",", ".").replace(/\s/g, "");
 
 /**
  * A model's reading into the draft the review screen and the commit already
@@ -101,14 +105,14 @@ export const transactionsDraftFrom = (
         isin,
         type: row.type,
         tradeDate: row.date,
-        quantity: row.type === "DIVIDEND" ? 0 : Number(parseQuantity(decimal(row.quantity)).scaled),
+        quantity: row.type === "DIVIDEND" ? 0 : Number(parseQuantity(row.quantity).scaled),
         unitPrice:
-          row.unitPrice === null || decimal(row.unitPrice) === "0"
+          row.unitPrice === null || row.unitPrice.trim() === "0"
             ? null
-            : Number(parseMoney(decimal(row.unitPrice), currency).minor),
-        amount: Number(parseMoney(decimal(row.amount), currency).minor),
-        fee: Number(parseMoney(decimal(row.fee), currency).minor),
-        tax: Number(parseMoney(decimal(row.tax), currency).minor),
+            : Number(parseMoney(row.unitPrice, currency).minor),
+        amount: Number(parseMoney(row.amount, currency).minor),
+        fee: Number(parseMoney(row.fee, currency).minor),
+        tax: Number(parseMoney(row.tax, currency).minor),
         currency,
         fxRateEur: currency === EUR ? 100_000_000 : 0,
         externalId: null,

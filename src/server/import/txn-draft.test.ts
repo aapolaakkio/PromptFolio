@@ -87,4 +87,35 @@ describe("DraftBody", () => {
       DraftBody.safeParse({ ...draft, txns: [{ ...draft.txns[0], amount: "1" }] }).success,
     ).toBe(false);
   });
+
+  test("a malformed currency fails validation instead of throwing out of parseCurrency", () => {
+    const draft = transactionsDraftFrom(
+      { transactions: [row], problems: [] },
+      { accountId: 7, knownIsins: new Map(), knownNames: new Map() },
+    );
+    for (const currency of ["eur", "12X"]) {
+      expect(() =>
+        DraftBody.safeParse({
+          ...draft,
+          txns: [{ ...draft.txns[0], currency }],
+        }),
+      ).not.toThrow();
+      expect(
+        DraftBody.safeParse({ ...draft, txns: [{ ...draft.txns[0], currency }] }).success,
+      ).toBe(false);
+
+      expect(() =>
+        DraftBody.safeParse({
+          ...draft,
+          unknownIsins: [{ isin: null, name: "Uusi rahasto", currency }],
+        }),
+      ).not.toThrow();
+      expect(
+        DraftBody.safeParse({
+          ...draft,
+          unknownIsins: [{ isin: null, name: "Uusi rahasto", currency }],
+        }).success,
+      ).toBe(false);
+    }
+  });
 });
