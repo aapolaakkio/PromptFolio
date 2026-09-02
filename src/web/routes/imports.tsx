@@ -2,14 +2,12 @@ import { useState } from "react";
 import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  commitImport,
-  commitOpPaste,
+  commitImportDraft,
   getImports,
   previewImport,
   previewOpPaste,
   undoImport,
 } from "../server/imports.ts";
-import { eur, fiDate } from "../lib/format.ts";
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { accountTypeLabel } from "./account-type.ts";
 import { RenameAccount } from "./RenameAccount.tsx";
@@ -23,16 +21,130 @@ import {
 } from "./imports-draft.ts";
 import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
+import { type Column, DraftTable } from "./DraftTable.tsx";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
 
-/** One previewed input: the file it came from (none for the paste), and what the server read from it. */
+/**
+ * One previewed input: the file it came from (none for the paste), what the
+ * server read from it, and the rows as the owner has since edited them.
+ */
 type Previewed = {
   readonly name: string;
   readonly file: File | null;
   readonly draft: DraftResponse;
+  readonly rows: EditableTxn[];
 };
+
+/** A draft row as the table edits it: money and quantity as decimal strings. */
+type EditableTxn = {
+  readonly line: number;
+  readonly tradeDate: string;
+  readonly type: string;
+  readonly isin: string;
+  readonly quantityText: string;
+  readonly amountEur: string;
+  readonly feeEur: string;
+  readonly currency: string;
+  readonly note: string;
+};
+
+const QUANTITY_SCALE = 1_000_000;
+const EUR_RATE = 100_000_000;
+
+const toEditable = (txn: DraftResponse["txns"][number]): EditableTxn => ({
+  line: txn.line,
+  tradeDate: txn.tradeDate,
+  type: txn.type,
+  isin: txn.isin ?? "",
+  quantityText: (txn.quantity / QUANTITY_SCALE).toString(),
+  amountEur: minorToEur(txn.amount),
+  feeEur: minorToEur(txn.fee),
+  currency: txn.currency,
+  note: txn.note ?? "",
+});
+
+/**
+ * Back to what the commit takes. Fields the table does not show (the resolved
+ * instrument, the unit price, tax, the broker's own id) are carried from the
+ * row the preview produced, so editing a summary column never drops them.
+ */
+const fromEditable = (
+  row: EditableTxn,
+  base: DraftResponse["txns"][number] | undefined,
+  accountId: number,
+): DraftResponse["txns"][number] => ({
+  line: row.line,
+  accountId,
+  instrumentId: base?.instrumentId ?? null,
+  isin: row.isin === "" ? null : row.isin,
+  type: row.type,
+  tradeDate: row.tradeDate,
+  quantity: Math.round(Number(row.quantityText.replace(",", ".")) * QUANTITY_SCALE),
+  unitPrice: base?.unitPrice ?? null,
+  amount: Math.round(Number(row.amountEur.replace(",", ".")) * 100),
+  fee: Math.round(Number(row.feeEur.replace(",", ".")) * 100),
+  tax: base?.tax ?? 0,
+  currency: row.currency,
+  fxRateEur: row.currency === "EUR" ? EUR_RATE : 0,
+  externalId: base?.externalId ?? null,
+  note: row.note === "" ? null : row.note,
+});
+
+/**
+ * A line the reader could not turn into fields becomes a blank row carrying
+ * its text, so the owner fills it in or removes it rather than losing it.
+ */
+const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn => ({
+  line: problem.line,
+  tradeDate: "",
+  type: "BUY",
+  isin: "",
+  quantityText: "",
+  amountEur: "",
+  feeEur: "0",
+  currency: "EUR",
+  note: problem.rawLine ?? problem.message,
+});
+
+const editableRows = (draft: DraftResponse): EditableTxn[] => [
+  ...draft.txns.map(toEditable),
+  ...draft.problems.map(rowFromProblem),
+];
+
+/** Which import record the commit writes: the paste is always an OP CSV. */
+const kindOf = (entry: Previewed): "csv_nordnet" | "csv_op" | "pdf" => {
+  if (entry.file === null) return "csv_op";
+  if (entry.draft.broker === "pdf") return "pdf";
+  return entry.draft.broker === "nordnet" ? "csv_nordnet" : "csv_op";
+};
+
+const TXN_COLUMNS: readonly Column<EditableTxn>[] = [
+  { key: "tradeDate", label: "Päivä", kind: "date" },
+  {
+    key: "type",
+    label: "Laji",
+    kind: "select",
+    options: [
+      "BUY",
+      "SELL",
+      "DIVIDEND",
+      "DEPOSIT",
+      "WITHDRAWAL",
+      "FEE",
+      "TRANSFER_IN",
+      "TRANSFER_OUT",
+      "INTEREST",
+    ].map((value) => ({ value, label: value })),
+  },
+  { key: "isin", label: "ISIN", kind: "text" },
+  { key: "quantityText", label: "Määrä", kind: "decimal", numeric: true },
+  { key: "amountEur", label: "Summa", kind: "decimal", numeric: true },
+  { key: "feeEur", label: "Kulut", kind: "decimal", numeric: true },
+  { key: "currency", label: "Valuutta", kind: "text" },
+  { key: "note", label: "Selite", kind: "text" },
+];
 
 /**
  * What an import did, in one line.
@@ -142,11 +254,10 @@ export const ImportsPage = () => {
   const previewFile = useMutation({
     mutationFn: () =>
       Promise.all(
-        files.map(async (file) => ({
-          name: file.name,
-          file,
-          draft: await previewImport({ data: fileForm(file) }),
-        })),
+        files.map(async (file) => {
+          const draft = await previewImport({ data: fileForm(file) });
+          return { name: file.name, file, draft, rows: editableRows(draft) };
+        }),
       ),
     onSuccess: showPreviews,
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
@@ -165,9 +276,10 @@ export const ImportsPage = () => {
   });
 
   const previewPaste = useMutation({
-    mutationFn: async () => [
-      { name: "OP-liite", file: null, draft: await previewOpPaste({ data: pasteBody() }) },
-    ],
+    mutationFn: async () => {
+      const draft = await previewOpPaste({ data: pasteBody() });
+      return [{ name: "OP-liite", file: null, draft, rows: editableRows(draft) }];
+    },
     onSuccess: showPreviews,
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
@@ -179,10 +291,22 @@ export const ImportsPage = () => {
     mutationFn: async () => {
       for (const entry of previews ?? []) {
         try {
-          const data =
-            entry.file === null
-              ? await commitOpPaste({ data: pasteBody() })
-              : await commitImport({ data: fileForm(entry.file) });
+          const data = await commitImportDraft({
+            data: {
+              // SAFETY: the commit button is disabled while no account is chosen.
+              accountId: accountId ?? 0,
+              filename: entry.draft.filename,
+              sha256: entry.draft.sha256,
+              kind: kindOf(entry),
+              draft: {
+                txns: entry.rows.map((row, index) =>
+                  fromEditable(row, entry.draft.txns[index], accountId ?? 0),
+                ),
+                problems: [],
+                unknownIsins: entry.draft.unknownIsins,
+              },
+            },
+          });
           setResults((prev) => [...prev, `${entry.name}: ${importSummary(data)}`]);
           setPreviews((prev) => prev?.filter((p) => p !== entry) ?? null);
           setFiles((prev) => prev.filter((f) => f !== entry.file));
@@ -203,8 +327,24 @@ export const ImportsPage = () => {
   const preview = source === "file" ? previewFile : previewPaste;
 
   const drafts = (previews ?? []).map((p) => p.draft);
-  const summary = previews ? summariseAll(drafts) : null;
   const unknown = unknownAcross(drafts);
+  // The rows on screen are what will be imported, so the count and the
+  // can-commit rule read them rather than the draft the server first sent.
+  const editedRows = (previews ?? []).reduce((sum, entry) => sum + entry.rows.length, 0);
+  const summary =
+    previews === null
+      ? null
+      : {
+          ...summariseAll(drafts),
+          good: editedRows,
+          problems: 0,
+          canCommit: previews.length > 0 && editedRows > 0 && unknown.length === 0,
+        };
+
+  const setRows = (index: number, rows: EditableTxn[]) =>
+    setPreviews(
+      (current) => current?.map((entry, at) => (at === index ? { ...entry, rows } : entry)) ?? null,
+    );
 
   return (
     <>
@@ -284,10 +424,10 @@ export const ImportsPage = () => {
       {source === "file" ? (
         <section className="card mt-4">
           <label>
-            CSV-tiedostot (Nordnet) — yhden tai useamman kerralla
+            CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät)
             <input
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.pdf,text/csv,application/pdf"
               multiple
               onChange={(e) => {
                 setFiles(Array.from(e.target.files ?? []));
@@ -343,7 +483,12 @@ export const ImportsPage = () => {
       {previews && summary && (
         <>
           {previews.map((entry, index) => (
-            <PreviewCard key={`${index}-${entry.name}`} entry={entry} />
+            <PreviewCard
+              key={`${index}-${entry.name}`}
+              entry={entry}
+              unknownCount={unknown.length}
+              onRows={(rows) => setRows(index, rows)}
+            />
           ))}
 
           {unknown.length > 0 && (
@@ -402,79 +547,48 @@ export const ImportsPage = () => {
   );
 };
 
-/** One file's preview: its rows, and the rows that could not be read. */
-const PreviewCard = ({ entry }: { readonly entry: Previewed }) => {
-  const { draft } = entry;
-  const summary = summariseAll([draft]);
-  return (
-    <>
-      <section className="card mt-6">
-        <h2>
-          Esikatselu — {entry.name} ({draft.broker})
-        </h2>
-        <p>
-          {summary.good} tuotavaa riviä
-          {summary.problems > 0 && `, ${summary.problems} ongelmaa`}
-          {summary.unknown > 0 && `, ${summary.unknown} tuntematonta arvopaperia`}.
-        </p>
+/** One file's preview: every row, editable, before any of it enters the ledger. */
+const PreviewCard = ({
+  entry,
+  unknownCount,
+  onRows,
+}: {
+  readonly entry: Previewed;
+  readonly unknownCount: number;
+  readonly onRows: (rows: EditableTxn[]) => void;
+}) => (
+  <section className="card mt-6">
+    <h2>
+      Esikatselu — {entry.name} ({entry.draft.broker})
+    </h2>
+    <p>
+      {entry.rows.length} tuotavaa riviä
+      {unknownCount > 0 && `, ${unknownCount} tuntematonta arvopaperia`}. Korjaa rivit tarvittaessa
+      ennen tuontia.
+    </p>
 
-        {/*
-              Every row, scrollable, rather than the first 50 and a count of
-              what was hidden: this is the last screen before the rows enter the
-              ledger, so the rows a reviewer most needs to check are exactly the
-              ones a cut-off list hides. The header stays put while the body
-              scrolls.
-            */}
-        <div className="max-h-112 overflow-auto rounded border border-line">
-          <table>
-            <thead className="sticky top-0 bg-surface">
-              <tr>
-                <th>Rivi</th>
-                <th>Päivä</th>
-                <th>Laji</th>
-                <th>ISIN</th>
-                <th className="num">Summa</th>
-              </tr>
-            </thead>
-            <tbody>
-              {draft.txns.map((t) => (
-                <tr key={t.line}>
-                  <td className="num">{t.line}</td>
-                  <td>{fiDate(t.tradeDate)}</td>
-                  <td>{t.type}</td>
-                  <td>{t.isin ?? "—"}</td>
-                  <td className="num">{eur(minorToEur(t.amount))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {draft.problems.length > 0 && (
-        <section className="card mt-4">
-          <h2>Ongelmalliset rivit</h2>
-          <p className="text-muted">
-            Näitä rivejä ei tuoda. Korjaa tiedosto tai jatka ilman niitä.
-          </p>
-          <div className="mt-3 max-h-80 overflow-auto">
-            <ul className="grid gap-2">
-              {draft.problems.map((p) => (
-                <li key={p.line}>
-                  <strong>Rivi {p.line}:</strong> {p.message}
-                  <div className="font-mono text-xs text-muted">
-                    {p.rawLine !== undefined
-                      ? p.rawLine
-                      : Object.entries(p.raw)
-                          .map(([k, v]) => `${k}=${v}`)
-                          .join("  ")}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      )}
-    </>
-  );
-};
+    {/*
+        Every row, editable and scrollable, rather than the first 50 and a count
+        of what was hidden: this is the last screen before the rows enter the
+        ledger, so the rows a reviewer most needs to check are exactly the ones a
+        cut-off list hides. Lines the reader could not parse are here too, as
+        blank rows carrying their text.
+      */}
+    <DraftTable
+      rows={entry.rows}
+      columns={TXN_COLUMNS}
+      onChange={onRows}
+      blank={(): EditableTxn => ({
+        line: entry.rows.length + 1,
+        tradeDate: "",
+        type: "BUY",
+        isin: "",
+        quantityText: "",
+        amountEur: "",
+        feeEur: "0",
+        currency: "EUR",
+        note: "",
+      })}
+    />
+  </section>
+);

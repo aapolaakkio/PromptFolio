@@ -23,12 +23,20 @@ export type DraftResponse = {
   sha256: string;
   txns: Array<{
     line: number;
+    accountId: number;
+    instrumentId: number | null;
+    isin: string | null;
     type: string;
     tradeDate: string;
-    isin: string | null;
     quantity: number;
+    unitPrice: number | null;
     amount: number;
+    fee: number;
+    tax: number;
     currency: string;
+    fxRateEur: number;
+    externalId: string | null;
+    note: string | null;
   }>;
   problems: Array<{
     line: number;

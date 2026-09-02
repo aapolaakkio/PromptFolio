@@ -12,12 +12,20 @@ import {
 // assertion out of the tests (anti-slop/require-safety-comment-for-type-assertion).
 const txnStub = (line: number): DraftResponse["txns"][number] => ({
   line,
+  accountId: 1,
+  instrumentId: null,
+  isin: null,
   type: "BUY",
   tradeDate: "2025-01-10",
-  isin: null,
   quantity: 0,
+  unitPrice: null,
   amount: 0,
+  fee: 0,
+  tax: 0,
   currency: "EUR",
+  fxRateEur: 100_000_000,
+  externalId: null,
+  note: null,
 });
 
 const draft = (over: Partial<DraftResponse> = {}): DraftResponse => ({
