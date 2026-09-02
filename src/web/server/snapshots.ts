@@ -12,6 +12,7 @@ import {
   PasteSnapshot,
   proposeFromCsv,
   proposeFromPaste,
+  proposeFromPdf,
   reconcileSnapshot,
   SnapshotQuery,
 } from "../../server/snapshot/service.ts";
@@ -43,6 +44,11 @@ export const proposeSnapshotFromPaste = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(PasteSnapshot)
   .handler(({ data, context }) => readable(() => proposeFromPaste(context.userId, data)));
+
+export const proposeSnapshotFromPdf = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(z.instanceof(FormData))
+  .handler(({ data, context }) => readable(() => proposeFromPdf(context.userId, data)));
 
 export const removeSnapshot = createServerFn({ method: "POST" })
   .middleware([authed])

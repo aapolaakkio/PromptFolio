@@ -5,11 +5,14 @@ import { reconcile, type SnapshotPosition } from "../../core/reconcile.ts";
 import { EUR, formatQuantity, parseQuantity } from "../../core/money.ts";
 import type { Txn } from "../../core/types.ts";
 import { assertAccountOwned } from "../accounts.ts";
+import { createClient, type ChatClient } from "../chat/runner.ts";
 import { db } from "../db/index.ts";
 import { instruments, snapshotRows, snapshots, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
+import { holdingsTotalCheck } from "./holdings-draft.ts";
 import { decodeHoldingsFile, parseHoldingsPaste } from "../import/holdings-paste.ts";
+import { extractPages, readHoldingsPdf } from "../import/pdf-read.ts";
 import { parseOpWebHoldings } from "../import/op-holdings-paste.ts";
 
 /**
@@ -69,6 +72,7 @@ const CreateSnapshot = z.object({
       }),
     )
     .min(1, "Tilannevedos ilman rivejä ei kerro mitään"),
+  statedTotalEur: z.string().nullable().optional(),
 });
 
 /** Minor-unit integer from a decimal string, or a 400 naming the field. */
@@ -120,6 +124,17 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
   const unknown = input.rows.find((row) => !known.has(row.instrumentId));
   if (unknown !== undefined) {
     throw new HttpError(400, `Arvopaperia ${unknown.instrumentId} ei ole olemassa`);
+  }
+
+  const check = holdingsTotalCheck(
+    input.rows.map((row) => ({ marketValueEur: row.marketValue ?? "0" })),
+    input.statedTotalEur ?? null,
+  );
+  if (check !== null && !check.ok) {
+    throw new HttpError(
+      400,
+      `Rivien arvot eivät täsmää otteen kokonaisarvoon (ero ${check.differenceEur} €). Korjaa rivit ennen tallennusta.`,
+    );
   }
 
   // ponytail: two steps, not one transaction. The rows need the snapshot's
@@ -194,7 +209,7 @@ export const reconcileSnapshot = async (userId: string, snapshotId: number) => {
   };
 };
 
-const proposalFrom = async (
+export const proposalFrom = async (
   userId: string,
   asOf: string,
   parsed: {
@@ -256,6 +271,58 @@ export const proposeFromPaste = (userId: string, body: z.infer<typeof PasteSnaps
     throw new HttpError(
       400,
       cause instanceof Error ? cause.message : "Liitettyä taulukkoa ei voitu lukea",
+    );
+  }
+};
+
+/** Injected by tests, so a PDF never reaches the real model. */
+let readerClient: ChatClient | null = null;
+export const _setReaderClient = (client: ChatClient | null): void => {
+  readerClient = client;
+};
+
+/**
+ * Proposes a snapshot from a holdings statement PDF, read by the model. The
+ * statement's own date and printed total come with it; the owner edits and
+ * confirms through `createSnapshot`, which checks the total again.
+ */
+export const proposeFromPdf = async (userId: string, form: FormData) => {
+  const file = form.get("file");
+  if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  try {
+    const pages = await extractPages(await file.arrayBuffer());
+    const reading = await readHoldingsPdf(pages, readerClient ?? createClient());
+    const proposal = await proposalFrom(userId, reading.asOf, {
+      holdings: reading.holdings.map((h) => ({
+        name: h.name,
+        quantity: h.quantity.replace(",", "."),
+        marketValueEur: h.marketValue.replace(",", "."),
+      })),
+      problems: reading.problems.map((p) => ({
+        line: p.line,
+        message: "Riviä ei saatu luettua",
+        raw: p.text,
+      })),
+    });
+    return {
+      ...proposal,
+      // A holdings PDF's market value may be printed in a currency other than
+      // EUR; the row carries it along so the review screen can show it, while
+      // the total check below (and createSnapshot's, again) still treats
+      // marketValueEur as EUR, exactly as the CSV path does today.
+      rows: proposal.rows.map((row, index) => ({
+        ...row,
+        currency: reading.holdings[index]?.currency ?? EUR,
+      })),
+      statedTotalEur: reading.totalValue,
+      filename: file.name,
+      source: "pdf" as const,
+    };
+  } catch (cause) {
+    if (cause instanceof HttpError) throw cause;
+    throw new HttpError(
+      400,
+      cause instanceof Error ? cause.message : "PDF-tiedostoa ei voitu lukea",
     );
   }
 };

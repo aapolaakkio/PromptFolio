@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
+import { readBytes } from "../files.ts";
 
 import { EUR } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
@@ -615,5 +616,85 @@ describe("POST /api/snapshots/csv", () => {
     const { userId } = await signUp(`csv-bad-${crypto.randomUUID()}@example.com`);
     const response = await upload(userId, utf16le("Nimi\tArvo EUR\nEsimerkki\t10,00"));
     expect(response.status).toBe(400);
+  });
+});
+
+// A holdings PDF is read by the model, `_setReaderClient` swaps in a scripted
+// ChatClient so this never reaches Workers AI, and the printed total is
+// carried into the proposal for the reconcile screen to show. Reset after
+// each test so a later test never silently reuses a scripted reading.
+describe("a holdings PDF", () => {
+  afterEach(() => {
+    service._setReaderClient(null);
+  });
+
+  test("proposes rows through the reader, matched by name, with the printed total", async () => {
+    service._setReaderClient({
+      run: () =>
+        Promise.resolve({
+          text: JSON.stringify({
+            asOf: "2026-06-30",
+            totalValue: "1000.00",
+            holdings: [
+              {
+                name: "Nokia",
+                isin: null,
+                quantity: "10",
+                marketValue: "1000.00",
+                currency: "EUR",
+              },
+            ],
+            problems: [],
+          }),
+          toolCalls: [],
+        }),
+    });
+    const { userId } = await signUp(`snap-pdf-${crypto.randomUUID()}@example.com`);
+    const nokia = await addInstrument(db, {
+      isin: "FI0009000681",
+      ticker: null,
+      name: "Nokia",
+      kind: "stock",
+      currency: EUR,
+      priceSource: "manual",
+    });
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(
+        [await readBytes(`${import.meta.dirname}/../import/fixtures/op-statement-sample.pdf`)],
+        "ote.pdf",
+      ),
+    );
+    const proposed = await answer(() => service.proposeFromPdf(userId, form));
+    expect(proposed.status).toBe(200);
+    expect(proposed.body).toMatchObject({
+      asOf: "2026-06-30",
+      statedTotalEur: "1000.00",
+      rows: [{ name: "Nokia", instrumentId: nokia.id, quantity: "10", marketValueEur: "1000.00" }],
+    });
+  });
+
+  test("saving refuses rows that do not reach the total the statement printed", async () => {
+    const { userId } = await signUp(`snap-total-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(userId);
+    const nokia = await addInstrument(db, {
+      isin: randomIsin(),
+      ticker: null,
+      name: "Nokia",
+      kind: "stock",
+      currency: EUR,
+      priceSource: "manual",
+    });
+    const refused = await answer(() =>
+      service.createSnapshot(userId, {
+        accountId,
+        asOf: "2026-06-30",
+        source: "pdf",
+        statedTotalEur: "1000.00",
+        rows: [{ instrumentId: nokia.id, quantity: "10", marketValue: "900.00" }],
+      }),
+    );
+    expect(refused.status).toBe(400);
   });
 });
