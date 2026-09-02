@@ -3,12 +3,13 @@ import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { eq } from "drizzle-orm";
 import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
-import { instruments } from "../db/schema.ts";
+import { instruments, transactions } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
 import { NORDNET } from "../import/brokers.ts";
+import type { DraftBody } from "./txn-draft.ts";
 
 // This file exercises the import service (preview/commit/undo) and
 // detectBrokerConfig against a real, migrated database and a real Better
@@ -59,6 +60,35 @@ const answer = async <T>(run: () => T | Promise<T>): Promise<Answer<T>> => {
     }
     throw cause;
   }
+};
+
+/** Preview, then commit what the preview produced -- the path the screen takes. */
+const commitPreviewed = async (
+  userId: string,
+  previewed: Answer<unknown>,
+  accountId: number,
+  kind: "csv_nordnet" | "csv_op" | "pdf",
+) => {
+  if (previewed.status !== 200) return previewed;
+  // SAFETY: a 200 from either preview is `{ broker, filename, sha256, txns, problems, unknownIsins }`,
+  // where txns/problems/unknownIsins are already draft-shaped -- the same shape commitDraftBody's own
+  // DraftBody validates, which is why the cast is typed against it rather than `unknown[]`.
+  const body = previewed.body as {
+    filename: string;
+    sha256: string;
+    txns: DraftBody["txns"];
+    problems: DraftBody["problems"];
+    unknownIsins: DraftBody["unknownIsins"];
+  };
+  return answer(() =>
+    service.commitDraftBody(userId, {
+      accountId,
+      filename: body.filename,
+      sha256: body.sha256,
+      kind,
+      draft: { txns: body.txns, problems: body.problems, unknownIsins: body.unknownIsins },
+    }),
+  );
 };
 
 const sessionCookieFrom = (response: Response): string => {
@@ -378,9 +408,14 @@ describe("POST /api/imports/commit", () => {
     const owner = await signUp(`imp-commit-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-commit-stranger-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(owner.userId);
-    const response = await answer(() =>
-      service.commitUpload(stranger.userId, uploadForm(csvFile(`${NORDNET_HEADER}\n`), accountId)),
+    const previewed = await answer(() =>
+      service.previewUpload(
+        owner.userId,
+        uploadForm(binaryFile(nordnetBytes(`${NORDNET_HEADER}\n`)), accountId),
+      ),
     );
+    expect(previewed.status).toBe(200);
+    const response = await commitPreviewed(stranger.userId, previewed, accountId, "csv_nordnet");
     expect(response.status).toBe(404);
   });
 
@@ -388,9 +423,10 @@ describe("POST /api/imports/commit", () => {
     const { userId } = await signUp(`imp-commit-unknown-isin-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     const nordnetBytesFile = await fixtureBytes("nordnet-sample.csv");
-    const response = await answer(() =>
-      service.commitUpload(userId, uploadForm(binaryFile(nordnetBytesFile), accountId)),
+    const previewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(binaryFile(nordnetBytesFile), accountId)),
     );
+    const response = await commitPreviewed(userId, previewed, accountId, "csv_nordnet");
     expect(response.status).toBe(400);
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
@@ -474,9 +510,10 @@ describe("POST /api/imports/commit", () => {
       amount: "-418,00",
     });
 
-    const commitResponse = await answer(() =>
-      service.commitUpload(userId, uploadForm(nordnetFile(row), accountId)),
+    const previewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(nordnetFile(row), accountId)),
     );
+    const commitResponse = await commitPreviewed(userId, previewed, accountId, "csv_nordnet");
     // SAFETY: as above -- a commit reports how many rows it inserted.
     const commitBody = commitResponse.body as { inserted: number };
     expect(commitBody.inserted).toBe(1);
@@ -512,9 +549,10 @@ describe("POST /api/imports/:id/undo", () => {
     const accountId = await openAccount(owner.userId);
     await registerNokia();
     const row = nordnetRow({ id: "3001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
-    const commitResponse = await answer(() =>
-      service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
+    const previewed = await answer(() =>
+      service.previewUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
     );
+    const commitResponse = await commitPreviewed(owner.userId, previewed, accountId, "csv_nordnet");
     // SAFETY: commit succeeded (the csv above is a plain EUR deposit,
     // nothing to resolve), so the body carries an importId.
     const { importId } = commitResponse.body as { importId: number };
@@ -634,9 +672,8 @@ describe("POST /api/imports/op-paste/commit", () => {
     const { userId } = await signUp(`imp-paste-commit-unknown-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId, "op");
     const text = await opPasteText();
-    const response = await answer(() =>
-      service.commitPaste(userId, { text, accountId: accountId }),
-    );
+    const previewed = await answer(() => service.previewPaste(userId, { text, accountId }));
+    const response = await commitPreviewed(userId, previewed, accountId, "csv_op");
     expect(response.status).toBe(400);
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
@@ -682,6 +719,89 @@ describe("POST /api/imports/op-paste/commit", () => {
   });
 });
 
+// --- POST /api/imports/preview reading a broker PDF ---
+//
+// Task 7 adds a third source alongside the Nordnet CSV and the OP paste: a
+// broker PDF, read page by page by a model. `_setReaderClient` swaps in a
+// scripted ChatClient so this never reaches Workers AI. The commit half is
+// identical to the CSV/paste path: `commitDraftBody` takes the reviewed
+// draft, not the file.
+
+describe("a broker PDF", () => {
+  const reading = {
+    transactions: [
+      {
+        date: "2025-01-10",
+        type: "BUY",
+        name: "NOKIA",
+        isin: "FI0009000681",
+        quantity: "100",
+        unitPrice: "4.15",
+        amount: "-418.00",
+        fee: "3.00",
+        tax: "0",
+        currency: "EUR",
+      },
+    ],
+    problems: [],
+  };
+
+  test("previews through the reader and commits like any draft", async () => {
+    service._setReaderClient({
+      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
+    });
+    const { userId } = await signUp(`imp-pdf-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    await registerNokia();
+    const bytes = await readBytes(`${import.meta.dirname}/fixtures/op-statement-sample.pdf`);
+    const form = new FormData();
+    form.set("file", new File([bytes], "tapahtumat.pdf"));
+    form.set("accountId", String(accountId));
+
+    const previewed = await answer(() => service.previewUpload(userId, form));
+    expect(previewed.status).toBe(200);
+    // SAFETY: a 200 preview carries the draft.
+    expect((previewed.body as { broker: string; txns: unknown[] }).broker).toBe("pdf");
+
+    const committed = await commitPreviewed(userId, previewed, accountId, "pdf");
+    expect(committed.status).toBe(200);
+    // SAFETY: a 200 commit reports counts.
+    expect((committed.body as { inserted: number }).inserted).toBe(1);
+  });
+
+  test("an edited draft is what commits", async () => {
+    service._setReaderClient({
+      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
+    });
+    const { userId } = await signUp(`imp-pdf-edit-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    await registerNokia();
+    const bytes = await readBytes(`${import.meta.dirname}/fixtures/op-statement-sample.pdf`);
+    const form = new FormData();
+    form.set("file", new File([bytes], "tapahtumat.pdf"));
+    form.set("accountId", String(accountId));
+    const previewed = await answer(() => service.previewUpload(userId, form));
+    // SAFETY: a 200 preview carries the draft, in the same shape commitPreviewed's own cast trusts.
+    const body = previewed.body as {
+      filename: string;
+      sha256: string;
+      txns: DraftBody["txns"];
+      problems: DraftBody["problems"];
+      unknownIsins: DraftBody["unknownIsins"];
+    };
+    const edited = { ...body, txns: [{ ...body.txns[0], amount: -50_000 }] };
+    const committed = await commitPreviewed(
+      userId,
+      { status: 200, body: edited },
+      accountId,
+      "pdf",
+    );
+    expect(committed.status).toBe(200);
+    const stored = await db.select().from(transactions).all();
+    expect(stored.at(-1)?.amount).toBe(-50_000);
+  });
+});
+
 // --- GET /api/imports ---
 //
 // Closes the other half of the gap: undoImport() has worked since Task 12, but there
@@ -694,7 +814,10 @@ describe("GET /api/imports", () => {
     const stranger = await signUp(`imp-list-stranger-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(owner.userId);
     const row = nordnetRow({ id: "4001", date: "2025-01-10", type: "TALLETUS", amount: "500,00" });
-    await answer(() => service.commitUpload(owner.userId, uploadForm(nordnetFile(row), accountId)));
+    const previewed = await answer(() =>
+      service.previewUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
+    );
+    await commitPreviewed(owner.userId, previewed, accountId, "csv_nordnet");
     const ownerList = await answer(() => service.listImports(owner.userId));
     const strangerList = await answer(() => service.listImports(stranger.userId));
     expect(ownerList.status).toBe(200);
@@ -718,9 +841,10 @@ describe("GET /api/imports", () => {
       type: "TALLETUS",
       amount: "500,00",
     });
-    const firstCommit = await answer(() =>
-      service.commitUpload(userId, uploadForm(nordnetFile(first, "first.csv"), accountId)),
+    const firstPreviewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(nordnetFile(first, "first.csv"), accountId)),
     );
+    const firstCommit = await commitPreviewed(userId, firstPreviewed, accountId, "csv_nordnet");
     // SAFETY: a successful commit answers with the row it wrote.
     const { importId: firstId } = firstCommit.body as { importId: number };
 
@@ -730,9 +854,10 @@ describe("GET /api/imports", () => {
       type: "TALLETUS",
       amount: "250,00",
     });
-    const secondCommit = await answer(() =>
-      service.commitUpload(userId, uploadForm(nordnetFile(second, "second.csv"), accountId)),
+    const secondPreviewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(nordnetFile(second, "second.csv"), accountId)),
     );
+    const secondCommit = await commitPreviewed(userId, secondPreviewed, accountId, "csv_nordnet");
     // SAFETY: as above.
     const { importId: secondId } = secondCommit.body as { importId: number };
 

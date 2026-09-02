@@ -14,6 +14,9 @@ import { portfoliosNamed } from "./portfolios.ts";
 import { parseOpPaste } from "./op-paste.ts";
 import type { BrokerCsvConfig } from "./types.ts";
 import { assertAccountOwned } from "../accounts.ts";
+import { createClient, type ChatClient } from "../chat/runner.ts";
+import { extractPages, readTransactionsPdf } from "./pdf-read.ts";
+import { DraftBody, transactionsDraftFrom } from "./txn-draft.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
@@ -73,8 +76,44 @@ const knownInstrumentMaps = async () => {
   };
 };
 
+/** A PDF announces itself in its first bytes; everything else is tried as CSV. */
+const isPdf = (bytes: ArrayBuffer): boolean =>
+  new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+
+/** Injected by tests, so a PDF never reaches the real model. */
+let readerClient: ChatClient | null = null;
+export const _setReaderClient = (client: ChatClient | null): void => {
+  readerClient = client;
+};
+
+/**
+ * Reads a broker PDF page by page with a model, into the same draft shape a
+ * CSV upload produces. Nothing here checks the result -- that belongs to the
+ * review screen and to `commitDraftBody`, which the owner's edits pass
+ * through unread.
+ */
+const buildPdfDraft = async (bytes: ArrayBuffer, accountId: number): Promise<Draft> => {
+  try {
+    const pages = await extractPages(bytes);
+    const reading = await readTransactionsPdf(pages, readerClient ?? createClient());
+    const { knownIsins, knownNames } = await knownInstrumentMaps();
+    return transactionsDraftFrom(reading, { accountId, knownIsins, knownNames });
+  } catch (cause) {
+    throw new HttpError(
+      400,
+      cause instanceof Error ? cause.message : "PDF-tiedostoa ei voitu lukea",
+    );
+  }
+};
+
 const buildDraft = async (file: File, accountId: number) => {
   const bytes = await file.arrayBuffer();
+  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
+
+  if (isPdf(bytes)) {
+    return { broker: "pdf" as const, draft: await buildPdfDraft(bytes, accountId), sha256 };
+  }
+
   const config = detectBrokerConfig(bytes);
   if (!config) throw new HttpError(400, "Tuntematon CSV-muoto: välittäjää ei tunnistettu");
 
@@ -93,13 +132,12 @@ const buildDraft = async (file: File, accountId: number) => {
   }
 
   const { knownIsins, knownNames } = await knownInstrumentMaps();
-  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   // Task 10's structural problems (bad column count, malformed quoting)
   // are merged into the draft here so the review screen gets one
   // line-ordered list of everything wrong with the file, instead of a
   // separate list the caller would have to stitch back together itself.
   return {
-    config,
+    broker: config.broker,
     draft: mapRows(rows, config, knownIsins, { accountId, csvProblems, knownNames }),
     sha256,
   };
@@ -192,24 +230,56 @@ export const listImports = async (userId: string) =>
 export const previewUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
   await assertAccountOwned(userId, accountId);
-  const { config, draft, sha256 } = await buildDraft(file, accountId);
-  return { broker: config.broker, filename: file.name, sha256, ...draft };
+  const { broker, draft, sha256 } = await buildDraft(file, accountId);
+  return { broker, filename: file.name, sha256, ...draft };
 };
 
+export const CommitDraftBody = z
+  .object({
+    accountId: z.number().int().positive(),
+    filename: z.string().min(1).max(255),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    kind: z.enum(["csv_nordnet", "csv_op", "pdf"]),
+    draft: DraftBody,
+  })
+  .strict();
+
+/**
+ * Commits the draft the owner reviewed in the preview -- edits included. The
+ * file is not read again; the draft is what enters the ledger. `accountId`
+ * on every row is overwritten with the one the request names, so an edited
+ * row cannot point at someone else's account.
+ */
+export const commitDraftBody = async (userId: string, body: z.infer<typeof CommitDraftBody>) => {
+  const { accountId, filename, sha256, kind, draft } = CommitDraftBody.parse(body);
+  await assertAccountOwned(userId, accountId);
+  const owned: Draft = { ...draft, txns: draft.txns.map((txn) => ({ ...txn, accountId })) };
+  const result = await commitDraft(db, { userId, accountId, filename, sha256, draft: owned, kind });
+  fireBackfill(owned);
+  return result;
+};
+
+/**
+ * The upload-and-commit path `imports.tsx` still calls (Task 11 moves the
+ * screen onto the preview-then-`commitDraftBody` flow above and this pair is
+ * deleted). Kept working as a thin wrapper: build the same draft the preview
+ * builds, then hand it to `commitDraftBody` so both paths share one check
+ * and one commit.
+ */
 export const commitUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
+  // Checked here too, and not just inside commitDraftBody below: failing fast
+  // on an account the caller cannot use must not first read the file, which
+  // for a PDF means asking the model to read it.
   await assertAccountOwned(userId, accountId);
-  const { config, draft, sha256 } = await buildDraft(file, accountId);
-  const result = await commitDraft(db, {
-    userId,
+  const { broker, draft, sha256 } = await buildDraft(file, accountId);
+  return commitDraftBody(userId, {
     accountId,
     filename: file.name,
     sha256,
+    kind: broker === "nordnet" ? "csv_nordnet" : broker === "pdf" ? "pdf" : "csv_op",
     draft,
-    kind: config.broker === "nordnet" ? "csv_nordnet" : "csv_op",
   });
-  fireBackfill(draft);
-  return result;
 };
 
 export const previewPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
@@ -219,20 +289,22 @@ export const previewPaste = async (userId: string, body: z.infer<typeof PasteBod
   return { broker: OP_WEB_PASTE.broker, filename: OP_PASTE_FILENAME, sha256, ...draft };
 };
 
+/**
+ * The paste-and-commit path `imports.tsx` still calls (Task 11 moves the
+ * screen onto the preview-then-`commitDraftBody` flow and this is deleted).
+ * Kept working as a thin wrapper, same shape as `commitUpload` above.
+ */
 export const commitPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
   await assertAccountOwned(userId, accountId);
   const { draft, sha256 } = await buildPasteDraft(text, accountId);
-  const result = await commitDraft(db, {
-    userId,
+  return commitDraftBody(userId, {
     accountId,
     filename: OP_PASTE_FILENAME,
     sha256,
-    draft,
     kind: "csv_op",
+    draft,
   });
-  fireBackfill(draft);
-  return result;
 };
 
 export const undo = (userId: string, importId: number) => undoImport(db, { userId, importId });

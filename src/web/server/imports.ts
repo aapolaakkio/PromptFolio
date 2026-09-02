@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import {
+  CommitDraftBody,
+  commitDraftBody,
   commitPaste,
   commitUpload,
   listImports,
@@ -28,6 +30,17 @@ export const commitImport = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(upload)
   .handler(({ data, context }) => readable(() => commitUpload(context.userId, data)));
+
+/**
+ * Commits the draft the review screen produced (edits included), rather than
+ * re-reading the file. `imports.tsx` moves onto this in Task 11, replacing
+ * `commitImport` and `commitOpPaste` above -- both of which stay as they are
+ * until then.
+ */
+export const commitImportDraft = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(CommitDraftBody)
+  .handler(({ data, context }) => readable(() => commitDraftBody(context.userId, data)));
 
 export const previewOpPaste = createServerFn({ method: "POST" })
   .middleware([authed])
