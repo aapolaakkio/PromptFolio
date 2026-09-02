@@ -276,33 +276,40 @@ export const CashPage = () => {
               <div key={`${index}-${name}`} className="grid gap-2">
                 {preview.data.length > 1 && <h3>{name}</h3>}
                 <p>
-                  {data.rows} tapahtumaa {fiDate(data.from ?? "")}–{fiDate(data.to ?? "")}. Sisään{" "}
-                  {eur(data.totalInEur)}, ulos {eur(data.totalOutEur)}.
+                  {data.draft.rows.length} tapahtumaa {fiDate(data.draft.rows[0]?.date ?? "")}–
+                  {fiDate(data.draft.rows.at(-1)?.date ?? "")}.
                 </p>
-                {data.verified && (
+                {data.draft.statement !== null && (
                   <p className="text-muted text-sm">
-                    Tiliote ilmoittaa saldoksi {eur(data.openingBalanceEur ?? "0.00")} →{" "}
-                    {eur(data.closingBalanceEur ?? "0.00")}, ja rivit täsmäävät siihen. Alkusaldo
-                    kirjataan automaattisesti.
-                    {data.maturityDate !== null && ` Erääntyy ${fiDate(data.maturityDate)}.`}
+                    Tiliote ilmoittaa saldoksi {eur(data.draft.statement.openingBalanceEur)} →{" "}
+                    {eur(data.draft.statement.closingBalanceEur)}
+                    {data.check !== null && data.check.ok ? ", ja rivit täsmäävät siihen" : ""}.
+                    Alkusaldo kirjataan automaattisesti.
+                    {data.draft.statement.maturityDate !== null &&
+                      ` Erääntyy ${fiDate(data.draft.statement.maturityDate)}.`}
                   </p>
                 )}
-                {data.problems.length > 0 && (
+                {data.draft.problems.length > 0 && (
                   <p className="text-loss text-sm">
-                    {data.problems.length} riviä ei voitu lukea; muut tuodaan.
+                    {data.draft.problems.length} riviä ei voitu lukea; muut tuodaan.
                   </p>
                 )}
                 {/* A statement runs to hundreds of rows; the preview scrolls
                     inside its own box rather than pushing the import button off
-                    the screen. */}
+                    the screen. The rows are not yet editable here -- that
+                    lands with the screen that reviews the draft directly. */}
                 <div className="max-h-80 overflow-auto rounded border border-line">
                   <table>
                     <tbody>
-                      {data.sample.map((row, rowIndex) => (
-                        <tr key={`${row.date}-${rowIndex}`}>
+                      {data.draft.rows.slice(0, 10).map((row) => (
+                        <tr key={row.line}>
                           <td>{fiDate(row.date)}</td>
                           <td className="text-right">{eur(row.amountEur)}</td>
-                          <td className="text-muted">{row.note}</td>
+                          <td className="text-muted">
+                            {[row.label, row.counterparty, row.message]
+                              .filter((part) => part !== "")
+                              .join(" — ")}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

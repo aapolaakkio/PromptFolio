@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import {
   BalanceInput,
+  CommitBankDraft,
+  commitBankDraft,
   commitBankStatementUpload,
   previewBankStatement,
   setAccountBalance,
@@ -17,10 +19,19 @@ export const previewBankImport = createServerFn({ method: "POST" })
   .validator(upload)
   .handler(({ data, context }) => readable(() => previewBankStatement(context.userId, data)));
 
+/**
+ * The upload-and-commit route `cash.tsx` still calls today. Task 10 moves the
+ * screen onto `commitBankDraftImport` below and this one is deleted.
+ */
 export const commitBankImport = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(upload)
   .handler(({ data, context }) => readable(() => commitBankStatementUpload(context.userId, data)));
+
+export const commitBankDraftImport = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(CommitBankDraft)
+  .handler(({ data, context }) => readable(() => commitBankDraft(context.userId, data)));
 
 export const recordAccountBalance = createServerFn({ method: "POST" })
   .middleware([authed])

@@ -4,18 +4,19 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { cashBalancesAt } from "../../core/cash.ts";
-import { EUR, formatMoney, parseMoney, subMoney, zeroMoney } from "../../core/money.ts";
+import { EUR, formatMoney, parseMoney, subMoney, zeroMoney, type Money } from "../../core/money.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { commitBankStatement } from "./bank-commit.ts";
 import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "./bank-statement.ts";
-import type { BankRow, BankStatementConfig } from "./bank-statement.ts";
+import type { BankStatementConfig } from "./bank-statement.ts";
 import {
-  extractStatementText,
-  parseOpStatementText,
-  verifyStatement,
-  type PdfStatement,
-} from "./bank-pdf.ts";
-import { isSweepStatement, parseSweepStatementText } from "./bank-pdf-sweep.ts";
+  BankDraft,
+  bankDraftFromReading,
+  bankDraftFromRows,
+  bankRowsFromDraft,
+  checkBankDraft,
+} from "./bank-draft.ts";
+import { extractPages, readBankPdf } from "./pdf-read.ts";
 import { type Db, db } from "../db/index.ts";
 import { accounts, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
@@ -45,57 +46,31 @@ const isPdf = (bytes: ArrayBuffer): boolean =>
   new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
 
 /**
- * Reads whichever format arrived. A PDF carries the balances the CSV leaves out
- * and is checked against them: the rows must account for the difference or the
- * file is refused, which is what makes the more fragile format the safer import.
+ * Reads whichever format arrived into one draft. A CSV parses by its bank's
+ * config; a PDF is read by the model, page by page. Neither is checked here:
+ * the check belongs to the draft, which the owner may still edit.
  */
-const readStatement = async (
-  bytes: ArrayBuffer,
-): Promise<{
-  bank: string;
-  rows: BankRow[];
-  problems: Array<{ line: number; message: string }>;
-  statement: PdfStatement | null;
-}> => {
+const readStatement = async (bytes: ArrayBuffer): Promise<{ bank: string; draft: BankDraft }> => {
   if (!isPdf(bytes)) {
     const config = detect(bytes);
     const { rows, problems } = parseBankStatement(bytes, config);
-    return { bank: config.bank, rows, problems, statement: null };
+    return { bank: config.bank, draft: bankDraftFromRows(rows, problems) };
   }
-
-  const text = await extractStatementText(bytes).catch((cause: unknown) => {
-    throw asBadRequest(cause);
-  });
-  // Which bank's PDF this is, decided from the document's own words rather than
-  // from the file name: a statement saved as "tiliote.pdf" is still whatever the
-  // bank wrote inside it.
-  const sweep = isSweepStatement(text);
-  let statement: PdfStatement;
   try {
-    statement = sweep ? parseSweepStatementText(text) : parseOpStatementText(text);
+    const pages = await extractPages(bytes);
+    const reading = await readBankPdf(pages, readerClient ?? createClient());
+    return { bank: "pdf", draft: bankDraftFromReading(reading) };
   } catch (cause) {
-    // A PDF this parser cannot read is the caller's problem to act on -- a
-    // statement from another bank, a different report saved as a statement --
-    // so it must arrive as the message that says so. Left as a thrown Error it
-    // became a generic 500 "Palvelinvirhe", which tells the owner nothing about
-    // what to do next.
+    // The extractor's and the reader's complaints are the owner's to act on --
+    // a scanned file, a reply the schema refused -- so they arrive as 400s.
     throw asBadRequest(cause);
   }
-  const check = verifyStatement(statement);
-  if (!check.ok) {
-    const difference = formatMoney({ minor: check.differenceEur, currency: EUR });
-    throw new HttpError(
-      400,
-      `Tiliotteen rivit eivät täsmää sen omaan loppusaldoon (ero ${difference} €). ` +
-        "Tiedostoa ei tuotu, koska osa riveistä on ilmeisesti luettu väärin.",
-    );
-  }
-  return {
-    bank: sweep ? "sweepbank" : "op",
-    rows: statement.rows,
-    problems: statement.problems,
-    statement,
-  };
+};
+
+/** Injected by tests, so a PDF never reaches the real model. */
+let readerClient: ChatClient | null = null;
+export const _setReaderClient = (client: ChatClient | null): void => {
+  readerClient = client;
 };
 
 const detect = (bytes: ArrayBuffer): BankStatementConfig => {
@@ -153,6 +128,23 @@ export const _setClassifierClient = (client: ChatClient | null): void => {
   classifierClient = client;
 };
 
+/** What the reconciliation and the maturity note read off a statement. */
+type StatementFacts = {
+  readonly from: string;
+  readonly to: string;
+  readonly openingBalance: Money;
+  readonly closingBalance: Money;
+  readonly maturityDate: string | null;
+};
+
+const statementOf = (statement: NonNullable<BankDraft["statement"]>): StatementFacts => ({
+  from: statement.from,
+  to: statement.to,
+  openingBalance: parseMoney(statement.openingBalanceEur, EUR),
+  closingBalance: parseMoney(statement.closingBalanceEur, EUR),
+  maturityDate: statement.maturityDate,
+});
+
 type MaturityOutcome = {
   /** What the account carries after this import. */
   readonly maturityDate: string | null;
@@ -163,7 +155,7 @@ type MaturityOutcome = {
 const recordMaturity = async (
   db: Db,
   accountId: number,
-  statement: PdfStatement,
+  statement: StatementFacts,
 ): Promise<MaturityOutcome> => {
   const account = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   const stated = statement.maturityDate;
@@ -202,7 +194,7 @@ type Reconciliation = {
 const reconcileToStatement = async (
   db: Db,
   accountId: number,
-  statement: PdfStatement,
+  statement: StatementFacts,
 ): Promise<Reconciliation> => {
   const existing = await db
     .select({ id: transactions.id, tradeDate: transactions.tradeDate })
@@ -298,61 +290,44 @@ export const previewBankStatement = async (userId: string, form: FormData) => {
   await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
-  const { bank, rows, problems, statement } = await readStatement(bytes);
-
-  const totalIn = rows.filter((row) => row.amount > 0n).reduce((sum, row) => sum + row.amount, 0n);
-  const totalOut = rows.filter((row) => row.amount < 0n).reduce((sum, row) => sum + row.amount, 0n);
-
-  return {
-    bank,
-    rows: rows.length,
-    from: rows[0]?.date ?? null,
-    to: rows.at(-1)?.date ?? null,
-    totalInEur: formatMoney({ minor: totalIn, currency: EUR }),
-    totalOutEur: formatMoney({ minor: totalOut, currency: EUR }),
-    // Present only for a PDF: the balances the statement itself prints, and the
-    // fact that the rows were checked against them.
-    openingBalanceEur: statement === null ? null : formatMoney(statement.openingBalance),
-    closingBalanceEur: statement === null ? null : formatMoney(statement.closingBalance),
-    // A fixed-term deposit's statement prints when it comes free. Shown so the
-    // owner can put it on the account; not written here, since changing an
-    // account's terms is not something reading a file should do.
-    maturityDate: statement?.maturityDate ?? null,
-    verified: statement !== null,
-    problems,
-    // The first rows only, so the owner can see the parse is right before
-    // committing several hundred of them.
-    sample: rows.slice(0, 10).map((row) => ({
-      date: row.date,
-      type: row.type,
-      amountEur: formatMoney({ minor: row.amount, currency: EUR }),
-      note: row.note,
-    })),
-  };
+  const { bank, draft } = await readStatement(bytes);
+  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
+  return { bank, filename: file.name, sha256, draft, check: checkBankDraft(draft) };
 };
 
-export const commitBankStatementUpload = async (userId: string, form: FormData) => {
-  const { file, accountId } = readUpload(form);
+export const CommitBankDraft = z
+  .object({
+    accountId: z.number().int().positive(),
+    filename: z.string().min(1).max(255),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    draft: BankDraft,
+  })
+  .strict();
+
+/**
+ * Commits the rows the owner reviewed -- and possibly corrected -- in the
+ * preview. The file is not read again: the draft is the statement now.
+ */
+export const commitBankDraft = async (userId: string, body: z.infer<typeof CommitBankDraft>) => {
+  const { accountId, filename, sha256, draft } = CommitBankDraft.parse(body);
   await assertAccountOwned(userId, accountId);
   await assertBankAccount(accountId);
+  if (draft.rows.length === 0)
+    throw new HttpError(400, "Tiedostosta ei löytynyt yhtään tapahtumaa");
 
-  const bytes = await file.arrayBuffer();
-  const { rows, problems, statement } = await readStatement(bytes);
-  if (rows.length === 0) throw new HttpError(400, "Tiedostosta ei löytynyt yhtään tapahtumaa");
+  const check = checkBankDraft(draft);
+  if (check !== null && !check.ok) {
+    throw new HttpError(
+      400,
+      `Tiliotteen rivit eivät täsmää sen omaan loppusaldoon (ero ${check.differenceEur} €). ` +
+        "Korjaa rivit esikatselussa ennen tuontia.",
+    );
+  }
 
-  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
-  const result = await commitBankStatement(db, {
-    userId,
-    accountId,
-    filename: file.name,
-    sha256,
-    rows,
-  });
+  const rows = bankRowsFromDraft(draft);
+  const result = await commitBankStatement(db, { userId, accountId, filename, sha256, rows });
 
-  // A PDF states what the account held before its first row, so the opening
-  // balance is written from the statement instead of being asked for. The
-  // ledger's own balance is then compared against the printed closing one: they
-  // agree unless this account already held rows for the same period.
+  const statement = draft.statement === null ? null : statementOf(draft.statement);
   const reconciliation =
     statement === null ? null : await reconcileToStatement(db, accountId, statement);
   const maturity = statement === null ? null : await recordMaturity(db, accountId, statement);
@@ -366,12 +341,33 @@ export const commitBankStatementUpload = async (userId: string, form: FormData) 
   // 700th row is malformed should still import the other 699.
   return {
     ...result,
-    problems,
+    problems: draft.problems.map((problem) => ({ line: problem.line, message: problem.text })),
     reconciliation,
     classified,
     maturityDate: maturity?.maturityDate ?? null,
     maturityConflict: maturity?.maturityConflict ?? null,
   };
+};
+
+/**
+ * The upload-and-commit path `cash.tsx` still calls (Task 10 moves the screen
+ * onto the preview-then-`commitBankDraft` flow above and this pair is
+ * deleted). Kept working as a thin wrapper: read the upload into the same
+ * draft the preview builds, then hand it to `commitBankDraft` so the two
+ * paths share one check and one commit.
+ */
+export const commitBankStatementUpload = async (userId: string, form: FormData) => {
+  const { file, accountId } = readUpload(form);
+  // Checked here too, and not just inside commitBankDraft below: failing fast
+  // on an account the caller cannot use must not first read the file, which
+  // for a PDF means asking the model to read it.
+  await assertAccountOwned(userId, accountId);
+  await assertBankAccount(accountId);
+
+  const bytes = await file.arrayBuffer();
+  const { draft } = await readStatement(bytes);
+  const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
+  return commitBankDraft(userId, { accountId, filename: file.name, sha256, draft });
 };
 
 /**
