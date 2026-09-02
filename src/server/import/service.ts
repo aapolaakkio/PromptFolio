@@ -246,9 +246,12 @@ export const CommitDraftBody = z
 
 /**
  * Commits the draft the owner reviewed in the preview -- edits included. The
- * file is not read again; the draft is what enters the ledger. `accountId`
- * on every row is overwritten with the one the request names, so an edited
- * row cannot point at someone else's account.
+ * file is not read again; the draft is what enters the ledger.
+ *
+ * A committed row lands on the account the request names: `insertRow` takes it
+ * as a parameter and never reads a row's own `accountId`. The map below
+ * normalises the draft to that same account so the draft and the ledger cannot
+ * disagree -- a second layer, not the one doing the work.
  */
 export const commitDraftBody = async (userId: string, body: z.infer<typeof CommitDraftBody>) => {
   const { accountId, filename, sha256, kind, draft } = CommitDraftBody.parse(body);

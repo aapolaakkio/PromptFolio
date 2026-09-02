@@ -808,6 +808,8 @@ describe("a broker PDF", () => {
     expect(stored.at(-1)?.amount).toBe(-50_000);
   });
 
+  // Guards the contract, not one line of it: the account a row lands on comes
+  // from the request either way (see commitDraftBody).
   test("an edited row cannot move itself to another account", async () => {
     service._setReaderClient({
       run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
