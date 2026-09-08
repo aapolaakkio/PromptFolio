@@ -105,3 +105,119 @@ describe("runRecipe", () => {
     expect(() => runRecipe(noBalances, recipe)).toThrow(/saldo/i);
   });
 });
+
+describe("runRecipe -- round 2 regressions", () => {
+  test("does not swallow a block line when restField's target was already set by a continuation match", () => {
+    const critical1Recipe: BankRecipe = {
+      ...recipe,
+      continuation: [...recipe.continuation, String.raw`^CP:(?<counterparty>.+)$`],
+    };
+    const critical1Doc = doc.replace(
+      "K-MARKET ESIMERKKI\nViesti:\nKahvia",
+      "FIRSTLINE\nCP:FROMCONT",
+    );
+
+    const { statement, unclaimed } = runRecipe(critical1Doc, critical1Recipe);
+
+    expect(statement.rows[0]?.counterparty).toBe("FROMCONT");
+    expect(unclaimed.map((entry) => entry.text)).toContain("FIRSTLINE");
+  });
+
+  test("reports every line as unclaimed when no line opens a record at all", () => {
+    const docLines = doc.split("\n");
+    const openingLine = docLines[1];
+    const closingLine = docLines[9];
+    const noRecordsDoc = [openingLine, "ROSKAA A", "ROSKAA B", closingLine].join("\n");
+
+    const { statement, unclaimed } = runRecipe(noRecordsDoc, recipe);
+
+    expect(statement.rows).toEqual([]);
+    expect(statement.problems).toEqual([]);
+    expect(unclaimed.map((entry) => entry.text)).toEqual(["ROSKAA A", "ROSKAA B"]);
+  });
+
+  test("skip wins over recordStart: a line matching both never opens a record", () => {
+    const skipWinsRecipe: BankRecipe = { ...recipe, skip: [...recipe.skip, String.raw`^28\.`] };
+
+    const { statement } = runRecipe(doc, skipWinsRecipe);
+
+    expect(statement.rows).toHaveLength(1);
+    expect(statement.rows[0]?.date).toBe("2025-08-29");
+  });
+
+  test("recordStart's own named group wins over restField, leaving the rest line unclaimed", () => {
+    const precedenceRecipe: BankRecipe = {
+      kind: "bank",
+      skip: [],
+      recordStart: String.raw`^(?<date>\d{1,2}\.\d{1,2}\.\d{4})\s+(?<amount>[+\-]\d+,\d{2})\s+(?<label>[A-Z]+)\s+(?<counterparty>[A-Z ]+)$`,
+      continuation: [],
+      restField: "counterparty",
+      header: {
+        from: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        to: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        openingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        closingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+      },
+      dateFormat: "d.m.yyyy",
+      money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+    };
+    const precedenceDoc = [
+      "28.8.2025 Saldo",
+      "+0,00 Saldo",
+      "1.9.2025 +5,00 PALKKA TYONANTAJA OY",
+      "MUU RIVI",
+      "30.9.2025 Saldo",
+      "+5,00 Saldo",
+    ].join("\n");
+
+    const { statement, unclaimed } = runRecipe(precedenceDoc, precedenceRecipe);
+
+    expect(statement.rows).toHaveLength(1);
+    expect(statement.rows[0]?.counterparty).toBe("TYONANTAJA OY");
+    expect(unclaimed.map((entry) => entry.text)).toContain("MUU RIVI");
+  });
+
+  test("throws the Finnish time-budget error on a per-line basis, not just per record", () => {
+    const docLines = doc.split("\n");
+    const openingLine = docLines[1];
+    const closingLine = docLines[9];
+    const filler = Array.from({ length: 250 }, (_, index) => `ROSKAA ${index}`);
+    const bigDoc = [openingLine, ...filler, closingLine].join("\n");
+
+    expect(() => runRecipe(bigDoc, recipe, -1)).toThrow(/kesti liian kauan/);
+  });
+
+  test("claims the lines a multi-line header fallback match covers, so they don't leak into a record block", () => {
+    const maturityRecipe: BankRecipe = {
+      kind: "bank",
+      skip: [],
+      recordStart: String.raw`^(?<date>\d{1,2}\.\d{1,2}\.\d{4})\s+(?<amount>[+\-]\d+,\d{2})\s+(?<label>[A-Z]+)$`,
+      continuation: [],
+      restField: "counterparty",
+      header: {
+        from: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        to: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        openingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        closingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        maturityDate: String.raw`^Eräpäivä\s*\n(?<value>\d{1,2}\.\d{1,2}\.\d{4})$`,
+      },
+      dateFormat: "d.m.yyyy",
+      money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+    };
+    const maturityDoc = [
+      "28.8.2025 Saldo",
+      "+0,00 Saldo",
+      "1.9.2025 +5,00 PALKKA",
+      "Eräpäivä",
+      "1.2.2027",
+      "30.9.2025 Saldo",
+      "+5,00 Saldo",
+    ].join("\n");
+
+    const { statement, unclaimed } = runRecipe(maturityDoc, maturityRecipe);
+
+    expect(statement.maturityDate).toBe("2027-02-01");
+    expect(statement.rows[0]?.counterparty).toBe("");
+    expect(unclaimed).toEqual([]);
+  });
+});
