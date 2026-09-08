@@ -67,33 +67,6 @@ const Decimal = z.string().regex(/^-?\d+([.,]\d+)?$/);
 export type ReadProblem = { readonly line: number; readonly text: string };
 const Problems = z.array(z.object({ line: z.number().int(), text: z.string() }));
 
-/** One batch's answer: header facts are nullable because a middle page has none. */
-const BankBatch = z.object({
-  from: IsoDate.nullable(),
-  to: IsoDate.nullable(),
-  openingBalance: Decimal.nullable(),
-  closingBalance: Decimal.nullable(),
-  maturityDate: IsoDate.nullable(),
-  rows: z.array(
-    z.object({
-      date: IsoDate,
-      amount: Decimal,
-      counterparty: z.string(),
-      message: z.string(),
-      reference: z.string().nullable(),
-    }),
-  ),
-  problems: Problems,
-});
-
-export const BankReading = BankBatch.extend({
-  from: IsoDate,
-  to: IsoDate,
-  openingBalance: Decimal,
-  closingBalance: Decimal,
-});
-export type BankReading = z.infer<typeof BankReading>;
-
 const HoldingsBatch = z.object({
   asOf: IsoDate.nullable(),
   totalValue: Decimal.nullable(),
@@ -152,7 +125,6 @@ const RULES = [
 ].join("\n");
 
 const PROMPTS = {
-  bank: "Tämä on pankin tiliotteen tekstisisältö. Poimi jakso, alku- ja loppusaldo, mahdollinen eräpäivä, ja jokainen tilitapahtuma (päivä, summa etumerkkeineen, maksunsaaja tai maksaja, viesti, arkistointitunnus).",
   holdings:
     "Tämä on arvopaperisäilytyksen tai salkun omistusotteen tekstisisältö. Poimi otteen päivä, mahdollinen painettu kokonaisarvo, ja jokainen omistus (nimi, ISIN jos painettu, määrä, markkina-arvo, valuutta).",
   transactions:
@@ -211,28 +183,6 @@ const readBatches = async <T>(
 
 const firstNonNull = <T>(values: readonly (T | null)[]): T | null =>
   values.find((value): value is T => value !== null) ?? null;
-
-export const readBankPdf = async (
-  pages: readonly PdfPage[],
-  client: ChatClient,
-  maxWords?: number,
-): Promise<BankReading> => {
-  const batches = await readBatches(pages, client, BankBatch, PROMPTS.bank, maxWords);
-  // Opening facts are printed at the top, closing ones at the bottom: the
-  // first batch that has them wins for one, the last for the other.
-  const merged = {
-    from: firstNonNull(batches.map((b) => b.from)),
-    openingBalance: firstNonNull(batches.map((b) => b.openingBalance)),
-    to: firstNonNull([...batches].reverse().map((b) => b.to)),
-    closingBalance: firstNonNull([...batches].reverse().map((b) => b.closingBalance)),
-    maturityDate: firstNonNull(batches.map((b) => b.maturityDate)),
-    rows: batches.flatMap((b) => b.rows),
-    problems: batches.flatMap((b) => b.problems),
-  };
-  const parsed = BankReading.safeParse(merged);
-  if (!parsed.success) throw new Error(UNREADABLE);
-  return parsed.data;
-};
 
 export const readHoldingsPdf = async (
   pages: readonly PdfPage[],

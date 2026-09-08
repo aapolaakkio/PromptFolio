@@ -5,8 +5,6 @@ import type { ChatClient, TurnParams } from "../chat/runner.ts";
 import {
   batchPages,
   extractPages,
-  PDF_READ_MODEL,
-  readBankPdf,
   readHoldingsPdf,
   readTransactionsPdf,
   type PdfPage,
@@ -59,69 +57,6 @@ const scripted = (replies: unknown[], seen: TurnParams[] = []): ChatClient => ({
 });
 
 const page = (number: number, text: string): PdfPage => ({ number, text });
-
-describe("readBankPdf", () => {
-  const first = {
-    from: "2025-08-28",
-    to: null,
-    openingBalance: "1500.00",
-    closingBalance: null,
-    maturityDate: null,
-    rows: [
-      {
-        date: "2025-09-01",
-        amount: "-25.90",
-        counterparty: "K-MARKET",
-        message: "",
-        reference: "1",
-      },
-    ],
-    problems: [],
-  };
-  const last = {
-    from: null,
-    to: "2026-08-28",
-    openingBalance: null,
-    closingBalance: "3236.44",
-    maturityDate: "2027-02-01",
-    rows: [
-      { date: "2026-08-01", amount: "12.34", counterparty: "", message: "Korko", reference: null },
-    ],
-    problems: [{ line: 7, text: "1.2.2026 ??? 40,00" }],
-  };
-
-  test("asks in JSON mode with the reading model, one call per batch", async () => {
-    const seen: TurnParams[] = [];
-    await readBankPdf([page(1, "a"), page(2, "b")], scripted([first, last], seen), 1);
-    expect(seen).toHaveLength(2);
-    expect(seen[0]?.model).toBe(PDF_READ_MODEL);
-    expect(seen[0]?.response_format?.type).toBe("json_schema");
-    expect(seen[0]?.messages.at(-1)?.content).toContain("a");
-    expect(seen[1]?.messages.at(-1)?.content).toContain("b");
-  });
-
-  test("takes the opening facts from the first batch, the closing ones from the last, and every row", async () => {
-    const reading = await readBankPdf([page(1, "a"), page(2, "b")], scripted([first, last]), 1);
-    expect(reading.from).toBe("2025-08-28");
-    expect(reading.to).toBe("2026-08-28");
-    expect(reading.openingBalance).toBe("1500.00");
-    expect(reading.closingBalance).toBe("3236.44");
-    expect(reading.maturityDate).toBe("2027-02-01");
-    expect(reading.rows.map((row) => row.amount)).toEqual(["-25.90", "12.34"]);
-    expect(reading.problems).toEqual([{ line: 7, text: "1.2.2026 ??? 40,00" }]);
-  });
-
-  test("a statement whose facts never arrive is refused as unreadable", async () => {
-    const empty = { ...first, from: null, openingBalance: null };
-    await expect(readBankPdf([page(1, "a")], scripted([empty]))).rejects.toThrow(/luettavaa/);
-  });
-
-  test("a reply that is not the shape is refused, not guessed at", async () => {
-    await expect(readBankPdf([page(1, "a")], scripted([{ nonsense: true }]))).rejects.toThrow(
-      /luettavaa/,
-    );
-  });
-});
 
 describe("readHoldingsPdf", () => {
   test("merges holdings across batches and keeps the printed total", async () => {

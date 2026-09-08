@@ -1,43 +1,60 @@
 import { describe, expect, test } from "vitest";
 
+import { EUR, money } from "../../core/money.ts";
+import type { PdfStatement } from "./bank-pdf.ts";
 import type { BankRow } from "./bank-statement.ts";
 import {
   BankDraft,
-  bankDraftFromReading,
   bankDraftFromRows,
+  bankDraftFromStatement,
   bankRowsFromDraft,
   checkBankDraft,
 } from "./bank-draft.ts";
 
-const reading = {
+const statement: PdfStatement = {
   from: "2025-08-28",
   to: "2026-08-28",
-  openingBalance: "1500,00",
-  closingBalance: "3236.44",
+  openingBalance: money(150_000n, EUR),
+  closingBalance: money(323_644n, EUR),
   maturityDate: null,
   rows: [
     {
+      line: 1,
       date: "2025-09-01",
-      amount: "-25.90",
+      type: "WITHDRAWAL",
+      amount: -2590n,
       counterparty: "K-MARKET",
-      message: "",
-      reference: "A1",
+      note: "K-MARKET",
+      externalId: "A1",
     },
     {
+      line: 2,
       date: "2025-09-02",
-      amount: "2750.00",
+      type: "DEPOSIT",
+      amount: 275_000n,
       counterparty: "TYÖNANTAJA",
-      message: "PALKKA",
-      reference: null,
+      note: "TYÖNANTAJA — PALKKA",
+      externalId: null,
     },
-    { date: "2026-08-01", amount: "12.34", counterparty: "", message: "KORKO", reference: null },
+    {
+      line: 3,
+      date: "2026-08-01",
+      type: "INTEREST",
+      amount: 1234n,
+      counterparty: "",
+      note: "KORKO",
+      externalId: null,
+    },
   ],
-  problems: [{ line: 9, text: "epäselvä rivi" }],
+  problems: [{ line: 9, message: "epäselvä rivi" }],
 };
 
-describe("bankDraftFromReading", () => {
-  test("carries the statement, normalises the decimal comma, and types rows by sign or by 'korko'", () => {
-    const draft = bankDraftFromReading(reading);
+const draftOf = (overrides: Partial<PdfStatement> = {}) =>
+  bankDraftFromStatement({ ...statement, ...overrides }, []);
+
+describe("bankDraftFromStatement", () => {
+  test("carries the statement's own balances and each row's type", () => {
+    const draft = draftOf();
     expect(draft.statement).toEqual({
       from: "2025-08-28",
       to: "2026-08-28",
@@ -47,18 +64,27 @@ describe("bankDraftFromReading", () => {
     });
     expect(draft.rows.map((row) => row.type)).toEqual(["WITHDRAWAL", "DEPOSIT", "INTEREST"]);
     expect(draft.rows[0]).toMatchObject({ line: 1, amountEur: "-25.90", externalId: "A1" });
+    expect(draft.rows[1]).toMatchObject({ counterparty: "TYÖNANTAJA", message: "PALKKA" });
     expect(draft.problems).toEqual([{ line: 9, text: "epäselvä rivi" }]);
+  });
+
+  test("a line nobody could account for becomes a problem the owner sees", () => {
+    const draft = bankDraftFromStatement(statement, [{ line: 2, text: "ESIMERKKI ASIAKAS" }]);
+    expect(draft.problems).toEqual([
+      { line: 2, text: "Tunnistamaton rivi: ESIMERKKI ASIAKAS" },
+      { line: 9, text: "epäselvä rivi" },
+    ]);
   });
 });
 
 describe("checkBankDraft", () => {
   test("agrees when the rows account for the closing balance", () => {
-    const draft = bankDraftFromReading({ ...reading, closingBalance: "4236.44" });
+    const draft = draftOf({ closingBalance: money(423_644n, EUR) });
     expect(checkBankDraft(draft)).toEqual({ ok: true, differenceEur: "0.00" });
   });
 
   test("reports the difference otherwise, and is null for a CSV draft", () => {
-    expect(checkBankDraft(bankDraftFromReading(reading))).toEqual({
+    expect(checkBankDraft(draftOf())).toEqual({
       ok: false,
       differenceEur: "-1000.00",
     });
@@ -68,7 +94,7 @@ describe("checkBankDraft", () => {
 
 describe("bankRowsFromDraft", () => {
   test("round-trips through BankRow, with the note the ledger stores", () => {
-    const rows = bankRowsFromDraft(bankDraftFromReading(reading));
+    const rows = bankRowsFromDraft(draftOf());
     expect(rows[0]).toMatchObject({
       amount: -2590n,
       note: "K-MARKET",
