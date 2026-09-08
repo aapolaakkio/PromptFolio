@@ -51,7 +51,7 @@ describe("parseRecipe", () => {
   });
 
   test("accepts a non-breaking space as the thousands separator", () => {
-    const nbsp = { ...valid, money: { ...valid.money, thousands: " " } };
-    expect(parseRecipe(nbsp).money.thousands).toBe(" ");
+    const nbsp = { ...valid, money: { ...valid.money, thousands: " " } };
+    expect(parseRecipe(nbsp).money.thousands).toBe(" ");
   });
 });
