@@ -96,9 +96,16 @@ normalisation: that is a character-identity fix, not a format choice.
 arithmetic. Sign conventions, date validity, and transaction typing stay in
 existing typed code, where they are already tested.
 
-Model-authored regexes are length-capped, compiled inside a `try`, and the run
-loop checks elapsed time every 200 lines and aborts. A pathological pattern
-costs one failed import, never a hung worker.
+Model-authored regexes are length-capped, compiled inside a `try`, screened for
+the shapes that backtrack catastrophically, and the run loop checks elapsed time
+every 200 lines and aborts. None of that bounds a single `exec`: V8 has no
+backtracking limit, so a pattern the shape check misses can hold one request
+until Cloudflare's CPU limit ends it. The budget is checked between calls, never
+inside one. What the screen does buy is that the classic shapes never run at
+all, and that the cost of the rest is one failed import rather than a corrupt
+ledger: the pattern describes the owner's own document, a recipe that hangs
+never verifies, so it is never stored, and the next import regenerates it. A
+linear-time engine is the real fix, and is not available here.
 
 ## How a recipe is made
 
@@ -126,12 +133,22 @@ boundary discipline `pdf-read.ts` applies to readings today.
 
 ## Verification
 
-Two checks, both local and cheap.
+Three checks, all local and cheap.
 
 **Coverage.** Every non-blank line must be claimed: by `skip`, by `recordStart`,
-or as a continuation of a record. Zero unclaimed lines are required. A bank that
-prints something we ignore has to say so through `skip`, so "ignored" is always
-a stated decision rather than an accident.
+or as a continuation of a record. A bank that prints something we ignore has to
+say so through `skip`, so "ignored" is always a stated decision rather than an
+accident. One tolerance: unclaimed lines *before* the first transaction row do
+not fail verification. A real OP fixed-term statement prints the account
+holder's name as page preamble and no honest pattern covers it. The tolerance
+needs rows to exist — with no rows nothing is "before the first row", so every
+unclaimed line fails. Tolerated lines are still reported to the owner.
+
+**Skipped lines that look like money.** `skip` satisfies coverage by
+definition, so a skipped line carrying both a printed date and a printed amount
+is flagged: `skip: ["SIIRTO"]` eats a cancelling −250,00/+250,00 pair while the
+arithmetic still balances. The probe is written in `verify.ts`, not taken from
+the recipe — the recipe is what is under suspicion.
 
 **Arithmetic.** `openingBalance + Σ amounts === closingBalance`, exact in minor
 units as `bigint`. Every row date must parse and fall inside `from…to`.
@@ -154,6 +171,24 @@ sign rule is wrong.
 A second failure stores nothing. The draft is built from the rows that did
 match, with the misses listed as problems, and the existing editable preview
 carries it to the owner.
+
+### What the checks do not catch
+
+Stated plainly, so the next reader does not read more safety into this than it
+has.
+
+- **A date and its amount on separate lines.** The skipped-line probe reads one
+  line at a time. A two-line record whose date and amount are skipped separately
+  shows neither half a complete transaction.
+- **A skipped line a header pattern also matches.** Those are recorded as
+  accounted for and never reach the probe, which is what keeps the balance line
+  `5 000,00 Saldo 28.8.2026` — a real date, a real amount — quiet. A header
+  pattern loose enough to also cover transaction rows walks through that door,
+  leaving only the arithmetic, and a cancelling pair satisfies the arithmetic.
+- **A catastrophic regex the shape check does not recognise.** The check refuses
+  a quantified group whose body reduces, at any depth, to a single unbounded
+  repetition, and one whose alternatives overlap. It is a heuristic, not a
+  decision procedure; see The recipe above for what a miss costs.
 
 ## Storage
 
