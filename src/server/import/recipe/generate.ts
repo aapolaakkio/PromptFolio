@@ -3,7 +3,7 @@ import { PDF_READ_MODEL, type PdfPage } from "../pdf-read.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import { runRecipe, type RecipeRun } from "./run.ts";
 import { parseRecipe, type BankRecipe } from "./types.ts";
-import { verifyRun } from "./verify.ts";
+import { verifyRun, type Verdict } from "./verify.ts";
 
 /** A recipe is about a kilobyte; this is room for one with comments stripped. */
 const MAX_TOKENS = 4096;
@@ -104,6 +104,28 @@ const ask = async (
   return parseRecipe(raw);
 };
 
+const UNREADABLE_RUN = "Kuvausta ei voitu ajaa tiedostolle";
+
+/**
+ * One attempt at reading the statement with a recipe. A recipe that cannot
+ * locate the balances throws rather than failing verification, and that is the
+ * likeliest first mistake of all, so the throw is turned into a verdict: the
+ * model gets its retry, and the owner an editable draft instead of a 400.
+ */
+type Attempt = { readonly run: RecipeRun | null; readonly verdict: Verdict };
+
+const attempt = (text: string, recipe: BankRecipe): Attempt => {
+  try {
+    const run = runRecipe(text, recipe);
+    return { run, verdict: verifyRun(run) };
+  } catch (cause) {
+    return {
+      run: null,
+      verdict: { ok: false, report: cause instanceof Error ? cause.message : UNREADABLE_RUN },
+    };
+  }
+};
+
 /**
  * One description, checked; and if it does not hold up, one more with the
  * complaint attached. Never a third: a model that has missed twice is guessing,
@@ -119,20 +141,27 @@ export const generateRecipe = async (
     { role: "system", content: INSTRUCTIONS },
     { role: "user", content: sample },
   ]);
-  const firstRun = runRecipe(text, first);
-  const firstVerdict = verifyRun(firstRun);
-  if (firstVerdict.ok) return { recipe: first, run: firstRun, verified: true };
+  const firstTry = attempt(text, first);
+  if (firstTry.run !== null && firstTry.verdict.ok) {
+    return { recipe: first, run: firstTry.run, verified: true };
+  }
+  const report = firstTry.verdict.ok ? "" : firstTry.verdict.report;
 
   const second = await ask(client, [
     { role: "system", content: INSTRUCTIONS },
     { role: "user", content: sample },
     {
       role: "user",
-      content: `Edellinen kuvauksesi:\n${JSON.stringify(first)}\n\n${firstVerdict.report}\n\nKorjaa kuvaus. Vastaa pelkällä JSON-oliolla.`,
+      content: `Edellinen kuvauksesi:\n${JSON.stringify(first)}\n\n${report}\n\nKorjaa kuvaus. Vastaa pelkällä JSON-oliolla.`,
     },
   ]);
-  const secondRun = runRecipe(text, second);
-  if (verifyRun(secondRun).ok) return { recipe: second, run: secondRun, verified: true };
-
-  return { recipe: first, run: firstRun, verified: false };
+  // A second throw has nothing left to build a draft from, so it surfaces --
+  // unless the first attempt at least produced a reading to fall back on.
+  const secondTry = attempt(text, second);
+  if (secondTry.run !== null && secondTry.verdict.ok) {
+    return { recipe: second, run: secondTry.run, verified: true };
+  }
+  if (firstTry.run !== null) return { recipe: first, run: firstTry.run, verified: false };
+  if (secondTry.run !== null) return { recipe: second, run: secondTry.run, verified: false };
+  throw new Error(secondTry.verdict.ok ? UNREADABLE_RUN : secondTry.verdict.report);
 };

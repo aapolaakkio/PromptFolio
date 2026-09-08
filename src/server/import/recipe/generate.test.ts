@@ -34,6 +34,19 @@ const wrongSign = JSON.stringify({
   money: { ...OP_STATEMENT_RECIPE.money, negative: "suffix" },
 });
 
+/**
+ * A recipe whose balance patterns match nothing: `runRecipe` throws instead of
+ * failing verification, which is the single likeliest first-attempt mistake.
+ */
+const noBalances = JSON.stringify({
+  ...OP_STATEMENT_RECIPE,
+  header: {
+    ...OP_STATEMENT_RECIPE.header,
+    openingBalance: String.raw`^EI-SALDOA (?<value>\d+,\d{2})$`,
+    closingBalance: String.raw`^EI-SALDOA (?<value>\d+,\d{2})$`,
+  },
+});
+
 describe("sampleFor", () => {
   test("sends the first page whole and the tail of the last", () => {
     const sample = sampleFor([
@@ -133,6 +146,34 @@ describe("generateRecipe", () => {
   test("refuses a reply whose JSON is not a recipe", async () => {
     const text = await fixture();
     await expect(generateRecipe(text, pagesOf(text), stub('{"kind":"bank"}'))).rejects.toThrow();
+  });
+
+  test("retries when the first recipe cannot even find the balances", async () => {
+    const text = await fixture();
+    const client = stub(noBalances, good);
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.verified).toBe(true);
+    expect(client.asked).toHaveLength(2);
+    expect(client.asked[1]).toMatch(/saldo/i);
+  });
+
+  test("gives back the second reading when only the first one threw", async () => {
+    const text = await fixture();
+    const client = stub(noBalances, wrongSign);
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.verified).toBe(false);
+    expect(result.run.statement.rows.length).toBeGreaterThan(0);
+  });
+
+  test("gives up when both recipes throw: there is nothing to draft from", async () => {
+    const text = await fixture();
+    await expect(generateRecipe(text, pagesOf(text), stub(noBalances, noBalances))).rejects.toThrow(
+      /saldo/i,
+    );
   });
 
   test("shows the model the worked example", async () => {
