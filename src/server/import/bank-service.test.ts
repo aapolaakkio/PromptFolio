@@ -12,7 +12,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
 import { BankDraft } from "./bank-draft.ts";
-import type { BankReading } from "./pdf-read.ts";
+import { OP_STATEMENT_RECIPE } from "./recipe/op-reference.ts";
 
 // Importing a statement writes several hundred cash rows at once, so these
 // tests care about the three ways that goes wrong: onto the wrong kind of
@@ -159,64 +159,14 @@ const commit = async (userId: string, accountId: number, bytes?: ArrayBuffer) =>
   return answer(() => bank.commitBankDraft(userId, { accountId, filename, sha256, draft }));
 };
 
-/** Never reaches Workers AI: the model's answer is scripted for each test. */
-const reader = (reading: BankReading) => ({
-  run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
+/**
+ * Never reaches Workers AI: the model is asked to describe the layout, and
+ * answers with the reference description of OP's own. The rows then come from
+ * the fixture itself, not from anything scripted here.
+ */
+const reader = () => ({
+  run: () => Promise.resolve({ text: JSON.stringify(OP_STATEMENT_RECIPE), toolCalls: [] }),
 });
-
-/**
- * The model's scripted reading of `op-statement-sample.pdf`. Two rows whose
- * movement, added to the printed opening balance, reaches the printed closing
- * one -- the figures the tests below already assert (see "brings its own
- * opening balance"): 1500.00 - 25.90 + 100.00 = 1574.10.
- */
-const sampleReading = {
-  from: "2025-08-28",
-  to: "2026-12-31",
-  openingBalance: "1500.00",
-  closingBalance: "1574.10",
-  maturityDate: null,
-  rows: [
-    {
-      date: "2025-09-01",
-      amount: "-25.90",
-      counterparty: "K-MARKET ESIMERKKI",
-      message: "PKORTTIMAKSU",
-      reference: "20250901001",
-    },
-    {
-      date: "2025-10-01",
-      amount: "100.00",
-      counterparty: "TYÖNANTAJA OY",
-      message: "PALKKA",
-      reference: "20251001001",
-    },
-  ],
-  problems: [],
-};
-
-/**
- * The scripted reading of `op-statement-earlier.pdf`: covers 2024-12-31 to
- * 2025-08-28, opening 0.00, closing 1500.00 -- the period `sampleReading`
- * picks up exactly where this one ends.
- */
-const earlierReading = {
-  from: "2024-12-31",
-  to: "2025-08-28",
-  openingBalance: "0.00",
-  closingBalance: "1500.00",
-  maturityDate: null,
-  rows: [
-    {
-      date: "2025-01-15",
-      amount: "1500.00",
-      counterparty: "TYÖNANTAJA OY",
-      message: "PALKKA",
-      reference: "20250115001",
-    },
-  ],
-  problems: [],
-};
 
 const cashTotal = async (userId: string, on: string): Promise<string> =>
   (await cashView(db, userId, on)).totalEur;
@@ -383,7 +333,7 @@ describe("a PDF statement", () => {
     readBytes(`${import.meta.dirname}/../import/fixtures/op-statement-sample.pdf`);
 
   test("is read, and says it was checked against its own printed balances", async () => {
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
@@ -396,7 +346,7 @@ describe("a PDF statement", () => {
   });
 
   test("brings its own opening balance, so nothing has to be typed in", async () => {
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
@@ -409,7 +359,7 @@ describe("a PDF statement", () => {
   });
 
   test("re-importing it leaves the balance where it was", async () => {
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
     await commit(userId, accountId, await pdf());
@@ -423,7 +373,7 @@ describe("a PDF statement", () => {
   });
 
   test("an edited row is what gets imported, and the check runs on the edit", async () => {
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
     const previewed = PreviewSchema.parse((await preview(userId, accountId, await pdf())).body);
@@ -519,9 +469,9 @@ describe("importing several statements for one account", () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
-    setReaderClient(reader(earlierReading));
+    setReaderClient(reader());
     await commit(userId, accountId, await earlier());
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await later())).body);
 
     // The 2024 opening still stands: replacing it with the later statement's
@@ -535,9 +485,9 @@ describe("importing several statements for one account", () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
-    setReaderClient(reader(sampleReading));
+    setReaderClient(reader());
     await commit(userId, accountId, await later());
-    setReaderClient(reader(earlierReading));
+    setReaderClient(reader());
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await earlier())).body);
 
     expect(second.reconciliation?.openingBalanceWritten).toBe(true);
@@ -550,7 +500,7 @@ describe("importing several statements for one account", () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
-    setReaderClient(reader(earlierReading));
+    setReaderClient(reader());
     await commit(userId, accountId, await earlier());
     await commit(userId, accountId, await earlier());
 
@@ -562,27 +512,9 @@ describe("a fixed-term deposit's maturity date", () => {
   const depositPdf = (): Promise<ArrayBuffer> =>
     readBytes(`${import.meta.dirname}/../import/fixtures/op-fixed-term-sample.pdf`);
 
-  // A 5 000,00 deposit, so opening 0,00 plus this one row reaches the printed
-  // closing balance, and the account's cash reads as exactly the amount the
-  // "locked without any further input" test below asserts.
-  const depositReading = {
-    from: "2025-08-28",
-    to: "2026-02-01",
-    openingBalance: "0.00",
-    closingBalance: "5000.00",
-    maturityDate: "2027-02-01",
-    rows: [
-      {
-        date: "2025-09-01",
-        amount: "5000.00",
-        counterparty: "",
-        message: "TALLETUS",
-        reference: "20250901fixedterm",
-      },
-    ],
-    problems: [],
-  };
-
+  // The fixture is a 5 000,00 deposit against a 0,00 opening balance, so the
+  // account's cash reads as exactly the amount the "locked without any further
+  // input" test below asserts.
   const accountRow = async (accountId: number) => {
     const { db } = await import("../db/index.ts");
     const { accounts } = await import("../db/schema.ts");
@@ -591,7 +523,7 @@ describe("a fixed-term deposit's maturity date", () => {
   };
 
   test("is taken from the statement onto an account that has none", async () => {
-    setReaderClient(reader(depositReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "fixed_term");
 
@@ -603,7 +535,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("never overwrites one the owner already recorded, and reports the disagreement", async () => {
-    setReaderClient(reader(depositReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "fixed_term");
     await updateAccount(db, userId, accountId, UpdateAccount.parse({ maturityDate: "2027-12-31" }));
@@ -618,7 +550,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("is not written onto a current account, where it would mean nothing", async () => {
-    setReaderClient(reader(depositReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
@@ -629,7 +561,7 @@ describe("a fixed-term deposit's maturity date", () => {
   });
 
   test("makes the deposit's cash read as locked without any further input", async () => {
-    setReaderClient(reader(depositReading));
+    setReaderClient(reader());
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "fixed_term");
     await commit(userId, accountId, await depositPdf());

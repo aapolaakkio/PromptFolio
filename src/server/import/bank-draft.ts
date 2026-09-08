@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { EUR, formatMoney, parseMoney } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
+import type { PdfStatement } from "./bank-pdf.ts";
 import type { BankRow } from "./bank-statement.ts";
 import type { BankReading } from "./pdf-read.ts";
 
@@ -85,6 +86,38 @@ export const bankDraftFromReading = (reading: BankReading): BankDraft => ({
     externalId: row.reference,
   })),
   problems: reading.problems,
+});
+
+/**
+ * A recipe-read statement as the browser edits it. Unclaimed lines ride along
+ * as problems: a line nobody could account for is the owner's to look at, and
+ * silently dropping it is how a missing transaction stays missing.
+ */
+export const bankDraftFromStatement = (
+  statement: PdfStatement,
+  unclaimed: readonly { line: number; text: string }[],
+): BankDraft => ({
+  statement: {
+    from: statement.from,
+    to: statement.to,
+    openingBalanceEur: formatMoney(statement.openingBalance),
+    closingBalanceEur: formatMoney(statement.closingBalance),
+    maturityDate: statement.maturityDate,
+  },
+  rows: statement.rows.map((row) => ({
+    line: row.line,
+    date: row.date,
+    type: row.type,
+    amountEur: formatMoney({ minor: row.amount, currency: EUR }),
+    counterparty: row.counterparty,
+    label: "",
+    message: row.note,
+    externalId: row.externalId,
+  })),
+  problems: [
+    ...statement.problems.map((problem) => ({ line: problem.line, text: problem.message })),
+    ...unclaimed.map((entry) => ({ line: entry.line, text: `Tunnistamaton rivi: ${entry.text}` })),
+  ].sort((a, b) => a.line - b.line),
 });
 
 /**

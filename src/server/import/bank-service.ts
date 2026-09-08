@@ -11,12 +11,12 @@ import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "./bank-stat
 import type { BankStatementConfig } from "./bank-statement.ts";
 import {
   BankDraft,
-  bankDraftFromReading,
   bankDraftFromRows,
+  bankDraftFromStatement,
   bankRowsFromDraft,
   checkBankDraft,
 } from "./bank-draft.ts";
-import { extractPages, readBankPdf } from "./pdf-read.ts";
+import { readBankPdfByRecipe } from "./recipe/read.ts";
 import { type Db, db } from "../db/index.ts";
 import { accounts, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
@@ -47,19 +47,22 @@ const isPdf = (bytes: ArrayBuffer): boolean =>
 
 /**
  * Reads whichever format arrived into one draft. A CSV parses by its bank's
- * config; a PDF is read by the model, page by page. Neither is checked here:
- * the check belongs to the draft, which the owner may still edit.
+ * config; a PDF is read by a recipe -- the owner's stored description of that
+ * layout, or a fresh one the model writes. Neither is checked here: the check
+ * belongs to the draft, which the owner may still edit.
  */
-const readStatement = async (bytes: ArrayBuffer): Promise<{ bank: string; draft: BankDraft }> => {
+const readStatement = async (
+  bytes: ArrayBuffer,
+  userId: string,
+): Promise<{ bank: string; draft: BankDraft }> => {
   if (!isPdf(bytes)) {
     const config = detect(bytes);
     const { rows, problems } = parseBankStatement(bytes, config);
     return { bank: config.bank, draft: bankDraftFromRows(rows, problems) };
   }
   try {
-    const pages = await extractPages(bytes);
-    const reading = await readBankPdf(pages, readerClient ?? createClient());
-    return { bank: "pdf", draft: bankDraftFromReading(reading) };
+    const run = await readBankPdfByRecipe(bytes, userId, readerClient ?? createClient());
+    return { bank: "pdf", draft: bankDraftFromStatement(run.statement, run.unclaimed) };
   } catch (cause) {
     // The extractor's and the reader's complaints are the owner's to act on --
     // a scanned file, a reply the schema refused -- so they arrive as 400s.
@@ -290,7 +293,7 @@ export const previewBankStatement = async (userId: string, form: FormData) => {
   await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
-  const { bank, draft } = await readStatement(bytes);
+  const { bank, draft } = await readStatement(bytes, userId);
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   return { bank, filename: file.name, sha256, draft, check: checkBankDraft(draft) };
 };
@@ -365,7 +368,7 @@ export const commitBankStatementUpload = async (userId: string, form: FormData) 
   await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
-  const { draft } = await readStatement(bytes);
+  const { draft } = await readStatement(bytes, userId);
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   return commitBankDraft(userId, { accountId, filename: file.name, sha256, draft });
 };
