@@ -1,0 +1,112 @@
+import { describe, expect, test } from "vitest";
+
+import { readText } from "../../files.ts";
+import type { ChatClient } from "../../chat/runner.ts";
+import { generateRecipe, sampleFor } from "./generate.ts";
+import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
+
+const fixture = (): Promise<string> =>
+  readText(`${import.meta.dirname}/../fixtures/op-statement-sample.txt`);
+
+const pagesOf = (text: string) => [{ number: 1, text }];
+
+/** Replies in order; records what it was asked. */
+const stub = (...replies: string[]): ChatClient & { asked: string[] } => {
+  const asked: string[] = [];
+  let at = 0;
+  const client: ChatClient & { asked: string[] } = {
+    asked,
+    run: async (params) => {
+      asked.push(params.messages.map((m) => m.content).join("\n"));
+      const reply = replies[at] ?? replies.at(-1) ?? "";
+      at += 1;
+      return { text: reply, toolCalls: [] };
+    },
+  };
+  return client;
+};
+
+const good = JSON.stringify(OP_STATEMENT_RECIPE);
+// "suffix" with no matching debit word drops the sign entirely, so the
+// negative rows vanish from the balance sum -- a real, detectable failure.
+const wrongSign = JSON.stringify({
+  ...OP_STATEMENT_RECIPE,
+  money: { ...OP_STATEMENT_RECIPE.money, negative: "suffix" },
+});
+
+describe("sampleFor", () => {
+  test("sends the first page whole and the tail of the last", () => {
+    const sample = sampleFor([
+      { number: 1, text: "eka sivu" },
+      { number: 2, text: "keski" },
+      { number: 3, text: "vika sivu" },
+    ]);
+
+    expect(sample).toContain("eka sivu");
+    expect(sample).toContain("vika sivu");
+    expect(sample).not.toContain("keski");
+  });
+
+  test("does not repeat a single page", () => {
+    const sample = sampleFor([{ number: 1, text: "ainoa" }]);
+    expect(sample.match(/ainoa/g)).toHaveLength(1);
+  });
+});
+
+describe("generateRecipe", () => {
+  test("returns a verified recipe from a good first answer", async () => {
+    const text = await fixture();
+    const client = stub(good);
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.verified).toBe(true);
+    expect(client.asked).toHaveLength(1);
+  });
+
+  test("retries once with the report when the first answer does not verify", async () => {
+    const text = await fixture();
+    const client = stub(wrongSign, good);
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.verified).toBe(true);
+    expect(client.asked).toHaveLength(2);
+    expect(client.asked[1]).toMatch(/Saldotarkistus/);
+  });
+
+  test("gives back the unverified run when both answers fail", async () => {
+    const text = await fixture();
+    const client = stub(wrongSign, wrongSign);
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.verified).toBe(false);
+    expect(result.run.statement.rows.length).toBeGreaterThan(0);
+  });
+
+  test("accepts an answer wrapped in a fenced block", async () => {
+    const text = await fixture();
+    const client = stub("Tässä kuvaus:\n```json\n" + good + "\n```");
+
+    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
+  });
+
+  test("refuses a reply that holds no JSON at all", async () => {
+    const text = await fixture();
+    await expect(generateRecipe(text, pagesOf(text), stub("en osaa"))).rejects.toThrow();
+  });
+
+  test("refuses a reply whose JSON is not a recipe", async () => {
+    const text = await fixture();
+    await expect(generateRecipe(text, pagesOf(text), stub('{"kind":"bank"}'))).rejects.toThrow();
+  });
+
+  test("shows the model the worked example", async () => {
+    const text = await fixture();
+    const client = stub(good);
+    await generateRecipe(text, pagesOf(text), client);
+
+    expect(client.asked[0]).toContain("recordStart");
+  });
+});
