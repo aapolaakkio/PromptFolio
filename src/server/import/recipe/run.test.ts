@@ -221,3 +221,76 @@ describe("runRecipe -- round 2 regressions", () => {
     expect(unclaimed).toEqual([]);
   });
 });
+
+describe("runRecipe -- round 3 regressions", () => {
+  test("a greedy header fallback match only claims its first and last line, reporting what's swallowed between them", () => {
+    const greedyRecipe: BankRecipe = {
+      kind: "bank",
+      skip: [],
+      recordStart: String.raw`^(?<date>\d{1,2}\.\d{1,2}\.\d{4})\s+(?<amount>[+\-]\d+,\d{2})\s+(?<label>[A-Z]+)$`,
+      continuation: [],
+      restField: null,
+      header: {
+        from: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        to: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        openingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        closingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        maturityDate: String.raw`Eräpäivä[\s\S]*?(?<value>\d{1,2}\.\d{1,2}\.\d{4})`,
+      },
+      dateFormat: "d.m.yyyy",
+      money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+    };
+    const greedyDoc = [
+      "28.8.2025 Saldo",
+      "+0,00 Saldo",
+      "1.9.2025 +5,00 PALKKA",
+      "Eräpäivä",
+      "JOTAIN",
+      "VIELA JOTAIN",
+      "1.2.2027",
+      "30.9.2025 Saldo",
+      "+5,00 Saldo",
+    ].join("\n");
+
+    const { statement, unclaimed } = runRecipe(greedyDoc, greedyRecipe);
+
+    expect(statement.maturityDate).toBe("2027-02-01");
+    expect(unclaimed).toEqual([
+      { line: 5, text: "JOTAIN" },
+      { line: 6, text: "VIELA JOTAIN" },
+    ]);
+  });
+
+  test("the ordinary two-line header (label, then its value) still comes back with unclaimed empty", () => {
+    const twoLineRecipe: BankRecipe = {
+      kind: "bank",
+      skip: [],
+      recordStart: String.raw`^(?<date>\d{1,2}\.\d{1,2}\.\d{4})\s+(?<amount>[+\-]\d+,\d{2})\s+(?<label>[A-Z]+)$`,
+      continuation: [],
+      restField: null,
+      header: {
+        from: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        to: String.raw`^(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s+Saldo$`,
+        openingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        closingBalance: String.raw`^(?<value>[+\-]\d+,\d{2})\s+Saldo$`,
+        maturityDate: String.raw`^Eräpäivä\s*\n(?<value>\d{1,2}\.\d{1,2}\.\d{4})$`,
+      },
+      dateFormat: "d.m.yyyy",
+      money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+    };
+    const twoLineDoc = [
+      "28.8.2025 Saldo",
+      "+0,00 Saldo",
+      "1.9.2025 +5,00 PALKKA",
+      "Eräpäivä",
+      "1.2.2027",
+      "30.9.2025 Saldo",
+      "+5,00 Saldo",
+    ].join("\n");
+
+    const { statement, unclaimed } = runRecipe(twoLineDoc, twoLineRecipe);
+
+    expect(statement.maturityDate).toBe("2027-02-01");
+    expect(unclaimed).toEqual([]);
+  });
+});

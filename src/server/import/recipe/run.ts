@@ -37,18 +37,6 @@ const makeBudgetChecker = (budgetMs: number): (() => void) => {
 const compile = (source: string): RegExp => new RegExp(source, "um");
 const compileAll = (sources: readonly string[]): RegExp[] => sources.map(compile);
 
-type CompiledPatterns = {
-  readonly skip: readonly RegExp[];
-  readonly recordStart: RegExp;
-  readonly continuation: readonly RegExp[];
-};
-
-const compileRecipePatterns = (recipe: BankRecipe): CompiledPatterns => ({
-  skip: compileAll(recipe.skip),
-  recordStart: compile(recipe.recordStart),
-  continuation: compileAll(recipe.continuation),
-});
-
 const groupValue = (match: RegExpExecArray): string | null =>
   match.groups?.value ?? match[1] ?? null;
 
@@ -70,13 +58,27 @@ const linesCovered = (lines: readonly string[], start: number, end: number): Set
 };
 
 /**
+ * Only the first and last of a set of line indexes. A model's fallback
+ * pattern may be greedy or lazy across half a page; claiming everything it
+ * spans would silently drop whatever furniture sat in between. A genuine
+ * two-line header fact (a label, then its value) still claims exactly those
+ * two lines; a single-line span claims just that one line.
+ */
+const firstAndLast = (indexes: ReadonlySet<number>): Set<number> => {
+  if (indexes.size === 0) return new Set();
+  const sorted = [...indexes].sort((a, b) => a - b);
+  return new Set([sorted[0]!, sorted.at(-1)!]);
+};
+
+/**
  * One header fact: first match for an opening fact, last for a closing one.
  * Tried line by line first -- most header facts sit on one line -- and only
  * when no line matches, against the whole document joined with newlines, so a
  * pattern may span a label and its value on separate lines
- * (`Eräpäivä\n1.2.2027`). A fallback match's own lines are reported so the
- * caller can claim them; a line match needs no such report, since a global
- * per-line header sweep already claims every line any header pattern matches.
+ * (`Eräpäivä\n1.2.2027`). A fallback match claims only the first and last
+ * line of its span (see `firstAndLast`) so the caller can claim them; a line
+ * match needs no such report, since a global per-line header sweep already
+ * claims every line any header pattern matches.
  */
 const readHeaderField = (lines: readonly string[], source: string | undefined, last: boolean) => {
   const noFallback = new Set<number>();
@@ -91,8 +93,8 @@ const readHeaderField = (lines: readonly string[], source: string | undefined, l
   }
   const whole = pattern.exec(lines.join("\n"));
   if (!whole) return { value: null, claimedByFallback: noFallback };
-  const claimedByFallback = linesCovered(lines, whole.index, whole.index + whole[0].length);
-  return { value: groupValue(whole), claimedByFallback };
+  const covered = linesCovered(lines, whole.index, whole.index + whole[0].length);
+  return { value: groupValue(whole), claimedByFallback: firstAndLast(covered) };
 };
 
 type HeaderFacts = {
@@ -123,11 +125,6 @@ const resolveHeaderFacts = (
     claimedLines,
   };
 };
-
-const definedHeaderPatterns = (header: BankRecipe["header"]): RegExp[] =>
-  [header.from, header.to, header.openingBalance, header.closingBalance, header.maturityDate]
-    .filter((source): source is string => source !== undefined)
-    .map(compile);
 
 type StatementHeader = {
   readonly from: string;
@@ -387,13 +384,23 @@ export const runRecipe = (
 ): RecipeRun => {
   const checkBudget = makeBudgetChecker(budgetMs);
   const lines = text.split("\n").map((line) => line.trim());
-  const { skip, recordStart, continuation } = compileRecipePatterns(recipe);
+  const skip = compileAll(recipe.skip);
+  const recordStart = compile(recipe.recordStart);
+  const continuation = compileAll(recipe.continuation);
 
   const facts = resolveHeaderFacts(lines, recipe.header);
   const header = buildStatementHeader(facts, recipe);
 
   const starts = findRecordStarts(lines, recordStart, skip, checkBudget);
-  const headerPatterns = definedHeaderPatterns(recipe.header);
+  const headerPatterns = [
+    recipe.header.from,
+    recipe.header.to,
+    recipe.header.openingBalance,
+    recipe.header.closingBalance,
+    recipe.header.maturityDate,
+  ]
+    .filter((source): source is string => source !== undefined)
+    .map(compile);
   const claimed = buildClaimed(
     lines,
     starts,
