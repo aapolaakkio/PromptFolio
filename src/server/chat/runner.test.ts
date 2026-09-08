@@ -234,6 +234,50 @@ describe("createClient inputs", () => {
       Object.assign(env, { AI: previous });
     }
   });
+
+  /**
+   * Workers AI refuses `tools: []` with a 400 rather than treating it as "no
+   * tools", which took every PDF reading down: they offer none.
+   */
+  test("createClient omits tools entirely when there are none, and sends them when there are", async () => {
+    const seen: { tools?: unknown }[] = [];
+    const previous = env.AI;
+    Object.assign(env, {
+      AI: {
+        run: (_model: string, inputs: { tools?: unknown }) => {
+          seen.push(inputs);
+          return Promise.resolve({ response: "{}" });
+        },
+      },
+    });
+    try {
+      const client = createClient();
+      await client.run({
+        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [],
+      });
+      const definition = {
+        type: "function" as const,
+        function: {
+          name: "laske",
+          description: "Laskee",
+          parameters: z.toJSONSchema(z.object({ a: z.number() })),
+        },
+      };
+      await client.run({
+        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [definition],
+      });
+      expect(seen[0]).not.toHaveProperty("tools");
+      expect(seen[1]?.tools).toEqual([definition]);
+    } finally {
+      Object.assign(env, { AI: previous });
+    }
+  });
 });
 
 describe("toolDefinitions", () => {

@@ -283,7 +283,6 @@ export const createClient = (): ChatClient => ({
   run: async (params, options) => {
     const base = {
       messages: toApiMessages(params.messages),
-      tools: [...params.tools],
       max_tokens: params.max_tokens,
       // Answers, not deliberation: the tool loop is where the work happens,
       // and thinking tokens are billed like any other.
@@ -292,10 +291,17 @@ export const createClient = (): ChatClient => ({
       // screen until the whole answer exists.
       stream: true,
     };
+    /**
+     * `tools` is omitted rather than sent empty. Workers AI refuses an empty
+     * array outright -- "`tools` must not be an empty array. Either provide at
+     * least one tool or omit the field entirely" -- and every reading call
+     * (a PDF's layout, a holdings statement) has no tools to offer.
+     */
+    const withTools = params.tools.length === 0 ? base : { ...base, tools: [...params.tools] };
     const inputs =
       params.response_format === undefined
-        ? base
-        : { ...base, response_format: params.response_format };
+        ? withTools
+        : { ...withTools, response_format: params.response_format };
     const output = await env.AI.run(
       params.model,
       inputs,
