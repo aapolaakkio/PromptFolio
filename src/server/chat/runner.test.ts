@@ -359,6 +359,38 @@ describe("readStream", () => {
     ]);
   });
 
+  /**
+   * Verbatim shape from @cf/meta/llama-3.3-70b: every chunk repeats its delta
+   * fragment in a top-level `tool_calls`, with only one of the two fields.
+   * The schema used to require both, so all three chunks failed to parse and
+   * were dropped -- the reply came back with no text and no calls at all.
+   */
+  test("reads a stream that repeats each tool-call fragment at the top level", async () => {
+    const reply = await readStream(
+      sse(
+        {
+          choices: [{ delta: { content: "", role: "assistant" } }],
+          response: "",
+          tool_calls: [],
+        },
+        {
+          choices: [
+            {
+              delta: { tool_calls: [{ function: { name: "verify_recipe" }, id: "c9", index: 0 }] },
+            },
+          ],
+          tool_calls: [{ name: "verify_recipe" }],
+        },
+        {
+          choices: [{ delta: { tool_calls: [{ function: { arguments: '{"a":1}' }, index: 0 }] } }],
+          tool_calls: [{ arguments: '{"a":1}' }],
+        },
+      ),
+      () => undefined,
+    );
+    expect(reply.toolCalls).toEqual([{ id: "c9", name: "verify_recipe", arguments: '{"a":1}' }]);
+  });
+
   test("reads the older models' shape too", async () => {
     const pieces: string[] = [];
     const reply = await readStream(

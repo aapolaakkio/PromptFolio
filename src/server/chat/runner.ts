@@ -177,11 +177,20 @@ const toReply = (parsed: z.infer<typeof ModelOutput>): ModelReply => {
  */
 const StreamChunk = z.object({
   response: z.string().nullish(),
+  /**
+   * The whole-call shape the older models use. Both fields are optional
+   * because the newer ones ALSO emit this key alongside `choices`, carrying
+   * one fragment at a time -- a chunk with only `name`, then chunks with only
+   * `arguments`. Requiring both made every such chunk fail to parse, and a
+   * failed chunk is dropped whole, so the reply came back empty.
+   */
   tool_calls: z
     .array(
       z.object({
-        name: z.string(),
-        arguments: z.union([z.string(), z.json().transform((value) => JSON.stringify(value))]),
+        name: z.string().optional(),
+        arguments: z
+          .union([z.string(), z.json().transform((value) => JSON.stringify(value))])
+          .optional(),
       }),
     )
     .optional(),
@@ -230,10 +239,12 @@ export const readStream = async (
       text += piece;
       onDelta(piece);
     }
-    for (const call of chunk.tool_calls ?? []) {
+    // Only when there is no `choices`: the newer models repeat their delta
+    // fragments here, and counting both would build every call twice.
+    for (const call of chunk.choices === undefined ? (chunk.tool_calls ?? []) : []) {
       calls = [
         ...calls,
-        { id: `call_${calls.length}`, name: call.name, arguments: call.arguments },
+        { id: `call_${calls.length}`, name: call.name ?? "", arguments: call.arguments ?? "" },
       ];
     }
     for (const delta of chunk.choices?.[0]?.delta?.tool_calls ?? []) {
