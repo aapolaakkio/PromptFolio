@@ -1,62 +1,37 @@
-import type { ChatClient } from "../../chat/runner.ts";
+import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 import { PDF_READ_MODEL, type PdfPage } from "../pdf-read.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
-import { runRecipe, type RecipeRun } from "./run.ts";
-import { parseRecipe, type BankRecipe } from "./types.ts";
-import { verifyRun, type Verdict } from "./verify.ts";
+import type { RecipeRun } from "./run.ts";
+import type { BankRecipe } from "./types.ts";
+import { createVerifySession, runVerifyCall, verifyToolDefinition } from "./verify-tool.ts";
 
 /** A recipe is about a kilobyte; this is room for one with comments stripped. */
 const MAX_TOKENS = 4096;
-/** How much of the last page the closing balance could be hiding in. */
+/**
+ * How much of the last page goes in the sample. Its END, not its beginning:
+ * the closing balance and the maturity date are printed at the bottom, and a
+ * long statement's last page opens with the same column captions page one
+ * already showed. Sending the head as well would cost tokens to repeat them.
+ */
 const TAIL_LINES = 15;
+/**
+ * Tool rounds before the loop gives up, the same cap `runTurn` uses: a model
+ * still calling the tool past this is circling, not converging.
+ */
+const MAX_ROUNDS = 10;
 
 const NO_ANSWER = "Malli ei kuvannut tiedostomuotoa";
 
 export const sampleFor = (pages: readonly PdfPage[]): string => {
   const first = pages[0];
   const last = pages.length > 1 ? pages.at(-1) : undefined;
-  const tail = last?.text.split("\n").slice(0, TAIL_LINES).join("\n");
+  const tail = last?.text.split("\n").slice(-TAIL_LINES).join("\n");
   return [
     `--- sivu ${first?.number ?? 1} ---\n${first?.text ?? ""}`,
-    tail === undefined ? "" : `--- viimeinen sivu (alku) ---\n${tail}`,
+    tail === undefined ? "" : `--- viimeinen sivu (loppu) ---\n${tail}`,
   ]
     .filter((part) => part !== "")
     .join("\n\n");
-};
-
-/**
- * The JSON object out of a reply that may be fenced and may be preceded by
- * pages of reasoning with braces of its own. A fenced block wins; otherwise the
- * last balanced object does, since a model that reconsiders writes its answer
- * last. Strings are tracked so a brace inside a payee's name cannot close the
- * object early.
- */
-const jsonObject = (reply: string): string | null => {
-  const fenced = [...reply.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)].at(-1);
-  if (fenced?.[1] !== undefined) return fenced[1];
-  let depth = 0;
-  let start = -1;
-  let last: string | null = null;
-  let inString = false;
-  let escaped = false;
-  for (let at = 0; at < reply.length; at += 1) {
-    const char = reply[at];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') inString = true;
-    else if (char === "{") {
-      if (depth === 0) start = at;
-      depth += 1;
-    } else if (char === "}" && depth > 0) {
-      depth -= 1;
-      if (depth === 0) last = reply.slice(start, at + 1);
-    }
-  }
-  return last;
 };
 
 const INSTRUCTIONS = `Saat otteen pankin tiliotteen tekstisisällöstä. Älä poimi tapahtumia. Kuvaa sen sijaan tiedoston rakenne JSON-oliona, jonka ohjelma ajaa koko tiedostolle.
@@ -72,7 +47,7 @@ Kentät:
 
 Säännöt:
 - Älä keksi kenttiä joita ei ole listattu.
-- Vastaa pelkällä JSON-oliolla, ilman selityksiä.
+- Älä kirjoita kuvausta vastaukseesi tekstinä: anna se verify_recipe-työkalulle.
 
 Neljä sudenkuoppaa, jotka ovat tuhonneet aiempia kuvauksia äänettömästi -- ei virhettä, ei tunnistamatonta riviä, vain puuttuva arvo:
 1. Älä kirjoita continuation-lauseketta joka osuu paljaaseen MUOTOON joka voisi olla myös nimi. Esimerkki: arkistotunnukselle tarkoitettu \`^[0-9A-Z]{16,}$\` nielaisee myös yhdeksi sanaksi painetun maksunsaajan nimen, ja nimi katoaa jäljettömiin. Vaadi jotain mitä arvossa on mutta nimessä ei -- tunnukselle vähintään yksi numero.
@@ -80,88 +55,62 @@ Neljä sudenkuoppaa, jotka ovat tuhonneet aiempia kuvauksia äänettömästi -- 
 3. Kun arvon paikka rivillä vaihtelee, käytä laiskaa hakua (\`.*?\`) etsimässä sitä, älä kiinteää paikkaa. Naiivi valinnainen ryhmä palauttaa äänettömästi tyhjää sen sijaan että epäonnistuisi -- se on helpoin tapa kirjoittaa kuvaus joka näyttää oikealta muttei ole.
 4. Jokainen continuation-lauseke osuu vain KERRAN yhtä tapahtumalohkoa kohti. Saman muodon toinen esiintymä lohkossa jää poimimatta.
 
+Työskentely:
+- Kutsu verify_recipe-työkalua ehdotuksellasi. Työkalu ajaa kuvauksen koko tiedostolle ja kertoo mitä meni pieleen: tunnistamattomat rivit, ohitetut tapahtumannäköiset rivit, saldotarkistuksen ja kolme ensimmäistä poimittua tapahtumaa.
+- Lue tulos, korjaa kuvaus ja kutsu uudelleen. Katso myös sampleRows: jos maksunsaaja on tyhjä tai viesti on päätynyt väärään kenttään, kuvaus on väärä vaikka saldo täsmäisi.
+- Kun tulos on ok: true, työ on valmis. Älä kutsu enää.
+
 Esimerkki toisesta pankista:
 ${JSON.stringify(OP_STATEMENT_RECIPE)}`;
 
-const ask = async (
-  client: ChatClient,
-  messages: { role: "system" | "user"; content: string }[],
-) => {
-  const reply = await client.run({
-    model: PDF_READ_MODEL,
-    max_tokens: MAX_TOKENS,
-    messages,
-    tools: [],
-  });
-  const object = jsonObject(reply.text);
-  if (object === null) throw new Error(NO_ANSWER);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(object);
-  } catch {
-    throw new Error(NO_ANSWER);
-  }
-  return parseRecipe(raw);
-};
-
-const UNREADABLE_RUN = "Kuvausta ei voitu ajaa tiedostolle";
-
 /**
- * One attempt at reading the statement with a recipe. A recipe that cannot
- * locate the balances throws rather than failing verification, and that is the
- * likeliest first mistake of all, so the throw is turned into a verdict: the
- * model gets its retry, and the owner an editable draft instead of a 400.
- */
-type Attempt = { readonly run: RecipeRun | null; readonly verdict: Verdict };
-
-const attempt = (text: string, recipe: BankRecipe): Attempt => {
-  try {
-    const run = runRecipe(text, recipe);
-    return { run, verdict: verifyRun(run) };
-  } catch (cause) {
-    return {
-      run: null,
-      verdict: { ok: false, report: cause instanceof Error ? cause.message : UNREADABLE_RUN },
-    };
-  }
-};
-
-/**
- * One description, checked; and if it does not hold up, one more with the
- * complaint attached. Never a third: a model that has missed twice is guessing,
- * and the owner's review screen is a better use of the next minute.
+ * One description, arrived at by trying. The model proposes a recipe, the
+ * `verify_recipe` tool runs it over the whole statement and hands back what
+ * went wrong, and it proposes again. What comes back is whatever the TOOL saw
+ * verify -- never the model's closing words, which cost nothing to write and
+ * are not evidence that a statement was read correctly.
+ *
+ * When nothing verifies, the most complete reading is still returned as an
+ * unverified draft: the owner's review screen can fix a recipe, but only if
+ * there is one.
  */
 export const generateRecipe = async (
   text: string,
   pages: readonly PdfPage[],
   client: ChatClient,
 ): Promise<{ recipe: BankRecipe; run: RecipeRun; verified: boolean }> => {
-  const sample = sampleFor(pages);
-  const first = await ask(client, [
+  const session = createVerifySession(text);
+  let messages: readonly ChatMessage[] = [
     { role: "system", content: INSTRUCTIONS },
-    { role: "user", content: sample },
-  ]);
-  const firstTry = attempt(text, first);
-  if (firstTry.run !== null && firstTry.verdict.ok) {
-    return { recipe: first, run: firstTry.run, verified: true };
-  }
-  const report = firstTry.verdict.ok ? "" : firstTry.verdict.report;
+    { role: "user", content: sampleFor(pages) },
+  ];
 
-  const second = await ask(client, [
-    { role: "system", content: INSTRUCTIONS },
-    { role: "user", content: sample },
-    {
-      role: "user",
-      content: `Edellinen kuvauksesi:\n${JSON.stringify(first)}\n\n${report}\n\nKorjaa kuvaus. Vastaa pelkällä JSON-oliolla.`,
-    },
-  ]);
-  // A second throw has nothing left to build a draft from, so it surfaces --
-  // unless the first attempt at least produced a reading to fall back on.
-  const secondTry = attempt(text, second);
-  if (secondTry.run !== null && secondTry.verdict.ok) {
-    return { recipe: second, run: secondTry.run, verified: true };
+  for (let round = 0; round < MAX_ROUNDS && session.verified() === null; round += 1) {
+    const reply = await client.run({
+      model: PDF_READ_MODEL,
+      max_tokens: MAX_TOKENS,
+      messages,
+      tools: [verifyToolDefinition],
+    });
+    // Words instead of a call: there is nothing to check, and nothing in the
+    // text is trusted, so asking again would only repeat the same reply.
+    if (reply.toolCalls.length === 0) break;
+    messages = [
+      ...messages,
+      { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
+    ];
+    for (const call of reply.toolCalls) {
+      const content = await runVerifyCall(session, call);
+      messages = [...messages, { role: "tool", tool_call_id: call.id, content }];
+      // A pass ends the job: further calls would spend a round on a question
+      // that is already answered.
+      if (session.verified() !== null) break;
+    }
   }
-  if (firstTry.run !== null) return { recipe: first, run: firstTry.run, verified: false };
-  if (secondTry.run !== null) return { recipe: second, run: secondTry.run, verified: false };
-  throw new Error(secondTry.verdict.ok ? UNREADABLE_RUN : secondTry.verdict.report);
+
+  const verified = session.verified();
+  if (verified !== null) return { recipe: verified.recipe, run: verified.run, verified: true };
+  const best = session.best();
+  if (best !== null) return { recipe: best.recipe, run: best.run, verified: false };
+  throw new Error(session.lastError() ?? NO_ANSWER);
 };

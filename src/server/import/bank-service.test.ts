@@ -13,6 +13,7 @@ import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
 import { BankDraft } from "./bank-draft.ts";
 import { OP_STATEMENT_RECIPE } from "./recipe/op-reference.ts";
+import { VERIFY_TOOL_NAME } from "./recipe/verify-tool.ts";
 
 // Importing a statement writes several hundred cash rows at once, so these
 // tests care about the three ways that goes wrong: onto the wrong kind of
@@ -161,11 +162,22 @@ const commit = async (userId: string, accountId: number, bytes?: ArrayBuffer) =>
 
 /**
  * Never reaches Workers AI: the model is asked to describe the layout, and
- * answers with the reference description of OP's own. The rows then come from
- * the fixture itself, not from anything scripted here.
+ * offers the reference description of OP's own to the verify_recipe tool, which
+ * is how a description reaches the reader. The rows then come from the fixture
+ * itself, not from anything scripted here.
  */
 const reader = () => ({
-  run: () => Promise.resolve({ text: JSON.stringify(OP_STATEMENT_RECIPE), toolCalls: [] }),
+  run: () =>
+    Promise.resolve({
+      text: "",
+      toolCalls: [
+        {
+          id: "call_0",
+          name: VERIFY_TOOL_NAME,
+          arguments: JSON.stringify({ recipe: OP_STATEMENT_RECIPE }),
+        },
+      ],
+    }),
 });
 
 const cashTotal = async (userId: string, on: string): Promise<string> =>

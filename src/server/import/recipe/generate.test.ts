@@ -1,63 +1,82 @@
 import { describe, expect, test } from "vitest";
 
+import type { ChatClient, ModelReply, TurnParams } from "../../chat/runner.ts";
 import { readText } from "../../files.ts";
-import type { ChatClient } from "../../chat/runner.ts";
 import { generateRecipe, sampleFor } from "./generate.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
+import type { BankRecipe } from "./types.ts";
+import { VERIFY_TOOL_NAME } from "./verify-tool.ts";
 
 const fixture = (): Promise<string> =>
   readText(`${import.meta.dirname}/../fixtures/op-statement-sample.txt`);
 
 const pagesOf = (text: string) => [{ number: 1, text }];
 
-/** Replies in order; records what it was asked. */
-const stub = (...replies: string[]): ChatClient & { asked: string[] } => {
-  const asked: string[] = [];
-  let at = 0;
-  const client: ChatClient & { asked: string[] } = {
-    asked,
-    run: async (params) => {
-      asked.push(params.messages.map((m) => m.content).join("\n"));
-      const reply = replies[at] ?? replies.at(-1) ?? "";
-      at += 1;
-      return { text: reply, toolCalls: [] };
-    },
-  };
-  return client;
-};
-
-const good = JSON.stringify(OP_STATEMENT_RECIPE);
-// "suffix" with no matching debit word drops the sign entirely, so the
-// negative rows vanish from the balance sum -- a real, detectable failure.
-const wrongSign = JSON.stringify({
-  ...OP_STATEMENT_RECIPE,
-  money: { ...OP_STATEMENT_RECIPE.money, negative: "suffix" },
+/** One model reply: a verify_recipe call carrying this candidate. */
+const call = (recipe: Partial<BankRecipe>, text = ""): ModelReply => ({
+  text,
+  toolCalls: [{ id: "call_0", name: VERIFY_TOOL_NAME, arguments: JSON.stringify({ recipe }) }],
 });
 
-/**
- * A recipe whose balance patterns match nothing: `runRecipe` throws instead of
- * failing verification, which is the single likeliest first-attempt mistake.
- */
-const noBalances = JSON.stringify({
+/** Replies in order, repeating the last; records every request. */
+const stub = (...replies: ModelReply[]): ChatClient & { asked: TurnParams[] } => {
+  const asked: TurnParams[] = [];
+  let at = 0;
+  return {
+    asked,
+    run: async (params) => {
+      asked.push(params);
+      const reply = replies[at] ?? replies.at(-1) ?? { text: "", toolCalls: [] };
+      at += 1;
+      return reply;
+    },
+  };
+};
+
+const good = OP_STATEMENT_RECIPE;
+// "suffix" with no matching debit word drops the sign entirely, so the
+// negative rows vanish from the balance sum -- a real, detectable failure.
+const wrongSign: BankRecipe = {
+  ...OP_STATEMENT_RECIPE,
+  money: { ...OP_STATEMENT_RECIPE.money, negative: "suffix" },
+};
+
+/** Balance patterns that match nothing: `runRecipe` throws instead of failing. */
+const noBalances: BankRecipe = {
   ...OP_STATEMENT_RECIPE,
   header: {
     ...OP_STATEMENT_RECIPE.header,
     openingBalance: String.raw`^EI-SALDOA (?<value>\d+,\d{2})$`,
     closingBalance: String.raw`^EI-SALDOA (?<value>\d+,\d{2})$`,
   },
-});
+};
+
+/** What the tool results in a request say, in order. */
+const toolResults = (params: TurnParams | undefined): string[] =>
+  (params?.messages ?? []).filter((m) => m.role === "tool").map((m) => m.content);
 
 describe("sampleFor", () => {
-  test("sends the first page whole and the tail of the last", () => {
+  test("sends the first page whole and the end of the last", () => {
     const sample = sampleFor([
       { number: 1, text: "eka sivu" },
       { number: 2, text: "keski" },
-      { number: 3, text: "vika sivu" },
+      { number: 3, text: "vika sivu\nLOPPUSALDO 1,00" },
     ]);
 
     expect(sample).toContain("eka sivu");
-    expect(sample).toContain("vika sivu");
+    expect(sample).toContain("LOPPUSALDO 1,00");
     expect(sample).not.toContain("keski");
+  });
+
+  test("sends the last page's end, not its beginning", () => {
+    const last = ["OTSIKKO", ...Array.from({ length: 40 }, (_, at) => `keskellä ${at}`), "SALDO"];
+    const sample = sampleFor([
+      { number: 1, text: "eka sivu" },
+      { number: 2, text: last.join("\n") },
+    ]);
+
+    expect(sample).toContain("SALDO");
+    expect(sample).not.toContain("keskellä 5");
   });
 
   test("does not repeat a single page", () => {
@@ -67,120 +86,84 @@ describe("sampleFor", () => {
 });
 
 describe("generateRecipe", () => {
-  test("returns a verified recipe from a good first answer", async () => {
+  test("stops at the first candidate that verifies", async () => {
     const text = await fixture();
-    const client = stub(good);
+    const client = stub(call(good));
 
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(true);
     expect(client.asked).toHaveLength(1);
+    expect(result.run.statement.rows.length).toBeGreaterThan(0);
   });
 
-  test("retries once with the report when the first answer does not verify", async () => {
+  test("converges: the model reads the complaint and fixes the recipe", async () => {
     const text = await fixture();
-    const client = stub(wrongSign, good);
+    const client = stub(call(wrongSign), call(good));
 
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(true);
+    expect(result.recipe).toEqual(good);
     expect(client.asked).toHaveLength(2);
-    expect(client.asked[1]).toMatch(/Saldotarkistus/);
+    expect(toolResults(client.asked[1])[0]).toMatch(/Saldotarkistus/);
   });
 
-  test("gives back the unverified run when both answers fail", async () => {
+  test("returns the recipe that verified, not the last one the model mentioned", async () => {
     const text = await fixture();
-    const client = stub(wrongSign, wrongSign);
+    // The candidate is good; the model's own prose names a different one.
+    const client = stub(call(good, JSON.stringify(wrongSign)));
+
+    const result = await generateRecipe(text, pagesOf(text), client);
+
+    expect(result.recipe.money.negative).toBe("leading");
+  });
+
+  test("gives back the best attempt as an unverified draft when nothing verifies", async () => {
+    const text = await fixture();
+    const client = stub(call(wrongSign));
 
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(false);
     expect(result.run.statement.rows.length).toBeGreaterThan(0);
+    expect(client.asked.length).toBeLessThanOrEqual(10);
   });
 
-  test("accepts an answer wrapped in a fenced block", async () => {
+  test("hands a schema-invalid candidate back as a tool result and carries on", async () => {
     const text = await fixture();
-    const client = stub("Tässä kuvaus:\n```json\n" + good + "\n```");
-
-    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
-  });
-
-  test("prefers the fenced block over reasoning braces elsewhere in the reply", async () => {
-    const text = await fixture();
-    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja päättelin...";
-    const client = stub(`${reasoning}\n\`\`\`json\n${good}\n\`\`\``);
-
-    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
-  });
-
-  test("accepts an answer that reasons first, braces and all, before the JSON", async () => {
-    const text = await fixture();
-    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja päättelin...";
-    const client = stub(`${reasoning}\n${good}`);
-
-    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
-  });
-
-  test("accepts an answer whose recipe has a brace inside a string value", async () => {
-    const text = await fixture();
-    const withBraceInString = JSON.stringify({
-      ...OP_STATEMENT_RECIPE,
-      money: { ...OP_STATEMENT_RECIPE.money, strip: ["{EUR"] },
-    });
-    const client = stub(withBraceInString);
-
-    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
-  });
-
-  test("refuses a reply that only reasons, braces and all, with no JSON answer", async () => {
-    const text = await fixture();
-    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja en osaa vastata.";
-    await expect(generateRecipe(text, pagesOf(text), stub(reasoning))).rejects.toThrow();
-  });
-
-  test("refuses a reply that holds no JSON at all", async () => {
-    const text = await fixture();
-    await expect(generateRecipe(text, pagesOf(text), stub("en osaa"))).rejects.toThrow();
-  });
-
-  test("refuses a reply whose JSON is not a recipe", async () => {
-    const text = await fixture();
-    await expect(generateRecipe(text, pagesOf(text), stub('{"kind":"bank"}'))).rejects.toThrow();
-  });
-
-  test("retries when the first recipe cannot even find the balances", async () => {
-    const text = await fixture();
-    const client = stub(noBalances, good);
+    const client = stub(call({ kind: "bank" }), call(good));
 
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(true);
-    expect(client.asked).toHaveLength(2);
-    expect(client.asked[1]).toMatch(/saldo/i);
+    expect(toolResults(client.asked[1])[0]).toContain("kelpaa");
   });
 
-  test("gives back the second reading when only the first one threw", async () => {
+  test("hands a recipe that cannot find the balances back as a tool result", async () => {
     const text = await fixture();
-    const client = stub(noBalances, wrongSign);
+    const client = stub(call(noBalances), call(good));
 
     const result = await generateRecipe(text, pagesOf(text), client);
 
-    expect(result.verified).toBe(false);
-    expect(result.run.statement.rows.length).toBeGreaterThan(0);
+    expect(result.verified).toBe(true);
+    expect(toolResults(client.asked[1])[0]).toMatch(/saldo/i);
   });
 
-  test("gives up when both recipes throw: there is nothing to draft from", async () => {
+  test("refuses when the model never calls the tool", async () => {
     const text = await fixture();
-    await expect(generateRecipe(text, pagesOf(text), stub(noBalances, noBalances))).rejects.toThrow(
-      /saldo/i,
-    );
+    const client = stub({ text: JSON.stringify(good), toolCalls: [] });
+
+    await expect(generateRecipe(text, pagesOf(text), client)).rejects.toThrow();
   });
 
-  test("shows the model the worked example", async () => {
+  test("shows the model the worked example and the tool", async () => {
     const text = await fixture();
-    const client = stub(good);
+    const client = stub(call(good));
     await generateRecipe(text, pagesOf(text), client);
 
-    expect(client.asked[0]).toContain("recordStart");
+    const first = client.asked[0];
+    expect(first?.messages[0]?.content).toContain("recordStart");
+    expect(first?.tools[0]?.function.name).toBe(VERIFY_TOOL_NAME);
   });
 });

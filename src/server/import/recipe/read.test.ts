@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
-import type { ChatClient } from "../../chat/runner.ts";
+import type { ChatClient, ModelReply } from "../../chat/runner.ts";
 import { db } from "../../db/index.ts";
 import { importRecipes, user } from "../../db/schema.ts";
 import { readBytes } from "../../files.ts";
 import { extractPages } from "../pdf-read.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import { readBankPdfByRecipe, recipeKey } from "./read.ts";
+import { VERIFY_TOOL_NAME } from "./verify-tool.ts";
 
 const USER = "recipe-read-user";
 
@@ -17,8 +18,29 @@ const pdf = (): Promise<ArrayBuffer> =>
 const keyFor = async (bytes: ArrayBuffer): Promise<string> =>
   recipeKey(bytes, (await extractPages(bytes))[0]?.text ?? "");
 
-/** A model that answers with each scripted reply in turn, counting the asks. */
+/**
+ * A model that offers each scripted recipe in turn as a `verify_recipe` call --
+ * the only way a recipe reaches `generateRecipe` now -- and counts the asks. A
+ * reply that is not a recipe is answered as plain words.
+ */
 type Stub = ChatClient & { readonly calls: number };
+
+const asCall = (reply: string): ModelReply => {
+  try {
+    return {
+      text: "",
+      toolCalls: [
+        {
+          id: "call_0",
+          name: VERIFY_TOOL_NAME,
+          arguments: JSON.stringify({ recipe: JSON.parse(reply) }),
+        },
+      ],
+    };
+  } catch {
+    return { text: reply, toolCalls: [] };
+  }
+};
 
 const stub = (...replies: string[]): Stub => {
   let at = 0;
@@ -31,7 +53,7 @@ const stub = (...replies: string[]): Stub => {
       calls += 1;
       const reply = replies[at] ?? replies.at(-1) ?? "";
       at += 1;
-      return Promise.resolve({ text: reply, toolCalls: [] });
+      return Promise.resolve(asCall(reply));
     },
   };
 };
