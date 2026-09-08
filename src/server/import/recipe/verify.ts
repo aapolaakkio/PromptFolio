@@ -26,14 +26,43 @@ const isPreamble = (entry: Unclaimed, rows: readonly BankRow[]): boolean => {
 /**
  * Probes for "this line was a transaction", written here rather than taken
  * from the recipe: the recipe is what is under suspicion, so its own patterns
- * cannot be the evidence. Deliberately narrow -- a printed date and a printed
- * two-decimal amount -- so page furniture (an IBAN, `1 (2)`, a period line, a
- * card number with `OSTOPVM 250828`, a `5 000,00 Panot yhteensä` total) does
- * not trip it. Balance lines carry both, and are excluded upstream because a
- * header pattern accounts for them.
+ * cannot be the evidence. Both must hit for a skipped line to be flagged --
+ * the period line `29.8.2025 - 28.8.2026` prints two dates and no amount, and
+ * a totals line `5 000,00 Panot yhteensä 1 kpl` an amount and no date, so
+ * either probe alone would fail every OP import.
+ *
+ * The date probe knows a two- or four-digit year, `.` `/` `-` as separators,
+ * and both day-first and year-first order. The amount probe knows a sign or no
+ * sign, a thousands separator or none, and zero, two or three decimals: an
+ * evasion is only worth naming once, and `1.8.26 -250 SIIRTO` hides exactly as
+ * much money as `1.9.2026 −250,00 SIIRTO`. Page furniture stays quiet because
+ * the guards keep a date's own digit groups from reading as a bare amount (an
+ * IBAN, `1 (1)`, `400000******0000 OSTOPVM 250828`, `Asiakkaan tulostama
+ * 1.3.2026`).
+ *
+ * Two evasions this does NOT catch, stated so the next reader is not misled:
+ *
+ * - A date printed on a different line from its amount. The probe reads one
+ *   line at a time, so a two-line record split across two skipped lines shows
+ *   neither probe a complete transaction.
+ * - A skipped line that a header pattern also matches. Those never reach here
+ *   (`run.ts` records them as accounted for), which is what keeps the balance
+ *   line `5 000,00 Saldo 28.8.2026` -- a real date and a real amount -- quiet.
+ *   A recipe that writes a header pattern loose enough to cover transaction
+ *   rows walks through that door; only the balance arithmetic is left to stop
+ *   it, and a cancelling pair of transfers satisfies the arithmetic.
  */
-const DATE_LIKE = /(?<!\d)(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})(?!\d)/u;
-const AMOUNT_LIKE = /(?<![\d.,])[+\-\u2212]?\d{1,3}(?:[  .,]\d{3})*[.,]\d{2}(?![\d.,])/u;
+const DATE_SEPARATOR = String.raw`[./-]`;
+const DAY_FIRST = String.raw`\d{1,2}${DATE_SEPARATOR}\d{1,2}${DATE_SEPARATOR}\d{2}(?:\d{2})?`;
+const YEAR_FIRST = String.raw`\d{4}${DATE_SEPARATOR}\d{1,2}${DATE_SEPARATOR}\d{1,2}`;
+const DATE_LIKE = new RegExp(String.raw`(?<!\d)(?:${DAY_FIRST}|${YEAR_FIRST})(?!\d)`, "u");
+
+const SIGN = "[+\\-\\u2212]?";
+const DIGIT_GROUPS = String.raw`\d{1,3}(?:[  .,]\d{3})*`;
+const AMOUNT_LIKE = new RegExp(
+  String.raw`(?<![\d.,])${SIGN}${DIGIT_GROUPS}(?:[.,]\d{2,3})?(?![\d.,])`,
+  "u",
+);
 
 /**
  * A line `skip` removed that still says when and how much. `skip` satisfies

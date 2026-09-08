@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import { EUR, money } from "../../../core/money.ts";
-import type { RecipeRun } from "./run.ts";
+import { readText } from "../../files.ts";
+import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
+import { type RecipeRun, runRecipe } from "./run.ts";
 import { verifyRun } from "./verify.ts";
 
 const run = (
@@ -205,4 +207,48 @@ describe("verifyRun -- money hidden by skip", () => {
 
     expect(verifyRun(run({}, [], skipped))).toEqual({ ok: true });
   });
+});
+
+/**
+ * Date and amount shapes an earlier, narrower probe let through. Each one
+ * hides a real transfer while the arithmetic still balances.
+ */
+const EVASIONS = [
+  "1.8.26 −250,00 SIIRTO",
+  "29/08/2025 −250,00 SIIRTO",
+  "2025.08.29 −250,00 SIIRTO",
+  "29-08-2025 −250,00 SIIRTO",
+  "2025-08-29 −250,00 SIIRTO",
+  "1.9.2026 -250 SIIRTO",
+  "1.9.2026 -250,000 SIIRTO",
+  "1.9.2026 250 SIIRTO",
+  "1.9.2026 1 250 SIIRTO",
+  "1.8.26 -250 SIIRTO",
+];
+
+describe("verifyRun -- skip evasions", () => {
+  test.each(EVASIONS)("catches %s", (text) => {
+    const verdict = verifyRun(run({}, [], [{ line: 5, text }]));
+
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.report).toContain(text);
+  });
+
+  test("still lets every real piece of page furniture through", () => {
+    const skipped = OP_FURNITURE.map((text, at) => ({ line: at + 1, text }));
+
+    expect(verifyRun(run({}, [], skipped))).toEqual({ ok: true });
+  });
+});
+
+describe("verifyRun -- the reference recipe on the real fixtures", () => {
+  const fixture = (name: string): Promise<string> =>
+    readText(`${import.meta.dirname}/../fixtures/${name}`);
+
+  test.each(["op-statement-sample.txt", "op-fixed-term-sample.txt"])(
+    "%s verifies clean, with no skipped line flagged",
+    async (name) => {
+      expect(verifyRun(runRecipe(await fixture(name), OP_STATEMENT_RECIPE))).toEqual({ ok: true });
+    },
+  );
 });
