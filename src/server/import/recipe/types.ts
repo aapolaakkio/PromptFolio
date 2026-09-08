@@ -33,7 +33,15 @@ const MoneyFormatSchema = z
     strip: z.array(z.string().min(1)).max(10).optional(),
     twoColumn: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((money, ctx) => {
+    if (money.thousands !== "" && money.thousands === money.decimal) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Tuhaterotin ja desimaalierotin eivät voi olla sama merkki",
+      });
+    }
+  });
 export type MoneyFormat = z.infer<typeof MoneyFormatSchema>;
 
 const HeaderSchema = z

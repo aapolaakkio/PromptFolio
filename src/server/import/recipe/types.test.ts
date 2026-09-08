@@ -54,4 +54,9 @@ describe("parseRecipe", () => {
     const nbsp = { ...valid, money: { ...valid.money, thousands: " " } };
     expect(parseRecipe(nbsp).money.thousands).toBe(" ");
   });
+
+  test("refuses a thousands separator equal to the decimal separator", () => {
+    const same = { ...valid, money: { ...valid.money, thousands: ".", decimal: "." } };
+    expect(() => parseRecipe(same)).toThrow();
+  });
 });

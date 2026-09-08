@@ -13,11 +13,33 @@ const MINUS = /−/g;
 
 const escapeForClass = (text: string): string => text.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
 
+/**
+ * `strip` entries are currency codes and symbols, printed only at the ends of
+ * a figure. Removing them anywhere in the string (e.g. a naive `split/join`)
+ * can eat digits that happen to match. Only a prefix or a suffix of the
+ * trimmed body is removed, repeated until neither end matches any entry.
+ */
+const stripEnds = (text: string, words: readonly string[]): string => {
+  let body = text.trim();
+  let changed = words.length > 0;
+  while (changed) {
+    changed = false;
+    for (const word of words) {
+      if (body.startsWith(word)) {
+        body = body.slice(word.length).trim();
+        changed = true;
+      } else if (body.endsWith(word)) {
+        body = body.slice(0, body.length - word.length).trim();
+        changed = true;
+      }
+    }
+  }
+  return body;
+};
+
 /** Sign and bare digits, with the format's own decorations taken off. */
 const strip = (text: string, format: MoneyFormat) => {
-  let body = text.replace(MINUS, "-").trim();
-  for (const word of format.strip ?? []) body = body.split(word).join("");
-  body = body.trim();
+  let body = stripEnds(text.replace(MINUS, "-").trim(), format.strip ?? []);
 
   let negative = false;
   if (format.negative === "parentheses" && /^\(.*\)$/.test(body)) {
@@ -27,9 +49,10 @@ const strip = (text: string, format: MoneyFormat) => {
     negative = true;
     body = body.slice(0, -1);
   } else if (format.negative === "suffix") {
-    const upper = body.toUpperCase();
-    negative = (format.debitWords ?? []).some((word) => upper.endsWith(word.toUpperCase()));
-    body = body.replace(/[A-Za-zÄÖÅäöå]+$/u, "");
+    const match = /[A-Za-zÄÖÅäöå]+$/u.exec(body);
+    const token = (match?.[0] ?? "").toUpperCase();
+    negative = (format.debitWords ?? []).some((word) => token === word.toUpperCase());
+    body = match ? body.slice(0, match.index) : body;
   } else if (body.startsWith("-")) {
     negative = true;
     body = body.slice(1);

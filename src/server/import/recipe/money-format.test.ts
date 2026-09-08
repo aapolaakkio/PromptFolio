@@ -49,6 +49,15 @@ describe("readAmount", () => {
     expect(readAmount("1 234,56 EUR", { ...base, strip: ["EUR"] })).toBe(123_456n);
   });
 
+  test("does not strip a stripped word from inside the digits", () => {
+    expect(readAmount("1 234,56", { ...base, strip: ["23"] })).toBe(123_456n);
+  });
+
+  test("does not flip the sign when a trailing word merely ends with a debit word", () => {
+    const format: MoneyFormat = { ...base, negative: "suffix", debitWords: ["D"] };
+    expect(readAmount("250,00 CAD", format)).toBe(25_000n);
+  });
+
   test("refuses text that holds no figure", () => {
     expect(() => readAmount("K-MARKET", base)).toThrow();
   });
