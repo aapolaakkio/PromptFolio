@@ -92,6 +92,39 @@ describe("generateRecipe", () => {
     expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
   });
 
+  test("prefers the fenced block over reasoning braces elsewhere in the reply", async () => {
+    const text = await fixture();
+    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja päättelin...";
+    const client = stub(`${reasoning}\n\`\`\`json\n${good}\n\`\`\``);
+
+    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
+  });
+
+  test("accepts an answer that reasons first, braces and all, before the JSON", async () => {
+    const text = await fixture();
+    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja päättelin...";
+    const client = stub(`${reasoning}\n${good}`);
+
+    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
+  });
+
+  test("accepts an answer whose recipe has a brace inside a string value", async () => {
+    const text = await fixture();
+    const withBraceInString = JSON.stringify({
+      ...OP_STATEMENT_RECIPE,
+      money: { ...OP_STATEMENT_RECIPE.money, strip: ["{EUR"] },
+    });
+    const client = stub(withBraceInString);
+
+    expect((await generateRecipe(text, pagesOf(text), client)).verified).toBe(true);
+  });
+
+  test("refuses a reply that only reasons, braces and all, with no JSON answer", async () => {
+    const text = await fixture();
+    const reasoning = "Ajattelin näin: tarkistin muodon {tarkistus ok} ja en osaa vastata.";
+    await expect(generateRecipe(text, pagesOf(text), stub(reasoning))).rejects.toThrow();
+  });
+
   test("refuses a reply that holds no JSON at all", async () => {
     const text = await fixture();
     await expect(generateRecipe(text, pagesOf(text), stub("en osaa"))).rejects.toThrow();

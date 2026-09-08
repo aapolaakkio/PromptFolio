@@ -25,15 +25,38 @@ export const sampleFor = (pages: readonly PdfPage[]): string => {
 };
 
 /**
- * The first `{...}` in a reply, fenced or not, reasoning or not. `pdf-read.ts`
- * has its own copy of this same brace-matching for the same reason: a reply is
- * never trusted to be bare JSON, only to contain some.
+ * The JSON object out of a reply that may be fenced and may be preceded by
+ * pages of reasoning with braces of its own. A fenced block wins; otherwise the
+ * last balanced object does, since a model that reconsiders writes its answer
+ * last. Strings are tracked so a brace inside a payee's name cannot close the
+ * object early.
  */
 const jsonObject = (reply: string): string | null => {
-  const start = reply.indexOf("{");
-  const end = reply.lastIndexOf("}");
-  if (start === -1 || end <= start) return null;
-  return reply.slice(start, end + 1);
+  const fenced = [...reply.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)].at(-1);
+  if (fenced?.[1] !== undefined) return fenced[1];
+  let depth = 0;
+  let start = -1;
+  let last: string | null = null;
+  let inString = false;
+  let escaped = false;
+  for (let at = 0; at < reply.length; at += 1) {
+    const char = reply[at];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") {
+      if (depth === 0) start = at;
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0) last = reply.slice(start, at + 1);
+    }
+  }
+  return last;
 };
 
 const INSTRUCTIONS = `Saat otteen pankin tiliotteen tekstisisällöstä. Älä poimi tapahtumia. Kuvaa sen sijaan tiedoston rakenne JSON-oliona, jonka ohjelma ajaa koko tiedostolle.
