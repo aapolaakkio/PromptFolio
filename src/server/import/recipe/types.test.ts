@@ -49,4 +49,9 @@ describe("parseRecipe", () => {
   test("refuses an unknown field", () => {
     expect(() => parseRecipe({ ...valid, extra: 1 })).toThrow();
   });
+
+  test("accepts a non-breaking space as the thousands separator", () => {
+    const nbsp = { ...valid, money: { ...valid.money, thousands: " " } };
+    expect(parseRecipe(nbsp).money.thousands).toBe(" ");
+  });
 });

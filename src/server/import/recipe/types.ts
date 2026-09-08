@@ -27,7 +27,7 @@ const Pattern = z
 const MoneyFormatSchema = z
   .object({
     decimal: z.enum([",", "."]),
-    thousands: z.enum([" ", " ", ".", ",", "'", ""]),
+    thousands: z.enum([" ", " ", ".", ",", "'", ""]),
     negative: z.enum(["leading", "trailing", "parentheses", "suffix"]),
     debitWords: z.array(z.string().min(1)).max(10).optional(),
     strip: z.array(z.string().min(1)).max(10).optional(),
