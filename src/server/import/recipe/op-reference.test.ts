@@ -56,4 +56,30 @@ describe("OP_STATEMENT_RECIPE", () => {
     expect(statement.maturityDate).toBe(reference.maturityDate);
     expect(verifyStatement(statement).ok).toBe(true);
   });
+
+  const synthetic = (payee: string): string =>
+    [
+      "+0,00 Saldo 1.1.2026",
+      "2.1.2026 +100,00 TILISIIRTO 20260102ESIM00000009 J",
+      payee,
+      "+100,00 Saldo 31.1.2026",
+    ].join("\n");
+
+  test("keeps a payee printed as one long unspaced word", () => {
+    const { statement, unclaimed } = runRecipe(
+      synthetic("KESKINAEINENVAKUUTUSYHTIOE"),
+      OP_STATEMENT_RECIPE,
+    );
+
+    expect(statement.rows[0]?.counterparty).toBe("KESKINAEINENVAKUUTUSYHTIOE");
+    expect(statement.rows[0]?.externalId).toBe("20260102ESIM00000009");
+    expect(unclaimed).toEqual([]);
+  });
+
+  test("keeps a payee whose name begins with a furniture word", () => {
+    const { statement, unclaimed } = runRecipe(synthetic("BIC-ATRIA OY"), OP_STATEMENT_RECIPE);
+
+    expect(statement.rows[0]?.counterparty).toBe("BIC-ATRIA OY");
+    expect(unclaimed).toEqual([]);
+  });
 });

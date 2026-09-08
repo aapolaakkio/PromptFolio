@@ -13,8 +13,10 @@ const WORD = String.raw`[A-ZÄÖÅ][A-ZÄÖÅ.-]*`;
  */
 export const OP_STATEMENT_RECIPE: BankRecipe = {
   kind: "bank",
+  // Each keyword ends at a word boundary: a payee named "BIC-ATRIA OY" is not
+  // furniture.
   skip: [
-    String.raw`^(Tilinumero|BIC|Kirjaus|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja/maksaja|Viesti$|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|Jatkuu)`,
+    String.raw`^(?:Tilinumero|BIC|Kirjauspäivä|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja/maksaja|Viesti|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|Jatkuu)(?=\s|$)`,
     String.raw`^\d+ \(\d+\)$`,
     String.raw`^[A-Z]{6}[A-Z0-9]{2,5}$`,
     String.raw`^[A-Z]{2}\d{2}(\s\d{4})+(\s\d{1,4})?$`,
@@ -28,10 +30,12 @@ export const OP_STATEMENT_RECIPE: BankRecipe = {
     `^(?<date>${DATE})\\s+(?<amount>${AMOUNT})` +
     `(?:\\s+(?<label>${WORD}(?:\\s+${WORD})*)(?=\\s|$))?` +
     String.raw`(?:.*?\s(?<externalId>[0-9A-Z]{16,})(?=\s|$))?.*$`,
+  // The standalone archive id must carry a digit; without that, a payee printed
+  // as one long unspaced word is eaten as an id and the name is lost.
   continuation: [
     String.raw`^Viesti:\n(?<message>.+)$`,
     String.raw`^Viesti:$`,
-    String.raw`^(?<externalId>[0-9A-Z]{16,})$`,
+    String.raw`^(?=[0-9A-Z]*[0-9])(?<externalId>[0-9A-Z]{16,})$`,
   ],
   restField: "counterparty",
   header: {
