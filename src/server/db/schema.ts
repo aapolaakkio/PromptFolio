@@ -391,3 +391,26 @@ export const allocationTargets = sqliteTable(
   },
   (t) => [unique().on(t.userId, t.dimension, t.key)],
 );
+
+/**
+ * A layout the model has already described, keyed by the shape of a document's
+ * opening lines. Per user and never shared: a recipe may legitimately quote a
+ * literal from the owner's own statement.
+ */
+export const importRecipes = sqliteTable(
+  "import_recipes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    fingerprint: text("fingerprint").notNull(),
+    kind: text("kind", { enum: ["bank"] }).notNull(),
+    /** The validated BankRecipe as JSON. Re-validated on read. */
+    recipe: text("recipe").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [unique().on(t.userId, t.fingerprint)],
+);
