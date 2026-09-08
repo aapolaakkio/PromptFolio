@@ -69,7 +69,7 @@ const AMOUNT_LIKE = new RegExp(
  * coverage by definition, and a cancelling pair of transfers satisfies the
  * arithmetic, so without this check the two together hide real money.
  */
-const looksLikeTransaction = (entry: Skipped): boolean =>
+export const looksLikeTransaction = (entry: Skipped): boolean =>
   DATE_LIKE.test(entry.text) && AMOUNT_LIKE.test(entry.text);
 
 export const verifyRun = ({ statement, unclaimed, skipped }: RecipeRun): Verdict => {

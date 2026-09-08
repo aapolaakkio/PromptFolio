@@ -5,7 +5,7 @@ import type { ToolCall, ToolDefinition } from "../../chat/runner.ts";
 import type { BankRow } from "../bank-statement.ts";
 import { runRecipe, type RecipeRun } from "./run.ts";
 import { BankRecipeSchema, parseRecipe, type BankRecipe } from "./types.ts";
-import { verifyRun } from "./verify.ts";
+import { looksLikeTransaction, verifyRun } from "./verify.ts";
 
 export const VERIFY_TOOL_NAME = "verify_recipe";
 
@@ -21,10 +21,6 @@ const MAX_SAMPLE_ROWS = 3;
 const UNREADABLE_RUN = "Kuvausta ei voitu ajaa tiedostolle";
 
 const eur = (minor: bigint): string => formatMoney(money(minor, EUR));
-
-/** The same probe `verify.ts` uses, restated here: a skipped line that looks like money. */
-const DATE_LIKE = /(?<!\d)(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})(?!\d)/u;
-const AMOUNT_LIKE = /(?<![\d.,])[+\-−]?\d{1,3}(?:[  .,]\d{3})*[.,]\d{2}(?![\d.,])/u;
 
 type Line = { readonly line: number; readonly text: string };
 type SampleRow = {
@@ -141,9 +137,7 @@ const describe = (run: RecipeRun, report: string | null): VerifyResult => {
   const base = {
     ok: report === null,
     unclaimed: listed(run.unclaimed),
-    skippedLookingLikeTransactions: listed(
-      run.skipped.filter((entry) => DATE_LIKE.test(entry.text) && AMOUNT_LIKE.test(entry.text)),
-    ),
+    skippedLookingLikeTransactions: listed(run.skipped.filter(looksLikeTransaction)),
     balance: {
       opening: eur(statement.openingBalance.minor),
       rows: eur(movement),
