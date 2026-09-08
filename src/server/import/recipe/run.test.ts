@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { runRecipe } from "./run.ts";
+import { verifyRun } from "./verify.ts";
 import type { BankRecipe } from "./types.ts";
 
 const recipe: BankRecipe = {
@@ -292,5 +293,106 @@ describe("runRecipe -- round 3 regressions", () => {
 
     expect(statement.maturityDate).toBe("2027-02-01");
     expect(unclaimed).toEqual([]);
+  });
+});
+
+/**
+ * A statement printing a running balance in its last column, described by a
+ * header pattern broad enough to match a transaction line as well. One row is
+ * printed without a sign, so `recordStart` misses it -- and before the header
+ * pass learned to ignore record lines, the opening balance was read off the
+ * first transaction's running balance (`opening + row1`), which cancelled the
+ * missing row exactly: rows short by one, problems none, unclaimed none,
+ * verdict ok, and the recipe stored for every month after.
+ */
+const runningBalanceRecipe: BankRecipe = {
+  kind: "bank",
+  skip: ["^Tiliote$"],
+  recordStart: String.raw`^(?<date>\d{1,2}\.\d{1,2}\.\d{4})\s+(?<amount>[+\-]\d[\d ]*,\d{2})\s+(?<label>[A-ZÄÖÅ]+)`,
+  continuation: [],
+  restField: null,
+  header: {
+    from: String.raw`^Saldo\s+(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s`,
+    to: String.raw`^Saldo\s+(?<value>\d{1,2}\.\d{1,2}\.\d{4})\s`,
+    openingBalance: String.raw`^\d{1,2}\.\d{1,2}\.\d{4}\s.*\s(?<value>\d[\d ]*,\d{2})$`,
+    closingBalance: String.raw`^\d{1,2}\.\d{1,2}\.\d{4}\s.*\s(?<value>\d[\d ]*,\d{2})$`,
+  },
+  dateFormat: "d.m.yyyy",
+  money: { decimal: ",", thousands: " ", negative: "leading", twoColumn: false },
+};
+
+const runningBalanceDoc = [
+  "Tiliote",
+  "Saldo 1.8.2026 1 000,00",
+  "1.8.2026 -100,00 KAUPPA 900,00",
+  "2.8.2026 -50,00 KIOSKI 850,00",
+  // Printed without a sign, so `recordStart` never opens a record for it.
+  "3.8.2026 100,00 KAHVILA 750,00",
+  "Saldo 31.8.2026 750,00",
+].join("\n");
+
+describe("runRecipe -- an over-broad header pattern", () => {
+  test("does not read a balance off a line that opens a record", () => {
+    const withoutTheHiddenRow = runningBalanceDoc
+      .split("\n")
+      .filter((line) => !line.includes("KAHVILA"))
+      .join("\n");
+
+    // Every remaining line matching the broad pattern is a transaction, so
+    // there is no balance left to find -- refused, rather than read as the
+    // first row's running balance (900,00).
+    expect(() => runRecipe(withoutTheHiddenRow, runningBalanceRecipe)).toThrow(/saldo/i);
+  });
+
+  test("cannot hide a transaction behind a compensating opening balance", () => {
+    const run = runRecipe(runningBalanceDoc, runningBalanceRecipe);
+
+    expect(run.statement.rows).toHaveLength(2);
+    expect(run.statement.openingBalance.minor).not.toBe(90_000n);
+    expect(verifyRun(run).ok).toBe(false);
+  });
+});
+
+describe("runRecipe -- what skip removed", () => {
+  const cancellingRecipe: BankRecipe = { ...recipe, skip: [...recipe.skip, "SIIRTO"] };
+  const cancellingDoc = [
+    "Tiliote",
+    "+1 000,00 Saldo 1.8.2026",
+    "1.8.2026 −25,90 PKORTTIMAKSU",
+    "K-MARKET ESIMERKKI",
+    "2.8.2026 −250,00 SIIRTO",
+    "3.8.2026 +250,00 SIIRTO",
+    "+974,10 Saldo 31.8.2026",
+  ].join("\n");
+
+  test("reports the skipped lines, so a cancelling pair cannot pass unseen", () => {
+    const run = runRecipe(cancellingDoc, cancellingRecipe);
+
+    // The old checks are both satisfied: one row of three, nothing unclaimed,
+    // and 1 000,00 − 25,90 is exactly the closing balance the statement prints.
+    expect(run.statement.rows).toHaveLength(1);
+    expect(run.unclaimed).toEqual([]);
+    expect(run.skipped.map((entry) => entry.text)).toEqual([
+      "Tiliote",
+      "2.8.2026 −250,00 SIIRTO",
+      "3.8.2026 +250,00 SIIRTO",
+    ]);
+    expect(verifyRun(run).ok).toBe(false);
+  });
+
+  test("does not report page furniture a header pattern already accounts for", () => {
+    const run = runRecipe(doc, recipe);
+
+    expect(run.skipped.map((entry) => entry.text)).toEqual(["Tiliote", "1 (2)"]);
+  });
+});
+
+describe("runRecipe -- the time budget", () => {
+  test("is checked while header patterns run, not only around them", () => {
+    // No balance lines at all: without a budget check in the header pass this
+    // reaches `buildStatementHeader` and complains about the missing balances.
+    const noBalances = Array.from({ length: 150 }, (_, index) => `ROSKAA ${index}`).join("\n");
+
+    expect(() => runRecipe(noBalances, recipe, -1)).toThrow(/kesti liian kauan/);
   });
 });

@@ -1,7 +1,7 @@
 import { EUR, formatMoney, money } from "../../../core/money.ts";
 import { verifyStatement } from "../bank-pdf.ts";
 import type { BankRow } from "../bank-statement.ts";
-import type { RecipeRun, Unclaimed } from "./run.ts";
+import type { RecipeRun, Skipped, Unclaimed } from "./run.ts";
 
 export type Verdict = { readonly ok: true } | { readonly ok: false; readonly report: string };
 
@@ -23,7 +23,27 @@ const isPreamble = (entry: Unclaimed, rows: readonly BankRow[]): boolean => {
   return entry.line < firstRowLine;
 };
 
-export const verifyRun = ({ statement, unclaimed }: RecipeRun): Verdict => {
+/**
+ * Probes for "this line was a transaction", written here rather than taken
+ * from the recipe: the recipe is what is under suspicion, so its own patterns
+ * cannot be the evidence. Deliberately narrow -- a printed date and a printed
+ * two-decimal amount -- so page furniture (an IBAN, `1 (2)`, a period line, a
+ * card number with `OSTOPVM 250828`, a `5 000,00 Panot yhteensä` total) does
+ * not trip it. Balance lines carry both, and are excluded upstream because a
+ * header pattern accounts for them.
+ */
+const DATE_LIKE = /(?<!\d)(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})(?!\d)/u;
+const AMOUNT_LIKE = /(?<![\d.,])[+\-\u2212]?\d{1,3}(?:[  .,]\d{3})*[.,]\d{2}(?![\d.,])/u;
+
+/**
+ * A line `skip` removed that still says when and how much. `skip` satisfies
+ * coverage by definition, and a cancelling pair of transfers satisfies the
+ * arithmetic, so without this check the two together hide real money.
+ */
+const looksLikeTransaction = (entry: Skipped): boolean =>
+  DATE_LIKE.test(entry.text) && AMOUNT_LIKE.test(entry.text);
+
+export const verifyRun = ({ statement, unclaimed, skipped }: RecipeRun): Verdict => {
   const complaints: string[] = [];
 
   const failing = unclaimed.filter((entry) => !isPreamble(entry, statement.rows));
@@ -33,6 +53,18 @@ export const verifyRun = ({ statement, unclaimed }: RecipeRun): Verdict => {
       .map((entry) => `  #${entry.line}: ${JSON.stringify(entry.text)}`)
       .join("\n");
     complaints.push(`Kuvaus jätti ${failing.length} riviä tunnistamatta:\n${listed}`);
+  }
+
+  const eaten = skipped.filter(looksLikeTransaction);
+  if (eaten.length > 0) {
+    const listed = eaten
+      .slice(0, MAX_LISTED)
+      .map((entry) => `  #${entry.line}: ${JSON.stringify(entry.text)}`)
+      .join("\n");
+    complaints.push(
+      `Ohitettujen rivien joukossa on ${eaten.length} riviä, joilla on sekä päivä ` +
+        `että summa -- ne näyttävät tapahtumilta:\n${listed}`,
+    );
   }
 
   const check = verifyStatement(statement);

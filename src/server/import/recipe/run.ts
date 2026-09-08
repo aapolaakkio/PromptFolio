@@ -6,23 +6,48 @@ import { readAmount, readTwoColumn } from "./money-format.ts";
 import type { BankRecipe } from "./types.ts";
 
 export type Unclaimed = { readonly line: number; readonly text: string };
+/** A line `skip` dropped that no header pattern accounted for. */
+export type Skipped = { readonly line: number; readonly text: string };
 export type RecipeRun = {
   readonly statement: PdfStatement;
   readonly unclaimed: readonly Unclaimed[];
+  /**
+   * What `skip` removed on its own account. Coverage cannot see these -- that
+   * is what `skip` means -- so verification looks at them separately: a skipped
+   * line carrying both a date and an amount is money the recipe threw away.
+   */
+  readonly skipped: readonly Skipped[];
 };
+
+/**
+ * The time budget ran out. Distinguished from every other failure because a
+ * stored recipe that trips it will trip it again on every future import, so
+ * the caller must be able to tell it apart and let it surface.
+ */
+export class RecipeTimeoutError extends Error {
+  constructor() {
+    super("Tiliotteen lukeminen kesti liian kauan");
+    this.name = "RecipeTimeoutError";
+  }
+}
 
 /** A model wrote these patterns, so the loop that runs them is watched. */
 const TIME_BUDGET_MS = 5_000;
 const CHECK_EVERY = 200;
 
-/** Throws once elapsed time crosses the budget, checked every `CHECK_EVERY` call. */
+/**
+ * Throws once elapsed time crosses the budget: on the first call and every
+ * `CHECK_EVERY` after. The first call matters -- a single `exec` can spend the
+ * whole budget on its own, and the loop that follows it must notice at once
+ * rather than 200 patterns later.
+ */
 const makeBudgetChecker = (budgetMs: number): (() => void) => {
   const started = Date.now();
   let ticks = 0;
   return () => {
     ticks += 1;
-    if (ticks % CHECK_EVERY === 0 && Date.now() - started > budgetMs) {
-      throw new Error("Tiliotteen lukeminen kesti liian kauan");
+    if (ticks % CHECK_EVERY === 1 && Date.now() - started > budgetMs) {
+      throw new RecipeTimeoutError();
     }
   };
 };
@@ -80,17 +105,24 @@ const firstAndLast = (indexes: ReadonlySet<number>): Set<number> => {
  * match needs no such report, since a global per-line header sweep already
  * claims every line any header pattern matches.
  */
-const readHeaderField = (lines: readonly string[], source: string | undefined, last: boolean) => {
+const readHeaderField = (
+  lines: readonly string[],
+  source: string | undefined,
+  last: boolean,
+  checkBudget: () => void,
+) => {
   const noFallback = new Set<number>();
   if (source === undefined) return { value: null, claimedByFallback: noFallback };
   const pattern = compile(source);
   const perLine = lines.flatMap((line) => {
+    checkBudget();
     const match = pattern.exec(line);
     return match ? [groupValue(match)] : [];
   });
   if (perLine.length > 0) {
     return { value: (last ? perLine.at(-1) : perLine[0]) ?? null, claimedByFallback: noFallback };
   }
+  checkBudget();
   const whole = pattern.exec(lines.join("\n"));
   if (!whole) return { value: null, claimedByFallback: noFallback };
   const covered = linesCovered(lines, whole.index, whole.index + whole[0].length);
@@ -106,13 +138,21 @@ type HeaderFacts = {
   readonly claimedLines: ReadonlySet<number>;
 };
 
+/**
+ * @param lines The document with every record-start line blanked out. A header
+ *   pattern broad enough to also match a transaction must not read a fact off
+ *   one, nor claim it as furniture: on a statement with a running-balance
+ *   column that turns the opening balance into `opening + row1`, which cancels
+ *   a missing row exactly and lets a wrong reading pass every check.
+ */
 const resolveHeaderFacts = (
   lines: readonly string[],
   header: BankRecipe["header"],
+  checkBudget: () => void,
 ): HeaderFacts => {
   const claimedLines = new Set<number>();
   const read = (source: string | undefined, last: boolean): string | null => {
-    const { value, claimedByFallback } = readHeaderField(lines, source, last);
+    const { value, claimedByFallback } = readHeaderField(lines, source, last, checkBudget);
     for (const index of claimedByFallback) claimedLines.add(index);
     return value;
   };
@@ -177,6 +217,10 @@ const findRecordStarts = (
  * Every line no record block will ever see: blank, `skip`-matched, matching a
  * header pattern (a structural fact, not a record field), a record-start
  * itself, or covered by a multi-line header fallback match.
+ *
+ * A header pattern may not claim a record-start line. An over-broad one that
+ * also matches transactions would otherwise take them out of coverage, and a
+ * line that says when and how much is a transaction first and furniture never.
  */
 const buildClaimed = (
   lines: readonly string[],
@@ -186,16 +230,40 @@ const buildClaimed = (
   headerFallbackClaims: ReadonlySet<number>,
   checkBudget: () => void,
 ): Set<number> => {
-  const claimed = new Set<number>([...starts, ...headerFallbackClaims]);
+  const startLines = new Set(starts);
+  const claimed = new Set<number>([
+    ...starts,
+    ...[...headerFallbackClaims].filter((index) => !startLines.has(index)),
+  ]);
   for (const [index, line] of lines.entries()) {
     checkBudget();
-    const isHeaderLine = headerPatterns.some((pattern) => pattern.test(line));
+    const isHeaderLine = !startLines.has(index) && headerPatterns.some((p) => p.test(line));
     if (line === "" || isHeaderLine || skip.some((pattern) => pattern.test(line))) {
       claimed.add(index);
     }
   }
   return claimed;
 };
+
+/**
+ * What `skip` dropped without any header pattern also covering it. Reported so
+ * verification can look for money inside it: `skip` satisfies coverage by
+ * definition, so a pattern eating a transaction leaves no other trace.
+ */
+const findSkipped = (
+  lines: readonly string[],
+  skip: readonly RegExp[],
+  headerPatterns: readonly RegExp[],
+  headerFallbackClaims: ReadonlySet<number>,
+  checkBudget: () => void,
+): Skipped[] =>
+  lines.flatMap((line, index) => {
+    checkBudget();
+    if (line === "" || !skip.some((pattern) => pattern.test(line))) return [];
+    if (headerFallbackClaims.has(index)) return [];
+    if (headerPatterns.some((pattern) => pattern.test(line))) return [];
+    return [{ line: index + 1, text: line }];
+  });
 
 type BlockFields = {
   readonly fields: Readonly<Record<string, string>>;
@@ -388,10 +456,13 @@ export const runRecipe = (
   const recordStart = compile(recipe.recordStart);
   const continuation = compileAll(recipe.continuation);
 
-  const facts = resolveHeaderFacts(lines, recipe.header);
+  const starts = findRecordStarts(lines, recordStart, skip, checkBudget);
+  const startLines = new Set(starts);
+  // The header pass never sees a line that opens a record; see resolveHeaderFacts.
+  const headerLines = lines.map((line, index) => (startLines.has(index) ? "" : line));
+  const facts = resolveHeaderFacts(headerLines, recipe.header, checkBudget);
   const header = buildStatementHeader(facts, recipe);
 
-  const starts = findRecordStarts(lines, recordStart, skip, checkBudget);
   const headerPatterns = [
     recipe.header.from,
     recipe.header.to,
@@ -421,6 +492,7 @@ export const runRecipe = (
     checkBudget,
   );
   const unclaimed = findUnclaimed(lines, claimed, consumed);
+  const skipped = findSkipped(lines, skip, headerPatterns, facts.claimedLines, checkBudget);
 
   return {
     statement: {
@@ -433,5 +505,6 @@ export const runRecipe = (
       maturityDate: header.maturityDate,
     },
     unclaimed,
+    skipped,
   };
 };
