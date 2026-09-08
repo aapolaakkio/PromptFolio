@@ -4,29 +4,20 @@ import { createHash } from "node:crypto";
 const SAMPLE_LINES = 5;
 
 /**
- * A dotted number -- a day, month or year in a `d.m.yyyy`-style date -- blanks
- * as one `#` per component, so a one-digit day and a two-digit day shape the
- * same. A digit run with no dot touching it (an account number, an amount)
- * blanks one `#` per digit instead, since there the digit count is the layout.
+ * A line with every run of digits collapsed to one `#`. A balance, a date
+ * component, or a page marker gaining a digit next month must not change this
+ * -- digit count is exactly what varies between two statements of the same
+ * format, so leaving it significant would make the cache miss on every layout
+ * the moment a figure crossed a power of ten.
  */
-const DOTTED_RUN = /\d+(?=\.)|(?<=\.)\d+/g;
-
-/**
- * A line with its figures blanked. Next month's statement prints a different
- * period and different balances in the same places, so hashing the raw lines
- * would make every statement a new format and the cache would never hit.
- */
-// eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- the term is the domain concept: a line's digit-blanked layout.
-export const shape = (line: string): string =>
-  line.replace(DOTTED_RUN, "#").replace(/\d/g, "#").trim();
+export const blankDigits = (line: string): string => line.replace(/\d+/g, "#").trim();
 
 export const fingerprint = (producer: string, lines: readonly string[]): string => {
   const sample = lines
     .map((line) => line.trim())
     .filter((line) => line !== "")
     .slice(0, SAMPLE_LINES)
-    // eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- see the export above.
-    .map(shape);
+    .map(blankDigits);
   return createHash("sha256")
     .update([producer, ...sample].join("\n"))
     .digest("hex");

@@ -1,18 +1,14 @@
 import { describe, expect, test } from "vitest";
 
-// eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- the term is the domain concept under test; see fingerprint.ts.
-import { fingerprint, shape } from "./fingerprint.ts";
+import { blankDigits, fingerprint } from "./fingerprint.ts";
 
-// eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- naming the function under test.
-describe("shape", () => {
+describe("blankDigits", () => {
   test("blanks digits so a value cannot change the layout", () => {
-    // eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- see fingerprint.ts.
-    expect(shape("Tiliote 1.8.2026 - 31.8.2026")).toBe("Tiliote #.#.# - #.#.#");
+    expect(blankDigits("Tiliote 1.8.2026 - 31.8.2026")).toBe("Tiliote #.#.# - #.#.#");
   });
 
   test("blanks an account number", () => {
-    // eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- see fingerprint.ts.
-    expect(shape("FI12 3456 7890 1234 56")).toBe("FI## #### #### #### ##");
+    expect(blankDigits("FI12 3456 7890 1234 56")).toBe("FI# # # # #");
   });
 });
 
@@ -34,5 +30,26 @@ describe("fingerprint", () => {
   test("a different producer gets a different fingerprint", () => {
     const lines = ["Tiliote", "1.8.2026 - 31.8.2026"];
     expect(fingerprint("pdfTeX", lines)).not.toBe(fingerprint("Word", lines));
+  });
+
+  test("a day gaining a digit does not change the fingerprint", () => {
+    const nineDays = ["Tiliote", "1.8.2026 - 9.8.2026"];
+    const tenDays = ["Tiliote", "10.8.2026 - 30.8.2026"];
+
+    expect(fingerprint("pdfTeX", nineDays)).toBe(fingerprint("pdfTeX", tenDays));
+  });
+
+  test("an amount gaining a digit does not change the fingerprint", () => {
+    const small = ["Tiliote", "Saldo 1 500,00"];
+    const large = ["Tiliote", "Saldo 12 500,00"];
+
+    expect(fingerprint("pdfTeX", small)).toBe(fingerprint("pdfTeX", large));
+  });
+
+  test("a page marker gaining a digit does not change the fingerprint", () => {
+    const nine = ["Tiliote", "1 (9)"];
+    const ten = ["Tiliote", "1 (10)"];
+
+    expect(fingerprint("pdfTeX", nine)).toBe(fingerprint("pdfTeX", ten));
   });
 });
