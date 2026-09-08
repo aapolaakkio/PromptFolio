@@ -5,6 +5,7 @@ import type { ChatClient, TurnParams } from "../chat/runner.ts";
 import {
   batchPages,
   extractPages,
+  PDF_READ_MODEL,
   readHoldingsPdf,
   readTransactionsPdf,
   type PdfPage,
@@ -97,6 +98,22 @@ describe("readHoldingsPdf", () => {
     expect(reading.asOf).toBe("2026-06-30");
     expect(reading.totalValue).toBe("1000.00");
     expect(reading.holdings.map((h) => h.name)).toEqual(["Nokia", "OP-Maailma"]);
+  });
+
+  /**
+   * The reading model and the JSON schema the reply is held to. Asserted here
+   * because `ask` is shared by every PDF reader, and a reply the schema never
+   * vouched for must not reach a preview.
+   */
+  test("asks the reading model for an answer in the batch's own JSON schema", async () => {
+    const seen: TurnParams[] = [];
+    await readHoldingsPdf(
+      [page(1, "a")],
+      scripted([{ asOf: "2026-06-30", totalValue: null, holdings: [], problems: [] }], seen),
+    );
+
+    expect(seen[0]?.model).toBe(PDF_READ_MODEL);
+    expect(seen[0]?.response_format?.type).toBe("json_schema");
   });
 });
 

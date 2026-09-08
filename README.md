@@ -138,10 +138,14 @@ fractional-share cash-out).
 Upload on **Käteinen**, in either format:
 
 - **CSV** (OP's transaction export) — fast, but its payee column is sometimes empty.
-- **PDF** (OP's statement, SweepBank/Ferratum's) — **preferred**, because it carries the opening
-  and closing balances. The import checks its own work against them: parsed rows plus the opening
-  balance must equal the printed closing balance, or the file is refused and the difference named.
-  A PDF also brings the payer's message, and a fixed-term deposit's maturity date.
+- **PDF** (any bank's statement) — **preferred**, because it carries the opening and closing
+  balances. A model is asked once to describe the layout of a statement it has not seen before —
+  where the dates, amounts and balances sit — and that description is remembered for you, so the
+  same bank's next statement is read without asking anything. The import checks its own work
+  against the printed balances: parsed rows plus the opening balance must equal the printed
+  closing balance. When they don't, the difference is named and you still get the draft to
+  correct; only committing a draft that doesn't add up is refused. A PDF also brings the payer's
+  message, and a fixed-term deposit's maturity date.
 
 Both formats identify rows by the bank's archive id, so re-importing an overlapping period skips
 what is already stored. Importing the same period in _both_ formats is useful: the PDF fills in
