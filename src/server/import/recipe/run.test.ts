@@ -93,7 +93,7 @@ describe("runRecipe", () => {
   });
 
   test("a record whose amount cannot be read becomes a problem, not an exception", () => {
-    const broken = doc.replace("−25,90", "−KAKSI,90");
+    const broken = doc.replace("−25,90", "−,90");
     const { statement } = runRecipe(broken, recipe);
 
     expect(statement.rows).toHaveLength(1);
