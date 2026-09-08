@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 
+import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import { MAX_PATTERN_LENGTH, parseRecipe } from "./types.ts";
 
 const valid = {
@@ -58,5 +59,44 @@ describe("parseRecipe", () => {
   test("refuses a thousands separator equal to the decimal separator", () => {
     const same = { ...valid, money: { ...valid.money, thousands: ".", decimal: "." } };
     expect(() => parseRecipe(same)).toThrow();
+  });
+});
+
+/**
+ * A pattern's run time cannot be bounded once `exec` has been entered, so the
+ * shapes that blow up are refused before they are ever compiled into a recipe.
+ * `^(a+)+$` is seven characters -- far under the length cap -- and took over
+ * two minutes on a 37-character line against a 500 ms budget.
+ */
+describe("parseRecipe -- catastrophic pattern shapes", () => {
+  const withSkip = (pattern: string) => ({ ...valid, skip: [pattern] });
+
+  test("refuses a quantified group whose body is itself quantified", () => {
+    expect(() => parseRecipe(withSkip("^(a+)+$"))).toThrow(/jumiin/);
+  });
+
+  test("refuses the other classic forms", () => {
+    for (const pattern of ["^(a*)*$", "^(a+)*$", String.raw`(\d+)+`, "(?:[a-z]+)+"]) {
+      expect(() => parseRecipe(withSkip(pattern))).toThrow(/jumiin/);
+    }
+  });
+
+  test("refuses a quantified group whose alternatives overlap", () => {
+    expect(() => parseRecipe(withSkip("^(a|aa)+$"))).toThrow(/jumiin/);
+  });
+
+  test("keeps accepting the patterns real recipes are made of", () => {
+    for (const pattern of [
+      String.raw`^\d{1,3}(?:[  ]\d{3})*,\d{2}$`,
+      String.raw`^[A-Z]{2}\d{2}(\s\d{4})+$`,
+      String.raw`^Eräpäivä\n(?:.*\n)*?\d{1,2}\.\d{1,2}\.\d{4}$`,
+      "^(?:Tilinumero|BIC|Viesti)(?=\\s|$)",
+    ]) {
+      expect(() => parseRecipe(withSkip(pattern))).not.toThrow();
+    }
+  });
+
+  test("accepts the reference recipe unchanged", () => {
+    expect(() => parseRecipe(OP_STATEMENT_RECIPE)).not.toThrow();
   });
 });

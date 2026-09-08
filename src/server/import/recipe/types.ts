@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { mayBacktrackForever } from "./pattern-safety.ts";
+
 /**
  * A model writes these patterns, so they are capped and compiled before use.
  * Long enough for a real record-start line, short enough that no single pattern
@@ -22,7 +24,14 @@ const Pattern = z
       }
     },
     { message: "Säännöllistä lauseketta ei voitu kääntää" },
-  );
+  )
+  // A pattern's own run time cannot be bounded once `exec` has been entered,
+  // so the shapes that blow up are refused here instead. Heuristic, not a
+  // decision procedure: it clears `(a+)+` and its relatives, and a pattern it
+  // accepts can still be slow -- the run loop keeps its time budget as well.
+  .refine((source) => !mayBacktrackForever(source), {
+    message: "Säännöllinen lauseke voi jäädä jumiin (sisäkkäinen toisto)",
+  });
 
 const MoneyFormatSchema = z
   .object({
