@@ -8,7 +8,7 @@ describe("blankDigits", () => {
   });
 
   test("blanks an account number", () => {
-    expect(blankDigits("FI12 3456 7890 1234 56")).toBe("FI# # # # #");
+    expect(blankDigits("FI12 3456 7890 1234 56")).toBe("FI#");
   });
 });
 
@@ -51,5 +51,12 @@ describe("fingerprint", () => {
     const ten = ["Tiliote", "1 (10)"];
 
     expect(fingerprint("pdfTeX", nine)).toBe(fingerprint("pdfTeX", ten));
+  });
+
+  test("a balance crossing a power of ten does not change the fingerprint", () => {
+    const underThousand = ["Tiliote", "Saldo 999,99"];
+    const overThousand = ["Tiliote", "Saldo 1 000,00"];
+
+    expect(fingerprint("pdfTeX", underThousand)).toBe(fingerprint("pdfTeX", overThousand));
   });
 });
