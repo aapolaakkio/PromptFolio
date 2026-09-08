@@ -56,7 +56,10 @@ const strip = (text: string, format: MoneyFormat) => {
     const token = (match?.[0] ?? "").toUpperCase();
     negative = (format.debitWords ?? []).some((word) => token === word.toUpperCase());
     body = match ? body.slice(0, match.index) : body;
-  } else if (body.startsWith("-")) {
+    // Only a format that says the minus leads may read one. A recipe declaring
+    // "trailing", "parentheses" or "suffix" and meeting `-1,00` has described
+    // the statement wrongly, and must fail loudly rather than read it right.
+  } else if (format.negative === "leading" && body.startsWith("-")) {
     negative = true;
     body = body.slice(1);
   }
