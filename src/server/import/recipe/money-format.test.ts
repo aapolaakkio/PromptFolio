@@ -53,6 +53,10 @@ describe("readAmount", () => {
     expect(readAmount("1 234,56", { ...base, strip: ["23"] })).toBe(123_456n);
   });
 
+  test("ignores an empty strip entry instead of looping on it", () => {
+    expect(readAmount("1 234,56", { ...base, strip: [""] })).toBe(123_456n);
+  });
+
   test("does not flip the sign when a trailing word merely ends with a debit word", () => {
     const format: MoneyFormat = { ...base, negative: "suffix", debitWords: ["D"] };
     expect(readAmount("250,00 CAD", format)).toBe(25_000n);

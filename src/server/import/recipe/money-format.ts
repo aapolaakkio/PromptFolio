@@ -18,13 +18,16 @@ const escapeForClass = (text: string): string => text.replace(/[.*+?^${}()|[\]\\
  * a figure. Removing them anywhere in the string (e.g. a naive `split/join`)
  * can eat digits that happen to match. Only a prefix or a suffix of the
  * trimmed body is removed, repeated until neither end matches any entry.
+ * An empty entry is skipped: it would match every `startsWith`/`endsWith`
+ * check without shrinking the body, spinning the loop forever.
  */
 const stripEnds = (text: string, words: readonly string[]): string => {
+  const nonEmpty = words.filter((word) => word.length > 0);
   let body = text.trim();
-  let changed = words.length > 0;
+  let changed = nonEmpty.length > 0;
   while (changed) {
     changed = false;
-    for (const word of words) {
+    for (const word of nonEmpty) {
       if (body.startsWith(word)) {
         body = body.slice(word.length).trim();
         changed = true;
