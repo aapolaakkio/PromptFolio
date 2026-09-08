@@ -113,6 +113,24 @@ describe("readBankPdfByRecipe", () => {
     expect(await db.select().from(importRecipes).all()).toHaveLength(1);
   });
 
+  test("a stored recipe that burns the time budget surfaces instead of being swallowed", async () => {
+    const bytes = await pdf();
+    const key = await keyFor(bytes);
+    await db.insert(importRecipes).values({
+      userId: USER,
+      fingerprint: key,
+      kind: "bank",
+      recipe: JSON.stringify(OP_STATEMENT_RECIPE),
+    });
+
+    const client = stub(JSON.stringify(OP_STATEMENT_RECIPE));
+    // A budget of -1 stands in for a pathological pattern: the stored recipe
+    // cannot finish. Swallowed, it would burn the same CPU every month.
+    await expect(readBankPdfByRecipe(bytes, USER, client, -1)).rejects.toThrow(/kesti liian kauan/);
+    expect(client.calls).toBe(0);
+    expect(await db.select().from(importRecipes).all()).toHaveLength(0);
+  });
+
   test("refuses a PDF with no text layer", async () => {
     const scanned = await readBytes(`${import.meta.dirname}/../fixtures/scanned-no-text.pdf`);
     await expect(
