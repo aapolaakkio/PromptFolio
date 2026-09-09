@@ -110,3 +110,24 @@ describe("parseRecipe -- catastrophic pattern shapes", () => {
     expect(() => parseRecipe(OP_STATEMENT_RECIPE)).not.toThrow();
   });
 });
+
+// A layout that prints the date on its own line and the amount several lines
+// later -- one bank's savings statement does -- can only name the amount in a
+// continuation. Refusing that recipe left no way to describe the file at all.
+test("accepts a recipe whose amount is named by a continuation", () => {
+  const split = {
+    ...valid,
+    recordStart: String.raw`^(?<date>\d{4}-\d{2}-\d{2})$`,
+    continuation: [String.raw`^[+-] (?<amount>[\d,.]+) EUR`],
+  };
+  expect(parseRecipe(split).continuation).toHaveLength(1);
+});
+
+test("still refuses a recipe that names an amount nowhere", () => {
+  const none = {
+    ...valid,
+    recordStart: String.raw`^(?<date>\d{4}-\d{2}-\d{2})$`,
+    continuation: [String.raw`^(?<message>.+)$`],
+  };
+  expect(() => parseRecipe(none)).toThrow(/amount/);
+});

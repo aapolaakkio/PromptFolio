@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { runRecipe } from "./run.ts";
 import { verifyRun } from "./verify.ts";
-import type { BankRecipe } from "./types.ts";
+import { parseRecipe, type BankRecipe } from "./types.ts";
 
 const recipe: BankRecipe = {
   kind: "bank",
@@ -394,5 +394,82 @@ describe("runRecipe -- the time budget", () => {
     const noBalances = Array.from({ length: 150 }, (_, index) => `ROSKAA ${index}`).join("\n");
 
     expect(() => runRecipe(noBalances, recipe, -1)).toThrow(/kesti liian kauan/);
+  });
+});
+
+describe("a layout whose amount sits below its date", () => {
+  const recipe = parseRecipe({
+    kind: "bank",
+    skip: [String.raw`^(?:Statement period:|TRANSACTIONS|END BALANCE)(?=\s|$)`],
+    recordStart: String.raw`^(?<date>\d{4}-\d{2}-\d{2})$`,
+    continuation: [String.raw`^(?<amount>[+-] [\d,.]+) EUR`],
+    restField: "counterparty",
+    header: {
+      from: String.raw`^Statement period: (?<value>\d{4}-\d{2}-\d{2})`,
+      to: String.raw`^Statement period: \d{4}-\d{2}-\d{2} (?<value>\d{4}-\d{2}-\d{2})`,
+      openingBalance: String.raw`^Initial balance: (?<value>[\d,.]+) EUR$`,
+      closingBalance: String.raw`^END BALANCE (?<value>[\d,.]+) EUR$`,
+    },
+    dateFormat: "yyyy-mm-dd",
+    money: { decimal: ".", thousands: ",", negative: "leading", twoColumn: false },
+  });
+
+  const doc = [
+    "Statement period: 2026-08-01 2026-08-29",
+    "Initial balance: 100.00 EUR",
+    "TRANSACTIONS",
+    "2026-08-08",
+    "Kahvila",
+    "- 2.50 EUR",
+    "2026-08-09",
+    "Palkka",
+    "+ 500.00 EUR",
+    "END BALANCE 597.50 EUR",
+  ].join("\n");
+
+  test("reads the amount from the continuation line", () => {
+    const { statement } = runRecipe(doc, recipe);
+
+    expect(statement.rows.map((row) => [row.date, row.amount, row.counterparty])).toEqual([
+      ["2026-08-08", -250n, "Kahvila"],
+      ["2026-08-09", 50_000n, "Palkka"],
+    ]);
+  });
+});
+
+describe("a header fact the recipe could not find", () => {
+  const base = {
+    kind: "bank" as const,
+    skip: [],
+    recordStart: String.raw`^(?<date>\d{4}-\d{2}-\d{2})\s+(?<amount>-?[\d.]+)$`,
+    continuation: [],
+    restField: null,
+    dateFormat: "yyyy-mm-dd" as const,
+    money: { decimal: ".", thousands: ",", negative: "leading", twoColumn: false },
+  };
+  const doc = ["Alku: 100.00", "2026-08-08 -2.50"].join("\n");
+
+  test("names the period when it is the period that is missing", () => {
+    const recipe = parseRecipe({
+      ...base,
+      header: {
+        openingBalance: String.raw`^Alku: (?<value>[\d.]+)$`,
+        closingBalance: String.raw`^Alku: (?<value>[\d.]+)$`,
+      },
+    });
+
+    expect(() => runRecipe(doc, recipe)).toThrow(/jakson alku.*jakson loppu/i);
+  });
+
+  test("names the balances when it is the balances that are missing", () => {
+    const recipe = parseRecipe({
+      ...base,
+      header: {
+        from: String.raw`^Alku: (?<value>[\d.]+)$`,
+        to: String.raw`^Alku: (?<value>[\d.]+)$`,
+      },
+    });
+
+    expect(() => runRecipe(doc, recipe)).toThrow(/alkusaldo.*loppusaldo/i);
   });
 });

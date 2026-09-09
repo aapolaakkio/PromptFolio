@@ -175,18 +175,30 @@ type StatementHeader = {
   readonly closingBalance: Money;
 };
 
-/** Validates the facts a statement must have, then converts them. Throws only here. */
+/** The Finnish name of every header fact a statement must have, in recipe order. */
+const REQUIRED_FACTS = [
+  ["from", "jakson alku"],
+  ["to", "jakson loppu"],
+  ["openingBalance", "alkusaldo"],
+  ["closingBalance", "loppusaldo"],
+] as const;
+
+/**
+ * Validates the facts a statement must have, then converts them. Throws only here.
+ *
+ * The complaint names the facts that are actually missing. It used to say
+ * "alku- ja loppusaldoa" whatever was absent, so a recipe that had read both
+ * balances and missed the period sent the owner -- and the model retrying --
+ * looking at the one part of the statement that had been read correctly.
+ */
 const buildStatementHeader = (facts: HeaderFacts, recipe: BankRecipe): StatementHeader => {
-  if (
-    facts.from === null ||
-    facts.to === null ||
-    facts.openingBalance === null ||
-    facts.closingBalance === null
-  ) {
-    throw new Error("Tiliotteesta ei löytynyt alku- ja loppusaldoa");
+  const missing = REQUIRED_FACTS.filter(([key]) => facts[key] === null).map(([, name]) => name);
+  if (missing.length > 0) {
+    throw new Error(`Tiliotteesta ei löytynyt: ${missing.join(", ")}`);
   }
-  const from = readDate(facts.from, recipe.dateFormat);
-  const to = readDate(facts.to, recipe.dateFormat);
+  // SAFETY: `missing` is empty, so every REQUIRED_FACTS entry read non-null.
+  const from = readDate(facts.from!, recipe.dateFormat);
+  const to = readDate(facts.to!, recipe.dateFormat);
   const yearHint = to.slice(0, 4);
   const maturityDate =
     facts.maturityDate === null ? null : readDate(facts.maturityDate, recipe.dateFormat, yearHint);
@@ -195,8 +207,8 @@ const buildStatementHeader = (facts: HeaderFacts, recipe: BankRecipe): Statement
     to,
     yearHint,
     maturityDate,
-    openingBalance: money(readAmount(facts.openingBalance, recipe.money), EUR),
-    closingBalance: money(readAmount(facts.closingBalance, recipe.money), EUR),
+    openingBalance: money(readAmount(facts.openingBalance!, recipe.money), EUR),
+    closingBalance: money(readAmount(facts.closingBalance!, recipe.money), EUR),
   };
 };
 
@@ -319,9 +331,16 @@ const buildRowOutcome = (
   yearHint: string,
 ) => {
   try {
+    // A field the record-start line named wins; a continuation supplies what it
+    // did not, which is the only place a layout printing the amount below the
+    // date can put it.
     const amount = recipe.money.twoColumn
-      ? readTwoColumn(groups.debit ?? "", groups.credit ?? "", recipe.money)
-      : readAmount(groups.amount ?? "", recipe.money);
+      ? readTwoColumn(
+          groups.debit ?? fields.debit ?? "",
+          groups.credit ?? fields.credit ?? "",
+          recipe.money,
+        )
+      : readAmount(groups.amount ?? fields.amount ?? "", recipe.money);
     const counterparty = groups.counterparty ?? fields.counterparty ?? "";
     const note = [groups.label ?? "", counterparty, fields.message ?? ""]
       .map((part) => part.trim())

@@ -89,17 +89,24 @@ const groupNames = (source: string): ReadonlySet<string> =>
  * A record is only a transaction if it says when and how much. Checked here
  * rather than at run time so a recipe that could never produce a row is refused
  * before it is stored, not after it has silently read a statement as empty.
+ *
+ * The date opens the record, so `recordStart` must name it. The amount need
+ * only be named somewhere in the record: a statement that prints a bare date
+ * on one line and its amount several lines below can name it in a
+ * `continuation`, and requiring both on one line left that layout with no
+ * description a model could write at all.
  */
 export const BankRecipeSchema = BaseRecipe.superRefine((recipe, ctx) => {
   const groups = groupNames(recipe.recordStart);
   if (!groups.has("date")) {
     ctx.addIssue({ code: "custom", message: "recordStart ei nimeä ryhmää date" });
   }
-  const hasPair = groups.has("debit") && groups.has("credit");
-  if (!groups.has("amount") && !hasPair) {
+  const named = new Set([...groups, ...recipe.continuation.flatMap((p) => [...groupNames(p)])]);
+  const hasPair = named.has("debit") && named.has("credit");
+  if (!named.has("amount") && !hasPair) {
     ctx.addIssue({
       code: "custom",
-      message: "recordStart ei nimeä ryhmää amount eikä debit/credit",
+      message: "amount- eikä debit/credit-ryhmää ei nimetä recordStartissa eikä continuationissa",
     });
   }
 });

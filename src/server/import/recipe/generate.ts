@@ -2,7 +2,7 @@ import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 import { PDF_READ_MODEL, type PdfPage } from "../pdf-read.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import type { RecipeRun } from "./run.ts";
-import { MAX_PATTERN_LENGTH, type BankRecipe } from "./types.ts";
+import type { BankRecipe } from "./types.ts";
 import { createVerifySession, runVerifyCall, verifyToolDefinition } from "./verify-tool.ts";
 
 /** A recipe is about a kilobyte; this is room for one with comments stripped. */
@@ -34,32 +34,29 @@ export const sampleFor = (pages: readonly PdfPage[]): string => {
     .join("\n\n");
 };
 
+/**
+ * What the model is told. Deliberately mechanical: how the program executes a
+ * recipe, and nothing about how to write one. Which pattern reads which field
+ * is the model's judgement, and the verify tool shows it the consequences of
+ * that judgement -- rows read, fields landed, balances -- on the real file.
+ * Advice about particular layouts belongs in neither: it aged badly, it was
+ * written for one bank, and a model that follows it stops looking.
+ */
 const INSTRUCTIONS = `Saat otteen pankin tiliotteen tekstisisällöstä. Älä poimi tapahtumia. Kuvaa sen sijaan tiedoston rakenne JSON-oliona, jonka ohjelma ajaa koko tiedostolle.
 
-Kentät:
-- skip: säännölliset lausekkeet riveille jotka eivät ole tapahtumia (otsikot, sivunumerot, tilinumerot, saldorivit). Jokaisen rivin on osuttava johonkin: skip, recordStart, continuation tai restField.
-- recordStart: tapahtuman aloittava rivi. Nimetyt ryhmät ovat kenttiä: date (pakollinen), amount (tai debit ja credit), label, externalId.
-- continuation: lausekkeet tapahtuman seuraaville riveille. Ajetaan riveihin jotka on liitetty rivinvaihdoilla, joten lauseke saa ulottua usealle riville.
-- restField: mihin kenttään ensimmäinen muuten tunnistamaton rivi menee.
-- header: koko tiedostosta haettavat lausekkeet. Arvo on ryhmä (?<value>...).
-- dateFormat: d.m.yyyy, dd.mm.yyyy, yyyy-mm-dd tai d.m.
-- money: miten luvut on painettu (desimaalierotin, tuhaterotin, miinuksen paikka).
-
-Säännöt:
-- Älä keksi kenttiä joita ei ole listattu.
-- Älä kirjoita kuvausta vastaukseesi tekstinä: anna se verify_recipe-työkalulle.
-- Yksi lauseke saa olla enintään ${MAX_PATTERN_LENGTH} merkkiä. Jos luettelosi ei mahdu, jaa se useaksi lausekkeeksi -- skip-kenttään mahtuu 40.
-
-Neljä sudenkuoppaa, jotka ovat tuhonneet aiempia kuvauksia äänettömästi -- ei virhettä, ei tunnistamatonta riviä, vain puuttuva arvo:
-1. Älä kirjoita continuation-lauseketta joka osuu paljaaseen MUOTOON joka voisi olla myös nimi. Esimerkki: arkistotunnukselle tarkoitettu \`^[0-9A-Z]{16,}$\` nielaisee myös yhdeksi sanaksi painetun maksunsaajan nimen, ja nimi katoaa jäljettömiin. Vaadi jotain mitä arvossa on mutta nimessä ei -- tunnukselle vähintään yksi numero.
-2. Kun listaat sivun täytesisältöä skip-kentässä, vaadi jokaisen avainsanan jälkeen välilyönti tai rivin loppu (esim. \`(?=\\s|$)\`). Muuten maksunsaaja, jonka nimi vain ALKAA täytesanalla (esimerkiksi "BIC"), katoaa kokonaan.
-3. Kun arvon paikka rivillä vaihtelee, käytä laiskaa hakua (\`.*?\`) etsimässä sitä, älä kiinteää paikkaa. Naiivi valinnainen ryhmä palauttaa äänettömästi tyhjää sen sijaan että epäonnistuisi -- se on helpoin tapa kirjoittaa kuvaus joka näyttää oikealta muttei ole.
-4. Jokainen continuation-lauseke osuu vain KERRAN yhtä tapahtumalohkoa kohti. Saman muodon toinen esiintymä lohkossa jää poimimatta.
+Näin ohjelma ajaa kuvauksen:
+- Rivit trimmataan. Jokainen skip-lausekkeeseen osuva rivi poistetaan.
+- recordStart-lausekkeeseen osuva rivi aloittaa tapahtuman. Sitä seuraavat rivit seuraavaan recordStartiin asti ovat saman tapahtuman lohko.
+- Jokainen continuation-lauseke ajetaan kerran lohkoa vastaan, rivinvaihdoilla liitettynä: lauseke saa ulottua usealle riville, mutta osuu vain KERRAN lohkoa kohti.
+- restField saa lohkon ensimmäisen rivin jota mikään lauseke ei ottanut.
+- Nimetyt ryhmät ovat kenttiä. date luetaan recordStartista; amount (tai debit ja credit) kummasta tahansa. recordStartin oma ryhmä voittaa continuationin.
+- header-lausekkeet haetaan koko tiedostosta, ryhmästä (?<value>...). Ne eivät saa osua tapahtumariveihin.
 
 Työskentely:
-- Kutsu verify_recipe-työkalua ehdotuksellasi. Työkalu ajaa kuvauksen koko tiedostolle ja kertoo mitä meni pieleen: tunnistamattomat rivit, ohitetut tapahtumannäköiset rivit, saldotarkistuksen ja kolme ensimmäistä poimittua tapahtumaa.
-- Lue tulos, korjaa kuvaus ja kutsu uudelleen. Katso myös sampleRows: jos maksunsaaja on tyhjä tai viesti on päätynyt väärään kenttään, kuvaus on väärä vaikka saldo täsmäisi.
+- Kutsu verify_recipe-työkalua ehdotuksellasi. Se ajaa kuvauksen koko tiedostolle ja kertoo mitä tuli ulos: tunnistamattomat rivit, ohitetut tapahtumannäköiset rivit, saldotarkistuksen ja kolme ensimmäistä poimittua tapahtumaa.
+- Lue tulos ja päättele itse mikä on pielessä. sampleRows kertoo mihin kenttiin arvot päätyivät: tyhjä maksunsaaja tai väärässä kentässä oleva viesti tarkoittaa väärää kuvausta vaikka saldo täsmäisi.
 - Kun tulos on ok: true, työ on valmis. Älä kutsu enää.
+- Älä kirjoita kuvausta vastaukseesi tekstinä: anna se verify_recipe-työkalulle.
 
 Esimerkki toisesta pankista:
 ${JSON.stringify(OP_STATEMENT_RECIPE)}`;

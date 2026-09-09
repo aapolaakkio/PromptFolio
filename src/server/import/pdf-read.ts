@@ -56,7 +56,7 @@ export const batchPages = (
   return batches;
 };
 
-export const PDF_READ_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export const PDF_READ_MODEL = "@cf/openai/gpt-oss-120b";
 /** Room for a few hundred rows of JSON. */
 const MAX_TOKENS = 8192;
 
