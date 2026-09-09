@@ -49,7 +49,8 @@ Näin ohjelma ajaa kuvauksen:
 - recordStart-lausekkeeseen osuva rivi aloittaa tapahtuman. Sitä seuraavat rivit seuraavaan recordStartiin asti ovat saman tapahtuman lohko.
 - Jokainen continuation-lauseke ajetaan kerran lohkoa vastaan, rivinvaihdoilla liitettynä: lauseke saa ulottua usealle riville, mutta osuu vain KERRAN lohkoa kohti.
 - restField saa lohkon ensimmäisen rivin jota mikään lauseke ei ottanut.
-- Nimetyt ryhmät ovat kenttiä. date luetaan recordStartista; amount (tai debit ja credit) kummasta tahansa. recordStartin oma ryhmä voittaa continuationin.
+- Nimetyt ryhmät ovat kenttiä, luettuna mistä tahansa saman lohkon lausekkeesta: date, amount (tai debit ja credit), label, counterparty, message, externalId. Millään kentällä ei ole omaa paikkaansa. recordStartin oma ryhmä voittaa continuationin.
+- Jos ote tulostaa jokaisen rivin jälkeen tilin saldon, nimeä se ryhmällä balance. Tarkistus lukee sen: se on ainoa keino huomata yksittäinen väärin luettu rivi, koska virhe ja sen peilikuva summautuvat pois.
 - header-lausekkeet haetaan koko tiedostosta, ryhmästä (?<value>...). Ne eivät saa osua tapahtumariveihin.
 
 Työskentely:

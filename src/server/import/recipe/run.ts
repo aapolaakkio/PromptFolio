@@ -10,6 +10,14 @@ export type Unclaimed = { readonly line: number; readonly text: string };
 export type Skipped = { readonly line: number; readonly text: string };
 export type RecipeRun = {
   readonly statement: PdfStatement;
+  /**
+   * The balance each row printed beside itself, in `statement.rows` order, or
+   * null where the recipe named none. A statement that prints a running
+   * balance is stating what it thinks the account held after every single row
+   * -- the one check that can see a wrong amount on one row, which the totals
+   * cannot: an error and its mirror image add up.
+   */
+  readonly rowBalances: readonly (bigint | null)[];
   readonly unclaimed: readonly Unclaimed[];
   /**
    * What `skip` removed on its own account. Coverage cannot see these -- that
@@ -322,6 +330,20 @@ const readBlockFields = (
   return { fields, consumedLocal };
 };
 
+/**
+ * The running balance a row printed, or null. Unreadable is null rather than a
+ * problem: a row the statement did read is not worth refusing over a column
+ * the check is only allowed to use when every row has it.
+ */
+const readBalance = (text: string | undefined, recipe: BankRecipe): bigint | null => {
+  if (text === undefined) return null;
+  try {
+    return readAmount(text, recipe.money);
+  } catch {
+    return null;
+  }
+};
+
 /** The row itself, or a `problem` when reading it throws -- never both, never an exception. */
 const buildRowOutcome = (
   groups: Readonly<Record<string, string | undefined>>,
@@ -330,35 +352,34 @@ const buildRowOutcome = (
   start: number,
   yearHint: string,
 ) => {
+  // One record, one set of fields, whichever line named them. The record-start
+  // line wins a clash -- it is the more specific place to have said something --
+  // and everything else reads the same way, so no field is tied to a position.
+  const field = (name: string): string | undefined => groups[name] ?? fields[name];
+
   try {
-    // A field the record-start line named wins; a continuation supplies what it
-    // did not, which is the only place a layout printing the amount below the
-    // date can put it.
     const amount = recipe.money.twoColumn
-      ? readTwoColumn(
-          groups.debit ?? fields.debit ?? "",
-          groups.credit ?? fields.credit ?? "",
-          recipe.money,
-        )
-      : readAmount(groups.amount ?? fields.amount ?? "", recipe.money);
-    const counterparty = groups.counterparty ?? fields.counterparty ?? "";
-    const note = [groups.label ?? "", counterparty, fields.message ?? ""]
+      ? readTwoColumn(field("debit") ?? "", field("credit") ?? "", recipe.money)
+      : readAmount(field("amount") ?? "", recipe.money);
+    const counterparty = field("counterparty") ?? "";
+    const note = [field("label") ?? "", counterparty, field("message") ?? ""]
       .map((part) => part.trim())
       .filter((part) => part !== "")
       .join(" — ");
     const row: BankRow = {
       line: start + 1,
-      date: readDate(groups.date ?? "", recipe.dateFormat, yearHint),
+      date: readDate(field("date") ?? "", recipe.dateFormat, yearHint),
       type: rowType(note, amount),
       amount,
       counterparty,
       note,
-      externalId: groups.externalId ?? fields.externalId ?? null,
+      externalId: field("externalId") ?? null,
     };
-    return { row, problem: null };
+    return { row, problem: null, balance: readBalance(field("balance"), recipe) };
   } catch (cause) {
     return {
       row: null,
+      balance: null,
       problem: {
         line: start + 1,
         message: cause instanceof Error ? cause.message : "Rivin käsittely epäonnistui",
@@ -370,6 +391,8 @@ const buildRowOutcome = (
 type BlockOutcome = {
   readonly row: BankRow | null;
   readonly problem: { readonly line: number; readonly message: string } | null;
+  /** What the row printed as the balance after it, when the recipe named one. */
+  readonly balance: bigint | null;
   readonly consumedIndexes: ReadonlySet<number>;
 };
 
@@ -412,6 +435,8 @@ const processRecordBlock = (
 
 type RecordsResult = {
   readonly rows: readonly BankRow[];
+  /** Index-aligned with `rows`: what each printed as the balance after it. */
+  readonly rowBalances: readonly (bigint | null)[];
   readonly problems: readonly { readonly line: number; readonly message: string }[];
   readonly consumed: ReadonlySet<number>;
 };
@@ -428,6 +453,7 @@ const readRecords = (
   checkBudget: () => void,
 ): RecordsResult => {
   const rows: BankRow[] = [];
+  const rowBalances: Array<bigint | null> = [];
   const problems: Array<{ line: number; message: string }> = [];
   const consumed = new Set<number>();
   for (const [order, start] of starts.entries()) {
@@ -443,11 +469,14 @@ const readRecords = (
       yearHint,
       checkBudget,
     );
-    if (outcome.row !== null) rows.push(outcome.row);
+    if (outcome.row !== null) {
+      rows.push(outcome.row);
+      rowBalances.push(outcome.balance);
+    }
     if (outcome.problem !== null) problems.push(outcome.problem);
     for (const index of outcome.consumedIndexes) consumed.add(index);
   }
-  return { rows, problems, consumed };
+  return { rows, rowBalances, problems, consumed };
 };
 
 /** Every line no header, `skip`, record start, or block claimed. */
@@ -500,7 +529,7 @@ export const runRecipe = (
     checkBudget,
   );
 
-  const { rows, problems, consumed } = readRecords(
+  const { rows, rowBalances, problems, consumed } = readRecords(
     lines,
     starts,
     claimed,
@@ -523,6 +552,7 @@ export const runRecipe = (
       problems: [...problems],
       maturityDate: header.maturityDate,
     },
+    rowBalances,
     unclaimed,
     skipped,
   };

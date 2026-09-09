@@ -77,7 +77,12 @@ const BaseRecipe = z
     continuation: z.array(Pattern).max(20),
     restField: z.enum(["counterparty", "message"]).nullable(),
     header: HeaderSchema,
-    dateFormat: z.enum(["d.m.yyyy", "dd.mm.yyyy", "yyyy-mm-dd", "d.m."]),
+    /**
+     * Which part comes first. `readDate` reads the separator, the year's width
+     * and a spelled-out month as they come, so each name covers a family of
+     * shapes rather than one exact punctuation.
+     */
+    dateFormat: z.enum(["d.m.yyyy", "dd.mm.yyyy", "m.d.yyyy", "yyyy-mm-dd", "d.m."]),
     money: MoneyFormatSchema,
   })
   .strict();
@@ -90,18 +95,24 @@ const groupNames = (source: string): ReadonlySet<string> =>
  * rather than at run time so a recipe that could never produce a row is refused
  * before it is stored, not after it has silently read a statement as empty.
  *
- * The date opens the record, so `recordStart` must name it. The amount need
- * only be named somewhere in the record: a statement that prints a bare date
- * on one line and its amount several lines below can name it in a
- * `continuation`, and requiring both on one line left that layout with no
- * description a model could write at all.
+ * WHERE either is named is not this schema's business. A statement prints its
+ * date, its amount and its payee on whichever lines its bank chose, and every
+ * rule about which line carries which field refused some real layout outright
+ * -- leaving no description a model could write, whatever it understood about
+ * the file. A record start still has to exist, because rows are what repeats;
+ * the fields inside one are read from wherever they were named.
  */
 export const BankRecipeSchema = BaseRecipe.superRefine((recipe, ctx) => {
-  const groups = groupNames(recipe.recordStart);
-  if (!groups.has("date")) {
-    ctx.addIssue({ code: "custom", message: "recordStart ei nimeä ryhmää date" });
+  const named = new Set([
+    ...groupNames(recipe.recordStart),
+    ...recipe.continuation.flatMap((pattern) => [...groupNames(pattern)]),
+  ]);
+  if (!named.has("date")) {
+    ctx.addIssue({
+      code: "custom",
+      message: "date-ryhmää ei nimetä recordStartissa eikä continuationissa",
+    });
   }
-  const named = new Set([...groups, ...recipe.continuation.flatMap((p) => [...groupNames(p)])]);
   const hasPair = named.has("debit") && named.has("credit");
   if (!named.has("amount") && !hasPair) {
     ctx.addIssue({

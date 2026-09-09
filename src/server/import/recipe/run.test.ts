@@ -473,3 +473,95 @@ describe("a header fact the recipe could not find", () => {
     expect(() => runRecipe(doc, recipe)).toThrow(/alkusaldo.*loppusaldo/i);
   });
 });
+
+describe("a record whose fields sit wherever the statement prints them", () => {
+  const recipe = parseRecipe({
+    kind: "bank",
+    skip: [String.raw`^(?:Jakso|Alkusaldo|Loppusaldo)(?=\s|$)`],
+    recordStart: String.raw`^TAPAHTUMA$`,
+    continuation: [
+      String.raw`^Pvm (?<date>\d{4}-\d{2}-\d{2})$`,
+      String.raw`^Summa (?<amount>-?[\d.]+)$`,
+      String.raw`^Laji (?<label>.+)$`,
+      String.raw`^Saaja (?<counterparty>.+)$`,
+      String.raw`^Viesti (?<message>.+)$`,
+      String.raw`^Tunnus (?<externalId>.+)$`,
+    ],
+    restField: null,
+    header: {
+      from: String.raw`^Jakso (?<value>\d{4}-\d{2}-\d{2})`,
+      to: String.raw`^Jakso \d{4}-\d{2}-\d{2} (?<value>\d{4}-\d{2}-\d{2})$`,
+      openingBalance: String.raw`^Alkusaldo (?<value>-?[\d.]+)$`,
+      closingBalance: String.raw`^Loppusaldo (?<value>-?[\d.]+)$`,
+    },
+    dateFormat: "yyyy-mm-dd",
+    money: { decimal: ".", thousands: ",", negative: "leading", twoColumn: false },
+  });
+
+  const doc = [
+    "Jakso 2026-08-01 2026-08-31",
+    "Alkusaldo 100.00",
+    "TAPAHTUMA",
+    "Pvm 2026-08-08",
+    "Summa -2.50",
+    "Laji KORTTIMAKSU",
+    "Saaja Kahvila",
+    "Viesti Aamukahvi",
+    "Tunnus AY5123",
+    "Loppusaldo 97.50",
+  ].join("\n");
+
+  test("reads every field from wherever it was named", () => {
+    const { statement, unclaimed } = runRecipe(doc, recipe);
+
+    expect(unclaimed).toEqual([]);
+    expect(statement.rows).toHaveLength(1);
+    expect(statement.rows[0]).toMatchObject({
+      date: "2026-08-08",
+      amount: -250n,
+      counterparty: "Kahvila",
+      externalId: "AY5123",
+      note: "KORTTIMAKSU — Kahvila — Aamukahvi",
+    });
+  });
+});
+
+describe("a statement that prints a running balance after every row", () => {
+  const recipe = parseRecipe({
+    kind: "bank",
+    skip: [String.raw`^(?:Jakso|Alkusaldo|Loppusaldo)(?=\s|$)`],
+    recordStart: String.raw`^(?<date>\d{4}-\d{2}-\d{2}) (?<amount>-?[\d.]+) (?<balance>-?[\d.]+)$`,
+    continuation: [],
+    restField: "counterparty",
+    header: {
+      from: String.raw`^Jakso (?<value>\d{4}-\d{2}-\d{2})`,
+      to: String.raw`^Jakso \d{4}-\d{2}-\d{2} (?<value>\d{4}-\d{2}-\d{2})$`,
+      openingBalance: String.raw`^Alkusaldo (?<value>-?[\d.]+)$`,
+      closingBalance: String.raw`^Loppusaldo (?<value>-?[\d.]+)$`,
+    },
+    dateFormat: "yyyy-mm-dd",
+    money: { decimal: ".", thousands: ",", negative: "leading", twoColumn: false },
+  });
+
+  const doc = (second: string) =>
+    [
+      "Jakso 2026-08-01 2026-08-31",
+      "Alkusaldo 100.00",
+      "2026-08-08 -2.50 97.50",
+      `2026-08-09 10.00 ${second}`,
+      "Loppusaldo 107.50",
+    ].join("\n");
+
+  test("reports the balance each row printed, in row order", () => {
+    expect(runRecipe(doc("107.50"), recipe).rowBalances).toEqual([9750n, 10_750n]);
+  });
+
+  test("a row the recipe read wrongly no longer agrees with its printed balance", () => {
+    // The amount is misread as +10.00 where the statement's own running balance
+    // says the row moved something else; the totals still reach the closing
+    // balance, so only the per-row chain can see it.
+    const run = runRecipe(doc("999.99"), recipe);
+
+    expect(verifyRun(run).ok).toBe(false);
+  });
+});

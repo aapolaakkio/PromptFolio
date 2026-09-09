@@ -40,6 +40,7 @@ const run = (
     maturityDate: null,
     ...over,
   },
+  rowBalances: [],
   unclaimed,
   skipped,
 });
@@ -264,4 +265,27 @@ describe("verifyRun -- the reference recipe on the real fixtures", () => {
       expect(verifyRun(runRecipe(await fixture(name), OP_STATEMENT_RECIPE))).toEqual({ ok: true });
     },
   );
+});
+
+describe("the running balance a statement prints after each row", () => {
+  const chained = (balances: readonly (bigint | null)[]): RecipeRun => ({
+    ...run(),
+    rowBalances: balances,
+  });
+
+  test("passes when every row agrees with the balance printed beside it", () => {
+    // 1 500,00 opening; rows -25,90 then +1 762,34.
+    expect(verifyRun(chained([147_410n, 323_644n]))).toEqual({ ok: true });
+  });
+
+  test("fails and names the first row whose printed balance disagrees", () => {
+    const verdict = verifyRun(chained([147_410n, 999_999n]));
+
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.report).toMatch(/juokseva saldo/i);
+  });
+
+  test("says nothing when the statement prints no running balance", () => {
+    expect(verifyRun(chained([null, null]))).toEqual({ ok: true });
+  });
 });

@@ -131,3 +131,21 @@ test("still refuses a recipe that names an amount nowhere", () => {
   };
   expect(() => parseRecipe(none)).toThrow(/amount/);
 });
+
+test("accepts a recipe whose date is named by a continuation", () => {
+  const split = {
+    ...valid,
+    recordStart: String.raw`^TAPAHTUMA$`,
+    continuation: [String.raw`^(?<date>\d{4}-\d{2}-\d{2}) (?<amount>-?[\d.]+)$`],
+  };
+  expect(parseRecipe(split).continuation).toHaveLength(1);
+});
+
+test("refuses a recipe that names a date nowhere", () => {
+  const none = {
+    ...valid,
+    recordStart: String.raw`^TAPAHTUMA$`,
+    continuation: [String.raw`^(?<amount>-?[\d.]+)$`],
+  };
+  expect(() => parseRecipe(none)).toThrow(/date/);
+});

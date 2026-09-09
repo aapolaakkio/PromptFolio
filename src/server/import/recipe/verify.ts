@@ -89,10 +89,44 @@ export const unclaimedWorthReporting = ({
 }: RecipeRun): readonly Unclaimed[] =>
   unclaimed.filter((entry) => !isPreamble(entry, statement.rows) && looksLikeTransaction(entry));
 
-export const verifyRun = ({ statement, unclaimed, skipped }: RecipeRun): Verdict => {
+/**
+ * The first row whose printed balance disagrees with the running total, or
+ * null when they all agree or the statement prints no such column.
+ *
+ * The arithmetic check proves the rows REACH the closing balance; this one
+ * proves each row was read correctly on its way there. A misread amount and a
+ * mirror-image second one cancel, and the totals never notice -- the statement
+ * saying what it held after every single row is the only witness to that.
+ *
+ * Every row must have a balance for the chain to mean anything: with a gap,
+ * the rows either side of it are being compared across an unknown.
+ */
+const firstBrokenLink = ({
+  statement,
+  rowBalances,
+}: RecipeRun): {
+  readonly row: BankRow;
+  readonly expected: bigint;
+  readonly printed: bigint;
+} | null => {
+  const { rows } = statement;
+  if (rows.length === 0 || rowBalances.length !== rows.length) return null;
+  if (rowBalances.some((balance) => balance === null)) return null;
+
+  let running = statement.openingBalance.minor;
+  for (const [at, row] of rows.entries()) {
+    running += row.amount;
+    const printed = rowBalances[at]!;
+    if (printed !== running) return { row, expected: running, printed };
+  }
+  return null;
+};
+
+export const verifyRun = (recipeRun: RecipeRun): Verdict => {
+  const { statement, skipped } = recipeRun;
   const complaints: string[] = [];
 
-  const failing = unclaimedWorthReporting({ statement, unclaimed, skipped });
+  const failing = unclaimedWorthReporting(recipeRun);
   if (failing.length > 0) {
     const listed = failing
       .slice(0, MAX_LISTED)
@@ -110,6 +144,14 @@ export const verifyRun = ({ statement, unclaimed, skipped }: RecipeRun): Verdict
     complaints.push(
       `Ohitettujen rivien joukossa on ${eaten.length} riviä, joilla on sekä päivä ` +
         `että summa -- ne näyttävät tapahtumilta:\n${listed}`,
+    );
+  }
+
+  const broken = firstBrokenLink(recipeRun);
+  if (broken !== null) {
+    complaints.push(
+      `Rivin #${broken.row.line} jälkeen juokseva saldo olisi ${eur(broken.expected)}, ` +
+        `mutta ote tulostaa ${eur(broken.printed)} -- rivi on luettu väärin.`,
     );
   }
 
