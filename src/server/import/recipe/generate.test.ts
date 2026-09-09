@@ -167,3 +167,38 @@ describe("generateRecipe", () => {
     expect(first?.tools[0]?.function.name).toBe(VERIFY_TOOL_NAME);
   });
 });
+
+describe("what each round resends", () => {
+  test("keeps the prompt flat instead of carrying every earlier attempt", async () => {
+    const client = stub(call(wrongSign));
+    await generateRecipe(await fixture(), pagesOf(await fixture()), client);
+
+    // Ten rounds happened, so an untrimmed history would have grown with each.
+    expect(client.asked).toHaveLength(10);
+    const sizes = client.asked.map((params) => params.messages.length);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(6);
+  });
+
+  test("carries the attempt just made, so the model sees what it broke", async () => {
+    const client = stub(call(wrongSign));
+    await generateRecipe(await fixture(), pagesOf(await fixture()), client);
+
+    expect(toolResults(client.asked.at(-1))).not.toHaveLength(0);
+    expect(toolResults(client.asked.at(-1)).at(-1)).toMatch(/Saldotarkistus/);
+  });
+
+  test("never drops the tool result belonging to an assistant's call", async () => {
+    const client = stub(call(wrongSign));
+    await generateRecipe(await fixture(), pagesOf(await fixture()), client);
+
+    for (const params of client.asked) {
+      const calls = params.messages.flatMap((m) =>
+        m.role === "assistant" ? (m.tool_calls ?? []) : [],
+      );
+      const answered = new Set(
+        params.messages.flatMap((m) => (m.role === "tool" ? [m.tool_call_id] : [])),
+      );
+      for (const one of calls) expect(answered.has(one.id)).toBe(true);
+    }
+  });
+});

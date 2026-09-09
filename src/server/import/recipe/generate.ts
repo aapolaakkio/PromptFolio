@@ -19,6 +19,18 @@ const TAIL_LINES = 15;
  * still calling the tool past this is circling, not converging.
  */
 const MAX_ROUNDS = 10;
+/**
+ * How many earlier attempts each round carries. The prompt used to keep every
+ * one, so the round that needed the model's attention most was the round it
+ * read the longest transcript to reach -- and the transcript was mostly
+ * recipes already known to be wrong. What a round needs is the file, the last
+ * thing tried and what that broke; the recipe before it is kept as well, so a
+ * candidate already refused is not proposed again.
+ *
+ * Whole exchanges are dropped, never halves: an assistant's tool call and the
+ * result answering it have to travel together or the request is malformed.
+ */
+const KEEP_ATTEMPTS = 2;
 
 const NO_ANSWER = "Malli ei kuvannut tiedostomuotoa";
 
@@ -79,32 +91,33 @@ export const generateRecipe = async (
   client: ChatClient,
 ): Promise<{ recipe: BankRecipe; run: RecipeRun; verified: boolean }> => {
   const session = createVerifySession(text);
-  let messages: readonly ChatMessage[] = [
+  const opening: readonly ChatMessage[] = [
     { role: "system", content: INSTRUCTIONS },
     { role: "user", content: sampleFor(pages) },
   ];
+  const attempts: (readonly ChatMessage[])[] = [];
 
   for (let round = 0; round < MAX_ROUNDS && session.verified() === null; round += 1) {
     const reply = await client.run({
       model: PDF_READ_MODEL,
       max_tokens: MAX_TOKENS,
-      messages,
+      messages: [...opening, ...attempts.slice(-KEEP_ATTEMPTS).flat()],
       tools: [verifyToolDefinition],
     });
     // Words instead of a call: there is nothing to check, and nothing in the
     // text is trusted, so asking again would only repeat the same reply.
     if (reply.toolCalls.length === 0) break;
-    messages = [
-      ...messages,
+    const attempt: ChatMessage[] = [
       { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
     ];
     for (const call of reply.toolCalls) {
       const content = await runVerifyCall(session, call);
-      messages = [...messages, { role: "tool", tool_call_id: call.id, content }];
+      attempt.push({ role: "tool", tool_call_id: call.id, content });
       // A pass ends the job: further calls would spend a round on a question
       // that is already answered.
       if (session.verified() !== null) break;
     }
+    attempts.push(attempt);
   }
 
   const verified = session.verified();
