@@ -4,10 +4,16 @@ import { mayBacktrackForever } from "./pattern-safety.ts";
 
 /**
  * A model writes these patterns, so they are capped and compiled before use.
- * Long enough for a real record-start line, short enough that no single pattern
- * can be a denial of service on its own.
+ *
+ * Length is not what bounds a pattern's cost -- `mayBacktrackForever` and the
+ * run's time budget are -- so the cap only has to stop a pattern that is
+ * expensive to compile at all. It has room for the shape the instructions
+ * teach: one alternation of every page-furniture word a statement prints. The
+ * OP recipe the model is shown as an example already spends 202 characters on
+ * its own, and a statement whose furniture is wordier was refused outright
+ * under a 400-character cap.
  */
-export const MAX_PATTERN_LENGTH = 400;
+export const MAX_PATTERN_LENGTH = 1_000;
 
 /** A pattern the model wrote: length-capped and known to compile. */
 const Pattern = z

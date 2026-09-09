@@ -2,7 +2,7 @@ import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 import { PDF_READ_MODEL, type PdfPage } from "../pdf-read.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import type { RecipeRun } from "./run.ts";
-import type { BankRecipe } from "./types.ts";
+import { MAX_PATTERN_LENGTH, type BankRecipe } from "./types.ts";
 import { createVerifySession, runVerifyCall, verifyToolDefinition } from "./verify-tool.ts";
 
 /** A recipe is about a kilobyte; this is room for one with comments stripped. */
@@ -48,6 +48,7 @@ Kentät:
 Säännöt:
 - Älä keksi kenttiä joita ei ole listattu.
 - Älä kirjoita kuvausta vastaukseesi tekstinä: anna se verify_recipe-työkalulle.
+- Yksi lauseke saa olla enintään ${MAX_PATTERN_LENGTH} merkkiä. Jos luettelosi ei mahdu, jaa se useaksi lausekkeeksi -- skip-kenttään mahtuu 40.
 
 Neljä sudenkuoppaa, jotka ovat tuhonneet aiempia kuvauksia äänettömästi -- ei virhettä, ei tunnistamatonta riviä, vain puuttuva arvo:
 1. Älä kirjoita continuation-lauseketta joka osuu paljaaseen MUOTOON joka voisi olla myös nimi. Esimerkki: arkistotunnukselle tarkoitettu \`^[0-9A-Z]{16,}$\` nielaisee myös yhdeksi sanaksi painetun maksunsaajan nimen, ja nimi katoaa jäljettömiin. Vaadi jotain mitä arvossa on mutta nimessä ei -- tunnukselle vähintään yksi numero.

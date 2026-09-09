@@ -38,6 +38,16 @@ describe("parseRecipe", () => {
     expect(parseRecipe(twoColumn).money.twoColumn).toBe(true);
   });
 
+  // The reference recipe the model is shown spends 202 characters on one skip
+  // alternation, and a statement with more page furniture than OP's needs more.
+  test("accepts a skip alternation the size a real statement's furniture takes", () => {
+    const words = Array.from({ length: 60 }, (_, at) => `Sana${at}`).join("|");
+    const long = { ...valid, skip: [`^(?:${words})(?=\\s|$)`] };
+
+    expect(long.skip[0]!.length).toBeGreaterThan(400);
+    expect(parseRecipe(long).skip[0]).toBe(long.skip[0]);
+  });
+
   test("refuses a pattern longer than the cap", () => {
     const huge = { ...valid, skip: ["x".repeat(MAX_PATTERN_LENGTH + 1)] };
     expect(() => parseRecipe(huge)).toThrow();
