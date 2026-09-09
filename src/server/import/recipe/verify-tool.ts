@@ -5,7 +5,7 @@ import type { ToolCall, ToolDefinition } from "../../chat/runner.ts";
 import type { BankRow } from "../bank-statement.ts";
 import { runRecipe, type RecipeRun } from "./run.ts";
 import { BankRecipeSchema, parseRecipe, type BankRecipe } from "./types.ts";
-import { looksLikeTransaction, verifyRun } from "./verify.ts";
+import { looksLikeTransaction, unclaimedWorthReporting, verifyRun } from "./verify.ts";
 
 export const VERIFY_TOOL_NAME = "verify_recipe";
 
@@ -136,7 +136,7 @@ const describe = (run: RecipeRun, report: string | null): VerifyResult => {
   const movement = statement.rows.reduce((sum, row) => sum + row.amount, 0n);
   const base = {
     ok: report === null,
-    unclaimed: listed(run.unclaimed),
+    unclaimed: listed(unclaimedWorthReporting(run)),
     skippedLookingLikeTransactions: listed(run.skipped.filter(looksLikeTransaction)),
     balance: {
       opening: eur(statement.openingBalance.minor),

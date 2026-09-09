@@ -17,6 +17,7 @@ import {
   checkBankDraft,
 } from "./bank-draft.ts";
 import { readBankPdfByRecipe } from "./recipe/read.ts";
+import { unclaimedWorthReporting } from "./recipe/verify.ts";
 import { type Db, db } from "../db/index.ts";
 import { accounts, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
@@ -62,7 +63,10 @@ const readStatement = async (
   }
   try {
     const run = await readBankPdfByRecipe(bytes, userId, readerClient ?? createClient());
-    return { bank: "pdf", draft: bankDraftFromStatement(run.statement, run.unclaimed) };
+    return {
+      bank: "pdf",
+      draft: bankDraftFromStatement(run.statement, unclaimedWorthReporting(run)),
+    };
   } catch (cause) {
     // The extractor's and the reader's complaints are the owner's to act on --
     // a scanned file, a reply the schema refused -- so they arrive as 400s.

@@ -1,7 +1,7 @@
 import { EUR, formatMoney, money } from "../../../core/money.ts";
 import { verifyStatement } from "../bank-pdf.ts";
 import type { BankRow } from "../bank-statement.ts";
-import type { RecipeRun, Skipped, Unclaimed } from "./run.ts";
+import type { RecipeRun, Unclaimed } from "./run.ts";
 
 export type Verdict = { readonly ok: true } | { readonly ok: false; readonly report: string };
 
@@ -69,13 +69,30 @@ const AMOUNT_LIKE = new RegExp(
  * coverage by definition, and a cancelling pair of transfers satisfies the
  * arithmetic, so without this check the two together hide real money.
  */
-export const looksLikeTransaction = (entry: Skipped): boolean =>
+export const looksLikeTransaction = (entry: { readonly text: string }): boolean =>
   DATE_LIKE.test(entry.text) && AMOUNT_LIKE.test(entry.text);
+
+/**
+ * The unclaimed lines worth anyone's attention. A record block is every line
+ * from its start to the next one, so an ordinary transaction carries detail
+ * lines no honest pattern names -- `VIESTI`, `Maksajan viite:`, a reference,
+ * an address, a page footer. Reporting those made a correct reading look
+ * broken to the owner and sent the model chasing patterns for furniture.
+ *
+ * What is left is the failure the list exists for: a transaction `recordStart`
+ * missed, swallowed into the block above it. It still prints a date and an
+ * amount, so the same probe the skipped lines get finds it here.
+ */
+export const unclaimedWorthReporting = ({
+  statement,
+  unclaimed,
+}: RecipeRun): readonly Unclaimed[] =>
+  unclaimed.filter((entry) => !isPreamble(entry, statement.rows) && looksLikeTransaction(entry));
 
 export const verifyRun = ({ statement, unclaimed, skipped }: RecipeRun): Verdict => {
   const complaints: string[] = [];
 
-  const failing = unclaimed.filter((entry) => !isPreamble(entry, statement.rows));
+  const failing = unclaimedWorthReporting({ statement, unclaimed, skipped });
   if (failing.length > 0) {
     const listed = failing
       .slice(0, MAX_LISTED)

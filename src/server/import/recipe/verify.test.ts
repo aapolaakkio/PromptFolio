@@ -63,11 +63,24 @@ describe("verifyRun", () => {
     if (!verdict.ok) expect(verdict.report).toContain("51.80");
   });
 
-  test("fails when a line was left unclaimed, and quotes it", () => {
-    const verdict = verifyRun(run({}, [{ line: 7, text: "OSTOPVM 28.08.2025" }]));
+  test("fails when an unclaimed line looks like a transaction, and quotes it", () => {
+    const verdict = verifyRun(run({}, [{ line: 7, text: "28.08.2025 -25,90 K-MARKET" }]));
 
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.report).toContain("OSTOPVM 28.08.2025");
+    if (!verdict.ok) expect(verdict.report).toContain("28.08.2025 -25,90 K-MARKET");
+  });
+
+  test("passes over unclaimed lines that carry no transaction, whatever their number", () => {
+    const detail = [
+      { line: 4, text: "VIESTI" },
+      { line: 5, text: "SEPA-MAKSU" },
+      { line: 6, text: "Maksajan viite:" },
+      { line: 7, text: "T20250101-000000" },
+      { line: 9, text: "Kolikot yht 12,34 EUR" },
+      { line: 10, text: "Esimerkkipankki Oy, Y-tunnus 0000000-0, PL 1, 00100 Helsinki" },
+    ];
+
+    expect(verifyRun(run({}, detail))).toEqual({ ok: true });
   });
 
   test("fails when a row's date falls outside the statement's period", () => {
@@ -87,7 +100,7 @@ describe("verifyRun", () => {
   test("lists at most ten unclaimed lines", () => {
     const many = Array.from({ length: 25 }, (_, at) => ({
       line: at,
-      text: `rivi ${at}`,
+      text: `28.08.2025 -25,90 rivi ${at}`,
     }));
     const verdict = verifyRun(run({}, many));
 
@@ -96,7 +109,7 @@ describe("verifyRun", () => {
   });
 
   test("tolerates an unclaimed line before the first row when rows are present", () => {
-    const verdict = verifyRun(run({}, [{ line: 1, text: "ESIMERKKI ASIAKAS" }]));
+    const verdict = verifyRun(run({}, [{ line: 1, text: "28.08.2025 -25,90 ESIMERKKI ASIAKAS" }]));
 
     expect(verdict).toEqual({ ok: true });
   });
@@ -104,25 +117,25 @@ describe("verifyRun", () => {
   test("does not tolerate a preamble line when there are no rows at all", () => {
     const verdict = verifyRun(
       run({ rows: [], closingBalance: money(150_000n, EUR) }, [
-        { line: 1, text: "ESIMERKKI ASIAKAS" },
+        { line: 1, text: "28.08.2025 -25,90 K-MARKET" },
       ]),
     );
 
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.report).toContain("ESIMERKKI ASIAKAS");
+    if (!verdict.ok) expect(verdict.report).toContain("28.08.2025 -25,90 K-MARKET");
   });
 
   test("fails and names only the unclaimed line at or after the first row", () => {
     const verdict = verifyRun(
       run({}, [
-        { line: 1, text: "ESIMERKKI ASIAKAS" },
-        { line: 7, text: "OSTOPVM 28.08.2025" },
+        { line: 1, text: "28.08.2025 -25,90 ESIMERKKI ASIAKAS" },
+        { line: 7, text: "28.08.2025 -25,90 K-MARKET" },
       ]),
     );
 
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
-      expect(verdict.report).toContain("OSTOPVM 28.08.2025");
+      expect(verdict.report).toContain("K-MARKET");
       expect(verdict.report).not.toContain("ESIMERKKI ASIAKAS");
     }
   });
