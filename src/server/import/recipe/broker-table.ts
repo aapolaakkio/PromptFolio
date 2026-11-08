@@ -293,7 +293,8 @@ export const TYPE_RULES = [
   "types: jokainen esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi.",
   "IGNORE vain kun samat kappaleet tai sama raha ovat jo toisella rivillä, ja kerro silloin reason. Älä koskaan ohita parin molempia puolia, jos kappaleita siirtyy tai määrä muuttuu.",
   "Kun osakkeet siirtyvät arvopaperilajista toiseen (esim. YHDISTELY - OTTO ja YHDISTELY - JÄTTÖ): OTTO on TRANSFER_OUT ja JÄTTÖ on TRANSFER_IN.",
-  "Kun saman arvopaperin kappalemäärä muuttuu ilman rahaa (käänteinen split tai osakkeiden vaihto, esim. VAIHTO - OTTO ja VAIHTO - JÄTTÖ): JÄTTÖ on SPLIT ja sen quantity on uusi kokonaismäärä; OTTO on IGNORE.",
+  "Vaihtopari (esim. VAIHTO AP-OTTO ja VAIHTO AP-JÄTTÖ, tai VAIHTO - OTTO ja VAIHTO - JÄTTÖ) voi vaihtaa arvopaperin toiseen (nimen tai ISINin muutos, sulautuminen) eikä vain muuttaa kappalemäärää. Jos tiedostossa on siirtyvän hankinta-arvon sarake (costBasis), OTTO on TRANSFER_OUT ja JÄTTÖ on TRANSFER_IN.",
+  "Jos hankinta-arvon saraketta ei ole: JÄTTÖ on SPLIT ja sen quantity on uusi kokonaismäärä, ja OTTO on IGNORE.",
   "Merkintä rahalla (esim. MERKINTÄ) on BUY. Merkintäoikeudet jotka eivät jää salkkuun (esim. IRROTUS - JÄTTÖ ja MERKINTÄOIK. OTTO): molemmat IGNORE.",
   "Jos laji on aidosti tuntematon, käytä IGNORE ja kerro reason-kentässä miksi.",
 ].join("\n");
