@@ -7,7 +7,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "main": "@tanstack/react-start/server-entry",
   "observability": { "enabled": true },
-  // The assistant and the payee classifier run on Workers AI through this.
+  // Only used to resolve the AI Gateway URL for Claude calls (AI_GATEWAY_ID).
   "ai": { "binding": "AI" },
   "d1_databases": [
     {

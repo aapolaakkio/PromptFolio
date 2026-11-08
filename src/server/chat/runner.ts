@@ -1,11 +1,22 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
+import type {
+  BetaContentBlock,
+  BetaMessage,
+  BetaMessageParam,
+  BetaTool,
+} from "@anthropic-ai/sdk/resources/beta";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
+
+import { HttpError } from "../errors.ts";
 import type { JSONSchema } from "zod/v4/core";
 
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import type { ChatTool } from "./tools.ts";
 
-const MAX_TOKENS = 4096;
+/** Thinking counts against this too, so it is roomier than an answer needs. */
+const MAX_TOKENS = 16000;
 /** Tool rounds in one turn. A model still calling tools past this is circling, not working. */
 const MAX_ROUNDS = 10;
 
@@ -41,7 +52,12 @@ export type ChatEvent =
 export type ToolCall = { readonly id: string; readonly name: string; readonly arguments: string };
 
 /** What one model call gives back: text, tool calls, or both. */
-export type ModelReply = { readonly text: string; readonly toolCalls: readonly ToolCall[] };
+export type ModelReply = {
+  readonly text: string;
+  readonly toolCalls: readonly ToolCall[];
+  /** The raw content, for replaying the turn with its thinking intact. */
+  readonly blocks?: readonly BetaContentBlock[];
+};
 
 export type ChatMessage =
   | { readonly role: "system" | "user"; readonly content: string }
@@ -49,27 +65,19 @@ export type ChatMessage =
       readonly role: "assistant";
       readonly content: string;
       readonly tool_calls?: readonly ToolCall[];
+      /** When present, sent back instead of `content` and `tool_calls`. */
+      readonly blocks?: readonly BetaContentBlock[];
     }
   | { readonly role: "tool"; readonly content: string; readonly tool_call_id: string };
 
-export type ToolDefinition = {
-  readonly type: "function";
-  readonly function: {
-    readonly name: string;
-    readonly description: string;
-    readonly parameters: JSONSchema.BaseSchema;
-  };
-};
+export type ToolDefinition = BetaTool;
 
 export type TurnParams = {
   readonly model: string;
   readonly max_tokens: number;
   readonly messages: readonly ChatMessage[];
   readonly tools: readonly ToolDefinition[];
-  /**
-   * JSON mode, for a reading rather than a conversation. Workers AI's own
-   * shape: the schema goes in directly, not wrapped the OpenAI way.
-   */
+  /** JSON mode, for a reading rather than a conversation. Sent as structured output. */
   readonly response_format?: {
     readonly type: "json_schema";
     readonly json_schema: JSONSchema.BaseSchema;
@@ -91,251 +99,134 @@ export type ChatClient = {
   readonly run: (params: TurnParams, options?: RunOptions) => Promise<ModelReply>;
 };
 
-/** Qwen thinks out loud between these tags when allowed to; the reader never should see it. */
-const stripThinking = (text: string): string =>
-  text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-
-const toApiMessages = (messages: readonly ChatMessage[]): ChatCompletionMessageParam[] =>
-  messages.map((message): ChatCompletionMessageParam => {
-    if (message.role !== "assistant") return message;
-    if (message.tool_calls === undefined) return { role: "assistant", content: message.content };
-    return {
-      role: "assistant",
-      content: message.content,
-      tool_calls: message.tool_calls.map((call) => ({
-        id: call.id,
-        type: "function" as const,
-        function: { name: call.name, arguments: call.arguments },
-      })),
-    };
+/**
+ * The conversation in the Messages API's shape. System text moves to the
+ * top-level `system`; a tool result is a user turn, and the API joins
+ * consecutive user turns, so parallel calls still answer as one.
+ */
+const toApiMessages = (messages: readonly ChatMessage[]): BetaMessageParam[] =>
+  messages.flatMap((message): BetaMessageParam[] => {
+    switch (message.role) {
+      case "system":
+        return [];
+      case "user":
+        return [{ role: "user", content: message.content }];
+      case "tool":
+        return [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: message.tool_call_id, content: message.content },
+            ],
+          },
+        ];
+      case "assistant": {
+        // The reply exactly as the model gave it: thinking blocks must go back unchanged.
+        if (message.blocks !== undefined)
+          return [{ role: "assistant", content: [...message.blocks] }];
+        const calls = (message.tool_calls ?? []).map((call) => ({
+          type: "tool_use" as const,
+          id: call.id,
+          name: call.name,
+          input: parseArguments(call.arguments),
+        }));
+        const text =
+          message.content === "" ? [] : [{ type: "text" as const, text: message.content }];
+        return [{ role: "assistant", content: [...text, ...calls] }];
+      }
+    }
   });
 
-const FunctionCall = z.object({
-  id: z.string(),
-  type: z.literal("function"),
-  function: z.object({ name: z.string(), arguments: z.string() }),
-});
+const ToolInput = z.json();
+const parseArguments = (text: string): z.infer<typeof ToolInput> =>
+  ToolInput.parse(JSON.parse(text.trim() === "" ? "{}" : text));
+
+const systemOf = (messages: readonly ChatMessage[]): string =>
+  messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n\n");
+
+const toReply = (message: BetaMessage): ModelReply => {
+  if (message.stop_reason === "refusal") throw new Error(REFUSED);
+  const text = message.content
+    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .join("")
+    .trim();
+  // A reply cut off at max_tokens may hold a call whose input never finished.
+  const toolCalls =
+    message.stop_reason === "max_tokens"
+      ? []
+      : message.content.flatMap((block) =>
+          block.type === "tool_use"
+            ? [{ id: block.id, name: block.name, arguments: JSON.stringify(block.input) }]
+            : [],
+        );
+  return { text, toolCalls, blocks: message.content };
+};
+
+const REFUSED = "Malli kieltäytyi vastaamasta tähän pyyntöön";
+
+/** Thinking can't be turned off on these models; effort is the dial. */
+const EFFORT = "medium";
 
 /**
- * What a model call may come back as. Newer models answer in the chat
- * completions shape; older ones in Workers AI's own, where a tool call has no
- * id and its arguments are already an object. Parsed rather than trusted, since
- * the binding types a model's reply by its name, and the name is chosen per turn.
+ * Claude, through Cloudflare AI Gateway when `AI_GATEWAY_ID` names one (logs,
+ * caching and spend limits in the Cloudflare dashboard), straight to the
+ * Anthropic API otherwise. Built per call site rather than at import time, so
+ * the Worker still serves the rest of the app without a key.
  */
-const ModelOutput = z.union([
-  z.object({
-    choices: z.array(
-      z.object({
-        message: z.object({
-          content: z.string().nullish(),
-          tool_calls: z.array(z.union([FunctionCall, z.object({ type: z.string() })])).optional(),
-        }),
-      }),
-    ),
-  }),
-  z.object({
-    response: z.string().nullish(),
-    tool_calls: z
-      .array(
-        z.object({
-          name: z.string(),
-          // An object from the older models; the runner hands arguments on as text either way.
-          arguments: z.union([z.string(), z.json().transform((value) => JSON.stringify(value))]),
-        }),
-      )
-      .optional(),
-  }),
-]);
+export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista");
 
-const toReply = (parsed: z.infer<typeof ModelOutput>): ModelReply => {
-  if ("choices" in parsed) {
-    const message = parsed.choices[0]?.message;
-    return {
-      text: stripThinking(message?.content ?? ""),
-      toolCalls: (message?.tool_calls ?? []).flatMap((call) =>
-        "function" in call
-          ? [{ id: call.id, name: call.function.name, arguments: call.function.arguments }]
-          : [],
-      ),
-    };
-  }
   return {
-    text: stripThinking(parsed.response ?? ""),
-    toolCalls: (parsed.tool_calls ?? []).map((call, index) => ({
-      id: `call_${index}`,
-      name: call.name,
-      arguments: call.arguments,
-    })),
+    run: async (params, options) => {
+      const baseURL = env.AI_GATEWAY_ID
+        ? await env.AI.gateway(env.AI_GATEWAY_ID).getUrl("anthropic")
+        : undefined;
+      const anthropic = new Anthropic({ apiKey, baseURL, fetch: fetchImpl });
+      const format = params.response_format;
+      // ponytail: Haiku has no server-side fallback, so a refusal there just surfaces.
+      const fallback = !params.model.startsWith("claude-haiku");
+      const stream = anthropic.beta.messages.stream(
+        {
+          model: params.model,
+          max_tokens: params.max_tokens,
+          system: systemOf(params.messages),
+          messages: toApiMessages(params.messages),
+          thinking: { type: "adaptive" },
+          output_config: {
+            effort: EFFORT,
+            format:
+              format === undefined
+                ? undefined
+                : { type: "json_schema", schema: transformJSONSchema(format.json_schema) },
+          },
+          // Undefined fields are left out of the request body.
+          tools: params.tools.length === 0 ? undefined : [...params.tools],
+          betas: fallback ? ["server-side-fallback-2026-07-01"] : undefined,
+          fallbacks: fallback ? "default" : undefined,
+        },
+        options?.signal ? { signal: options.signal } : undefined,
+      );
+      const onDelta = options?.onDelta;
+      if (onDelta) stream.on("text", onDelta);
+      return toReply(await stream.finalMessage());
+    },
   };
 };
-
-/**
- * One streamed chunk, in either shape Workers AI uses: chat-completion deltas
- * for the newer models, `response` pieces for the older ones. Anything else in
- * a chunk is ignored rather than refused: a stream carries usage lines and
- * keep-alives that are not the model's words.
- */
-const StreamChunk = z.object({
-  response: z.string().nullish(),
-  /**
-   * The whole-call shape the older models use. Both fields are optional
-   * because the newer ones ALSO emit this key alongside `choices`, carrying
-   * one fragment at a time -- a chunk with only `name`, then chunks with only
-   * `arguments`. Requiring both made every such chunk fail to parse, and a
-   * failed chunk is dropped whole, so the reply came back empty.
-   */
-  tool_calls: z
-    .array(
-      z.object({
-        name: z.string().optional(),
-        arguments: z
-          .union([z.string(), z.json().transform((value) => JSON.stringify(value))])
-          .optional(),
-      }),
-    )
-    .optional(),
-  choices: z
-    .array(
-      z.object({
-        delta: z
-          .object({
-            content: z.string().nullish(),
-            tool_calls: z
-              .array(
-                z.object({
-                  index: z.number().int().optional(),
-                  id: z.string().optional(),
-                  function: z
-                    .object({ name: z.string().optional(), arguments: z.string().optional() })
-                    .optional(),
-                }),
-              )
-              .optional(),
-          })
-          .optional(),
-      }),
-    )
-    .optional(),
-});
-
-type PartialCall = { id: string; name: string; arguments: string };
-
-/**
- * Reads a server-sent-event stream from the binding into one reply, handing
- * each piece of text on as it arrives. Tool calls come in pieces too, keyed by
- * index, and are assembled here.
- */
-export const readStream = async (
-  stream: ReadableStream<Uint8Array>,
-  onDelta: (text: string) => void,
-): Promise<ModelReply> => {
-  let text = "";
-  let calls: readonly PartialCall[] = [];
-  let buffer = "";
-
-  const apply = (chunk: z.infer<typeof StreamChunk>) => {
-    const piece = chunk.choices?.[0]?.delta?.content ?? chunk.response ?? "";
-    if (piece !== "") {
-      text += piece;
-      onDelta(piece);
-    }
-    // Only when there is no `choices`: the newer models repeat their delta
-    // fragments here, and counting both would build every call twice.
-    for (const call of chunk.choices === undefined ? (chunk.tool_calls ?? []) : []) {
-      calls = [
-        ...calls,
-        { id: `call_${calls.length}`, name: call.name ?? "", arguments: call.arguments ?? "" },
-      ];
-    }
-    for (const delta of chunk.choices?.[0]?.delta?.tool_calls ?? []) {
-      const index = delta.index ?? 0;
-      const current = calls[index] ?? { id: `call_${index}`, name: "", arguments: "" };
-      const next = {
-        id: delta.id ?? current.id,
-        name: delta.function?.name ?? current.name,
-        arguments: current.arguments + (delta.function?.arguments ?? ""),
-      };
-      calls =
-        index < calls.length ? calls.map((c, at) => (at === index ? next : c)) : [...calls, next];
-    }
-  };
-
-  const takeLine = (line: string) => {
-    if (!line.startsWith("data: ")) return;
-    const payload = line.slice("data: ".length).trim();
-    if (payload === "[DONE]" || payload === "") return;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(payload);
-    } catch {
-      return;
-    }
-    const parsed = StreamChunk.safeParse(raw);
-    if (parsed.success) apply(parsed.data);
-  };
-
-  const decoder = new TextDecoder();
-  const reader = stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) takeLine(line);
-  }
-  takeLine(buffer);
-
-  return { text: stripThinking(text), toolCalls: calls.filter((call) => call.name !== "") };
-};
-
-/** Workers AI, through the Worker's own binding: no key, no URL, billed to the account. */
-export const createClient = (): ChatClient => ({
-  run: async (params, options) => {
-    const base = {
-      messages: toApiMessages(params.messages),
-      max_tokens: params.max_tokens,
-      // Answers, not deliberation: the tool loop is where the work happens,
-      // and thinking tokens are billed like any other.
-      chat_template_kwargs: { enable_thinking: false },
-      // Streamed, so a reader sees words as they come rather than a blank
-      // screen until the whole answer exists.
-      stream: true,
-    };
-    /**
-     * `tools` is omitted rather than sent empty. Workers AI refuses an empty
-     * array outright -- "`tools` must not be an empty array. Either provide at
-     * least one tool or omit the field entirely" -- and every reading call
-     * (a PDF's layout, a holdings statement) has no tools to offer.
-     */
-    const withTools = params.tools.length === 0 ? base : { ...base, tools: [...params.tools] };
-    const inputs =
-      params.response_format === undefined
-        ? withTools
-        : { ...withTools, response_format: params.response_format };
-    const output = await env.AI.run(
-      params.model,
-      inputs,
-      options?.signal ? { signal: options.signal } : undefined,
-    );
-    // The binding types a streamed reply as a plain object; at runtime it is
-    // the stream itself. A model that ignored `stream` answers whole.
-    if (output instanceof ReadableStream) {
-      return readStream(output, options?.onDelta ?? (() => undefined));
-    }
-    return toReply(ModelOutput.parse(output));
-  },
-});
 
 /** The tools as the model sees them: name, purpose, and the JSON schema of what they take. */
 export const toolDefinitions = (tools: readonly ChatTool[]): ToolDefinition[] =>
   tools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: z.toJSONSchema(tool.schema, { io: "input", unrepresentable: "any" }),
-    },
+    name: tool.name,
+    description: tool.description,
+    // SAFETY: every tool schema is a z.object, whose JSON schema is `type: "object"`.
+    input_schema: z.toJSONSchema(tool.schema, {
+      io: "input",
+      unrepresentable: "any",
+    }) as ToolDefinition["input_schema"],
   }));
 
 /**
@@ -437,7 +328,14 @@ export async function* runTurn(
     }
     messages = [
       ...messages,
-      { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
+      reply.blocks === undefined
+        ? { role: "assistant", content: reply.text, tool_calls: reply.toolCalls }
+        : {
+            role: "assistant",
+            content: reply.text,
+            tool_calls: reply.toolCalls,
+            blocks: reply.blocks,
+          },
     ];
     for (const call of reply.toolCalls) {
       yield { type: "tool", name: call.name };

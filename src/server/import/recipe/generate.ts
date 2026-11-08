@@ -6,7 +6,7 @@ import type { BankRecipe } from "./types.ts";
 import { createVerifySession, runVerifyCall, verifyToolDefinition } from "./verify-tool.ts";
 
 /** A recipe is about a kilobyte; this is room for one with comments stripped. */
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 16000;
 /**
  * How much of the last page goes in the sample. Its END, not its beginning:
  * the closing balance and the maturity date are printed at the bottom, and a

@@ -29,8 +29,10 @@ export const env: Cloudflare.Env = Object.assign(proxy.env, {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BASE_URL: "http://localhost:3000",
   ALLOW_SIGNUP: "true",
-  // The real binding would reach Workers AI. A test that wants a model scripts
-  // one; everything else gets the same refusal test-network-guard.ts gives fetch.
+  // Claude calls go through an injected fetch in tests; the global one throws
+  // (test-network-guard.ts). The key is a placeholder and never leaves the process.
+  ANTHROPIC_API_KEY: "test-anthropic-key",
+  AI_GATEWAY_ID: "",
   AI: {
     run: () => {
       throw new Error("network blocked in tests: Workers AI");

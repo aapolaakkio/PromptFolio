@@ -5,7 +5,6 @@ import { env } from "cloudflare:workers";
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import {
   createClient,
-  readStream,
   runTurn,
   SYSTEM_PROMPT,
   toolDefinitions,
@@ -16,10 +15,10 @@ import {
 } from "./runner.ts";
 import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
 
-// The whole loop is exercised against a scripted model: no account, no
-// network, no cost. `test-cloudflare-env.ts` replaces the AI binding with one
-// that throws, so a regression that reached the real service would fail this
-// file rather than quietly bill the user.
+// The whole loop is exercised against a scripted model, and the client against
+// a fake Messages API: no account, no network, no cost. The global fetch throws
+// (test-network-guard.ts), so a regression that reached the real service would
+// fail this file rather than quietly bill the user.
 
 const says = (text: string): ModelReply => ({ text, toolCalls: [] });
 const calls = (...names: string[]): ModelReply => ({
@@ -178,9 +177,9 @@ describe("runTurn", () => {
 
   test("asks the model it was given, when one was", async () => {
     const seen: Seen = { requests: [] };
-    await drain(runTurn(scripted([says("ok")], seen), [], [], undefined, "@cf/openai/gpt-oss-20b"));
+    await drain(runTurn(scripted([says("ok")], seen), [], [], undefined, "claude-haiku-5-5"));
 
-    expect(seen.requests[0]?.model).toBe("@cf/openai/gpt-oss-20b");
+    expect(seen.requests[0]?.model).toBe("claude-haiku-5-5");
   });
 
   test("stops asking once the reader has gone", async () => {
@@ -197,85 +196,274 @@ describe("runTurn", () => {
   });
 });
 
-describe("createClient inputs", () => {
-  test("createClient forwards a response_format to the binding, and omits it when absent", async () => {
-    const seen: { response_format?: unknown }[] = [];
-    const previous = env.AI;
-    Object.assign(env, {
-      AI: {
-        run: (_model: string, inputs: { response_format?: unknown }) => {
-          seen.push(inputs);
-          return Promise.resolve({ response: "{}" });
+/** A Messages API stream that says `text` and calls `tools`, in SSE form. */
+const anthropicStream = (
+  text: string,
+  tools: { id: string; name: string; input: unknown }[] = [],
+  stopReason = tools.length > 0 ? "tool_use" : "end_turn",
+): Response => {
+  const events: { event: string; data: unknown }[] = [
+    {
+      event: "message_start",
+      data: {
+        type: "message_start",
+        message: {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          model: "claude-opus-5-5",
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 0 },
         },
+      },
+    },
+    {
+      event: "content_block_start",
+      data: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", thinking: "", signature: "" },
+      },
+    },
+    {
+      event: "content_block_delta",
+      data: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "signature_delta", signature: "sig" },
+      },
+    },
+    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+    {
+      event: "content_block_start",
+      data: {
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "text", text: "" },
+      },
+    },
+    ...text.split(" ").map((word, at) => ({
+      event: "content_block_delta",
+      data: {
+        type: "content_block_delta",
+        index: 1,
+        delta: { type: "text_delta", text: at === 0 ? word : ` ${word}` },
+      },
+    })),
+    { event: "content_block_stop", data: { type: "content_block_stop", index: 1 } },
+    ...tools.flatMap((tool, at) => [
+      {
+        event: "content_block_start",
+        data: {
+          type: "content_block_start",
+          index: 2 + at,
+          content_block: { type: "tool_use", id: tool.id, name: tool.name, input: {} },
+        },
+      },
+      {
+        event: "content_block_delta",
+        data: {
+          type: "content_block_delta",
+          index: 2 + at,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(tool.input) },
+        },
+      },
+      { event: "content_block_stop", data: { type: "content_block_stop", index: 2 + at } },
+    ]),
+    {
+      event: "message_delta",
+      data: {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: 1 },
+      },
+    },
+    { event: "message_stop", data: { type: "message_stop" } },
+  ];
+  const body = events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+};
+
+/** The parts of a Messages API request body the tests look at. */
+const RequestBody = z.looseObject({
+  messages: z.array(
+    z.object({
+      role: z.string(),
+      content: z.union([z.string(), z.array(z.looseObject({ type: z.string() }))]),
+    }),
+  ),
+});
+
+/** A fetch that records each request body and answers with the given responses in turn. */
+const fakeAnthropic = (...responses: Response[]) => {
+  const bodies: z.infer<typeof RequestBody>[] = [];
+  const urls: string[] = [];
+  const fetchImpl: typeof fetch = (input, init) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    bodies.push(RequestBody.parse(JSON.parse(z.string().parse(init?.body))));
+    const next = responses.shift();
+    if (next === undefined) throw new Error("fake Anthropic ran out of responses");
+    return Promise.resolve(next);
+  };
+  return { fetchImpl, bodies, urls };
+};
+
+describe("createClient", () => {
+  test("sends the Messages API shape: system on top, tool results as user turns", async () => {
+    const api = fakeAnthropic(anthropicStream("valmis"));
+    await createClient(api.fetchImpl).run({
+      model: "claude-opus-5-5",
+      max_tokens: 64,
+      messages: [
+        { role: "system", content: "ohje" },
+        { role: "user", content: "moi" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "toolu_1", name: "laske", arguments: '{"a":1}' }],
+        },
+        { role: "tool", tool_call_id: "toolu_1", content: '{"ok":true}' },
+      ],
+      tools: [],
+    });
+
+    const body = api.bodies[0];
+    expect(body?.system).toBe("ohje");
+    expect(body?.messages).toEqual([
+      { role: "user", content: "moi" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu_1", name: "laske", input: { a: 1 } }],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: '{"ok":true}' }],
+      },
+    ]);
+    expect(body).not.toHaveProperty("tools");
+    expect(body?.thinking).toEqual({ type: "adaptive" });
+    expect(body?.fallbacks).toBe("default");
+    expect(api.urls[0]).toContain("api.anthropic.com");
+  });
+
+  test("asks for structured output when given a schema, and skips fallbacks on Haiku", async () => {
+    const api = fakeAnthropic(anthropicStream("{}"));
+    await createClient(api.fetchImpl).run({
+      model: "claude-haiku-5-5",
+      max_tokens: 64,
+      messages: [{ role: "user", content: "moi" }],
+      tools: [],
+      response_format: {
+        type: "json_schema",
+        json_schema: z.toJSONSchema(z.object({ ok: z.boolean() })),
+      },
+    });
+
+    const body = api.bodies[0];
+    expect(body?.output_config).toMatchObject({
+      format: { type: "json_schema", schema: expect.objectContaining({ type: "object" }) },
+    });
+    expect(body).not.toHaveProperty("fallbacks");
+  });
+
+  test("streams text, returns tool calls, and keeps the raw blocks for replay", async () => {
+    const api = fakeAnthropic(
+      anthropicStream("katsotaan salkku", [{ id: "toolu_9", name: "get_holdings", input: {} }]),
+    );
+    const pieces: string[] = [];
+    const reply = await createClient(api.fetchImpl).run(
+      {
+        model: "claude-opus-5-5",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [],
+      },
+      { onDelta: (text) => pieces.push(text) },
+    );
+
+    expect(pieces.join("")).toBe("katsotaan salkku");
+    expect(reply.text).toBe("katsotaan salkku");
+    expect(reply.toolCalls).toEqual([{ id: "toolu_9", name: "get_holdings", arguments: "{}" }]);
+    expect(reply.blocks?.map((block) => block.type)).toEqual(["thinking", "text", "tool_use"]);
+  });
+
+  test("a turn replays the model's own blocks, thinking included, on the next round", async () => {
+    const api = fakeAnthropic(
+      anthropicStream("", [{ id: "toolu_1", name: "get_holdings", input: {} }]),
+      anthropicStream("Arvo on 1,00 EUR."),
+    );
+    const tool = stubTool("get_holdings", () => Promise.resolve({ value: "1.00" }));
+    await drain(runTurn(createClient(api.fetchImpl), [tool], [{ role: "user", content: "moi" }]));
+
+    const replayed = api.bodies[1]?.messages[1]?.content;
+    expect(Array.isArray(replayed) ? replayed.map((block) => block.type) : replayed).toEqual([
+      "thinking",
+      "text",
+      "tool_use",
+    ]);
+  });
+
+  test("drops tool calls from a reply cut off at max_tokens", async () => {
+    const api = fakeAnthropic(
+      anthropicStream("", [{ id: "toolu_1", name: "laske", input: {} }], "max_tokens"),
+    );
+    const reply = await createClient(api.fetchImpl).run({
+      model: "claude-opus-5-5",
+      max_tokens: 64,
+      messages: [{ role: "user", content: "moi" }],
+      tools: [],
+    });
+    expect(reply.toolCalls).toEqual([]);
+  });
+
+  test("a refusal is an error, not an empty answer", async () => {
+    const api = fakeAnthropic(anthropicStream("", [], "refusal"));
+    await expect(
+      createClient(api.fetchImpl).run({
+        model: "claude-opus-5-5",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "moi" }],
+        tools: [],
+      }),
+    ).rejects.toThrow("kieltäytyi");
+  });
+
+  test("goes through AI Gateway when one is named", async () => {
+    const api = fakeAnthropic(anthropicStream("ok"));
+    const previous = { AI: env.AI, AI_GATEWAY_ID: env.AI_GATEWAY_ID };
+    Object.assign(env, {
+      AI_GATEWAY_ID: "promptfolio",
+      AI: {
+        gateway: (id: string) => ({
+          getUrl: (provider: string) =>
+            Promise.resolve(`https://gateway.ai.cloudflare.com/v1/acct/${id}/${provider}`),
+        }),
       },
     });
     try {
-      const schema = z.toJSONSchema(z.object({ ok: z.boolean() }));
-      const client = createClient();
-      await client.run({
-        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
-        tools: [],
-        response_format: { type: "json_schema", json_schema: schema },
-      });
-      await client.run({
-        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      await createClient(api.fetchImpl).run({
+        model: "claude-opus-5-5",
         max_tokens: 64,
         messages: [{ role: "user", content: "moi" }],
         tools: [],
       });
-      expect(seen[0]?.response_format).toEqual({
-        type: "json_schema",
-        json_schema: schema,
-      });
-      expect(seen[1]).not.toHaveProperty("response_format");
+      expect(api.urls[0]).toBe(
+        "https://gateway.ai.cloudflare.com/v1/acct/promptfolio/anthropic/v1/messages",
+      );
     } finally {
-      Object.assign(env, { AI: previous });
+      Object.assign(env, previous);
     }
   });
 
-  /**
-   * Workers AI refuses `tools: []` with a 400 rather than treating it as "no
-   * tools", which took every PDF reading down: they offer none.
-   */
-  test("createClient omits tools entirely when there are none, and sends them when there are", async () => {
-    const seen: { tools?: unknown }[] = [];
-    const previous = env.AI;
-    Object.assign(env, {
-      AI: {
-        run: (_model: string, inputs: { tools?: unknown }) => {
-          seen.push(inputs);
-          return Promise.resolve({ response: "{}" });
-        },
-      },
-    });
+  test("refuses with a 503 when no key is configured", () => {
+    const previous = env.ANTHROPIC_API_KEY;
+    Object.assign(env, { ANTHROPIC_API_KEY: "" });
     try {
-      const client = createClient();
-      await client.run({
-        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
-        tools: [],
-      });
-      const definition = {
-        type: "function" as const,
-        function: {
-          name: "laske",
-          description: "Laskee",
-          parameters: z.toJSONSchema(z.object({ a: z.number() })),
-        },
-      };
-      await client.run({
-        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
-        tools: [definition],
-      });
-      expect(seen[0]).not.toHaveProperty("tools");
-      expect(seen[1]?.tools).toEqual([definition]);
+      expect(() => createClient()).toThrow("ANTHROPIC_API_KEY");
     } finally {
-      Object.assign(env, { AI: previous });
+      Object.assign(env, { ANTHROPIC_API_KEY: previous });
     }
   });
 });
@@ -291,134 +479,15 @@ describe("toolDefinitions", () => {
 
     expect(toolDefinitions([tool])).toEqual([
       {
-        type: "function",
-        function: {
-          name: "get_returns",
-          description: "Tuotto",
-          parameters: expect.objectContaining({
-            type: "object",
-            properties: { on: { type: "string" } },
-            additionalProperties: false,
-          }),
-        },
+        name: "get_returns",
+        description: "Tuotto",
+        input_schema: expect.objectContaining({
+          type: "object",
+          properties: { on: { type: "string" } },
+          additionalProperties: false,
+        }),
       },
     ]);
-  });
-});
-
-const sse = (...chunks: unknown[]): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      for (const chunk of chunks)
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-
-describe("readStream", () => {
-  test("joins chat-completion deltas into text, handing each piece on as it arrives", async () => {
-    const pieces: string[] = [];
-    const reply = await readStream(
-      sse(
-        { choices: [{ delta: { content: "Salkun " } }] },
-        { choices: [{ delta: { content: "arvo." } }] },
-      ),
-      (text) => pieces.push(text),
-    );
-    expect(pieces).toEqual(["Salkun ", "arvo."]);
-    expect(reply).toEqual({ text: "Salkun arvo.", toolCalls: [] });
-  });
-
-  test("assembles a tool call streamed in pieces", async () => {
-    const reply = await readStream(
-      sse(
-        {
-          choices: [
-            {
-              delta: {
-                tool_calls: [
-                  { index: 0, id: "c1", function: { name: "get_holdings", arguments: "" } },
-                ],
-              },
-            },
-          ],
-        },
-        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"on":' } }] } }] },
-        {
-          choices: [
-            { delta: { tool_calls: [{ index: 0, function: { arguments: '"2026-06-01"}' } }] } },
-          ],
-        },
-      ),
-      () => undefined,
-    );
-    expect(reply.toolCalls).toEqual([
-      { id: "c1", name: "get_holdings", arguments: '{"on":"2026-06-01"}' },
-    ]);
-  });
-
-  /**
-   * Verbatim shape from @cf/meta/llama-3.3-70b: every chunk repeats its delta
-   * fragment in a top-level `tool_calls`, with only one of the two fields.
-   * The schema used to require both, so all three chunks failed to parse and
-   * were dropped -- the reply came back with no text and no calls at all.
-   */
-  test("reads a stream that repeats each tool-call fragment at the top level", async () => {
-    const reply = await readStream(
-      sse(
-        {
-          choices: [{ delta: { content: "", role: "assistant" } }],
-          response: "",
-          tool_calls: [],
-        },
-        {
-          choices: [
-            {
-              delta: { tool_calls: [{ function: { name: "verify_recipe" }, id: "c9", index: 0 }] },
-            },
-          ],
-          tool_calls: [{ name: "verify_recipe" }],
-        },
-        {
-          choices: [{ delta: { tool_calls: [{ function: { arguments: '{"a":1}' }, index: 0 }] } }],
-          tool_calls: [{ arguments: '{"a":1}' }],
-        },
-      ),
-      () => undefined,
-    );
-    expect(reply.toolCalls).toEqual([{ id: "c9", name: "verify_recipe", arguments: '{"a":1}' }]);
-  });
-
-  test("reads the older models' shape too", async () => {
-    const pieces: string[] = [];
-    const reply = await readStream(
-      sse(
-        { response: "Tuotto " },
-        { response: "oli 20 %." },
-        { response: "", tool_calls: [{ name: "get_returns", arguments: { on: "2026-06-01" } }] },
-      ),
-      (text) => pieces.push(text),
-    );
-    expect(pieces).toEqual(["Tuotto ", "oli 20 %."]);
-    expect(reply.text).toBe("Tuotto oli 20 %.");
-    expect(reply.toolCalls).toEqual([
-      { id: "call_0", name: "get_returns", arguments: '{"on":"2026-06-01"}' },
-    ]);
-  });
-
-  test("a chunk split across two reads is still one event", async () => {
-    const encoder = new TextEncoder();
-    const whole = 'data: {"choices":[{"delta":{"content":"kokonainen"}}]}\n\ndata: [DONE]\n\n';
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode(whole.slice(0, 20)));
-        controller.enqueue(encoder.encode(whole.slice(20)));
-        controller.close();
-      },
-    });
-    expect((await readStream(stream, () => undefined)).text).toBe("kokonainen");
   });
 });
 

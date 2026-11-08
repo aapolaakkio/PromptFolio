@@ -24,8 +24,8 @@ const noBalances: BankRecipe = {
 
 describe("verifyToolDefinition", () => {
   test("is a function the model can call, named for what it does", () => {
-    expect(verifyToolDefinition.function.name).toBe(VERIFY_TOOL_NAME);
-    expect(verifyToolDefinition.function.parameters.properties).toHaveProperty("recipe");
+    expect(verifyToolDefinition.name).toBe(VERIFY_TOOL_NAME);
+    expect(verifyToolDefinition.input_schema.properties).toHaveProperty("recipe");
   });
 });
 

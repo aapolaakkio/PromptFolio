@@ -56,9 +56,9 @@ export const batchPages = (
   return batches;
 };
 
-export const PDF_READ_MODEL = "@cf/openai/gpt-oss-120b";
+export const PDF_READ_MODEL = "claude-opus-5-5";
 /** Room for a few hundred rows of JSON. */
-const MAX_TOKENS = 8192;
+const MAX_TOKENS = 32000;
 
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /** A decimal as printed, sign allowed, dot or comma; parsed by each flow with core/money. */

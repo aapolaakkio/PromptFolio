@@ -79,18 +79,15 @@ const DESCRIPTION =
  * allowed values come from the same definition that will judge the answer.
  */
 export const verifyToolDefinition: ToolDefinition = {
-  type: "function",
-  function: {
-    name: VERIFY_TOOL_NAME,
-    description: DESCRIPTION,
-    parameters: {
-      type: "object",
-      properties: {
-        recipe: z.toJSONSchema(BankRecipeSchema, { io: "input", unrepresentable: "any" }),
-      },
-      required: ["recipe"],
-      additionalProperties: false,
+  name: VERIFY_TOOL_NAME,
+  description: DESCRIPTION,
+  input_schema: {
+    type: "object",
+    properties: {
+      recipe: z.toJSONSchema(BankRecipeSchema, { io: "input", unrepresentable: "any" }),
     },
+    required: ["recipe"],
+    additionalProperties: false,
   },
 };
 

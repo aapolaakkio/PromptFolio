@@ -164,7 +164,7 @@ describe("generateRecipe", () => {
 
     const first = client.asked[0];
     expect(first?.messages[0]?.content).toContain("recordStart");
-    expect(first?.tools[0]?.function.name).toBe(VERIFY_TOOL_NAME);
+    expect(first?.tools[0]?.name).toBe(VERIFY_TOOL_NAME);
   });
 });
 

@@ -161,8 +161,8 @@ describe("choosing a model", () => {
     });
     const userId = await signUp();
 
-    await eventsOf(await turn(userId, { message: "moi", model: "@cf/openai/gpt-oss-20b" }));
-    expect(asked).toBe("@cf/openai/gpt-oss-20b");
+    await eventsOf(await turn(userId, { message: "moi", model: "claude-haiku-5-5" }));
+    expect(asked).toBe("claude-haiku-5-5");
 
     // The server function validates with the same schema before startTurn runs.
     expect(chat.Ask.safeParse({ message: "moi", model: "@cf/evil/model" }).success).toBe(false);
