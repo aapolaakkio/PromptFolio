@@ -274,10 +274,73 @@ test("holdings are exactly current, not stale, when priced on the price's own da
 // invented number, since there is nothing to value this holding at. It must instead
 // report `valueEur`/`unrealisedEur` as null, with `valuationError` saying why, exactly
 // like `costBasisError` already does for an unmatched disposal (see HoldingView's doc).
+test("a holding with no stored price is valued at the price it was last traded at", async () => {
+  // A fund whose source serves only its latest value, or a share whose source
+  // refuses requests: the owner's own buy is a real price for that day.
+  const { db, binding, accountId } = await seed();
+  const fund = await binding
+    .prepare(
+      "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(
+      "FI4000261128",
+      null,
+      "OP-Maailma Indeksi A",
+      "fund",
+      "EUR",
+      "op_fund",
+      "op-maailma-indeksi",
+    )
+    .first<{ id: number }>();
+  if (fund === null) throw new Error("insert returned no id");
+  await binding
+    .prepare(
+      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 2000000, 25000, -50000, 0, 0, 'EUR', 100000000, 'fund-buy')",
+    )
+    .bind(accountId, fund.id)
+    .run();
+
+  const { prices } = await loadPortfolio(db, "u1");
+  expect(prices.priceOn(fund.id, "2025-07-01")?.minor).toBe(25000n);
+  expect(prices.priceDateOn(fund.id, "2025-07-01")).toBe("2025-02-01");
+  // Before the trade there is still no price at all.
+  expect(prices.priceOn(fund.id, "2025-01-31")).toBeNull();
+});
+
+test("a price traded before a split is not used: it is in the old share units", async () => {
+  const { db, binding, accountId } = await seed();
+  const share = await binding
+    .prepare(
+      "INSERT INTO instruments (isin, ticker, name, kind, currency, price_source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind("FI4000567029", "FIA1S.HE", "Finnair", "stock", "EUR", "yahoo", "FIA1S.HE")
+    .first<{ id: number }>();
+  if (share === null) throw new Error("insert returned no id");
+  const insert = (
+    date: string,
+    type: string,
+    quantity: number,
+    unitPrice: number | null,
+    hash: string,
+  ) =>
+    binding
+      .prepare(
+        "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 'EUR', 100000000, ?)",
+      )
+      .bind(accountId, share.id, type, date, quantity, unitPrice, hash)
+      .run();
+  await insert("2023-01-10", "BUY", 1_000_000_000, 60, "fia-buy");
+  await insert("2024-03-21", "SPLIT", 10_000_000, null, "fia-split");
+
+  const { prices } = await loadPortfolio(db, "u1");
+  expect(prices.priceOn(share.id, "2025-01-01")).toBeNull();
+});
+
 test("a position with no price at all reports no value, not a fabricated zero, and is stale", async () => {
   const { db, binding, accountId } = await seed();
-  // A second instrument with no rows in `prices` at all -- distinct from
-  // the "carried forward from an earlier date" staleness case above.
+  // A second instrument with no rows in `prices` at all, bought on a row that
+  // states no unit price either -- distinct from the "carried forward from an
+  // earlier date" staleness case above, and from a traded price (below).
   // SAFETY: the preceding INSERT's own `RETURNING id` clause guarantees a
   // single row with an `id` column on success.
   const nesteAnnual = await binding
@@ -289,7 +352,7 @@ test("a position with no price at all reports no value, not a fabricated zero, a
   if (nesteAnnual === null) throw new Error("insert returned no id");
   await binding
     .prepare(
-      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 50000000, 1000, -5000, 0, 0, 'EUR', 100000000, 'neste-buy')",
+      "INSERT INTO transactions (account_id, instrument_id, type, trade_date, quantity, unit_price, amount, fee, tax, currency, fx_rate_eur, content_hash) VALUES (?, ?, 'BUY', '2025-02-01', 50000000, NULL, -5000, 0, 0, 'EUR', 100000000, 'neste-buy')",
     )
     .bind(accountId, nesteAnnual.id)
     .run();

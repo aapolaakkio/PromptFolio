@@ -102,6 +102,47 @@ export type Portfolio = {
  * `core` never sees a database row: this is the one module that translates
  * between storage integers and `Money`/`Quantity`/`FxRate`.
  */
+/**
+ * The price the owner actually traded at, as a price point: a buy or a sale's
+ * unit price is what the instrument was worth that day. For a fund whose source
+ * serves only its latest value, or a share whose source refuses us, these are
+ * the only real historical prices there are, and they beat valuing a holding
+ * at cost. A stored price for the same day wins.
+ *
+ * Skipped before a split of the same instrument: those prices are in pre-split
+ * units, while the valuation restates held quantities into post-split ones.
+ */
+// ponytail: pre-split trades dropped rather than adjusted by the split ratio;
+// adjust them if a split instrument's early history matters.
+const tradedPrices = (
+  txns: readonly Txn[],
+  stored: readonly { instrumentId: number; date: string }[],
+) => {
+  const storedDays = new Set(stored.map((row) => `${row.instrumentId}|${row.date}`));
+  const lastSplit = new Map<number, string>();
+  for (const txn of txns) {
+    if (txn.type !== "SPLIT" || txn.instrumentId === null) continue;
+    const seen = lastSplit.get(txn.instrumentId);
+    if (seen === undefined || txn.tradeDate > seen) lastSplit.set(txn.instrumentId, txn.tradeDate);
+  }
+  return txns.flatMap((txn) => {
+    if (txn.type !== "BUY" && txn.type !== "SELL") return [];
+    if (txn.instrumentId === null || txn.unitPrice === null || txn.unitPrice.minor <= 0n) return [];
+    if (storedDays.has(`${txn.instrumentId}|${txn.tradeDate}`)) return [];
+    const split = lastSplit.get(txn.instrumentId);
+    if (split !== undefined && txn.tradeDate < split) return [];
+    storedDays.add(`${txn.instrumentId}|${txn.tradeDate}`);
+    return [
+      {
+        instrumentId: txn.instrumentId,
+        date: txn.tradeDate,
+        close: Number(txn.unitPrice.minor),
+        currency: txn.unitPrice.currency,
+      },
+    ];
+  });
+};
+
 export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> => {
   const ownedAccountIds = (
     await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.userId, userId)).all()
@@ -166,7 +207,10 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
     sourceKey: row.sourceKey,
   }));
 
-  const priceRows = await db.select().from(prices).orderBy(asc(prices.date)).all();
+  const storedPrices = await db.select().from(prices).orderBy(asc(prices.date)).all();
+  const priceRows = [...storedPrices, ...tradedPrices(txns, storedPrices)].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
+  );
   const pricesByInstrument = groupBy(priceRows, (row) => row.instrumentId);
 
   const fxRows = await db.select().from(fxRates).orderBy(asc(fxRates.date)).all();
