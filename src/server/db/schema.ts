@@ -403,8 +403,8 @@ export const importRecipes = sqliteTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     fingerprint: text("fingerprint").notNull(),
-    kind: text("kind", { enum: ["bank"] }).notNull(),
-    /** The validated BankRecipe as JSON. Re-validated on read. */
+    kind: text("kind", { enum: ["bank", "bank-csv"] }).notNull(),
+    /** The validated recipe (BankRecipe or BankCsvRecipe) as JSON. Re-validated on read. */
     recipe: text("recipe").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()

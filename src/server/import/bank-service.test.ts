@@ -217,14 +217,19 @@ describe("POST /api/imports/bank/preview", () => {
     expect((await preview(userId, unclassified)).status).toBe(400);
   });
 
-  test("refuses a file that is not a statement it knows", async () => {
+  test("refuses a CSV no built-in format knows and the model cannot describe", async () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
     const bytes = bytesOf("a;b\n1;2\n");
+    setReaderClient({ run: () => Promise.resolve({ text: "ei tiliote", toolCalls: [] }) });
 
-    const response = await preview(userId, accountId, bytes);
-    expect(response.status).toBe(400);
-    expect(ErrorSchema.parse(response.body).error).toContain("tiliotteeksi");
+    try {
+      const response = await preview(userId, accountId, bytes);
+      expect(response.status).toBe(400);
+      expect(ErrorSchema.parse(response.body).error).toContain("tiliotteeksi");
+    } finally {
+      setReaderClient(null);
+    }
   });
 });
 

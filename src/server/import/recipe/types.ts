@@ -39,7 +39,7 @@ const Pattern = z
     message: "Säännöllinen lauseke voi jäädä jumiin (sisäkkäinen toisto)",
   });
 
-const MoneyFormatSchema = z
+export const MoneyFormatSchema = z
   .object({
     decimal: z.enum([",", "."]),
     thousands: z.enum([" ", " ", ".", ",", "'", ""]),

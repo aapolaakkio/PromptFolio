@@ -130,7 +130,7 @@ const csvConfigOf = (
  * or out, so an unrecognised one still imports correctly. Only interest needs
  * naming, being money in that is also income.
  */
-const rowType = (
+export const rowType = (
   label: string,
   amount: bigint,
   interestLabels: readonly string[],
@@ -142,7 +142,7 @@ const rowType = (
 };
 
 /** Counterparty and message together, trimmed, without an empty separator. */
-const noteOf = (parts: readonly string[]): string =>
+export const noteOf = (parts: readonly string[]): string =>
   parts
     .map((part) => part.trim())
     .filter((part) => part !== "")

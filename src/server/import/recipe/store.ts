@@ -9,10 +9,12 @@ import { parseRecipe, type BankRecipe } from "./types.ts";
  * shape of the schema is treated as a miss, so the model describes the layout
  * again -- one extra call, never a wrong import.
  */
-export const loadRecipe = async (
+export const loadParsed = async <R>(
   userId: string,
   fingerprint: string,
-): Promise<BankRecipe | null> => {
+  // eslint-disable-next-line anti-slop/no-unknown-parameters
+  parse: (raw: unknown) => R,
+): Promise<R | null> => {
   const row = await db
     .select({ recipe: importRecipes.recipe })
     .from(importRecipes)
@@ -20,20 +22,23 @@ export const loadRecipe = async (
     .get();
   if (!row) return null;
   try {
-    return parseRecipe(JSON.parse(row.recipe));
+    return parse(JSON.parse(row.recipe));
   } catch {
     return null;
   }
 };
 
+export const loadRecipe = (userId: string, fingerprint: string): Promise<BankRecipe | null> =>
+  loadParsed(userId, fingerprint, parseRecipe);
+
 export const saveRecipe = async (
   userId: string,
   fingerprint: string,
-  recipe: BankRecipe,
+  recipe: BankRecipe | { readonly kind: "bank-csv" },
 ): Promise<void> => {
   await db
     .insert(importRecipes)
-    .values({ userId, fingerprint, kind: "bank", recipe: JSON.stringify(recipe) })
+    .values({ userId, fingerprint, kind: recipe.kind, recipe: JSON.stringify(recipe) })
     .onConflictDoUpdate({
       target: [importRecipes.userId, importRecipes.fingerprint],
       set: { recipe: JSON.stringify(recipe) },

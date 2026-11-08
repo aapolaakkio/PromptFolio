@@ -16,6 +16,7 @@ import {
   bankRowsFromDraft,
   checkBankDraft,
 } from "./bank-draft.ts";
+import { readBankCsvByRecipe } from "./recipe/csv-recipe.ts";
 import { readBankPdfByRecipe } from "./recipe/read.ts";
 import { unclaimedWorthReporting } from "./recipe/verify.ts";
 import { type Db, db } from "../db/index.ts";
@@ -57,9 +58,23 @@ const readStatement = async (
   userId: string,
 ): Promise<{ bank: string; draft: BankDraft }> => {
   if (!isPdf(bytes)) {
-    const config = detect(bytes);
-    const { rows, problems } = parseBankStatement(bytes, config);
-    return { bank: config.bank, draft: bankDraftFromRows(rows, problems) };
+    // OP's own exports are read by their built-in configs, with no model call;
+    // any other bank's CSV by a recipe the model writes for its header.
+    const config = BANK_CONFIGS.find((candidate) => matchesBank(bytes, candidate));
+    if (config !== undefined) {
+      const { rows, problems } = parseBankStatement(bytes, config);
+      return { bank: config.bank, draft: bankDraftFromRows(rows, problems) };
+    }
+    try {
+      const { rows, problems } = await readBankCsvByRecipe(
+        bytes,
+        userId,
+        readerClient ?? createClient(),
+      );
+      return { bank: "csv", draft: bankDraftFromRows(rows, problems) };
+    } catch (cause) {
+      throw cause instanceof HttpError ? cause : asBadRequest(cause);
+    }
   }
   try {
     const run = await readBankPdfByRecipe(bytes, userId, readerClient ?? createClient());
@@ -78,12 +93,6 @@ const readStatement = async (
 let readerClient: ChatClient | null = null;
 export const _setReaderClient = (client: ChatClient | null): void => {
   readerClient = client;
-};
-
-const detect = (bytes: ArrayBuffer): BankStatementConfig => {
-  const config = BANK_CONFIGS.find((candidate) => matchesBank(bytes, candidate));
-  if (!config) throw new HttpError(400, "Tiedostoa ei tunnistettu tiliotteeksi");
-  return config;
 };
 
 /**
