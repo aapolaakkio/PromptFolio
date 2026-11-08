@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod";
 
 import { readText } from "../../files.ts";
-import { BrokerRecordSchema, runBrokerRecord } from "./broker-record.ts";
+import { BrokerRecordSchema, runBrokerRecord, sampleOf } from "./broker-record.ts";
 import { OP_PASTE_RECIPE } from "./broker-reference.ts";
 
 const fixture = (): Promise<string> =>
@@ -56,5 +56,23 @@ describe("runBrokerRecord", () => {
     };
     const run = runBrokerRecord(text, recipe, known, 3);
     expect(run.failures.some((failure) => failure.message.includes("tapahtumalta"))).toBe(true);
+  });
+});
+
+describe("sampleOf", () => {
+  test("shows a record of every length, even one first printed past the opening lines", () => {
+    const buy = ["RAHASTO A", "OSTO", "10.01.2024", "1,0000   kpl", "100,00   EUR", "100,00   EUR"];
+    const swap = ["FINNAIR OYJ", "VAIHTO - JÄTTÖ", "21.03.2024", "18,00   kpl"];
+    // A ten-line heading, then buys: the 120-line opening ends four lines into
+    // the sixteenth buy -- a cut-off record exactly as long as the swap.
+    const heading = Array.from({ length: 10 }, (_, i) => `Otsikko ${i}`);
+    const text = [
+      ...heading,
+      " ",
+      ...Array.from({ length: 30 }, () => [...buy, " "]).flat(),
+      ...swap,
+    ].join("\n");
+
+    expect(sampleOf(text)).toContain("VAIHTO - JÄTTÖ");
   });
 });

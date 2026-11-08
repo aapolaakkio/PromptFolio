@@ -204,10 +204,40 @@ const INSTRUCTIONS = [
   "skip: rivit jotka poistetaan ensin (sarakeotsikot, sivun muut tekstit). Älä poista rivejä joissa on tapahtuman tietoja.",
   "recordStart: rivi josta tapahtuma alkaa, tai null jos tapahtumat erottaa tyhjä rivi.",
   "record: säännöllinen lauseke joka vastaa YHTÄ KOKONAISTA tapahtumaa, rivit yhdistettynä \\n-merkillä. Nimetyt ryhmät ovat kenttiä: tradeDate, type, instrumentName, isin, quantity, unitPrice, fee, currency, amount, costBasis, note, priceCurrency, portfolio, externalId. Pakolliset: tradeDate, type, amount. Valinnainen rivi: (?:\\n(?<fee>[^\\n]+))?",
+  "Kaikilla tapahtumilla ei ole samoja rivejä: esimerkiksi osakkeiden vaihdossa, yhdistelyssä tai merkintäoikeuksien irrotuksessa voi olla pelkkä nimi, laji, päivä ja kappalemäärä ilman yhtään rahariviä. Tee silloin hinta-, kulu- ja summarivit yhdessä valinnaisiksi, esim. (?:\\n(?<unitPrice>[^\\n]+)(?:\\n(?<fee>[^\\n]+))?\\n(?<amount>[^\\n]+))?",
   "types: jokainen tekstissä esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi. IGNORE jos rivi on toisen tapahtuman toinen puoli; kerro silloin reason. Jos laji on epäselvä, käytä IGNORE ja kerro miksi.",
   "unsignedAmount: true jos osto ja myynti tulostuvat samanmerkkisinä; silloin sign kertoo rahan suunnan (osto -1, myynti 1).",
   "money kertoo desimaali- ja tuhaterottimen, negatiivisen merkinnän ja strip-listassa yksiköt jotka poistetaan (esim. kpl, EUR).",
 ].join("\n");
+
+/**
+ * The text's opening lines, plus one record of every other length found
+ * further down. A corporate action with no money lines may first appear
+ * hundreds of lines in; shown only the opening, a model writes a record
+ * pattern that cannot read it.
+ */
+export const sampleOf = (text: string): string => {
+  const lines = linesOf(text);
+  const opening = lines.slice(0, SAMPLE_LINES);
+  const records = lines.join("\n").split(/\n{2,}/);
+  // The opening's last record may be cut off mid-way, so its length says nothing.
+  const seen = new Set(
+    opening
+      .join("\n")
+      .split(/\n{2,}/)
+      .slice(0, -1)
+      .map((r) => r.split("\n").length),
+  );
+  const extra = records.filter((record) => {
+    const length = record.split("\n").length;
+    if (seen.has(length)) return false;
+    seen.add(length);
+    return true;
+  });
+  return extra.length === 0
+    ? opening.join("\n")
+    : `${opening.join("\n")}\n\nMuualla tekstissä myös näin:\n\n${extra.join("\n\n")}`;
+};
 
 export const brokerRecordKey = (text: string): string =>
   fingerprint(
@@ -238,7 +268,7 @@ export const readBrokerRecordByRecipe = async (
   const asked = await askForRecipe({
     client,
     instructions: INSTRUCTIONS,
-    sample: linesOf(text).slice(0, SAMPLE_LINES).join("\n"),
+    sample: sampleOf(text),
     schema: BrokerRecordSchema,
     run,
     judge: (result) => ({
