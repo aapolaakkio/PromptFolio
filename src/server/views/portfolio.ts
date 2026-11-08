@@ -150,7 +150,13 @@ export const allocationView = async (db: Db, userId: string, dimension: Dimensio
   };
 };
 
-export const cashFlowView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
+export const cashFlowView = async (
+  db: Db,
+  userId: string,
+  from: IsoDate,
+  to: IsoDate,
+  by: "category" | "counterparty" = "category",
+) => {
   const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
   // Every account that is not a bank one holds investments, and its own
@@ -167,6 +173,7 @@ export const cashFlowView = async (db: Db, userId: string, from: IsoDate, to: Is
     cashlessInvestedAccountIds: cashlessAccountIds(txns, bank),
     from,
     to,
+    by,
   });
 };
 

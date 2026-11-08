@@ -52,8 +52,8 @@ export const SpendingPage = () => {
   });
 
   const cashflow = useQuery({
-    queryKey: ["cashflow", from, to],
-    queryFn: () => getCashFlow({ data: { from, to } }),
+    queryKey: ["cashflow", from, to, groupBy],
+    queryFn: () => getCashFlow({ data: { from, to, by: groupBy } }),
   });
 
   const monthly = useQuery({

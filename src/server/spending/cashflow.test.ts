@@ -528,3 +528,40 @@ describe("a card refund", () => {
     expect(months[0]?.expensesEur).toBe("4.90");
   });
 });
+
+describe("cashFlowFor, split by payee", () => {
+  const byPayee = (txns: readonly Txn[]) =>
+    cashFlowFor({
+      txns,
+      rules: RULES,
+      bankAccountIds: BANK,
+      investedAccountIds: BROKERAGE,
+      ...YEAR,
+      by: "counterparty",
+    });
+
+  test("names each payee where the category split names each category", () => {
+    const flow = byPayee([
+      row(1, "PKORTTIMAKSU — K-MARKET ESIMERKKI", "-40.00", "2026-03-01"),
+      row(1, "PKORTTIMAKSU — K-MARKET ESIMERKKI", "-10.00", "2026-03-02"),
+      row(1, "PKORTTIMAKSU — ESIMERKKI RAVINTOLA", "-25.00", "2026-03-03"),
+    ]);
+    const out = flow.nodes.filter((node) => node.id.startsWith("out:"));
+    expect(out.map((node) => [node.label, node.totalEur])).toEqual([
+      ["K-MARKET ESIMERKKI", "50.00"],
+      ["ESIMERKKI RAVINTOLA", "25.00"],
+    ]);
+  });
+
+  test("past the fifteen largest payees, the rest are added up into one node", () => {
+    const flow = byPayee(
+      Array.from({ length: 18 }, (_, i) =>
+        row(1, `PKORTTIMAKSU — KAUPPA ${i}`, `-${100 - i}.00`, "2026-04-01"),
+      ),
+    );
+    const out = flow.nodes.filter((node) => node.id.startsWith("out:"));
+    expect(out).toHaveLength(16);
+    // Payees spend 100 down to 83; the three smallest are 85 + 84 + 83.
+    expect(out.at(-1)).toMatchObject({ label: "Muut saajat", totalEur: "252.00" });
+  });
+});

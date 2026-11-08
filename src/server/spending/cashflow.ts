@@ -3,6 +3,7 @@ import type { IsoDate, Txn } from "../../core/types.ts";
 import { CATEGORY_LABELS } from "./categories.ts";
 import { internalTransferIds, investmentPaymentIds } from "./internal.ts";
 import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
+import { groupKey } from "./summary.ts";
 
 /**
  * Where a period's money came from and where it went, as a flow graph.
@@ -44,6 +45,9 @@ const negate = (amount: Money): Money => ({ minor: -amount.minor, currency: amou
  * rather than from the sending account's transfer rows -- the broker's record
  * is the reliable half, and counting both would double it.
  */
+/** Payees drawn by name when spending is split by payee; the rest are one node. */
+const MAX_PAYEES = 15;
+
 export const cashFlowFor = (args: {
   txns: readonly Txn[];
   rules: readonly SpendingRule[];
@@ -53,6 +57,8 @@ export const cashFlowFor = (args: {
   cashlessInvestedAccountIds?: ReadonlySet<number>;
   from: IsoDate;
   to: IsoDate;
+  /** How spending splits on the right: by category (the default) or by payee. */
+  by?: "category" | "counterparty";
 }): CashFlow => {
   // Money the owner moved between their own accounts is neither earned nor
   // spent, and text rules cannot tell it apart from a real payment -- see
@@ -92,7 +98,8 @@ export const cashFlowFor = (args: {
   }
 
   // --- money out, by category ---
-  const expenses = new Map<string, Money>();
+  const by = args.by ?? "category";
+  const expenses = new Map<string, { label: string; amount: Money }>();
   let taxes = zeroMoney(EUR);
   for (const txn of bankRows) {
     // A refund is negative spending in its own category, not income: nobody
@@ -108,7 +115,13 @@ export const cashFlowFor = (args: {
       taxes = addMoney(taxes, positive);
       continue;
     }
-    expenses.set(category, addMoney(expenses.get(category) ?? zeroMoney(EUR), positive));
+    const [key, label] = groupKey(
+      { note: txn.note ?? "", amount: txn.amount, date: txn.tradeDate },
+      by,
+      args.rules,
+    );
+    const existing = expenses.get(key);
+    expenses.set(key, { label, amount: addMoney(existing?.amount ?? zeroMoney(EUR), positive) });
   }
 
   // --- money moved into investments, from the broker's own record ---
@@ -137,7 +150,7 @@ export const cashFlowFor = (args: {
 
   const totalIn = [...income.values()].reduce((sum, value) => addMoney(sum, value), zeroMoney(EUR));
   const totalSpent = [...expenses.values()].reduce(
-    (sum, value) => addMoney(sum, value),
+    (sum, entry) => addMoney(sum, entry.amount),
     zeroMoney(EUR),
   );
   const leftover: Money = {
@@ -200,14 +213,19 @@ export const cashFlowFor = (args: {
   }
 
   const sortedExpenses = [...expenses.entries()].sort((a, b) =>
-    a[1].minor === b[1].minor ? 0 : a[1].minor > b[1].minor ? -1 : 1,
+    a[1].amount.minor === b[1].amount.minor ? 0 : a[1].amount.minor > b[1].amount.minor ? -1 : 1,
   );
-  for (const [category, amount] of sortedExpenses) {
-    // SAFETY: `expenses` is keyed by `categoriseWith`, whose return type is the
-    // Category union that CATEGORY_LABELS is declared complete over.
-    const label = CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category;
-    if (push(`out:${category}`, label, amount)) {
-      links.push({ from: "expenses", to: `out:${category}`, amountEur: formatMoney(amount) });
+  // A year has hundreds of payees; past the largest few a Sankey is a smear of
+  // hairlines, so the rest are added up into one node.
+  const shown = by === "counterparty" ? sortedExpenses.slice(0, MAX_PAYEES) : sortedExpenses;
+  const rest = sortedExpenses
+    .slice(shown.length)
+    .reduce((sum, [, entry]) => addMoney(sum, entry.amount), zeroMoney(EUR));
+  const outgoing: [string, { label: string; amount: Money }][] =
+    rest.minor > 0n ? [...shown, ["muut-saajat", { label: "Muut saajat", amount: rest }]] : shown;
+  for (const [key, { label, amount }] of outgoing) {
+    if (push(`out:${key}`, label, amount)) {
+      links.push({ from: "expenses", to: `out:${key}`, amountEur: formatMoney(amount) });
     }
   }
 

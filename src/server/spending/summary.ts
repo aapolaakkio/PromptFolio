@@ -27,7 +27,7 @@ export type SpendingSummary = {
 /** One transaction, reduced to what a spending view needs. */
 type SpendingRow = { readonly note: string; readonly amount: Money; readonly date: IsoDate };
 
-const groupKey = (
+export const groupKey = (
   row: SpendingRow,
   by: "category" | "counterparty",
   rules: readonly SpendingRule[],

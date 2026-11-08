@@ -88,9 +88,11 @@ export const getReturns = createServerFn()
 /** Income, spending, investing and what was left, for the Sankey. */
 export const getCashFlow = createServerFn()
   .middleware([authed])
-  .validator(Range)
+  .validator(
+    z.intersection(Range, z.object({ by: z.enum(["category", "counterparty"]).optional() })),
+  )
   .handler(({ data, context }) =>
-    cashFlowView(db, context.userId, data.from ?? "1900-01-01", data.to ?? today()),
+    cashFlowView(db, context.userId, data.from ?? "1900-01-01", data.to ?? today(), data.by),
   );
 
 /** Spending grouped by category or payee, already added up. */
