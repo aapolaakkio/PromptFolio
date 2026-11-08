@@ -12,7 +12,8 @@ import type { FetchImpl, FetchedPrice } from "./types.ts";
  * one at a time with a pause between.
  *
  * `fetchImpl` is expected to be gated already; a `YahooPausedError` from it
- * propagates. Any other failure for a symbol leaves that symbol out.
+ * propagates. `stopWhen` ends the probing early, so the common case costs one
+ * request. Any other failure for a symbol leaves that symbol out.
  */
 const SPACING_MS = 2000;
 const WINDOW_DAYS = 10;
@@ -41,13 +42,16 @@ export const fetchLatestQuotes = async (
   symbols: readonly string[],
   fetchImpl: FetchImpl,
   spacingMs: number = SPACING_MS,
+  stopWhen: (symbol: string, price: FetchedPrice) => boolean = () => false,
 ): Promise<Map<string, FetchedPrice>> => {
   const quotes = new Map<string, FetchedPrice>();
   // ponytail: spaced single requests; batch if Yahoo offers one
   for (const [index, symbol] of symbols.entries()) {
     if (index > 0) await sleep(spacingMs);
     const latest = await latestOf(symbol, fetchImpl);
-    if (latest !== null) quotes.set(symbol, latest);
+    if (latest === null) continue;
+    quotes.set(symbol, latest);
+    if (stopWhen(symbol, latest)) break;
   }
   return quotes;
 };

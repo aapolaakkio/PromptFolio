@@ -527,20 +527,39 @@ describe("lookupInstrument, paused Yahoo and request cost", () => {
     expect(result.sourceKey).toBeNull();
   });
 
-  test("candidate listings cost one request when there is one candidate", async () => {
-    let quoteRequests = 0;
-    const counting = stubFetch({
-      openfigi: { body: figiBody("NOKIA OYJ", "Common Stock") },
-      "finance/search": { body: JSON.stringify({ quotes: [{ symbol: "NOKIA.HE" }] }) },
-      "chart/NOKIA.HE": chart("EUR"),
-    });
+  const countQuotes = (routes: Record<string, { body: string; status?: number }>) => {
+    const state = { quoteRequests: 0 };
+    const inner = stubFetch(routes);
     // SAFETY: only a URL is passed and only the Response is read, as in stubFetch.
     const stub = (async (input: RequestInfo | URL) => {
-      if (urlOf(input).includes("v8/finance/chart")) quoteRequests += 1;
-      return await counting(input);
+      if (urlOf(input).includes("v8/finance/chart")) state.quoteRequests += 1;
+      return await inner(input);
     }) as typeof fetch;
+    return { state, stub };
+  };
+  const manyCandidates = (second: string) => ({
+    openfigi: { body: figiBody("NOKIA OYJ", "Common Stock") },
+    "finance/search": {
+      body: JSON.stringify({
+        quotes: [{ symbol: "A.HE" }, { symbol: "B.HE" }, { symbol: "C.HE" }],
+      }),
+    },
+    "chart/A.HE": chart("EUR"),
+    "chart/B.HE": chart(second),
+    "chart/C.HE": chart("EUR"),
+  });
+
+  test("candidate listings cost one request when the first matches", async () => {
+    const { state, stub } = countQuotes(manyCandidates("EUR"));
     const result = await lookupInstrument("FI0009000681", "NOKIA", EUR, stub);
-    expect(result.outcome).toBe("found");
-    expect(quoteRequests).toBe(1);
+    expect(result.sourceKey).toBe("A.HE");
+    expect(state.quoteRequests).toBe(1);
+  });
+
+  test("probing stops at the second candidate when that is the first match", async () => {
+    const { state, stub } = countQuotes({ ...manyCandidates("EUR"), "chart/A.HE": chart("USD") });
+    const result = await lookupInstrument("FI0009000681", "NOKIA", EUR, stub);
+    expect(result.sourceKey).toBe("B.HE");
+    expect(state.quoteRequests).toBe(2);
   });
 });

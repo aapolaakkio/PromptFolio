@@ -211,7 +211,7 @@ type Listing = { readonly symbol: string; readonly currency: Currency };
 /**
  * The first candidate quoted in the holding's currency, or the first that exists
  * at all, so the form can offer something and flag the mismatch. All candidates
- * are quoted together in one call, in order.
+ * are probed in order and probing stops at the first match, so the home listing costs one request.
  */
 const pickListing = async (
   candidates: readonly string[],
@@ -219,7 +219,12 @@ const pickListing = async (
   fetchImpl: typeof fetch,
   quoteSpacingMs: number | undefined,
 ): Promise<Listing | null> => {
-  const quotes = await fetchLatestQuotes(candidates, fetchImpl, quoteSpacingMs);
+  const quotes = await fetchLatestQuotes(
+    candidates,
+    fetchImpl,
+    quoteSpacingMs,
+    (_symbol, price) => currency === null || price.currency === currency,
+  );
   let fallback: Listing | null = null;
   for (const symbol of candidates) {
     const quoted = quotes.get(symbol)?.currency;
