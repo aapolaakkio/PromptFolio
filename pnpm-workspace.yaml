@@ -8,9 +8,4 @@ allowBuilds:
 
 minimumReleaseAge: 1440
 
-minimumReleaseAgeExclude:
-  - "@tanstack/react-table"
-  - "@tanstack/react-charts"
-  - "@tanstack/charts"
-
 engineStrict: true

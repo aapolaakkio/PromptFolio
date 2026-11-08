@@ -34,8 +34,6 @@ export const account = sqliteTable("account", {
     .references(() => user.id, { onDelete: "cascade" }),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
-  // Better Auth's adapter throws at query time without this.
-  issuer: text("issuer").notNull(),
   password: text("password"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),

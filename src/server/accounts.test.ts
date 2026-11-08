@@ -266,7 +266,7 @@ describe("updateAccount", () => {
     const { userId } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
     const id = await createAccount(userId, { name: "Vanha nimi", broker: "nordnet" });
 
-    expect((await rename(userId, id, "Nordnet OST")).name).toBe("Nordnet OST");
+    expect((await rename(userId, id, "Nordnet OST"))?.name).toBe("Nordnet OST");
   });
 
   test("refuses an account belonging to someone else, as 404 rather than 403", async () => {
@@ -306,8 +306,8 @@ describe("updateAccount", () => {
       UpdateAccount.parse({ name: "Tili", broker: "nordnet", baseCurrency: "USD" }),
     );
 
-    expect(updated.broker).toBe("op");
-    expect(updated.baseCurrency).toBe("EUR");
+    expect(updated?.broker).toBe("op");
+    expect(updated?.baseCurrency).toBe("EUR");
   });
 });
 
@@ -348,15 +348,15 @@ test("changes the account type without touching the name, and can clear it", asy
     updateAccount(db, userId, id, UpdateAccount.parse(body));
 
   const typed = await patch({ accountType: "ost" });
-  expect(typed.accountType).toBe("ost");
-  expect(typed.name).toBe("Nordnet");
+  expect(typed?.accountType).toBe("ost");
+  expect(typed?.name).toBe("Nordnet");
 
   const renamed = await patch({ name: "Nordnet OST" });
-  expect(renamed.accountType).toBe("ost");
-  expect(renamed.name).toBe("Nordnet OST");
+  expect(renamed?.accountType).toBe("ost");
+  expect(renamed?.name).toBe("Nordnet OST");
 
   const cleared = await patch({ accountType: null });
-  expect(cleared.accountType).toBeNull();
+  expect(cleared?.accountType).toBeNull();
 
   // An empty change is refused rather than treated as a no-op: it means the
   // caller sent a form with nothing filled in.
