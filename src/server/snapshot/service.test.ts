@@ -3,6 +3,7 @@ import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { readBytes } from "../files.ts";
+import { TABLE_HOLDINGS_RECIPE } from "../import/recipe/holdings-reference.ts";
 
 import { EUR } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
@@ -19,9 +20,16 @@ let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: typeof import("./service.ts");
 let transactions: (typeof import("../db/schema.ts"))["transactions"];
 
+/** A model that describes every pasted or uploaded table with the reference recipe. */
+const tableReader = {
+  run: () => Promise.resolve({ text: JSON.stringify(TABLE_HOLDINGS_RECIPE), toolCalls: [] }),
+};
+
 beforeAll(async () => {
   auth = (await import("../auth.ts")).getAuth();
   service = await import("./service.ts");
+  // Every statement is read by a recipe; this stands in for the model.
+  service._setReaderClient(tableReader);
   transactions = (await import("../db/schema.ts")).transactions;
 });
 
@@ -619,42 +627,43 @@ describe("POST /api/snapshots/csv", () => {
   });
 });
 
-// A holdings PDF is read by the model, `_setReaderClient` swaps in a scripted
-// ChatClient so this never reaches Workers AI, and the printed total is
-// carried into the proposal for the reconcile screen to show. Reset after
-// each test so a later test never silently reuses a scripted reading.
+// A holdings PDF is read by a recipe; `_setReaderClient` swaps in a scripted
+// model, and the printed total is carried into the proposal for the reconcile
+// screen to show. Reset after each test so a later test never silently reuses
+// a scripted recipe.
 describe("a holdings PDF", () => {
   afterEach(() => {
-    service._setReaderClient(null);
+    service._setReaderClient(tableReader);
   });
+
+  /**
+   * A holdings recipe for the fixture PDF's text, which is a bank statement:
+   * it reads one line as a holding so the wiring can be checked end to end --
+   * the statement's date, a total the holdings reach, and a name match.
+   */
+  const pdfRecipe = {
+    ...TABLE_HOLDINGS_RECIPE,
+    layout: "record",
+    delimiter: null,
+    columns: [],
+    skip: [String.raw`^(?!1\.9\.2025 )`],
+    recordStart: String.raw`^\d`,
+    record: String.raw`(?<quantity>\d+)\.9\.2025 \+(?<marketValue>[\d ]*\d,\d{2}) (?<name>PANO)[^\n]*`,
+    asOf: String.raw`Saldo (?<value>\d{1,2}\.\d{1,2}\.\d{4})$`,
+    total: String.raw`^1\.9\.2025 \+(?<value>[\d ]*\d,\d{2})`,
+    dateFormat: "d.m.yyyy",
+  };
 
   test("proposes rows through the reader, matched by name, with the printed total", async () => {
     service._setReaderClient({
-      run: () =>
-        Promise.resolve({
-          text: JSON.stringify({
-            asOf: "2026-06-30",
-            totalValue: "1000.00",
-            holdings: [
-              {
-                name: "Nokia",
-                isin: null,
-                quantity: "10",
-                marketValue: "1000.00",
-                currency: "EUR",
-              },
-            ],
-            problems: [],
-          }),
-          toolCalls: [],
-        }),
+      run: () => Promise.resolve({ text: JSON.stringify(pdfRecipe), toolCalls: [] }),
     });
     const { userId } = await signUp(`snap-pdf-${crypto.randomUUID()}@example.com`);
-    const nokia = await addInstrument(db, {
-      isin: "FI0009000681",
+    const pano = await addInstrument(db, {
+      isin: randomIsin(),
       ticker: null,
-      name: "Nokia",
-      kind: "stock",
+      name: "PANO",
+      kind: "fund",
       currency: EUR,
       priceSource: "manual",
     });
@@ -669,9 +678,9 @@ describe("a holdings PDF", () => {
     const proposed = await answer(() => service.proposeFromPdf(userId, form));
     expect(proposed.status).toBe(200);
     expect(proposed.body).toMatchObject({
-      asOf: "2026-06-30",
-      statedTotalEur: "1000.00",
-      rows: [{ name: "Nokia", instrumentId: nokia.id, quantity: "10", marketValueEur: "1000.00" }],
+      asOf: "2025-08-28",
+      statedTotalEur: "100.00",
+      rows: [{ name: "PANO", instrumentId: pano.id, quantity: "1", marketValueEur: "100.00" }],
     });
   });
 

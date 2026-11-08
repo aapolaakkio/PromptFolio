@@ -11,10 +11,10 @@ import type { Draft } from "./map.ts";
 import { portfoliosNamed } from "./portfolios.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
-import { extractPages, readTransactionsPdf } from "./pdf-read.ts";
+import { extractPages } from "./pdf-read.ts";
 import { readBrokerRecordByRecipe } from "./recipe/broker-record.ts";
 import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
-import { DraftBody, transactionsDraftFrom } from "./txn-draft.ts";
+import { DraftBody } from "./txn-draft.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
@@ -53,17 +53,27 @@ export const _setReaderClient = (client: ChatClient | null): void => {
 };
 
 /**
- * Reads a broker PDF page by page with a model, into the same draft shape a
- * CSV upload produces. Nothing here checks the result -- that belongs to the
- * review screen and to `commitDraftBody`, which the owner's edits pass
- * through unread.
+ * A broker PDF's text, read by a record recipe into the same draft a CSV
+ * upload produces. Nothing here checks the result beyond the recipe's own
+ * check -- the rest belongs to the review screen and `commitDraftBody`.
  */
-const buildPdfDraft = async (bytes: ArrayBuffer, accountId: number): Promise<Draft> => {
+const buildPdfDraft = async (
+  bytes: ArrayBuffer,
+  userId: string,
+  accountId: number,
+): Promise<Draft> => {
   try {
     const pages = await extractPages(bytes);
-    const reading = await readTransactionsPdf(pages, readerClient ?? createClient());
-    const { knownIsins, knownNames } = await knownInstrumentMaps();
-    return transactionsDraftFrom(reading, { accountId, knownIsins, knownNames });
+    const text = pages.map((page) => page.text).join("\n");
+    const known = await knownInstrumentMaps();
+    const run = await readBrokerRecordByRecipe(
+      text,
+      userId,
+      readerClient ?? createClient(),
+      known,
+      accountId,
+    );
+    return run.draft;
   } catch (cause) {
     throw new HttpError(
       400,
@@ -77,7 +87,7 @@ const buildDraft = async (file: File, userId: string, accountId: number) => {
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
 
   if (isPdf(bytes)) {
-    return { broker: "pdf" as const, draft: await buildPdfDraft(bytes, accountId), sha256 };
+    return { broker: "pdf" as const, draft: await buildPdfDraft(bytes, userId, accountId), sha256 };
   }
 
   const known = await knownInstrumentMaps();

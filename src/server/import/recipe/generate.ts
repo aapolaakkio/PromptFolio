@@ -1,5 +1,6 @@
 import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
-import { PDF_READ_MODEL, type PdfPage } from "../pdf-read.ts";
+import type { PdfPage } from "../pdf-read.ts";
+import { RECIPE_MODEL } from "./ask.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import type { RecipeRun } from "./run.ts";
 import type { BankRecipe } from "./types.ts";
@@ -99,7 +100,7 @@ export const generateRecipe = async (
 
   for (let round = 0; round < MAX_ROUNDS && session.verified() === null; round += 1) {
     const reply = await client.run({
-      model: PDF_READ_MODEL,
+      model: RECIPE_MODEL,
       max_tokens: MAX_TOKENS,
       messages: [...opening, ...attempts.slice(-KEEP_ATTEMPTS).flat()],
       tools: [verifyToolDefinition],

@@ -11,9 +11,8 @@ import { instruments, snapshotRows, snapshots, transactions } from "../db/schema
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { holdingsTotalCheck } from "./holdings-draft.ts";
-import { decodeHoldingsFile, parseHoldingsPaste } from "../import/holdings-paste.ts";
-import { extractPages, readHoldingsPdf } from "../import/pdf-read.ts";
-import { parseOpWebHoldings } from "../import/op-holdings-paste.ts";
+import { decodeHoldingsFile, readHoldingsByRecipe } from "../import/recipe/holdings-recipe.ts";
+import { extractPages } from "../import/pdf-read.ts";
 
 /**
  * A fund name reduced to what two spellings of the same fund share: brokers
@@ -232,98 +231,87 @@ export const proposalFrom = async (
   };
 };
 
-/**
- * Proposes a snapshot from a broker's holdings export. Nordnet publishes one;
- * OP does not, which is why the paste path beside this exists. Stores nothing
- * either way -- the user confirms through `createSnapshot`.
- */
-export const proposeFromCsv = async (userId: string, form: FormData) => {
-  const file = form.get("file");
-  const asOf = IsoDateSchema.parse(form.get("asOf"));
-  if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
-
-  try {
-    const parsed = parseHoldingsPaste(decodeHoldingsFile(new Uint8Array(await file.arrayBuffer())));
-    return proposalFrom(userId, asOf, parsed);
-  } catch (cause) {
-    if (cause instanceof HttpError) throw cause;
-    throw new HttpError(400, cause instanceof Error ? cause.message : "Tiedostoa ei voitu lukea");
-  }
-};
-
-/**
- * Proposes a snapshot from a broker's on-screen holdings table, pasted in.
- *
- * Two shapes reach here, told apart by whether the paste has columns at all: a
- * broker's spreadsheet copy is tab-separated with a header row; a table copied
- * out of a PDF viewer is one value per line, which is the shape OP's statement
- * takes. Sniffed rather than configured -- the user should not have to know
- * which kind of paste they are holding.
- */
-export const proposeFromPaste = (userId: string, body: z.infer<typeof PasteSnapshot>) => {
-  const input = PasteSnapshot.parse(body);
-  const columnar = input.text.includes("\t");
-  try {
-    const parsed = columnar ? parseHoldingsPaste(input.text) : parseOpWebHoldings(input.text);
-    return proposalFrom(userId, input.asOf, parsed);
-  } catch (cause) {
-    if (cause instanceof HttpError) throw cause;
-    throw new HttpError(
-      400,
-      cause instanceof Error ? cause.message : "Liitettyä taulukkoa ei voitu lukea",
-    );
-  }
-};
-
-/** Injected by tests, so a PDF never reaches the real model. */
+/** Injected by tests, so a statement never reaches the real model. */
 let readerClient: ChatClient | null = null;
 export const _setReaderClient = (client: ChatClient | null): void => {
   readerClient = client;
 };
 
+/** A recipe's complaint, as a 400 the owner can read. */
+const asBadRequest = (cause: unknown, fallback: string): HttpError =>
+  cause instanceof HttpError
+    ? cause
+    : new HttpError(400, cause instanceof Error ? cause.message : fallback);
+
+/** A table or a one-value-per-line view, read by a recipe into a proposal. */
+const proposeFromText = async (userId: string, text: string, asOf: string) => {
+  const run = await readHoldingsByRecipe(text, userId, readerClient ?? createClient(), false);
+  return proposalFrom(userId, asOf, { holdings: run.holdings, problems: run.problems });
+};
+
 /**
- * Proposes a snapshot from a holdings statement PDF, read by the model. The
- * statement's own date and printed total come with it; the owner edits and
- * confirms through `createSnapshot`, which checks the total again.
+ * Proposes a snapshot from a broker's holdings export, read by a recipe like
+ * every other import. Stores nothing -- the user confirms through
+ * `createSnapshot`.
+ */
+export const proposeFromCsv = async (userId: string, form: FormData) => {
+  const file = form.get("file");
+  const asOf = IsoDateSchema.parse(form.get("asOf"));
+  if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  try {
+    const text = decodeHoldingsFile(new Uint8Array(await file.arrayBuffer()));
+    return await proposeFromText(userId, text, asOf);
+  } catch (cause) {
+    throw asBadRequest(cause, "Tiedostoa ei voitu lukea");
+  }
+};
+
+/**
+ * Proposes a snapshot from a broker's on-screen holdings table, pasted in: a
+ * tab-separated table or one value per line, whichever the recipe describes.
+ */
+export const proposeFromPaste = async (userId: string, body: z.infer<typeof PasteSnapshot>) => {
+  const input = PasteSnapshot.parse(body);
+  try {
+    return await proposeFromText(userId, input.text, input.asOf);
+  } catch (cause) {
+    throw asBadRequest(cause, "Liitettyä taulukkoa ei voitu lukea");
+  }
+};
+
+/**
+ * Proposes a snapshot from a holdings statement PDF. The statement's own date
+ * and printed total come with it; the recipe is only kept when the holdings add
+ * up to that total, and the owner edits and confirms through `createSnapshot`,
+ * which checks the total again.
  */
 export const proposeFromPdf = async (userId: string, form: FormData) => {
   const file = form.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
   try {
     const pages = await extractPages(await file.arrayBuffer());
-    const reading = await readHoldingsPdf(pages, readerClient ?? createClient());
-    const proposal = await proposalFrom(userId, reading.asOf, {
-      holdings: reading.holdings.map((h) => ({
-        name: h.name,
-        quantity: h.quantity.replace(",", "."),
-        marketValueEur: h.marketValue.replace(",", "."),
-      })),
-      problems: reading.problems.map((p) => ({
-        line: p.line,
-        message: "Riviä ei saatu luettua",
-        raw: p.text,
-      })),
+    const text = pages.map((page) => page.text).join("\n");
+    const run = await readHoldingsByRecipe(text, userId, readerClient ?? createClient(), true);
+    if (run.asOf === null) throw new Error("Otteen päivää ei löytynyt");
+    const proposal = await proposalFrom(userId, run.asOf, {
+      holdings: run.holdings,
+      problems: run.problems,
     });
     return {
       ...proposal,
       // A holdings PDF's market value may be printed in a currency other than
       // EUR; the row carries it along so the review screen can show it, while
-      // the total check below (and createSnapshot's, again) still treats
-      // marketValueEur as EUR, exactly as the CSV path does today.
+      // the total check (createSnapshot's) still treats marketValueEur as EUR.
       rows: proposal.rows.map((row, index) => ({
         ...row,
-        currency: reading.holdings[index]?.currency ?? EUR,
+        currency: run.holdings[index]?.currency ?? EUR,
       })),
-      statedTotalEur: reading.totalValue,
+      statedTotalEur: run.statedTotalEur,
       filename: file.name,
       source: "pdf" as const,
     };
   } catch (cause) {
-    if (cause instanceof HttpError) throw cause;
-    throw new HttpError(
-      400,
-      cause instanceof Error ? cause.message : "PDF-tiedostoa ei voitu lukea",
-    );
+    throw asBadRequest(cause, "PDF-tiedostoa ei voitu lukea");
   }
 };
 

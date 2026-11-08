@@ -695,22 +695,32 @@ describe("POST /api/imports/op-paste/commit", () => {
 // draft, not the file.
 
 describe("a broker PDF", () => {
-  const reading = {
-    transactions: [
-      {
-        date: "2025-01-10",
-        type: "BUY",
-        name: "NOKIA",
-        isin: "FI0009000681",
-        quantity: "100",
-        unitPrice: "4.15",
-        amount: "-418.00",
-        fee: "3.00",
-        tax: "0",
-        currency: "EUR",
-      },
+  /**
+   * A record recipe for the statement fixture's text: its two transactions,
+   * each a dated signed line followed by its detail lines, with the opening
+   * and closing balances dropped.
+   */
+  const statementRecipe = {
+    kind: "broker-record",
+    skip: [
+      String.raw`^(?:Tilinumero .*|BIC .*|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja/maksaja|Viesti|Viite Arkistointitunnus|Saajan tilinumero|Saajan pankin BIC)$`,
+      String.raw`Saldo \d`,
+      String.raw`^(?:Tiliote|Käyttötili|Ajalta)$`,
+      String.raw`^\d{1,2}\.\d{1,2}\.\d{4} - `,
+      String.raw`^\d+ \(\d+\)$`,
     ],
-    problems: [],
+    recordStart: String.raw`^\d{1,2}\.\d{1,2}\.\d{4} [−+-]`,
+    record: String.raw`(?<tradeDate>\d{1,2}\.\d{1,2}\.\d{4}) (?<amount>[−+-][\d ]*\d,\d{2}) (?<type>[A-ZÄÖ]+)(?<note>[\s\S]*)`,
+    dateFormat: "d.m.yyyy",
+    money: { decimal: ",", thousands: " ", negative: "leading", twoColumn: false },
+    unsignedAmount: false,
+    types: [
+      { label: "PKORTTIMAKSU", type: "WITHDRAWAL", reason: null, sign: null },
+      { label: "PANO", type: "DEPOSIT", reason: null, sign: null },
+    ],
+  };
+  const statementReader = {
+    run: () => Promise.resolve({ text: JSON.stringify(statementRecipe), toolCalls: [] }),
   };
 
   // The scripted client is set per test below; reset afterwards so a later
@@ -721,9 +731,7 @@ describe("a broker PDF", () => {
   });
 
   test("previews through the reader and commits like any draft", async () => {
-    service._setReaderClient({
-      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
-    });
+    service._setReaderClient(statementReader);
     const { userId } = await signUp(`imp-pdf-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     await registerNokia();
@@ -740,13 +748,11 @@ describe("a broker PDF", () => {
     const committed = await commitPreviewed(userId, previewed, accountId, "pdf");
     expect(committed.status).toBe(200);
     // SAFETY: a 200 commit reports counts.
-    expect((committed.body as { inserted: number }).inserted).toBe(1);
+    expect((committed.body as { inserted: number }).inserted).toBe(2);
   });
 
   test("an edited draft is what commits", async () => {
-    service._setReaderClient({
-      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
-    });
+    service._setReaderClient(statementReader);
     const { userId } = await signUp(`imp-pdf-edit-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     await registerNokia();
@@ -778,9 +784,7 @@ describe("a broker PDF", () => {
   // Guards the contract, not one line of it: the account a row lands on comes
   // from the request either way (see commitDraftBody).
   test("an edited row cannot move itself to another account", async () => {
-    service._setReaderClient({
-      run: () => Promise.resolve({ text: JSON.stringify(reading), toolCalls: [] }),
-    });
+    service._setReaderClient(statementReader);
     const { userId } = await signUp(`imp-pdf-foreign-account-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     const otherAccountId = await openAccount(userId);

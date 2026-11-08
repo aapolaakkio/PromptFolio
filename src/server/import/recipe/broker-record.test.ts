@@ -41,13 +41,20 @@ describe("runBrokerRecord", () => {
     expect(run.failures[0]?.message).toContain("elokuu");
   });
 
-  test("a skip pattern that ate a figure fails the check", async () => {
-    const run = runBrokerRecord(
-      await fixture(),
-      { ...OP_PASTE_RECIPE, skip: [...OP_PASTE_RECIPE.skip, String.raw`^\d{2}\.\d{2}\.\d{4}$`] },
-      known,
-      3,
-    );
-    expect(run.failures.some((failure) => failure.message.includes("numeron"))).toBe(true);
+  test("a skip pattern that ate a whole transaction line fails the check", () => {
+    const text = [
+      "Päivä Laji Arvopaperi Summa",
+      "10.08.2025 OSTO ESIMERKKI 300,02",
+      "11.08.2025 MYYNTI ESIMERKKI 44,55",
+      "12.08.2025 OSTO ESIMERKKI 10,00",
+    ].join("\n");
+    const recipe = {
+      ...OP_PASTE_RECIPE,
+      skip: [String.raw`^Päivä`, String.raw`MYYNTI`],
+      recordStart: String.raw`^\d{2}\.`,
+      record: String.raw`(?<tradeDate>\S+) (?<type>\S+) (?<instrumentName>\S+) (?<amount>\S+)`,
+    };
+    const run = runBrokerRecord(text, recipe, known, 3);
+    expect(run.failures.some((failure) => failure.message.includes("tapahtumalta"))).toBe(true);
   });
 });

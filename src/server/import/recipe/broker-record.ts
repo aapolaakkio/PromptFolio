@@ -19,6 +19,12 @@ import { mayBacktrackForever } from "./pattern-safety.ts";
 import { forgetRecipe, loadParsed, saveRecipe } from "./store.ts";
 import { MAX_PATTERN_LENGTH, MoneyFormatSchema } from "./types.ts";
 
+/** A date and an amount on one line: what a skipped transaction looks like. */
+const LOOKS_LIKE_TRANSACTION = [
+  /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b/u,
+  /\d[.,]\d{2}\b/u,
+];
+
 /** Lines the model is shown from the start of the text. */
 const SAMPLE_LINES = 120;
 const NOT_READABLE = "Tekstiä ei tunnistettu tapahtumaluetteloksi";
@@ -144,17 +150,25 @@ export const runBrokerRecord = (
       ? []
       : [{ line: index + 1, text: value }],
   );
-  // A skip pattern that ate a figure would hide a transaction from every
-  // other check, so a skipped line carrying digits fails the recipe.
-  const skippedFigures: CsvProblem[] = linesOf(text).flatMap((value, index) =>
-    value !== "" && /\d/.test(value) && skip.some((pattern) => pattern.test(value))
-      ? [{ line: index + 1, message: `Ohitettu rivi sisältää numeron: ${value}`, raw: value }]
+  const rows: RawRow[] = [];
+  const blocks = blocksOf(kept, recordStart);
+  // A skip pattern that ate a transaction would hide it from every other
+  // check, so a skipped line between two records that carries both a date and
+  // an amount fails the recipe. Above the first record and below the last are
+  // balances and totals; anywhere, a page number or printed date alone is
+  // furniture.
+  const first = blocks[0]?.line ?? Number.POSITIVE_INFINITY;
+  const last = blocks.at(-1)?.line ?? Number.NEGATIVE_INFINITY;
+  const skippedTransactions: CsvProblem[] = linesOf(text).flatMap((value, index) =>
+    index + 1 > first &&
+    index + 1 < last &&
+    LOOKS_LIKE_TRANSACTION.every((sign) => sign.test(value)) &&
+    skip.some((pattern) => pattern.test(value))
+      ? [{ line: index + 1, message: `Ohitettu rivi näyttää tapahtumalta: ${value}`, raw: value }]
       : [],
   );
-
-  const rows: RawRow[] = [];
-  const problems: CsvProblem[] = [...skippedFigures];
-  for (const block of blocksOf(kept, recordStart)) {
+  const problems: CsvProblem[] = [...skippedTransactions];
+  for (const block of blocks) {
     const joined = block.lines.join("\n");
     const match = record.exec(joined);
     if (match === null) {
@@ -186,7 +200,7 @@ export const runBrokerRecord = (
 };
 
 const INSTRUCTIONS = [
-  "Saat välittäjän tapahtumaluettelon tekstinä, jossa jokainen arvo on omalla rivillään (esim. verkkopalvelusta kopioitu taulukko). Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen tapahtuman.",
+  "Saat välittäjän tapahtumaluettelon tekstinä: verkkopalvelusta kopioitu taulukko, jossa jokainen arvo on omalla rivillään, tai PDF:stä poimittu teksti. Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen tapahtuman.",
   "skip: rivit jotka poistetaan ensin (sarakeotsikot, sivun muut tekstit). Älä poista rivejä joissa on tapahtuman tietoja.",
   "recordStart: rivi josta tapahtuma alkaa, tai null jos tapahtumat erottaa tyhjä rivi.",
   "record: säännöllinen lauseke joka vastaa YHTÄ KOKONAISTA tapahtumaa, rivit yhdistettynä \\n-merkillä. Nimetyt ryhmät ovat kenttiä: tradeDate, type, instrumentName, isin, quantity, unitPrice, fee, currency, amount, costBasis, note, priceCurrency, portfolio, externalId. Pakolliset: tradeDate, type, amount. Valinnainen rivi: (?:\\n(?<fee>[^\\n]+))?",
