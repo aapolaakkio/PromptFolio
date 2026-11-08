@@ -93,6 +93,9 @@ export const valueSeriesView = async (
     valueEur: formatMoney(point.valueEur),
     investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
     stale: point.stale,
+    // A holding with no price yet that day, valued at what was paid for it:
+    // the chart draws these days apart, since they show no real movement.
+    costValued: point.costValuedInstrumentIds.length > 0,
     // Instruments excluded from this day's valueEur because their net
     // position was negative (an unmatched disposal -- see core/ledger.ts's
     // negativePositionIds). Cross-reference against /api/holdings, which

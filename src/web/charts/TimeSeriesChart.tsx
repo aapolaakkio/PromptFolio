@@ -21,6 +21,12 @@ export type SeriesPoint = {
    * rising one is only deposits.
    */
   invested?: number;
+  /**
+   * True when some holding had no price yet and was valued at what was paid
+   * for it. Such a day shows no market movement, only cost, and is drawn as
+   * its own line so it is never read as real value.
+   */
+  estimated?: boolean;
 };
 
 /**
@@ -74,7 +80,7 @@ const RANGES = [
   { label: "Koko jakso", months: null },
 ] as const;
 
-export type PlotRow = { at: number; value: number; invested: number | null };
+export type PlotRow = { at: number; value: number; invested: number | null; estimated: boolean };
 
 /** Every point, as the chart plots them. */
 export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
@@ -82,7 +88,27 @@ export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
     at: asMillis(point.date),
     value: point.value,
     invested: point.invested ?? null,
+    estimated: point.estimated === true,
   }));
+
+/**
+ * The value line split in two: days valued from real prices, and days where
+ * some holding was valued at cost. The estimate keeps the first real day too,
+ * so the two lines meet rather than leaving a gap.
+ */
+// ponytail: assumes the estimated days form one run (before the first price),
+// which is how missing history looks; a run in the middle would be bridged.
+export const splitEstimated = (rows: readonly PlotRow[]) => {
+  const real = rows.filter((row) => !row.estimated);
+  const lastEstimate = rows.findLastIndex((row) => row.estimated);
+  const estimate =
+    lastEstimate === -1
+      ? []
+      : rows
+          .slice(0, lastEstimate + 2)
+          .filter((row, index) => row.estimated || index === lastEstimate + 1);
+  return { real, estimate };
+};
 
 /**
  * The span a preset button selects: `months` back from the most recent point,
@@ -115,6 +141,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
   const all = useMemo(() => plotRows(points), [points]);
   const window = useMemo(() => zoom ?? presetWindow(all, months), [all, months, zoom]);
   const rows = useMemo(() => within(all, window), [all, window]);
+  const split = useMemo(() => splitEstimated(rows), [rows]);
 
   const definition = useMemo(
     () =>
@@ -132,11 +159,23 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
                 }),
               ]
             : []),
-          lineY(rows, {
+          ...(split.estimate.length > 0
+            ? [
+                lineY(split.estimate, {
+                  id: "estimate",
+                  x: "at",
+                  y: "value",
+                  stroke: "var(--color-muted)",
+                  strokeWidth: 2,
+                  strokeDasharray: "2 3",
+                }),
+              ]
+            : []),
+          lineY(split.real, {
             id: "value",
             x: "at",
             y: "value",
-            points: rows.length <= 60,
+            points: split.real.length <= 60,
             stroke: colourFor(0),
             strokeWidth: 2,
           }),
@@ -187,7 +226,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
     // Deliberately not dependent on any drag-in-progress state: rebuilding the
     // definition mid-drag destroys the gesture, which is why the first drag
     // used to do nothing and only the second appeared to work.
-    [rows, window],
+    [rows, window, split],
   );
 
   /** A preset replaces a dragged span rather than compounding with it. */
@@ -234,11 +273,26 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
               />
               Sijoitettu
             </span>
+            {split.estimate.length > 0 && (
+              <span
+                className="flex items-center gap-1.5"
+                title="Päivinä ennen arvopaperin ensimmäistä hintaa arvo on hankintahinta, ei markkina-arvo."
+              >
+                <span
+                  className="h-0.5 w-4"
+                  style={{
+                    background:
+                      "repeating-linear-gradient(90deg, var(--color-muted) 0 2px, transparent 2px 5px)",
+                  }}
+                />
+                Arvo hankintahinnalla
+              </span>
+            )}
           </span>
         )}
       </div>
       <div className="h-72">
-        <Chart definition={definition} ariaLabel={label} />
+        <Chart definition={definition} height={288} ariaLabel={label} />
       </div>
     </div>
   );
