@@ -3,28 +3,20 @@ import { z } from "zod";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
 /** The four sources a price can come from, as the instrument store defines them. */
-type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
+export type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
 
 /**
- * The only two sources worth choosing by hand. Yahoo prices everything this
- * portfolio holds, Finnish funds included (they appear under synthetic `0P...`
- * symbols), so scraping a bank's own page is a fallback the resolver reaches for
- * on its own rather than something to pick from a list.
+ * Every source a person may choose. Yahoo prices listed shares and many funds
+ * (under synthetic `0P...` symbols); a fund's own page at Nordnet or OP is the
+ * way to price one Yahoo does not, or will not serve. The source code for
+ * those is the last part of the fund page's address.
  */
-const SOURCES = [
+export const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },
+  { id: "nordnet_fund", label: "Nordnet-rahasto (rahaston sivun osoitteen loppuosa)" },
+  { id: "op_fund", label: "OP-rahasto (rahaston sivun osoitteen loppuosa)" },
   { id: "manual", label: "Syötän arvon itse" },
 ] as const;
-
-/**
- * A bank's own fund page, kept selectable only when the lookup already chose it
- * -- otherwise the `<select>` would show a blank value for a source the user
- * cannot see or change. Never offered otherwise.
- */
-const FALLBACK_SOURCES = new Map<string, string>([
-  ["op_fund", "OP-rahasto (haettu automaattisesti)"],
-  ["nordnet_fund", "Nordnet-rahasto (haettu automaattisesti)"],
-]);
 
 const ISIN_PATTERN = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
 
@@ -254,9 +246,6 @@ export const UnknownInstrumentForm = ({
               {s.label}
             </option>
           ))}
-          {FALLBACK_SOURCES.has(priceSource) && (
-            <option value={priceSource}>{FALLBACK_SOURCES.get(priceSource)}</option>
-          )}
         </select>
       </label>
       <label>
@@ -268,7 +257,15 @@ export const UnknownInstrumentForm = ({
           // impossible to register at all.
           required={priceSource !== "manual"}
           onChange={(e) => setSourceKey(e.target.value)}
-          placeholder={priceSource === "yahoo" ? "esim. NOKIA.HE" : "rahaston tunnus"}
+          placeholder={
+            priceSource === "yahoo"
+              ? "esim. NOKIA.HE"
+              : priceSource === "nordnet_fund"
+                ? "esim. nordnet-suomi-indeksi-eur-a401761d"
+                : priceSource === "op_fund"
+                  ? "esim. op-maailma-indeksi"
+                  : "rahaston tunnus"
+          }
         />
         {priceSource === "manual" && (
           <div className="text-xs text-muted">

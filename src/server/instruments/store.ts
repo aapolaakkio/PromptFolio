@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { Currency } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
-import { instruments } from "../db/schema.ts";
+import { instruments, prices } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 
 /** What a caller may set on a new instrument, already validated. */
@@ -52,4 +52,45 @@ export const addInstrument = async (db: Db, body: NewInstrument) => {
     .values({ ...body, isin, sourceKey })
     .returning()
     .get();
+};
+
+/** What may be corrected on an instrument after it was added. */
+export type InstrumentFix = {
+  readonly currency: Currency;
+  readonly priceSource: NewInstrument["priceSource"];
+  readonly sourceKey: string;
+};
+
+/**
+ * Corrects how an instrument is priced: its quotation currency, its price
+ * source and that source's code. Shared reference data, so any signed-in
+ * member may correct it, as any may add one.
+ *
+ * A changed currency drops the instrument's stored prices: they were fetched
+ * and checked against the old currency, and the next refresh fetches them in
+ * the right one. Transactions are untouched -- their unit prices are read in
+ * the instrument's currency, which is exactly what the correction fixes.
+ */
+export const updateInstrument = async (db: Db, id: number, fix: InstrumentFix) => {
+  const existing = await db.select().from(instruments).where(eq(instruments.id, id)).get();
+  if (existing === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  const sourceKey = fix.sourceKey.trim();
+  if (fix.priceSource !== "manual" && sourceKey === "") {
+    throw new HttpError(400, "Lähdetunnus vaaditaan, kun hintalähde hakee hinnat automaattisesti");
+  }
+  if (existing.currency !== fix.currency) {
+    await db.delete(prices).where(eq(prices.instrumentId, id)).run();
+  }
+  const updated = await db
+    .update(instruments)
+    .set({
+      currency: fix.currency,
+      priceSource: fix.priceSource,
+      sourceKey: sourceKey === "" ? (existing.isin ?? existing.name) : sourceKey,
+    })
+    .where(eq(instruments.id, id))
+    .returning()
+    .get();
+  if (updated === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  return updated;
 };

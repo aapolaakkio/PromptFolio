@@ -4,7 +4,11 @@ import { z } from "zod";
 import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
 import { lookupInstrument } from "../../server/instruments/lookup.ts";
-import { addInstrument, listInstruments } from "../../server/instruments/store.ts";
+import {
+  addInstrument,
+  listInstruments,
+  updateInstrument,
+} from "../../server/instruments/store.ts";
 import { authed, readable } from "./guard.ts";
 
 const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen");
@@ -52,3 +56,16 @@ export const createInstrument = createServerFn({ method: "POST" })
       }),
   )
   .handler(({ data }) => readable(() => addInstrument(db, data)));
+
+/** Corrects an instrument's currency, price source or source code. */
+export const editInstrument = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(
+    z.object({
+      id: z.number().int().positive(),
+      currency: currencyField,
+      priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
+      sourceKey: z.string().max(200),
+    }),
+  )
+  .handler(({ data }) => readable(() => updateInstrument(db, data.id, data)));

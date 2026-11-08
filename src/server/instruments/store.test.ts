@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
 import { db } from "../db/index.ts";
-import { addInstrument, listInstruments } from "./store.ts";
+import { eq } from "drizzle-orm";
+
+import { prices } from "../db/schema.ts";
+import { addInstrument, listInstruments, updateInstrument } from "./store.ts";
 
 // What api/instruments.test.ts checked through HTTP, checked here against the
 // function itself. Gone with the route: three "rejects a request with no
@@ -124,5 +127,77 @@ describe("listInstruments", () => {
     });
 
     expect((await listInstruments(db)).some((row) => row.isin === isin)).toBe(true);
+  });
+});
+
+describe("updateInstrument", () => {
+  const add = () =>
+    addInstrument(db, {
+      isin: randomIsin(),
+      ticker: null,
+      name: "Nordnet Norge Indeks",
+      kind: "fund",
+      currency: EUR,
+      priceSource: "manual",
+      sourceKey: "",
+    });
+
+  test("corrects the currency, and drops prices stored in the old one", async () => {
+    const fund = await add();
+    await db
+      .insert(prices)
+      .values({
+        instrumentId: fund.id,
+        date: "2026-11-05",
+        close: 1000,
+        currency: EUR,
+        source: "manual",
+        fetchedAt: new Date(),
+      })
+      .run();
+
+    const updated = await updateInstrument(db, fund.id, {
+      currency: parseCurrency("NOK"),
+      priceSource: "nordnet_fund",
+      sourceKey: "nordnet-norge-indeks-nok-52540035",
+    });
+
+    expect(updated.currency).toBe("NOK");
+    expect(updated.priceSource).toBe("nordnet_fund");
+    expect(updated.sourceKey).toBe("nordnet-norge-indeks-nok-52540035");
+    expect(await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all()).toEqual(
+      [],
+    );
+  });
+
+  test("keeps stored prices when the currency stays the same", async () => {
+    const fund = await add();
+    await db
+      .insert(prices)
+      .values({
+        instrumentId: fund.id,
+        date: "2026-11-05",
+        close: 1000,
+        currency: EUR,
+        source: "manual",
+        fetchedAt: new Date(),
+      })
+      .run();
+
+    await updateInstrument(db, fund.id, { currency: EUR, priceSource: "manual", sourceKey: "" });
+
+    expect(
+      await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all(),
+    ).toHaveLength(1);
+  });
+
+  test("refuses an automatic source with no source code, and an unknown instrument", async () => {
+    const fund = await add();
+    await expect(
+      updateInstrument(db, fund.id, { currency: EUR, priceSource: "nordnet_fund", sourceKey: " " }),
+    ).rejects.toThrow("Lähdetunnus");
+    await expect(
+      updateInstrument(db, 999_999, { currency: EUR, priceSource: "manual", sourceKey: "" }),
+    ).rejects.toThrow("ei löytynyt");
   });
 });

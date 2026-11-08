@@ -4,6 +4,7 @@ import { eur, qty, share, fiDate } from "../lib/format.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
+import { EditInstrumentForm } from "./EditInstrumentForm.tsx";
 import { getHoldings } from "../server/portfolio.ts";
 import { refreshPricesNow } from "../server/prices.ts";
 
@@ -75,6 +76,8 @@ export const HoldingsPage = () => {
   // human correcting any instrument's stale/wrong stored price needs the
   // exact same entry path, see RecordPriceForm.tsx's own doc comment.
   const [priceFormFor, setPriceFormFor] = useState<number | null>(null);
+  /** Which row shows its "correct how this is priced" form. */
+  const [editFor, setEditFor] = useState<number | null>(null);
 
   const holdings = useQuery({
     queryKey: ["holdings"],
@@ -229,6 +232,24 @@ export const HoldingsPage = () => {
                   >
                     {priceFormFor === row.instrumentId ? "Peruuta" : "Syötä hinta"}
                   </button>
+                  <button
+                    type="button"
+                    className="mt-1 ml-1 text-xs"
+                    onClick={() =>
+                      setEditFor(editFor === row.instrumentId ? null : row.instrumentId)
+                    }
+                  >
+                    {editFor === row.instrumentId ? "Sulje" : "Muokkaa"}
+                  </button>
+                  {editFor === row.instrumentId && (
+                    <EditInstrumentForm
+                      instrumentId={row.instrumentId}
+                      onSaved={() => {
+                        setEditFor(null);
+                        void queryClient.invalidateQueries();
+                      }}
+                    />
+                  )}
                   {priceFormFor === row.instrumentId && (
                     <RecordPriceForm
                       instrumentId={row.instrumentId}
