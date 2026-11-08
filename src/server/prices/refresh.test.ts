@@ -124,6 +124,30 @@ test("one failing source does not stop the others", async () => {
   expect(log.filter((l) => !l.ok)[0]!.message).toContain("503");
 });
 
+test("stores a fund's latest value, which is always dated before the day it is fetched", async () => {
+  // OP's page on a Monday shows Friday's NAV. Asking for today alone dropped
+  // it, so a fund never got a price from the daily refresh at all.
+  const { db } = await testDb();
+  const fund = await seedInstrument(db, {
+    isin: crypto.randomUUID(),
+    name: "OP-Maailma Indeksi A",
+    kind: "fund",
+    priceSource: "op_fund",
+    sourceKey: "op-maailma-indeksi",
+    ticker: null,
+  });
+  const page = "<dl><dt>Osuuden arvo (21.08.)</dt><dd>283,60 EUR</dd></dl>";
+
+  const result = await refreshPrices(db, {
+    fetchImpl: async () => new Response(page),
+    today: "2026-08-24",
+  });
+
+  expect(result).toEqual({ ok: 1, failed: 0 });
+  const stored = await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all();
+  expect(stored.map((p) => [p.date, p.close])).toEqual([["2026-08-21", 28360]]);
+});
+
 test("skips manual instruments without logging a failure", async () => {
   const { db } = await testDb();
   await seedInstrument(db, { priceSource: "manual", sourceKey: "n/a" });

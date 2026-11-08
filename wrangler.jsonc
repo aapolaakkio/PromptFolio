@@ -5,7 +5,11 @@
   // node:crypto (createHash, used by the import hashing) and node:buffer come
   // from here. Without it the import and price modules fail to resolve at build.
   "compatibility_flags": ["nodejs_compat"],
-  "main": "@tanstack/react-start/server-entry",
+  // TanStack Start's handler plus the scheduled price refresh; see src/worker.ts.
+  "main": "src/worker.ts",
+  // Weekday evenings, 18:00 UTC (20:00 or 21:00 in Helsinki): after the
+  // exchanges close and the funds have published the day's value.
+  "triggers": { "crons": ["0 18 * * 1-5"] },
   "observability": { "enabled": true },
   // Only used to resolve the AI Gateway URL for Claude calls (AI_GATEWAY_ID).
   "ai": { "binding": "AI" },

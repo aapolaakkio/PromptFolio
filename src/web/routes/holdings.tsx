@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eur, qty, share, fiDate } from "../lib/format.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
 import { getHoldings } from "../server/portfolio.ts";
+import { refreshPricesNow } from "../server/prices.ts";
 
 const KIND_LABELS = {
   stock: "Osake",
@@ -131,7 +132,10 @@ export const HoldingsPage = () => {
 
   return (
     <>
-      <h1>Omistukset</h1>
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h1>Omistukset</h1>
+        <RefreshPricesButton />
+      </div>
       {/* Above the table, because the one question the table makes you work
           for -- how much rides on a single position -- is answered by the
           lengths at a glance. */}
@@ -242,5 +246,36 @@ export const HoldingsPage = () => {
         </tbody>
       </table>
     </>
+  );
+};
+
+/**
+ * Runs the price refresh now. It fetches every instrument's latest price and
+ * fills missing history, so it can take a while; everything priced is
+ * refetched when it finishes.
+ */
+const RefreshPricesButton = () => {
+  const queryClient = useQueryClient();
+  const refresh = useMutation({
+    mutationFn: () => refreshPricesNow(),
+    onSettled: () => void queryClient.invalidateQueries(),
+  });
+  return (
+    <div className="flex items-baseline gap-2">
+      {refresh.isError && (
+        <span role="alert" className="text-loss text-sm">
+          Hintojen päivitys epäonnistui
+        </span>
+      )}
+      {refresh.isSuccess && <span className="text-muted text-sm">Hinnat päivitetty</span>}
+      <button
+        type="button"
+        className="text-sm"
+        disabled={refresh.isPending}
+        onClick={() => refresh.mutate()}
+      >
+        {refresh.isPending ? "Päivitetään…" : "Päivitä hinnat"}
+      </button>
+    </div>
   );
 };

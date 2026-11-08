@@ -4,6 +4,7 @@ import { z } from "zod";
 import { isRealCalendarDate } from "../../server/calendar-date.ts";
 import { db } from "../../server/db/index.ts";
 import { recordManualPrice } from "../../server/prices/manual.ts";
+import { runScheduledRefresh } from "../../server/prices/refresh.ts";
 import { authed, readable } from "./guard.ts";
 
 /**
@@ -40,3 +41,14 @@ export const savePrice = createServerFn({ method: "POST" })
     }),
   )
   .handler(({ data }) => readable(() => recordManualPrice(db, data)));
+
+/**
+ * The same refresh the weekday cron runs, on demand: for a holding imported
+ * today, or a day the cron missed. Prices are shared across the household, so
+ * any signed-in member may run it.
+ */
+// ponytail: no throttle; the button disables while a run is in flight. Add one
+// if the price sources start refusing repeated runs.
+export const refreshPricesNow = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .handler(() => readable(() => runScheduledRefresh(db)));

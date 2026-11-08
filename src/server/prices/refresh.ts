@@ -42,6 +42,16 @@ const describeFailure = (cause: unknown): string =>
  * A point the plausibility check refuses is reported as a failure, not folded
  * into a clean "ok" -- the fetch worked, the data was not trusted.
  */
+/**
+ * How far back the daily refresh accepts a price. A fund publishes its value
+ * for the previous business day, so on a Monday the latest NAV is Friday's;
+ * asking for today alone dropped every fund price, every day.
+ */
+const RECENT_DAYS = 7;
+
+const daysBefore = (iso: string, days: number): string =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+
 export const refreshPrices = async (
   db: Db,
   opts: { fetchImpl?: FetchImpl; today?: string } = {},
@@ -57,7 +67,7 @@ export const refreshPrices = async (
     try {
       const points = await source.fetch({
         sourceKey: instrument.sourceKey,
-        from: asOf,
+        from: daysBefore(asOf, RECENT_DAYS),
         to: asOf,
         fetchImpl: opts.fetchImpl,
       });
