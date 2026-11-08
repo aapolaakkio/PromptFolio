@@ -185,7 +185,20 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
       const baseURL = env.AI_GATEWAY_ID
         ? await env.AI.gateway(env.AI_GATEWAY_ID).getUrl("anthropic")
         : undefined;
-      const anthropic = new Anthropic({ apiKey, baseURL, fetch: fetchImpl });
+      // An Authenticated Gateway refuses requests without this Cloudflare token.
+      const gatewayToken = env.AI_GATEWAY_TOKEN;
+      const anthropic = new Anthropic({
+        apiKey,
+        baseURL,
+        fetch: fetchImpl,
+        defaultHeaders: {
+          "cf-aig-authorization": baseURL && gatewayToken ? `Bearer ${gatewayToken}` : null,
+          // The SDK sends the key as `Authorization: Bearer`, which AI Gateway
+          // does not recognise as an Anthropic credential; `x-api-key` it does.
+          "x-api-key": apiKey,
+          authorization: null,
+        },
+      });
       const format = params.response_format;
       // ponytail: Haiku has no server-side fallback, so a refusal there just surfaces.
       const fallback = !params.model.startsWith("claude-haiku");

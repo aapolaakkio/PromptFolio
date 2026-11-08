@@ -33,6 +33,7 @@ export const env: Cloudflare.Env = Object.assign(proxy.env, {
   // (test-network-guard.ts). The key is a placeholder and never leaves the process.
   ANTHROPIC_API_KEY: "test-anthropic-key",
   AI_GATEWAY_ID: "",
+  AI_GATEWAY_TOKEN: "",
   AI: {
     run: () => {
       throw new Error("network blocked in tests: Workers AI");

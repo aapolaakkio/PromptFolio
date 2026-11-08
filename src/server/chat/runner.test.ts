@@ -300,14 +300,16 @@ const RequestBody = z.looseObject({
 const fakeAnthropic = (...responses: Response[]) => {
   const bodies: z.infer<typeof RequestBody>[] = [];
   const urls: string[] = [];
+  const headers: Headers[] = [];
   const fetchImpl: typeof fetch = (input, init) => {
     urls.push(input instanceof Request ? input.url : String(input));
+    headers.push(new Headers(init?.headers));
     bodies.push(RequestBody.parse(JSON.parse(z.string().parse(init?.body))));
     const next = responses.shift();
     if (next === undefined) throw new Error("fake Anthropic ran out of responses");
     return Promise.resolve(next);
   };
-  return { fetchImpl, bodies, urls };
+  return { fetchImpl, bodies, urls, headers };
 };
 
 describe("createClient", () => {
@@ -346,6 +348,7 @@ describe("createClient", () => {
     expect(body?.thinking).toEqual({ type: "adaptive" });
     expect(body?.fallbacks).toBe("default");
     expect(api.urls[0]).toContain("api.anthropic.com");
+    expect(api.headers[0]?.has("cf-aig-authorization")).toBe(false);
   });
 
   test("asks for structured output when given a schema, and skips fallbacks on Haiku", async () => {
@@ -430,11 +433,16 @@ describe("createClient", () => {
     ).rejects.toThrow("kieltäytyi");
   });
 
-  test("goes through AI Gateway when one is named", async () => {
+  test("goes through AI Gateway when one is named, with its token", async () => {
     const api = fakeAnthropic(anthropicStream("ok"));
-    const previous = { AI: env.AI, AI_GATEWAY_ID: env.AI_GATEWAY_ID };
+    const previous = {
+      AI: env.AI,
+      AI_GATEWAY_ID: env.AI_GATEWAY_ID,
+      AI_GATEWAY_TOKEN: env.AI_GATEWAY_TOKEN,
+    };
     Object.assign(env, {
       AI_GATEWAY_ID: "promptfolio",
+      AI_GATEWAY_TOKEN: "gateway-token",
       AI: {
         gateway: (id: string) => ({
           getUrl: (provider: string) =>
@@ -452,6 +460,10 @@ describe("createClient", () => {
       expect(api.urls[0]).toBe(
         "https://gateway.ai.cloudflare.com/v1/acct/promptfolio/anthropic/v1/messages",
       );
+      expect(api.headers[0]?.get("cf-aig-authorization")).toBe("Bearer gateway-token");
+      // The only form of the key AI Gateway recognises as an Anthropic credential.
+      expect(api.headers[0]?.get("x-api-key")).toBe(env.ANTHROPIC_API_KEY);
+      expect(api.headers[0]?.has("authorization")).toBe(false);
     } finally {
       Object.assign(env, previous);
     }
