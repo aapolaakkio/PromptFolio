@@ -4,6 +4,11 @@ import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 /** The model that writes every recipe. */
 export const RECIPE_MODEL = "claude-opus-5-5";
 const MAX_TOKENS = 16000;
+/**
+ * The most of a document a model is shown. A sample is a layout's first rows;
+ * a line long enough to blow past this is not a layout worth paying for.
+ */
+const MAX_SAMPLE_CHARS = 40_000;
 /** Attempts at a recipe before settling for the best one, unsaved. */
 const MAX_ATTEMPTS = 3;
 
@@ -35,7 +40,7 @@ export const askForRecipe = async <R, Run>(args: {
 }): Promise<Asked<R, Run> | null> => {
   let messages: readonly ChatMessage[] = [
     { role: "system", content: args.instructions },
-    { role: "user", content: args.sample },
+    { role: "user", content: args.sample.slice(0, MAX_SAMPLE_CHARS) },
   ];
   let best: { recipe: R; run: Run; score: number } | null = null;
 

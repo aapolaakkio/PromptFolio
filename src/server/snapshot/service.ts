@@ -13,6 +13,8 @@ import { loadPortfolio } from "../valuation.ts";
 import { holdingsTotalCheck } from "./holdings-draft.ts";
 import { decodeHoldingsFile, readHoldingsByRecipe } from "../import/recipe/holdings-recipe.ts";
 import { extractPages } from "../import/pdf-read.ts";
+import { MAX_PASTE_CHARS } from "../import/service.ts";
+import { MAX_UPLOAD_BYTES } from "../import/upload.ts";
 
 /**
  * A fund name reduced to what two spellings of the same fund share: brokers
@@ -54,7 +56,7 @@ const Adjust = z.object({
  */
 const PasteSnapshot = z.object({
   asOf: IsoDateSchema,
-  text: z.string().min(1, "Liitä taulukko ensin"),
+  text: z.string().min(1, "Liitä taulukko ensin").max(MAX_PASTE_CHARS, "Liite on liian suuri"),
 });
 
 const CreateSnapshot = z.object({
@@ -237,6 +239,11 @@ export const _setReaderClient = (client: ChatClient | null): void => {
   readerClient = client;
 };
 
+/** The same ceiling every other upload has: the file is read whole, then sent in part to a model. */
+const assertSize = (file: File): void => {
+  if (file.size > MAX_UPLOAD_BYTES) throw new HttpError(413, "Tiedosto on liian suuri (max 5 MB)");
+};
+
 /** A recipe's complaint, as a 400 the owner can read. */
 const asBadRequest = (cause: unknown, fallback: string): HttpError =>
   cause instanceof HttpError
@@ -258,6 +265,7 @@ export const proposeFromCsv = async (userId: string, form: FormData) => {
   const file = form.get("file");
   const asOf = IsoDateSchema.parse(form.get("asOf"));
   if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  assertSize(file);
   try {
     const text = decodeHoldingsFile(new Uint8Array(await file.arrayBuffer()));
     return await proposeFromText(userId, text, asOf);
@@ -288,6 +296,7 @@ export const proposeFromPaste = async (userId: string, body: z.infer<typeof Past
 export const proposeFromPdf = async (userId: string, form: FormData) => {
   const file = form.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  assertSize(file);
   try {
     const pages = await extractPages(await file.arrayBuffer());
     const text = pages.map((page) => page.text).join("\n");

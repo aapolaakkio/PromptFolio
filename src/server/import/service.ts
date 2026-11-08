@@ -18,7 +18,7 @@ import { DraftBody } from "./txn-draft.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
-const MAX_PASTE_CHARS = 2_000_000;
+export const MAX_PASTE_CHARS = 2_000_000;
 
 /**
  * Every known instrument, indexed two ways: by ISIN (Nordnet, and any
