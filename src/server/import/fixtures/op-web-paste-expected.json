@@ -1,0 +1,81 @@
+{
+  "txns": [
+    {
+      "accountId": 3,
+      "instrumentId": null,
+      "isin": null,
+      "type": "BUY",
+      "tradeDate": "2025-08-10",
+      "quantity": 1200000,
+      "unitPrice": 25000,
+      "amount": -30002,
+      "fee": 2,
+      "tax": 0,
+      "currency": "EUR",
+      "fxRateEur": 100000000,
+      "externalId": null,
+      "note": null
+    },
+    {
+      "accountId": 3,
+      "instrumentId": null,
+      "isin": null,
+      "type": "BUY",
+      "tradeDate": "2025-07-15",
+      "quantity": 1100000,
+      "unitPrice": 27273,
+      "amount": -30000,
+      "fee": 0,
+      "tax": 0,
+      "currency": "EUR",
+      "fxRateEur": 100000000,
+      "externalId": null,
+      "note": null
+    },
+    {
+      "accountId": 3,
+      "instrumentId": null,
+      "isin": null,
+      "type": "SELL",
+      "tradeDate": "2025-10-20",
+      "quantity": 15000000,
+      "unitPrice": 310,
+      "amount": 4455,
+      "fee": 45,
+      "tax": 0,
+      "currency": "EUR",
+      "fxRateEur": 100000000,
+      "externalId": null,
+      "note": null
+    },
+    {
+      "accountId": 3,
+      "instrumentId": null,
+      "isin": null,
+      "type": "DIVIDEND",
+      "tradeDate": "2025-04-10",
+      "quantity": 0,
+      "unitPrice": 8,
+      "amount": 160,
+      "fee": 0,
+      "tax": 0,
+      "currency": "EUR",
+      "fxRateEur": 100000000,
+      "externalId": null,
+      "note": null
+    }
+  ],
+  "unknownIsins": [
+    {
+      "isin": null,
+      "name": "OP-MAAILMA INDEKSI A",
+      "currency": "EUR"
+    },
+    {
+      "isin": null,
+      "name": "ESIMERKKI OYJ",
+      "currency": "EUR"
+    }
+  ],
+  "problems": []
+}

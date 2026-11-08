@@ -6,14 +6,13 @@ import { db } from "../db/index.ts";
 import { imports, instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
-import { OP_WEB_PASTE } from "./brokers.ts";
 import { commitDraft, undoImport } from "./commit.ts";
-import { mapRows, type Draft } from "./map.ts";
+import type { Draft } from "./map.ts";
 import { portfoliosNamed } from "./portfolios.ts";
-import { parseOpPaste } from "./op-paste.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
 import { extractPages, readTransactionsPdf } from "./pdf-read.ts";
+import { readBrokerRecordByRecipe } from "./recipe/broker-record.ts";
 import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
 import { DraftBody, transactionsDraftFrom } from "./txn-draft.ts";
 
@@ -123,35 +122,46 @@ const PasteBody = z.object({
 });
 
 /**
- * OP's pasted view into the same draft a CSV upload produces, so it commits the
- * same way. No detection step: the paste has no delimiter and no header row for
- * a signature to match.
+ * A paste is a table when its first line splits into several columns and most
+ * lines split the same way; otherwise every value sits on its own line, as
+ * OP's web view copies.
  */
-const buildPasteDraft = async (text: string, accountId: number) => {
-  let parsed: ReturnType<typeof parseOpPaste>;
+// ponytail: a column-count heuristic; let the model choose if a paste fools it.
+const looksLikeTable = (text: string): boolean => {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const header = lines[0] ?? "";
+  return ["\t", ";", ","].some((delimiter) => {
+    const width = header.split(delimiter).length;
+    if (width < 3) return false;
+    const same = lines.filter((line) => line.split(delimiter).length === width).length;
+    return same >= lines.length / 2;
+  });
+};
+
+/**
+ * Pasted transactions into the same draft a CSV upload produces, so they commit
+ * the same way. Read by a recipe like every other import: a pasted table by a
+ * table recipe, one value per line by a record recipe.
+ */
+const buildPasteDraft = async (text: string, userId: string, accountId: number) => {
+  const known = await knownInstrumentMaps();
+  const client = readerClient ?? createClient();
   try {
-    parsed = parseOpPaste(text);
+    const run = looksLikeTable(text)
+      ? await readBrokerTableByRecipe(
+          new TextEncoder().encode(text).buffer,
+          userId,
+          client,
+          known,
+          accountId,
+        )
+      : await readBrokerRecordByRecipe(text, userId, client, known, accountId);
+    return { draft: run.draft, sha256: createHash("sha256").update(text).digest("hex") };
   } catch (cause) {
-    // parseOpPaste throws a plain Error (e.g. an unrecognised header block)
-    // rather than an HttpError -- handle() would otherwise report it as a
-    // generic 500, which is wrong for what is really a 400 (malformed
-    // input), and would hide the parser's own descriptive Finnish message
-    // from the client.
-    throw new HttpError(
-      400,
-      cause instanceof Error ? cause.message : "OP-liitettä ei voitu jäsentää",
-    );
+    throw cause instanceof HttpError
+      ? cause
+      : new HttpError(400, cause instanceof Error ? cause.message : "Liitettä ei voitu lukea");
   }
-  const { knownIsins, knownNames } = await knownInstrumentMaps();
-  const sha256 = createHash("sha256").update(text).digest("hex");
-  return {
-    draft: mapRows(parsed.rows, OP_WEB_PASTE, knownIsins, {
-      accountId,
-      csvProblems: parsed.problems,
-      knownNames,
-    }),
-    sha256,
-  };
 };
 
 /**
@@ -166,9 +176,8 @@ const fireBackfill = (draft: Draft): void => {
 };
 
 // A pasted-text import has no real filename; this constant labels the
-// resulting `imports` row the same way every OP paste produces, so the
-// import history reads as "an OP paste", not a made-up per-request name.
-const OP_PASTE_FILENAME = "op-liite.txt";
+// resulting `imports` row the same way for every paste.
+const PASTE_FILENAME = "liite.txt";
 
 // Preview and commit both re-parse the uploaded file (or re-parse the
 // pasted text) from scratch. That is deliberate: no server-side draft state
@@ -257,8 +266,8 @@ export const commitUpload = async (userId: string, form: FormData) => {
 export const previewPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
   await assertAccountOwned(userId, accountId);
-  const { draft, sha256 } = await buildPasteDraft(text, accountId);
-  return { broker: OP_WEB_PASTE.broker, filename: OP_PASTE_FILENAME, sha256, ...draft };
+  const { draft, sha256 } = await buildPasteDraft(text, userId, accountId);
+  return { broker: "paste", filename: PASTE_FILENAME, sha256, ...draft };
 };
 
 /**
@@ -269,10 +278,10 @@ export const previewPaste = async (userId: string, body: z.infer<typeof PasteBod
 export const commitPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
   await assertAccountOwned(userId, accountId);
-  const { draft, sha256 } = await buildPasteDraft(text, accountId);
+  const { draft, sha256 } = await buildPasteDraft(text, userId, accountId);
   return commitDraftBody(userId, {
     accountId,
-    filename: OP_PASTE_FILENAME,
+    filename: PASTE_FILENAME,
     sha256,
     kind: "paste",
     draft,

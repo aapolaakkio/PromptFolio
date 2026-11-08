@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { NORDNET } from "./brokers.ts";
+import { NORDNET } from "./fixtures/broker-mappings.ts";
 import { portfoliosNamed } from "./portfolios.ts";
 import type { RawRow } from "./types.ts";
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { readBytes } from "../../files.ts";
-import { NORDNET } from "../brokers.ts";
+import { NORDNET } from "../fixtures/broker-mappings.ts";
 import { parseCsv } from "../csv.ts";
 import { mapRows } from "../map.ts";
 import { BrokerTableSchema, runBrokerTable } from "./broker-table.ts";

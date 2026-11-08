@@ -22,7 +22,7 @@ const magnitudeEur = (txn: Txn): Money => {
  * What investing has cost, per year.
  *
  * **Capital income tax withheld on an equity savings account is not a fee.**
- * The broker books it as one -- `import/brokers.ts` maps `PÄÄOMATULOVERO OST`
+ * The broker books it as one -- `import/fixtures/broker-mappings.ts` maps `PÄÄOMATULOVERO OST`
  * to `FEE` deliberately, because the money leaves permanently without reaching
  * the investor and calling it a withdrawal would tell the money-weighted return
  * it was money taken out and enjoyed. For a report on the cost of investing it

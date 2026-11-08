@@ -1,7 +1,7 @@
 import { readBytes } from "../files.ts";
 import { test, expect } from "vitest";
 import { parseCsv } from "./csv.ts";
-import { NORDNET } from "./brokers.ts";
+import { NORDNET } from "./fixtures/broker-mappings.ts";
 
 const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
 

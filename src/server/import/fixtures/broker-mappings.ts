@@ -1,4 +1,11 @@
-import type { BrokerCsvConfig, OpPasteConfig } from "./types.ts";
+/**
+ * The field mappings the hand-written Nordnet and OP importers used, kept as
+ * test fixtures: `map.test.ts` exercises `mapRows` with them, and the reference
+ * recipes in `recipe/broker-reference.ts` are built from them so a recipe and
+ * the mapping it replaced cannot drift apart. No production code reads these;
+ * every import goes through a recipe.
+ */
+import type { BrokerCsvConfig, OpPasteConfig } from "../types.ts";
 
 /**
  * Read off a real Nordnet export (288 rows, 30 columns): UTF-16LE with a BOM,

@@ -2,8 +2,9 @@ import { readBytes, readText } from "../files.ts";
 import { test, expect } from "vitest";
 import { mapRows, normaliseDate, contentHash, type DraftTxn } from "./map.ts";
 import { parseCsv } from "./csv.ts";
-import { parseOpPaste } from "./op-paste.ts";
-import { NORDNET, OP_WEB_PASTE } from "./brokers.ts";
+import { runBrokerRecord } from "./recipe/broker-record.ts";
+import { OP_PASTE_RECIPE } from "./recipe/broker-reference.ts";
+import { NORDNET, OP_WEB_PASTE } from "./fixtures/broker-mappings.ts";
 import { buildLots } from "../../core/costbasis.ts";
 import { EUR, parseCurrency, formatMoney, money, parseFxRate } from "../../core/money.ts";
 import type { RawRow } from "./types.ts";
@@ -11,6 +12,15 @@ import type { TransactionType, Txn } from "../../core/types.ts";
 
 const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
 const opFixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
+
+/** An OP paste, read by its reference recipe into the draft `mapRows` builds. */
+const opDraft = (text: string, options: { knownNames?: Map<string, number> } = {}) =>
+  runBrokerRecord(
+    text,
+    OP_PASTE_RECIPE,
+    { knownIsins: new Map(), knownNames: options.knownNames ?? new Map() },
+    0,
+  ).draft;
 
 /** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {
@@ -145,7 +155,7 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
 
   // One of the fixture's 13 rows is reported rather than booked: the
   // fractional adjustment's cash-only twin, whose quantity and cash the other
-  // leg already carries -- see brokers.ts's ignoredTypes.
+  // leg already carries -- see fixtures/broker-mappings.ts's ignoredTypes.
   expect(draft.problems).toHaveLength(1);
   expect(draft.txns).toHaveLength(12);
 
@@ -221,11 +231,10 @@ test("collects ISINs it has never seen instead of inventing instruments", async 
   expect(draft.txns.find((t) => t.isin === "SE0005993102")!.instrumentId).toBeNull();
 });
 
-// --- OP web-paste (op-paste.ts's own shape-anchored parser, not parseCsv) --
+// --- OP web-paste, read by its reference recipe --
 
 test("maps the OP fixture's OSTO-with-fee row: fi dates, unit suffixes, and a name-only instrument", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   expect(draft.problems).toEqual([]);
   expect(draft.txns).toHaveLength(4);
 
@@ -240,16 +249,14 @@ test("maps the OP fixture's OSTO-with-fee row: fi dates, unit suffixes, and a na
 });
 
 test("the OP fixture's OSTO-without-fee row (the fee line is absent, not blank) still parses", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const noFee = draft.txns[1]!;
   expect(noFee.fee).toBe(0);
   expect(noFee.amount).toBe(-30000);
 });
 
 test("the OP fixture's MYYNTI row: unsigned total re-signed positive, never cross-checked against quantity × Kurssi", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const sell = draft.txns[2]!;
   expect(sell.type).toBe("SELL");
   expect(sell.quantity).toBe(15_000_000); // "15,00   kpl"
@@ -259,8 +266,7 @@ test("the OP fixture's MYYNTI row: unsigned total re-signed positive, never cros
 });
 
 test("the OP fixture's OSINKO row maps to DIVIDEND, positive amount, and quantity forced to 0", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const dividend = draft.txns[3]!;
   expect(dividend.type).toBe("DIVIDEND");
   expect(dividend.amount).toBe(160); // unsigned "1,60   EUR", signed positive by OSINKO
@@ -278,8 +284,7 @@ test("the OP fixture's OSINKO row maps to DIVIDEND, positive amount, and quantit
 // carry a zero fee, which is exactly why the double-count bug survived --
 // this test is the one that would have caught it.
 test("a real OP fixture row's non-zero fee reaches cost basis and disposal proceeds unadjusted, end to end", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
 
   const toTxn = (
     row: DraftTxn,
@@ -340,8 +345,7 @@ test("a real OP fixture row's non-zero fee reaches cost basis and disposal proce
 });
 
 test("every OP fixture row with no ISIN is tracked as unknown by name, never given an invented ISIN", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map());
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const names = draft.unknownIsins.map((u) => u.name).sort();
   expect(names).toEqual(["ESIMERKKI OYJ", "OP-MAAILMA INDEKSI A"]);
   expect(draft.unknownIsins.every((u) => u.isin === null)).toBe(true);
@@ -350,8 +354,7 @@ test("every OP fixture row with no ISIN is tracked as unknown by name, never giv
 // --- options.knownNames (Task 20: makes a name-only row resolvable across re-imports) ---
 
 test("resolves a name-only row against options.knownNames, case-insensitively", async () => {
-  const { rows } = parseOpPaste(await opFixture("op-web-paste-sample.txt"));
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map(), {
+  const draft = opDraft(await opFixture("op-web-paste-sample.txt"), {
     // Deliberately mixed-case, unlike the fixture's all-caps "OP-MAAILMA
     // INDEKSI A" -- proves the match is case-insensitive, not merely an
     // exact-string match that happens to line up.
@@ -388,8 +391,7 @@ test("still tracks a name-only row as unknown when knownNames has no match", () 
     "10,00   EUR",
     "10,00   EUR",
   ].join("\n");
-  const { rows } = parseOpPaste(paste);
-  const draft = mapRows(rows, OP_WEB_PASTE, new Map(), {
+  const draft = opDraft(paste, {
     knownNames: new Map([["eri rahasto", 1]]),
   });
   expect(draft.txns[0]!.instrumentId).toBeNull();
@@ -632,7 +634,7 @@ test("an empty unit-price cell yields no unit price, distinct from a literal 0",
       Summa: "-5,00",
     }),
   ];
-  // NORDNET's real typeMap has no "palkkio" label (see brokers.ts -- only
+  // NORDNET's real typeMap has no "palkkio" label (see fixtures/broker-mappings.ts -- only
   // the 13 labels actually observed in the real export are mapped). This
   // test only cares about the empty-vs-zero unit-price distinction, so it
   // overrides typeMap locally rather than asserting on an invented label.
@@ -688,7 +690,7 @@ test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
 // A second, wider Nordnet export (2026-08-28) covering a second account carried
 // five transaction-type labels the first one never showed. These map the ones
 // that can be booked from a single row; the paired-leg events below stay
-// unmapped on purpose -- see brokers.ts's own typeMap comment.
+// unmapped on purpose -- see fixtures/broker-mappings.ts's own typeMap comment.
 test("maps the labels a second Nordnet account introduced: dividend, equity-savings cash legs, withheld tax", () => {
   const csv = [
     NORDNET_HEADER,
@@ -867,9 +869,7 @@ test("maps OP's corporate actions so a reverse split lands on the right share co
     block(["ESIMERKKI OYJ", "VAIHTO - JÄTTÖ", "21.03.2020", "18,00   kpl"]),
   ].join("\n");
 
-  const parsed = parseOpPaste(text);
-  expect(parsed.problems).toEqual([]);
-  const draft = mapRows(parsed.rows, OP_WEB_PASTE, new Map(), {
+  const draft = opDraft(text, {
     knownNames: new Map([
       ["ESIMERKKI OYJ", 1],
       ["ESIMERKKI OYJ/SH NV", 2],

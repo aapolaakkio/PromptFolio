@@ -105,11 +105,9 @@ export type BrokerCsvConfig = FieldMapping & {
 };
 
 /**
- * OP's web-paste transaction view: newline-separated, no delimiter, no
- * fixed column count per row (a fee line is present or absent). Parsed by
- * `parseOpPaste`, not `parseCsv` -- there is no `encoding`/`delimiter` to
- * declare, and no single header row for `detectBroker`'s signature match
- * to run against, so this type carries none of those fields.
+ * OP's web-paste transaction view: newline-separated, no delimiter, no fixed
+ * column count per row. Only the test fixture mapping uses it now; a paste is
+ * read by a record recipe, so this type carries no `encoding`/`delimiter`.
  */
 export type OpPasteConfig = FieldMapping & {
   readonly broker: "op";

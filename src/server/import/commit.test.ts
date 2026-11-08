@@ -166,7 +166,7 @@ test("refuses a draft with unresolved isins", async () => {
 });
 
 // Review finding: a broker with no ISIN column at all (OP's web-paste view,
-// see brokers.ts) reports its unknown instruments with `isin: null`. The
+// see fixtures/broker-mappings.ts) reports its unknown instruments with `isin: null`. The
 // refusal message must fall back to `name` there -- `Array.prototype.join`
 // renders a null array entry as an empty string, so without the fallback
 // this would throw a message naming nothing at all.

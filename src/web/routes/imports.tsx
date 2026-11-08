@@ -263,11 +263,10 @@ export const ImportsPage = () => {
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
 
-  // The OP paste text travels from the <textarea> to this body untouched --
-  // never trimmed or whitespace-collapsed. The parser anchors on an exact
-  // single-space separator line and multi-space unit padding
-  // ("1,0453   kpl"); either would destroy that shape (spec §10a A3,
-  // op-paste.ts's own module comment).
+  // The pasted text travels from the <textarea> to this body untouched --
+  // never trimmed or whitespace-collapsed. A recipe reads tabs, separator
+  // lines and unit padding ("1,0453   kpl") as structure, so normalising any
+  // of them would change the layout it was written for.
   const pasteBody = () => ({
     // SAFETY: same as fileForm -- the paste buttons are disabled whenever
     // `pasteText` is empty or `accountId` is null.
@@ -278,7 +277,7 @@ export const ImportsPage = () => {
   const previewPaste = useMutation({
     mutationFn: async () => {
       const draft = await previewOpPaste({ data: pasteBody() });
-      return [{ name: "OP-liite", file: null, draft, rows: editableRows(draft) }];
+      return [{ name: "Liite", file: null, draft, rows: editableRows(draft) }];
     },
     onSuccess: showPreviews,
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
@@ -427,7 +426,7 @@ export const ImportsPage = () => {
               disabled={source === "paste"}
               onClick={() => selectSource("paste")}
             >
-              OP-liite (liitä teksti)
+              Liitä teksti
             </button>
           </div>
 
@@ -456,7 +455,7 @@ export const ImportsPage = () => {
           ) : (
             <section className="card mt-4">
               <label>
-                OP:n verkkopalvelun tapahtumataulukko (kopioi ja liitä sellaisenaan)
+                Välittäjän verkkopalvelun tapahtumataulukko (kopioi ja liitä sellaisenaan)
                 <textarea
                   rows={10}
                   className="font-mono text-xs"

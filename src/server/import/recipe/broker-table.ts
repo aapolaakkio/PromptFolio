@@ -19,7 +19,7 @@ const MAX_LABELS = 40;
 const QUOTED_FAILURES = 10;
 const NOT_READABLE = "Tiedostoa ei tunnistettu tapahtumaluetteloksi";
 
-const FIELDS = [
+export const FIELDS = [
   "externalId",
   "tradeDate",
   "type",
@@ -45,7 +45,7 @@ const NUMERIC: ReadonlySet<CanonicalField> = new Set([
   "costBasis",
 ]);
 
-const TYPES = [
+export const TYPES = [
   "BUY",
   "SELL",
   "DIVIDEND",
@@ -64,6 +64,16 @@ const TYPES = [
  * deliberately ignored with a reason, and an unmapped label fails the check
  * rather than being guessed at import time.
  */
+export const TypeRuleSchema = z
+  .object({
+    label: z.string().min(1),
+    type: z.enum([...TYPES, "IGNORE"]),
+    /** Why an IGNORE row is skipped, shown on the review screen. */
+    reason: z.string().nullable(),
+    sign: z.union([z.literal(1), z.literal(-1)]).nullable(),
+  })
+  .strict();
+
 const BaseBrokerTable = z
   .object({
     kind: z.literal("broker-table"),
@@ -84,19 +94,7 @@ const BaseBrokerTable = z
     money: MoneyFormatSchema,
     /** True when the amount is printed unsigned, so each type carries its sign. */
     unsignedAmount: z.boolean(),
-    types: z
-      .array(
-        z
-          .object({
-            label: z.string().min(1),
-            type: z.enum([...TYPES, "IGNORE"]),
-            /** Why an IGNORE row is skipped, shown on the review screen. */
-            reason: z.string().nullable(),
-            sign: z.union([z.literal(1), z.literal(-1)]).nullable(),
-          })
-          .strict(),
-      )
-      .max(80),
+    types: z.array(TypeRuleSchema).max(80),
   })
   .strict();
 
@@ -128,11 +126,14 @@ const parseBrokerTable = (raw: unknown): BrokerTable => BrokerTableSchema.parse(
  * and keyed by field name, so the mapping's columns are the field names
  * themselves and its dates are ISO.
  */
-export const mappingOf = (recipe: BrokerTable): FieldMapping => {
+export const mappingOf = (
+  recipe: Pick<BrokerTable, "types" | "unsignedAmount">,
+  fields: readonly CanonicalField[],
+): FieldMapping => {
   const mapped = recipe.types.filter((t) => t.type !== "IGNORE");
   return {
     dateFormat: "iso",
-    columns: Object.fromEntries(recipe.columns.map((c) => [c.field, c.field])),
+    columns: Object.fromEntries(fields.map((field) => [field, field])),
     typeMap: Object.fromEntries(mapped.map((t) => [t.label.toLowerCase(), t.type])),
     ignoredTypes: Object.fromEntries(
       recipe.types
@@ -145,25 +146,56 @@ export const mappingOf = (recipe: BrokerTable): FieldMapping => {
   };
 };
 
+/** One field's printed text as the plain value `mapRows` parses. */
+export const readField = (
+  field: CanonicalField,
+  text: string,
+  format: Pick<BrokerTable, "dateFormat" | "money">,
+): string => {
+  const raw = text.trim();
+  if (raw === "") return "";
+  if (field === "tradeDate") return readDate(raw, format.dateFormat);
+  return NUMERIC.has(field) ? readDecimal(raw, format.money) : raw;
+};
+
 /** One row's cells, read by the recipe into the plain text `mapRows` parses. */
 const normalise = (row: RawRow, recipe: BrokerTable): RawRow => {
   const values: Record<string, string> = {};
   for (const column of recipe.columns) {
-    const raw = (
+    const raw =
       column.position === null
         ? (row.values[column.header] ?? "")
-        : (row.cells[column.position - 1] ?? "")
-    ).trim();
-    values[column.field] =
-      raw === ""
-        ? ""
-        : column.field === "tradeDate"
-          ? readDate(raw, recipe.dateFormat)
-          : NUMERIC.has(column.field)
-            ? readDecimal(raw, recipe.money)
-            : raw;
+        : (row.cells[column.position - 1] ?? "");
+    values[column.field] = readField(column.field, raw, recipe);
   }
   return { line: row.line, values, cells: [] };
+};
+
+/**
+ * Normalised rows into a draft, and which of its problems are failures: every
+ * problem except a row the recipe deliberately ignored, which is reported on
+ * review but means the recipe did its job.
+ */
+export const mapNormalised = (
+  rows: readonly RawRow[],
+  csvProblems: readonly CsvProblem[],
+  mapping: FieldMapping,
+  known: KnownInstruments,
+  accountId: number,
+) => {
+  const draft = mapRows(rows, mapping, known.knownIsins, {
+    accountId,
+    csvProblems: [...csvProblems],
+    knownNames: known.knownNames,
+  });
+  const ignored = new Set(Object.keys(mapping.ignoredTypes ?? {}));
+  const ignoredLines = new Set(
+    rows.filter((row) => ignored.has((row.values.type ?? "").toLowerCase())).map((r) => r.line),
+  );
+  const failures = draft.problems
+    .filter((problem) => !ignoredLines.has(problem.line))
+    .map(({ line, message }) => ({ line, message }));
+  return { draft, failures };
 };
 
 export type TableRun = {
@@ -209,19 +241,16 @@ export const runBrokerTable = (
       }
     }
   }
-  const mapping = mappingOf(recipe);
-  const draft = mapRows(rows, mapping, known.knownIsins, {
-    accountId,
+  const { draft, failures } = mapNormalised(
+    rows,
     csvProblems,
-    knownNames: known.knownNames,
-  });
-  const ignored = new Set(Object.keys(mapping.ignoredTypes ?? {}));
-  const ignoredLines = new Set(
-    rows.filter((row) => ignored.has((row.values.type ?? "").toLowerCase())).map((r) => r.line),
+    mappingOf(
+      recipe,
+      recipe.columns.map((column) => column.field),
+    ),
+    known,
+    accountId,
   );
-  const failures = draft.problems
-    .filter((problem) => !ignoredLines.has(problem.line))
-    .map(({ line, message }) => ({ line, message }));
   return { draft, rows, missingHeaders, failures };
 };
 
@@ -255,10 +284,10 @@ const labelsOf = (bytes: ArrayBuffer): string => {
     .join("\n");
 };
 
-const passes = (run: TableRun): boolean =>
+export const passes = (run: TableRun): boolean =>
   run.missingHeaders.length === 0 && run.failures.length === 0 && run.draft.txns.length > 0;
 
-const feedbackOf = (run: TableRun): string => {
+export const feedbackOf = (run: TableRun): string => {
   if (run.missingHeaders.length > 0) {
     return `Näitä sarakkeita ei ole otsikkorivillä: ${run.missingHeaders.join(", ")}`;
   }

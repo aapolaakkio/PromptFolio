@@ -8,7 +8,7 @@ import { addInstrument } from "../instruments/store.ts";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
-import { NORDNET_TABLE_RECIPE } from "./recipe/broker-reference.ts";
+import { NORDNET_TABLE_RECIPE, OP_PASTE_RECIPE } from "./recipe/broker-reference.ts";
 import type { DraftBody } from "./txn-draft.ts";
 
 // This file exercises the import service (preview/commit/undo) and
@@ -27,9 +27,20 @@ import type { DraftBody } from "./txn-draft.ts";
 
 type Service = typeof import("./service.ts");
 
-/** A model that describes every table as Nordnet's export. */
+/**
+ * A model that describes a table as Nordnet's export and one-value-per-line
+ * text as OP's paste -- the two layouts this file's fixtures use.
+ */
 const nordnetReader = {
-  run: () => Promise.resolve({ text: JSON.stringify(NORDNET_TABLE_RECIPE), toolCalls: [] }),
+  run: (params: { readonly messages: readonly { readonly content: string }[] }) =>
+    Promise.resolve({
+      text: JSON.stringify(
+        params.messages[0]?.content.includes("omalla rivillään")
+          ? OP_PASTE_RECIPE
+          : NORDNET_TABLE_RECIPE,
+      ),
+      toolCalls: [],
+    }),
 };
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
@@ -348,7 +359,7 @@ describe("POST /api/imports/preview", () => {
     };
     expect(body.broker).toBe("csv");
     // 13 data rows in the fixture, one of them (the fractional adjustment's
-    // cash-only twin) reported rather than booked -- see brokers.ts's
+    // cash-only twin) reported rather than booked -- see fixtures/broker-mappings.ts's
     // ignoredTypes -- so 12 reach the draft as transactions.
     expect(body.txns).toHaveLength(12);
     // No instrument is pre-registered for this fresh user, so every isin
@@ -528,9 +539,8 @@ describe("POST /api/imports/:id/undo", () => {
 // Task 20 closes the gap Task 11's report flagged: OP's paste has no HTTP
 // route at all. Both routes reuse buildPasteDraft -> the same mapRows /
 // commitDraft pipeline the file-upload routes use -- the only difference is
-// how the raw text is obtained (parseOpPaste, not parseCsv). knownIsins
-// alone can never resolve an OP row: it carries no ISIN at all, ever (see
-// op-paste.ts), so `knownInstrumentMaps`'s companion `knownNames` map
+// how the raw text is read (a record recipe, not a table one). knownIsins
+// alone can never resolve an OP row: it carries no ISIN at all, ever, so `knownInstrumentMaps`'s companion `knownNames` map
 // (Task 20's change to map.ts) is what lets a *previously registered*
 // instrument stop showing up as unknown -- proven directly below, not just
 // asserted.
@@ -581,7 +591,7 @@ describe("POST /api/imports/op-paste/preview", () => {
     expect(PasteBody.safeParse({ text: await opPasteText() }).success).toBe(false);
   });
 
-  test("rejects text whose header block isn't a real OP paste", async () => {
+  test("rejects text no recipe can read as transactions", async () => {
     const { userId } = await signUp(
       `imp-paste-preview-badheader-${crypto.randomUUID()}@example.com`,
     );
@@ -593,7 +603,7 @@ describe("POST /api/imports/op-paste/preview", () => {
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
     const body = response.body as { error: string };
-    expect(body.error).toContain("otsikkoa");
+    expect(body.error).toContain("tapahtumaluetteloksi");
   });
 
   test("previews the real OP paste fixture and reports both name-only unresolved instruments", async () => {
@@ -613,7 +623,7 @@ describe("POST /api/imports/op-paste/preview", () => {
       problems: unknown[];
       unknownIsins: Array<{ isin: string | null; name: string }>;
     };
-    expect(body.broker).toBe("op");
+    expect(body.broker).toBe("paste");
     expect(body.txns).toHaveLength(4);
     expect(body.problems).toEqual([]);
     expect(body.unknownIsins.map((u) => u.name).sort()).toEqual([
