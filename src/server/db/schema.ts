@@ -126,9 +126,28 @@ export const instruments = sqliteTable("instruments", {
     enum: ["yahoo", "nordnet_fund", "op_fund", "manual"],
   }).notNull(),
   sourceKey: text("source_key").notNull(),
+  // "pending" while a registry lookup is still owed, "attention" when it needs the user.
+  lookupStatus: text("lookup_status", { enum: ["ok", "pending", "attention"] })
+    .notNull()
+    .default("ok"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
+});
+
+/** Single row (id 1): when Yahoo may be asked again, and the current backoff. */
+export const yahooGate = sqliteTable("yahoo_gate", {
+  id: integer("id").primaryKey(),
+  pausedUntil: integer("paused_until"),
+  backoffMs: integer("backoff_ms").notNull().default(0),
+});
+
+/** Cached registry lookups, keyed by ISIN or `name:` + lowercased name. */
+export const instrumentLookups = sqliteTable("instrument_lookups", {
+  key: text("key").primaryKey(),
+  outcome: text("outcome", { enum: ["found", "form", "pending"] }).notNull(),
+  result: text("result").notNull(),
+  checkedAt: integer("checked_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const imports = sqliteTable("imports", {
