@@ -91,8 +91,12 @@ export const HoldingsChart = ({ holdings }: { holdings: readonly HoldingBar[] })
   if (rows.length === 0) return <p className="text-muted">Ei arvotettavia omistuksia.</p>;
 
   return (
-    <div style={{ height: `${Math.max(120, rows.length * 34)}px` }}>
-      <Chart definition={definition} ariaLabel="Omistukset arvon mukaan" />
-    </div>
+    // `height` sizes the chart itself: since @tanstack/react-charts 1.x the
+    // surrounding box's height is not measured, and the chart overflowed it.
+    <Chart
+      definition={definition}
+      height={Math.max(120, rows.length * 34)}
+      ariaLabel="Omistukset arvon mukaan"
+    />
   );
 };

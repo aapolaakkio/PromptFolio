@@ -110,6 +110,7 @@ export const AllocationChart = ({ slices }: { slices: AllocationSlice[] }) => {
     <div>
       <div className="h-10">
         <Chart
+          height={40}
           definition={definition}
           ariaLabel="Jakauma"
           aspectRatio={30 / 1}

@@ -76,7 +76,7 @@ export const MonthlyFlowChart = ({ months }: { readonly months: readonly Monthly
 
   return (
     <div className="h-72">
-      <Chart definition={definition} ariaLabel="Tulot ja menot kuukausittain" />
+      <Chart definition={definition} height={288} ariaLabel="Tulot ja menot kuukausittain" />
     </div>
   );
 };

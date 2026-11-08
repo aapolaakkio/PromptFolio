@@ -114,7 +114,7 @@ export const CategoryTrendChart = ({
 
   return (
     <div className="h-72">
-      <Chart definition={definition} ariaLabel="Kulutus luokittain kuukausittain" />
+      <Chart definition={definition} height={288} ariaLabel="Kulutus luokittain kuukausittain" />
     </div>
   );
 };

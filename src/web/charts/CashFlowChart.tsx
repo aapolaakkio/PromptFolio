@@ -168,7 +168,11 @@ export const CashFlowChart = ({
 
   return (
     <div className="h-128">
-      <Chart definition={definition} ariaLabel="Rahavirrat: tulot, menot ja sijoitukset" />
+      <Chart
+        definition={definition}
+        height={512}
+        ariaLabel="Rahavirrat: tulot, menot ja sijoitukset"
+      />
     </div>
   );
 };
