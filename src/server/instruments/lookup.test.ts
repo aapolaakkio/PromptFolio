@@ -1,14 +1,26 @@
 import { readText } from "../files.ts";
 import { urlOf } from "../prices/types.ts";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
-import { lookupInstrument } from "./lookup.ts";
+import { gatedFetch } from "../prices/yahoo-gate.ts";
+import { db } from "../db/index.ts";
+import { yahooGate } from "../db/schema.ts";
+import { lookupInstrument as lookupWithSpacing } from "./lookup.ts";
 import { figiLookup } from "./openfigi.ts";
 import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
 
 const EUR = parseCurrency("EUR");
+
+// No pause between quote requests: the tests would otherwise sit out 2 s each.
+const lookupInstrument = (
+  isin: Parameters<typeof lookupWithSpacing>[0],
+  name: string,
+  currency: Parameters<typeof lookupWithSpacing>[2],
+  fetchImpl: typeof fetch,
+) => lookupWithSpacing(isin, name, currency, fetchImpl, 0);
+
 const USD = parseCurrency("USD");
 
 const fixture = (name: string): Promise<string> =>
@@ -39,7 +51,17 @@ const stubFetch = (routes: Record<string, { body: string; status?: number }>): t
 };
 
 const chart = (currency: string) => ({
-  body: JSON.stringify({ chart: { result: [{ meta: { currency } }] } }),
+  body: JSON.stringify({
+    chart: {
+      result: [
+        {
+          meta: { currency },
+          timestamp: [1_700_000_000],
+          indicators: { quote: [{ close: [1.5] }] },
+        },
+      ],
+    },
+  }),
 });
 
 const figiBody = (
@@ -208,6 +230,8 @@ describe("lookupInstrument", () => {
       sourceKey: "NOKIA.HE",
       isin: "FI0009000681",
       listingCurrency: EUR,
+      outcome: "found",
+      formReason: null,
     });
   });
 
@@ -261,6 +285,8 @@ describe("lookupInstrument", () => {
     );
     expect(result.sourceKey).toBe("IWDA.L");
     expect(result.listingCurrency).toBe(USD);
+    expect(result.outcome).toBe("form");
+    expect(result.formReason).toBe("currency");
   });
 
   test("falls back to Yahoo's own quoteType when OpenFIGI answers nothing", async () => {
@@ -305,6 +331,8 @@ describe("lookupInstrument", () => {
     expect(result.priceSource).toBe("op_fund");
     expect(result.sourceKey).toBe("op-maailma-indeksi");
     expect(result.isin).toBe("FI4000261128");
+    expect(result.outcome).toBe("found");
+    expect(result.formReason).toBeNull();
   });
 
   test("a fund with no Yahoo listing falls back to OP's own page", async () => {
@@ -340,6 +368,8 @@ describe("lookupInstrument", () => {
       sourceKey: null,
       isin: "FI0000000003",
       listingCurrency: null,
+      outcome: "form",
+      formReason: "nothing",
     });
   });
 
@@ -383,6 +413,8 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
     // No free source checked maps a name or ticker back to an ISIN, so this
     // stays null rather than being invented.
     expect(result.isin).toBeNull();
+    expect(result.outcome).toBe("form");
+    expect(result.formReason).toBe("name");
   });
 
   test("refuses a match whose name is a different company", async () => {
@@ -471,10 +503,44 @@ describe("name search, company-form suffix", () => {
             : [{ symbol: "K34.F", quoteType: "EQUITY", longname: "Esimerkki Plc" }];
         return new Response(JSON.stringify({ quotes }));
       }
-      return new Response(JSON.stringify({ chart: { result: [{ meta: { currency: "EUR" } }] } }));
+      return new Response(chart("EUR").body);
     }) as typeof fetch;
     const byName = await lookupInstrument(null, "ESIMERKKI OYJ", EUR, stub);
     expect(asked[0]).toBe("ESIMERKKI");
     expect(byName.sourceKey).toBe("KCR.HE");
+  });
+});
+
+describe("lookupInstrument, paused Yahoo and request cost", () => {
+  beforeEach(async () => {
+    await db.delete(yahooGate).run();
+  });
+
+  test("a 429 during the lookup is pending, not nothing-found", async () => {
+    const base = stubFetch({
+      openfigi: { body: await fixture("figi-nokia.json") },
+      "finance/search": { body: "", status: 429 },
+    });
+    const result = await lookupInstrument("FI0009000681", "NOKIA", EUR, gatedFetch(db, base));
+    expect(result.outcome).toBe("pending");
+    expect(result.formReason).toBeNull();
+    expect(result.sourceKey).toBeNull();
+  });
+
+  test("candidate listings cost one request when there is one candidate", async () => {
+    let quoteRequests = 0;
+    const counting = stubFetch({
+      openfigi: { body: figiBody("NOKIA OYJ", "Common Stock") },
+      "finance/search": { body: JSON.stringify({ quotes: [{ symbol: "NOKIA.HE" }] }) },
+      "chart/NOKIA.HE": chart("EUR"),
+    });
+    // SAFETY: only a URL is passed and only the Response is read, as in stubFetch.
+    const stub = (async (input: RequestInfo | URL) => {
+      if (urlOf(input).includes("v8/finance/chart")) quoteRequests += 1;
+      return await counting(input);
+    }) as typeof fetch;
+    const result = await lookupInstrument("FI0009000681", "NOKIA", EUR, stub);
+    expect(result.outcome).toBe("found");
+    expect(quoteRequests).toBe(1);
   });
 });

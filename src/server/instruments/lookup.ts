@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { parseCurrency, type Currency } from "../../core/money.ts";
+import type { Currency } from "../../core/money.ts";
+import { fetchLatestQuotes } from "../prices/yahoo-batch.ts";
+import { YahooPausedError } from "../prices/yahoo-gate.ts";
 import { figiLookup, type InstrumentKind } from "./openfigi.ts";
 import { resolveOpSlug } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
@@ -19,18 +21,6 @@ const SearchResponse = z.object({
       shortname: z.string().optional(),
     }),
   ),
-});
-
-const ChartMeta = z.object({
-  chart: z.object({
-    result: z
-      .array(
-        z.object({
-          meta: z.object({ currency: z.string(), instrumentType: z.string().optional() }),
-        }),
-      )
-      .min(1),
-  }),
 });
 
 /**
@@ -69,9 +59,19 @@ export type InstrumentLookup = {
    * silently.
    */
   readonly listingCurrency: Currency | null;
+  /**
+   * "found": use it as is. "form": the user has to look (see `formReason`).
+   * "pending": Yahoo is paused, so nothing is known yet and nothing was
+   * wrongly reported as missing.
+   */
+  readonly outcome: "found" | "form" | "pending";
+  /** Why the form is needed; null unless `outcome` is "form". */
+  readonly formReason: "nothing" | "currency" | "name" | null;
 };
 
-const NOTHING: InstrumentLookup = {
+type Resolved = Omit<InstrumentLookup, "outcome" | "formReason">;
+
+const NOTHING: Resolved = {
   kind: null,
   name: null,
   priceSource: null,
@@ -97,7 +97,43 @@ export const lookupInstrument = async (
   name: string,
   currency: Currency | null,
   fetchImpl: typeof fetch = fetch,
+  quoteSpacingMs?: number,
 ): Promise<InstrumentLookup> => {
+  try {
+    return classify(await resolve(isin, name, currency, fetchImpl, quoteSpacingMs), currency);
+  } catch (err) {
+    if (err instanceof YahooPausedError) {
+      return { ...NOTHING, isin, outcome: "pending", formReason: null };
+    }
+    throw err;
+  }
+};
+
+/**
+ * Sends to the form: nothing found; the only listing is in another currency
+ * than the holding; or a row with no ISIN that a name search resolved (an OP
+ * fund resolved through its page has its ISIN by then, so it is not one).
+ */
+const classify = (resolved: Resolved, currency: Currency | null): InstrumentLookup => {
+  if (resolved.priceSource === null) return { ...resolved, outcome: "form", formReason: "nothing" };
+  if (resolved.isin === null) return { ...resolved, outcome: "form", formReason: "name" };
+  if (
+    currency !== null &&
+    resolved.listingCurrency !== null &&
+    resolved.listingCurrency !== currency
+  ) {
+    return { ...resolved, outcome: "form", formReason: "currency" };
+  }
+  return { ...resolved, outcome: "found", formReason: null };
+};
+
+const resolve = async (
+  isin: string | null,
+  name: string,
+  currency: Currency | null,
+  fetchImpl: typeof fetch,
+  quoteSpacingMs: number | undefined,
+): Promise<Resolved> => {
   // OP's paste import carries no ISIN column, so the fund's own page is the
   // only way to learn its ISIN. Once that is known there is nothing special
   // left about the holding: it goes through the ordinary path, which prices it
@@ -108,12 +144,12 @@ export const lookupInstrument = async (
     // from; with that in hand it takes the ordinary path.
     const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
     if (discovered !== null) {
-      return await lookupInstrument(discovered.isin, name, currency, fetchImpl);
+      return await resolve(discovered.isin, name, currency, fetchImpl, quoteSpacingMs);
     }
     // A share has no such page. Yahoo can still be searched by name, which
     // fills in everything except the ISIN -- no free source checked maps a
     // ticker or a name back to one, so that field stays typed by hand.
-    return await byName(name, currency, fetchImpl);
+    return await byName(name, currency, fetchImpl, quoteSpacingMs);
   }
 
   const figi = await settle(figiLookup(isin, fetchImpl));
@@ -127,6 +163,7 @@ export const lookupInstrument = async (
     ),
     currency,
     fetchImpl,
+    quoteSpacingMs,
   );
   if (listing !== null) {
     return {
@@ -156,7 +193,7 @@ const viaOpFundPage = async (
   isin: string | null,
   registryName: string | null,
   fetchImpl: typeof fetch,
-): Promise<InstrumentLookup> => {
+): Promise<Resolved> => {
   const op = await settle(resolveOpSlug(name, isin, fetchImpl));
   if (op === null) return { ...NOTHING, name: registryName, isin };
   return {
@@ -173,18 +210,20 @@ type Listing = { readonly symbol: string; readonly currency: Currency };
 
 /**
  * The first candidate quoted in the holding's currency, or the first that exists
- * at all, so the form can offer something and flag the mismatch. Probed in order
- * and stopped at the first match, so the home listing costs one request.
+ * at all, so the form can offer something and flag the mismatch. All candidates
+ * are quoted together in one call, in order.
  */
 const pickListing = async (
   candidates: readonly string[],
   currency: Currency | null,
   fetchImpl: typeof fetch,
+  quoteSpacingMs: number | undefined,
 ): Promise<Listing | null> => {
+  const quotes = await fetchLatestQuotes(candidates, fetchImpl, quoteSpacingMs);
   let fallback: Listing | null = null;
   for (const symbol of candidates) {
-    const quoted = await settle(listingCurrency(symbol, fetchImpl));
-    if (quoted === null) continue;
+    const quoted = quotes.get(symbol)?.currency;
+    if (quoted === undefined) continue;
     if (currency === null || quoted === currency) return { symbol, currency: quoted };
     fallback ??= { symbol, currency: quoted };
   }
@@ -204,7 +243,8 @@ const byName = async (
   name: string,
   currency: Currency | null,
   fetchImpl: typeof fetch,
-): Promise<InstrumentLookup> => {
+  quoteSpacingMs: number | undefined,
+): Promise<Resolved> => {
   const hits: NamedHit[] = [];
   const seen = new Set<string>();
   for (const term of searchTerms(name)) {
@@ -221,6 +261,7 @@ const byName = async (
     matching.map((hit) => hit.symbol),
     currency,
     fetchImpl,
+    quoteSpacingMs,
   );
   if (listing === null) return NOTHING;
 
@@ -299,7 +340,8 @@ const yahooSearchByName = async (name: string, fetchImpl: typeof fetch): Promise
 const settle = async <T>(work: Promise<T>): Promise<T | null> => {
   try {
     return await work;
-  } catch {
+  } catch (err) {
+    if (err instanceof YahooPausedError) throw err;
     return null;
   }
 };
@@ -319,19 +361,4 @@ const yahooSearch = async (isin: string, fetchImpl: typeof fetch): Promise<Yahoo
   return parsed.data.quotes
     .filter((quote) => !isIsinPlaceholder(quote.symbol, isin))
     .map((quote) => ({ symbol: quote.symbol, quoteType: quote.quoteType }));
-};
-
-const listingCurrency = async (
-  symbol: string,
-  fetchImpl: typeof fetch,
-): Promise<Currency | null> => {
-  const response = await fetchImpl(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-      symbol,
-    )}?range=1d&interval=1d`,
-  );
-  if (!response.ok) return null;
-  const parsed = ChartMeta.safeParse(await response.json());
-  if (!parsed.success) return null;
-  return parseCurrency(parsed.data.chart.result[0]!.meta.currency.toUpperCase());
 };
