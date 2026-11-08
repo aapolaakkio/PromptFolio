@@ -64,6 +64,20 @@ export const TYPES = [
  * deliberately ignored with a reason, and an unmapped label fails the check
  * rather than being guessed at import time.
  */
+/**
+ * Types whose amount is cash in or out, and so need a sign when the broker
+ * prints amounts unsigned. A split or a transfer of units moves no cash.
+ */
+export const MOVES_MONEY: ReadonlySet<string> = new Set([
+  "BUY",
+  "SELL",
+  "DIVIDEND",
+  "FEE",
+  "INTEREST",
+  "DEPOSIT",
+  "WITHDRAWAL",
+]);
+
 export const TypeRuleSchema = z
   .object({
     label: z.string().min(1),
@@ -108,10 +122,13 @@ export const BrokerTableSchema = BaseBrokerTable.superRefine((recipe, ctx) => {
   if (new Set(fields).size !== fields.length) {
     ctx.addIssue({ code: "custom", message: "Sama kenttä on nimetty kahdesti" });
   }
-  if (recipe.unsignedAmount && recipe.types.some((t) => t.type !== "IGNORE" && t.sign === null)) {
+  if (
+    recipe.unsignedAmount &&
+    recipe.types.some((t) => MOVES_MONEY.has(t.type) && t.sign === null)
+  ) {
     ctx.addIssue({
       code: "custom",
-      message: "Etumerkittömällä summalla jokaisella lajilla on oltava sign",
+      message: "Etumerkittömällä summalla jokaisella rahaa liikuttavalla lajilla on oltava sign",
     });
   }
 });
@@ -183,11 +200,22 @@ export const mapNormalised = (
   known: KnownInstruments,
   accountId: number,
 ) => {
-  const draft = mapRows(rows, mapping, known.knownIsins, {
+  const mapped = mapRows(rows, mapping, known.knownIsins, {
     accountId,
     csvProblems: [...csvProblems],
     knownNames: known.knownNames,
   });
+  // A broker that prints no ISIN (OP's web view) still names an instrument the
+  // ledger knows; its row shows that instrument's ISIN rather than a blank.
+  const isinOf = new Map([...known.knownIsins].map(([isin, id]) => [id, isin] as const));
+  const draft = {
+    ...mapped,
+    txns: mapped.txns.map((txn) =>
+      txn.isin === null && txn.instrumentId !== null
+        ? { ...txn, isin: isinOf.get(txn.instrumentId) ?? null }
+        : txn,
+    ),
+  };
   const ignored = new Set(Object.keys(mapping.ignoredTypes ?? {}));
   const ignoredLines = new Set(
     rows.filter((row) => ignored.has((row.values.type ?? "").toLowerCase())).map((r) => r.line),
@@ -254,11 +282,27 @@ export const runBrokerTable = (
   return { draft, rows, missingHeaders, failures };
 };
 
+/**
+ * How a label becomes a transaction type, shared by every broker recipe. The
+ * hard cases are corporate actions: legs that move no cash, where ignoring
+ * both halves of a pair silently strands units on a line that no longer
+ * exists -- which is what a model told "ignore when unsure" did to a real
+ * reverse split.
+ */
+export const TYPE_RULES = [
+  "types: jokainen esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi.",
+  "IGNORE vain kun samat kappaleet tai sama raha ovat jo toisella rivillä, ja kerro silloin reason. Älä koskaan ohita parin molempia puolia, jos kappaleita siirtyy tai määrä muuttuu.",
+  "Kun osakkeet siirtyvät arvopaperilajista toiseen (esim. YHDISTELY - OTTO ja YHDISTELY - JÄTTÖ): OTTO on TRANSFER_OUT ja JÄTTÖ on TRANSFER_IN.",
+  "Kun saman arvopaperin kappalemäärä muuttuu ilman rahaa (käänteinen split tai osakkeiden vaihto, esim. VAIHTO - OTTO ja VAIHTO - JÄTTÖ): JÄTTÖ on SPLIT ja sen quantity on uusi kokonaismäärä; OTTO on IGNORE.",
+  "Merkintä rahalla (esim. MERKINTÄ) on BUY. Merkintäoikeudet jotka eivät jää salkkuun (esim. IRROTUS - JÄTTÖ ja MERKINTÄOIK. OTTO): molemmat IGNORE.",
+  "Jos laji on aidosti tuntematon, käytä IGNORE ja kerro reason-kentässä miksi.",
+].join("\n");
+
 const INSTRUCTIONS = [
   "Saat välittäjän tapahtumaluettelon alun (CSV tai verkkopalvelusta kopioitu taulukko) ja jokaisen sarakkeen kaikki erilaiset arvot, kun niitä on vähän. Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen rivin.",
   "delimiter: sarake-erotin. columns: mikä otsikkorivin sarake (täsmälleen kuten kirjoitettu) on mikin kenttä. Pakolliset: tradeDate, type, amount. position vain jos sama otsikko toistuu, muuten null.",
   "Kentät: tradeDate kauppapäivä, type tapahtuman laji, instrumentName arvopaperin nimi, isin, quantity kappalemäärä, unitPrice kurssi, fee kulut, currency summan valuutta, amount rahavirta, costBasis siirtyvä hankinta-arvo (vaihdoissa), note välittäjän selite, priceCurrency kurssin valuutta, portfolio välittäjän tilinumero, externalId tapahtuman tunniste.",
-  "types: jokainen tiedostossa esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi. IGNORE jos rivi on toisen rivin toinen puoli (sama raha tai kappaleet on jo toisella rivillä); kerro silloin reason. Älä arvaa: jos laji on epäselvä, käytä IGNORE ja kerro miksi.",
+  TYPE_RULES,
   "unsignedAmount: true jos osto ja myynti tulostuvat samanmerkkisinä; silloin sign kertoo rahan suunnan (osto -1, myynti 1).",
   "money kertoo desimaali- ja tuhaterottimen, negatiivisen merkinnän ja strip-listassa yksiköt jotka poistetaan (esim. kpl, EUR).",
 ].join("\n");

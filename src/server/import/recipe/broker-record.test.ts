@@ -76,3 +76,40 @@ describe("sampleOf", () => {
     expect(sampleOf(text)).toContain("VAIHTO - JÄTTÖ");
   });
 });
+
+describe("BrokerRecordSchema", () => {
+  test("asks a sign only of labels that move money, so a split or transfer needs none", () => {
+    const recipe = {
+      ...OP_PASTE_RECIPE,
+      types: [
+        { label: "OSTO", type: "BUY", reason: null, sign: -1 },
+        { label: "VAIHTO - JÄTTÖ", type: "SPLIT", reason: null, sign: null },
+        { label: "YHDISTELY - OTTO", type: "TRANSFER_OUT", reason: null, sign: null },
+      ],
+    };
+    expect(BrokerRecordSchema.safeParse(recipe).success).toBe(true);
+    expect(
+      BrokerRecordSchema.safeParse({
+        ...recipe,
+        types: [{ label: "OSTO", type: "BUY", reason: null, sign: null }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("a row matched to a known instrument by name", () => {
+  test("carries that instrument's ISIN, though the paste printed none", async () => {
+    const run = runBrokerRecord(
+      await fixture(),
+      OP_PASTE_RECIPE,
+      {
+        knownIsins: new Map([["FI0000000001", 42]]),
+        knownNames: new Map([["OP-MAAILMA INDEKSI A", 42]]),
+      },
+      3,
+    );
+    expect(run.draft.txns[0]?.isin).toBe("FI0000000001");
+    // An instrument the ledger does not know stays without one: none is invented.
+    expect(run.draft.txns.find((t) => t.instrumentId === null)?.isin).toBeNull();
+  });
+});

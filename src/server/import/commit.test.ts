@@ -104,6 +104,20 @@ test("inserts draft rows and records the import", async () => {
   expect(importRow.skippedCount).toBe(0);
 });
 
+test("skips a row stored before its ISIN was known, now carrying one", async () => {
+  // A name-only paste stored the row with no ISIN; the same paste read later
+  // fills the ISIN from the matched instrument. It is still the same row.
+  const { db, accountId } = await seed();
+  const row = draftTxn({ accountId, externalId: null });
+  await commitDraft(db, args(accountId, draftOf([{ ...row, isin: null }])));
+  const second = await commitDraft(
+    db,
+    args(accountId, draftOf([{ ...row, isin: "FI0009000681" }])),
+  );
+  expect(second.inserted).toBe(0);
+  expect(second.skipped).toBe(1);
+});
+
 test("skips a row already present by external id", async () => {
   const { db, accountId } = await seed();
   const row = draftTxn({ accountId, externalId: "1001" });

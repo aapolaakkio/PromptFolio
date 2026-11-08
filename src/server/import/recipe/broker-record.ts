@@ -6,12 +6,14 @@ import { askForRecipe } from "./ask.ts";
 import {
   FIELDS,
   type KnownInstruments,
+  MOVES_MONEY,
   mapNormalised,
   mappingOf,
   passes,
   feedbackOf,
   readField,
   type TableRun,
+  TYPE_RULES,
   TypeRuleSchema,
 } from "./broker-table.ts";
 import { fingerprint } from "./fingerprint.ts";
@@ -86,10 +88,13 @@ export const BrokerRecordSchema = BaseBrokerRecord.superRefine((recipe, ctx) => 
       ctx.addIssue({ code: "custom", message: `record ei nimeä ryhmää ${required}` });
     }
   }
-  if (recipe.unsignedAmount && recipe.types.some((t) => t.type !== "IGNORE" && t.sign === null)) {
+  if (
+    recipe.unsignedAmount &&
+    recipe.types.some((t) => MOVES_MONEY.has(t.type) && t.sign === null)
+  ) {
     ctx.addIssue({
       code: "custom",
-      message: "Etumerkittömällä summalla jokaisella lajilla on oltava sign",
+      message: "Etumerkittömällä summalla jokaisella rahaa liikuttavalla lajilla on oltava sign",
     });
   }
 });
@@ -205,7 +210,7 @@ const INSTRUCTIONS = [
   "recordStart: rivi josta tapahtuma alkaa, tai null jos tapahtumat erottaa tyhjä rivi.",
   "record: säännöllinen lauseke joka vastaa YHTÄ KOKONAISTA tapahtumaa, rivit yhdistettynä \\n-merkillä. Nimetyt ryhmät ovat kenttiä: tradeDate, type, instrumentName, isin, quantity, unitPrice, fee, currency, amount, costBasis, note, priceCurrency, portfolio, externalId. Pakolliset: tradeDate, type, amount. Valinnainen rivi: (?:\\n(?<fee>[^\\n]+))?",
   "Kaikilla tapahtumilla ei ole samoja rivejä: esimerkiksi osakkeiden vaihdossa, yhdistelyssä tai merkintäoikeuksien irrotuksessa voi olla pelkkä nimi, laji, päivä ja kappalemäärä ilman yhtään rahariviä. Tee silloin hinta-, kulu- ja summarivit yhdessä valinnaisiksi, esim. (?:\\n(?<unitPrice>[^\\n]+)(?:\\n(?<fee>[^\\n]+))?\\n(?<amount>[^\\n]+))?",
-  "types: jokainen tekstissä esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi. IGNORE jos rivi on toisen tapahtuman toinen puoli; kerro silloin reason. Jos laji on epäselvä, käytä IGNORE ja kerro miksi.",
+  TYPE_RULES,
   "unsignedAmount: true jos osto ja myynti tulostuvat samanmerkkisinä; silloin sign kertoo rahan suunnan (osto -1, myynti 1).",
   "money kertoo desimaali- ja tuhaterottimen, negatiivisen merkinnän ja strip-listassa yksiköt jotka poistetaan (esim. kpl, EUR).",
 ].join("\n");

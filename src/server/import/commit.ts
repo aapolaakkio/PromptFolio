@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { EUR, type Currency } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
 import { imports, transactions } from "../db/schema.ts";
@@ -66,7 +66,15 @@ const existingRow = (
     .where(
       row.externalId
         ? and(eq(transactions.accountId, accountId), eq(transactions.externalId, row.externalId))
-        : and(eq(transactions.accountId, accountId), eq(transactions.contentHash, hash)),
+        : and(
+            eq(transactions.accountId, accountId),
+            // The same row stored before its ISIN was known (a name-only paste,
+            // since enriched from the ledger) hashed with a blank ISIN.
+            inArray(transactions.contentHash, [
+              hash,
+              storedContentHash({ ...row, isin: null }, accountId),
+            ]),
+          ),
     )
     .get();
 

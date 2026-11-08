@@ -52,13 +52,16 @@ export const askForRecipe = async <R, Run>(args: {
       tools: [],
       response_format: { type: "json_schema", json_schema: z.toJSONSchema(args.schema) },
     });
-    const recipe = recipeOf(reply.text, args.schema);
-    let feedback = "Vastaus ei ollut kelvollinen kuvaus. Vastaa pelkällä JSON-oliolla.";
-    if (recipe !== null) {
-      const run = args.run(recipe);
+    const parsed = recipeOf(reply.text, args.schema);
+    let feedback = parsed.ok
+      ? ""
+      : `Vastaus ei kelpaa: ${parsed.error}\nVastaa pelkällä JSON-oliolla.`;
+    if (parsed.ok) {
+      const run = args.run(parsed.recipe);
       const judged = args.judge(run);
-      if (judged.passed) return { recipe, run, verified: true };
-      if (judged.score > (best?.score ?? 0)) best = { recipe, run, score: judged.score };
+      if (judged.passed) return { recipe: parsed.recipe, run, verified: true };
+      if (judged.score > (best?.score ?? 0))
+        best = { recipe: parsed.recipe, run, score: judged.score };
       feedback = judged.feedback;
     }
     messages = [
@@ -73,12 +76,19 @@ export const askForRecipe = async <R, Run>(args: {
   return best === null ? null : { recipe: best.recipe, run: best.run, verified: false };
 };
 
-/** The reply's JSON, or null when the model wrote something the schema refuses. */
-const recipeOf = <R>(text: string, schema: z.ZodType<R>): R | null => {
+/** The reply as a recipe, or what was wrong with it -- told back to the model. */
+const recipeOf = <R>(
+  text: string,
+  schema: z.ZodType<R>,
+): { ok: true; recipe: R } | { ok: false; error: string } => {
+  let raw: unknown;
   try {
-    const parsed = schema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
+    raw = JSON.parse(text);
   } catch {
-    return null;
+    return { ok: false, error: "ei JSON-muotoa" };
   }
+  const parsed = schema.safeParse(raw);
+  return parsed.success
+    ? { ok: true, recipe: parsed.data }
+    : { ok: false, error: z.prettifyError(parsed.error).slice(0, 2000) };
 };
