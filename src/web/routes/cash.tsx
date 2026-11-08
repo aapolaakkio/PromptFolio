@@ -2,59 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAccounts } from "../server/accounts.ts";
 import { useState } from "react";
 
-import {
-  commitBankDraftImport,
-  previewBankImport,
-  recordAccountBalance,
-} from "../server/bank-imports.ts";
+import { recordAccountBalance } from "../server/bank-imports.ts";
 import { eur, fiDate } from "../lib/format.ts";
 import { accountTypeLabel } from "./account-type.ts";
-import {
-  availabilityLabel,
-  describeBalance,
-  describeImport,
-  describeMaturity,
-  describeReconciliation,
-  ENTRY_LABELS,
-} from "./cash-view.ts";
+import { availabilityLabel, describeBalance, ENTRY_LABELS } from "./cash-view.ts";
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { getCash } from "../server/portfolio.ts";
 import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
-import { bankBalanceCheck, problemToRow } from "./draft-edit.ts";
-import { type Column, DraftTable } from "./DraftTable.tsx";
-
-type BankCommitResult = Awaited<ReturnType<typeof commitBankDraftImport>>;
-type BankPreview = Awaited<ReturnType<typeof previewBankImport>>;
-type BankDraftRow = BankPreview["draft"]["rows"][number];
-
-const BANK_COLUMNS: readonly Column<BankDraftRow>[] = [
-  { key: "date", label: "Päivä", kind: "date" },
-  {
-    key: "type",
-    label: "Laji",
-    kind: "select",
-    options: [
-      { value: "DEPOSIT", label: "Pano" },
-      { value: "WITHDRAWAL", label: "Otto" },
-      { value: "INTEREST", label: "Korko" },
-    ],
-  },
-  { key: "amountEur", label: "Summa", kind: "decimal", numeric: true },
-  { key: "counterparty", label: "Vastapuoli", kind: "text" },
-  { key: "message", label: "Viesti", kind: "text" },
-];
-
-/**
- * A row the reader could not make sense of, as a blank row carrying the
- * printed text, so the owner fills it in rather than losing it.
- */
-const rowFromProblem = (problem: {
-  readonly line: number;
-  readonly text: string;
-}): BankDraftRow => ({
-  ...problemToRow(problem),
-  label: "",
-});
 
 /** What a person can record by hand, as the ledger stores it. */
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
@@ -72,9 +26,6 @@ const today = (): string => new Date().toISOString().slice(0, 10);
 export const CashPage = () => {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [drafts, setDrafts] = useState<{ name: string; preview: BankPreview }[]>([]);
-  const [imported, setImported] = useState<{ name: string; data: BankCommitResult }[]>([]);
   const [balance, setBalance] = useState("");
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,82 +48,12 @@ export const CashPage = () => {
     queryFn: () => getCashEntries({ data: { accountId: chosen ?? 0 } }),
   });
 
-  // A statement whose rows no longer reach its own closing balance would be
-  // refused by the server; the button says so before the round trip.
-  const balancesAgree = drafts.every(
-    (entry) => bankBalanceCheck(entry.preview.draft)?.ok !== false,
-  );
-
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["cash"] });
     void queryClient.invalidateQueries({ queryKey: ["cash-entries"] });
     void queryClient.invalidateQueries({ queryKey: ["spending"] });
     void queryClient.invalidateQueries({ queryKey: ["returns"] });
   };
-
-  const preview = useMutation({
-    mutationFn: () =>
-      Promise.all(
-        files.map(async (file) => ({
-          name: file.name,
-          data: await previewBankImport({ data: formFor(file) }),
-        })),
-      ),
-    onMutate: () => {
-      setImported([]);
-      setDrafts([]);
-    },
-    // Every problem the reader reported becomes a blank row to fill in, so the
-    // preview holds the whole statement and nothing is silently dropped.
-    onSuccess: (results) =>
-      setDrafts(
-        results.map(({ name, data }) => ({
-          name,
-          preview: {
-            ...data,
-            draft: {
-              ...data.draft,
-              rows: [...data.draft.rows, ...data.draft.problems.map(rowFromProblem)],
-              problems: [],
-            },
-          },
-        })),
-      ),
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
-  });
-
-  // One statement at a time. A failure names the file and stops; the ones
-  // before it are in, and re-importing them is a no-op the bank's archive
-  // ids guarantee, so a retry of the whole selection is safe.
-  const commit = useMutation({
-    mutationFn: async () => {
-      for (const entry of drafts) {
-        try {
-          const data = await commitBankDraftImport({
-            data: {
-              // SAFETY: the buttons below are disabled while no account is chosen.
-              accountId: chosen ?? 0,
-              filename: entry.preview.filename,
-              sha256: entry.preview.sha256,
-              draft: entry.preview.draft,
-            },
-          });
-          setImported((prev) => [...prev, { name: entry.name, data }]);
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Tuonti epäonnistui";
-          throw new Error(`${entry.name}: ${message}`);
-        }
-      }
-    },
-    onSuccess: () => {
-      setError(null);
-      preview.reset();
-      setDrafts([]);
-      setFiles([]);
-    },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
-    onSettled: refresh,
-  });
 
   const reconcile = useMutation({
     mutationFn: () =>
@@ -192,14 +73,6 @@ export const CashPage = () => {
     mutationFn: (id: number) => deleteCashEntry({ data: { id } }),
     onSuccess: refresh,
   });
-
-  const formFor = (file: File): FormData => {
-    const form = new FormData();
-    form.append("file", file);
-    // SAFETY: the buttons below are disabled while no account is chosen.
-    form.append("accountId", String(chosen));
-    return form;
-  };
 
   return (
     <section className="grid gap-8">
@@ -302,114 +175,6 @@ export const CashPage = () => {
 
       {chosen !== null && (
         <>
-          <div className="card grid gap-3">
-            <h2>Tuo tiliote</h2>
-            <p className="text-muted text-sm">
-              OP:n tapahtumavienti (CSV) tai tiliote (PDF). Sama tiedosto voidaan tuoda uudelleen:
-              jo tuodut rivit ohitetaan pankin arkistointitunnuksen perusteella. Saman jakson voi
-              tuoda molemmissa muodoissa — PDF täydentää saajatiedot, jotka CSV jättää tyhjiksi.
-            </p>
-            <input
-              type="file"
-              accept=".csv,.pdf,text/csv,application/pdf"
-              multiple
-              onChange={(event) => {
-                setFiles(Array.from(event.target.files ?? []));
-                setImported([]);
-                setDrafts([]);
-                preview.reset();
-              }}
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={files.length === 0 || chosen === null || preview.isPending}
-                onClick={() => preview.mutate()}
-              >
-                {preview.isPending ? "Luetaan…" : "Esikatsele"}
-              </button>
-              <button
-                type="button"
-                disabled={drafts.length === 0 || commit.isPending || !balancesAgree}
-                onClick={() => commit.mutate()}
-              >
-                {commit.isPending
-                  ? "Tuodaan…"
-                  : drafts.length > 1
-                    ? `Tuo ${drafts.length} tiedostoa`
-                    : "Tuo"}
-              </button>
-            </div>
-
-            {drafts.map((entry, index) => {
-              const check = bankBalanceCheck(entry.preview.draft);
-              return (
-                <div key={`${index}-${entry.name}`} className="grid gap-2">
-                  {drafts.length > 1 && <h3>{entry.name}</h3>}
-                  {entry.preview.draft.statement !== null && (
-                    <p className="text-muted text-sm">
-                      Tiliote {fiDate(entry.preview.draft.statement.from)}–
-                      {fiDate(entry.preview.draft.statement.to)}, saldo{" "}
-                      {eur(entry.preview.draft.statement.openingBalanceEur)} →{" "}
-                      {eur(entry.preview.draft.statement.closingBalanceEur)}. Alkusaldo kirjataan
-                      automaattisesti.
-                    </p>
-                  )}
-                  {check !== null && (
-                    <p className={check.ok ? "text-gain text-sm" : "text-loss text-sm"}>
-                      {check.ok
-                        ? "Rivit täsmäävät loppusaldoon."
-                        : `Rivit eivät täsmää loppusaldoon: ero ${check.differenceEur} €.`}
-                    </p>
-                  )}
-                  <DraftTable
-                    rows={entry.preview.draft.rows}
-                    columns={BANK_COLUMNS}
-                    blank={(): BankDraftRow => ({
-                      line: entry.preview.draft.rows.length + 1,
-                      date: "",
-                      type: "DEPOSIT",
-                      amountEur: "",
-                      counterparty: "",
-                      label: "",
-                      message: "",
-                      externalId: null,
-                    })}
-                    onChange={(rows) =>
-                      setDrafts((current) =>
-                        current.map((d, at) =>
-                          at === index
-                            ? {
-                                ...d,
-                                preview: { ...d.preview, draft: { ...d.preview.draft, rows } },
-                              }
-                            : d,
-                        ),
-                      )
-                    }
-                  />
-                </div>
-              );
-            })}
-
-            {imported.map(({ name, data }, index) => (
-              <div key={`${index}-${name}`}>
-                {imported.length > 1 && <h3>{name}</h3>}
-                <p>{describeImport(data)}</p>
-                {describeMaturity(data) !== null && (
-                  <p className={data.maturityConflict === null ? "" : "text-loss"}>
-                    {describeMaturity(data)}
-                  </p>
-                )}
-                {data.reconciliation && (
-                  <p className={data.reconciliation.differenceEur === "0.00" ? "" : "text-loss"}>
-                    {describeReconciliation(data.reconciliation)}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-
           <div className="card grid gap-3">
             <h2>Täsmäytä saldo</h2>
             <p className="max-w-prose text-muted text-sm">

@@ -21,6 +21,7 @@ import {
 } from "./imports-draft.ts";
 import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
+import { BankStatementImport } from "./BankStatementImport.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
@@ -412,117 +413,129 @@ export const ImportsPage = () => {
         )}
       </section>
 
-      <div className="mt-4 flex gap-2">
-        <button type="button" disabled={source === "file"} onClick={() => selectSource("file")}>
-          CSV-tiedosto
-        </button>
-        <button type="button" disabled={source === "paste"} onClick={() => selectSource("paste")}>
-          OP-liite (liitä teksti)
-        </button>
-      </div>
-
-      {source === "file" ? (
-        <section className="card mt-4">
-          <label>
-            CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät)
-            <input
-              type="file"
-              accept=".csv,.pdf,text/csv,application/pdf"
-              multiple
-              onChange={(e) => {
-                setFiles(Array.from(e.target.files ?? []));
-                resetOutcome();
-              }}
-            />
-          </label>
-          <button
-            type="button"
-            disabled={files.length === 0 || accountId === null || previewFile.isPending}
-            onClick={() => previewFile.mutate()}
-          >
-            {previewFile.isPending ? "Luetaan…" : "Esikatsele"}
-          </button>
-        </section>
+      {selectedAccount?.kind === "bank" ? (
+        // Statements go onto bank accounts and nowhere else, so choosing one
+        // switches this page to the statement import.
+        <BankStatementImport key={selectedAccount.id} accountId={selectedAccount.id} />
       ) : (
-        <section className="card mt-4">
-          <label>
-            OP:n verkkopalvelun tapahtumataulukko (kopioi ja liitä sellaisenaan)
-            <textarea
-              rows={10}
-              className="font-mono text-xs"
-              value={pasteText}
-              onChange={(e) => {
-                setPasteText(e.target.value);
-                resetOutcome();
-              }}
-            />
-          </label>
-          <button
-            type="button"
-            disabled={pasteText === "" || accountId === null || previewPaste.isPending}
-            onClick={() => previewPaste.mutate()}
-          >
-            {previewPaste.isPending ? "Luetaan…" : "Esikatsele"}
-          </button>
-        </section>
-      )}
-
-      {error && (
-        <p role="alert" className="mt-4 text-loss">
-          {error}
-        </p>
-      )}
-      {results.length > 0 && (
-        <ul role="status" className="mt-4 grid gap-1 text-gain">
-          {results.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
-
-      {previews && summary && (
         <>
-          {previews.map((entry, index) => (
-            <PreviewCard
-              key={`${index}-${entry.name}`}
-              entry={entry}
-              unknownCount={unknown.length}
-              onRows={(rows) => setRows(index, rows)}
-            />
-          ))}
+          <div className="mt-4 flex gap-2">
+            <button type="button" disabled={source === "file"} onClick={() => selectSource("file")}>
+              CSV-tiedosto
+            </button>
+            <button
+              type="button"
+              disabled={source === "paste"}
+              onClick={() => selectSource("paste")}
+            >
+              OP-liite (liitä teksti)
+            </button>
+          </div>
 
-          {unknown.length > 0 && (
-            <section className="mt-4">
-              <h2>Tuntemattomat arvopaperit</h2>
-              <p className="text-muted">
-                Lisää nämä ennen tuontia, jotta hinnat osataan hakea oikeasta lähteestä.
-              </p>
-              <div className="mt-3 grid gap-4 md:grid-cols-2">
-                {unknown.map((u) => (
-                  <UnknownInstrumentForm
-                    key={u.isin ?? u.name}
-                    isin={u.isin}
-                    name={u.name}
-                    rowCurrency={u.currency}
-                    onResolved={() => preview.mutate()}
-                  />
-                ))}
-              </div>
+          {source === "file" ? (
+            <section className="card mt-4">
+              <label>
+                Välittäjän CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät)
+                <input
+                  type="file"
+                  accept=".csv,.pdf,text/csv,application/pdf"
+                  multiple
+                  onChange={(e) => {
+                    setFiles(Array.from(e.target.files ?? []));
+                    resetOutcome();
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={files.length === 0 || accountId === null || previewFile.isPending}
+                onClick={() => previewFile.mutate()}
+              >
+                {previewFile.isPending ? "Luetaan…" : "Esikatsele"}
+              </button>
+            </section>
+          ) : (
+            <section className="card mt-4">
+              <label>
+                OP:n verkkopalvelun tapahtumataulukko (kopioi ja liitä sellaisenaan)
+                <textarea
+                  rows={10}
+                  className="font-mono text-xs"
+                  value={pasteText}
+                  onChange={(e) => {
+                    setPasteText(e.target.value);
+                    resetOutcome();
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={pasteText === "" || accountId === null || previewPaste.isPending}
+                onClick={() => previewPaste.mutate()}
+              >
+                {previewPaste.isPending ? "Luetaan…" : "Esikatsele"}
+              </button>
             </section>
           )}
 
-          <button
-            type="button"
-            className="mt-6"
-            disabled={!summary.canCommit || commit.isPending}
-            onClick={() => commit.mutate()}
-          >
-            {commit.isPending
-              ? "Tuodaan…"
-              : previews.length > 1
-                ? `Tuo ${previews.length} tiedostoa (${summary.good} tapahtumaa)`
-                : `Tuo ${summary.good} tapahtumaa`}
-          </button>
+          {error && (
+            <p role="alert" className="mt-4 text-loss">
+              {error}
+            </p>
+          )}
+          {results.length > 0 && (
+            <ul role="status" className="mt-4 grid gap-1 text-gain">
+              {results.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
+
+          {previews && summary && (
+            <>
+              {previews.map((entry, index) => (
+                <PreviewCard
+                  key={`${index}-${entry.name}`}
+                  entry={entry}
+                  unknownCount={unknown.length}
+                  onRows={(rows) => setRows(index, rows)}
+                />
+              ))}
+
+              {unknown.length > 0 && (
+                <section className="mt-4">
+                  <h2>Tuntemattomat arvopaperit</h2>
+                  <p className="text-muted">
+                    Lisää nämä ennen tuontia, jotta hinnat osataan hakea oikeasta lähteestä.
+                  </p>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    {unknown.map((u) => (
+                      <UnknownInstrumentForm
+                        key={u.isin ?? u.name}
+                        isin={u.isin}
+                        name={u.name}
+                        rowCurrency={u.currency}
+                        onResolved={() => preview.mutate()}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <button
+                type="button"
+                className="mt-6"
+                disabled={!summary.canCommit || commit.isPending}
+                onClick={() => commit.mutate()}
+              >
+                {commit.isPending
+                  ? "Tuodaan…"
+                  : previews.length > 1
+                    ? `Tuo ${previews.length} tiedostoa (${summary.good} tapahtumaa)`
+                    : `Tuo ${summary.good} tapahtumaa`}
+              </button>
+            </>
+          )}
         </>
       )}
 

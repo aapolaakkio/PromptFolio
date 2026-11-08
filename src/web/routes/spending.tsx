@@ -183,7 +183,7 @@ export const SpendingPage = () => {
               {(spending.data?.groups ?? []).length === 0 && (
                 <tr>
                   <td colSpan={3} className="text-muted">
-                    Ei kuluja tällä jaksolla. Tuo tiliote Käteinen-välilehdeltä.
+                    Ei kuluja tällä jaksolla. Tuo tiliote Tuonnit-välilehdeltä.
                   </td>
                 </tr>
               )}
