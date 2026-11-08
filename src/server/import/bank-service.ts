@@ -7,8 +7,6 @@ import { cashBalancesAt } from "../../core/cash.ts";
 import { EUR, formatMoney, parseMoney, subMoney, zeroMoney, type Money } from "../../core/money.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { commitBankStatement } from "./bank-commit.ts";
-import { matchesBank, OP_BANK, OP_CREDIT, parseBankStatement } from "./bank-statement.ts";
-import type { BankStatementConfig } from "./bank-statement.ts";
 import {
   BankDraft,
   bankDraftFromRows,
@@ -30,7 +28,6 @@ import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.
 /** Every bank format the app can read. A file is matched against each in turn. */
 // The card log is tried first: its signature is the stricter of the two, and an
 // account statement can never match it.
-const BANK_CONFIGS: readonly BankStatementConfig[] = [OP_CREDIT, OP_BANK];
 
 const IsoDateSchema = z
   .string()
@@ -48,9 +45,8 @@ const isPdf = (bytes: ArrayBuffer): boolean =>
   new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
 
 /**
- * Reads whichever format arrived into one draft. A CSV parses by its bank's
- * config; a PDF is read by a recipe -- the owner's stored description of that
- * layout, or a fresh one the model writes. Neither is checked here: the check
+ * Reads whichever format arrived into one draft. Both are read by a recipe --
+ * the owner's stored description of that layout, or a fresh one the model writes. Neither is checked here: the check
  * belongs to the draft, which the owner may still edit.
  */
 const readStatement = async (
@@ -58,13 +54,6 @@ const readStatement = async (
   userId: string,
 ): Promise<{ bank: string; draft: BankDraft }> => {
   if (!isPdf(bytes)) {
-    // OP's own exports are read by their built-in configs, with no model call;
-    // any other bank's CSV by a recipe the model writes for its header.
-    const config = BANK_CONFIGS.find((candidate) => matchesBank(bytes, candidate));
-    if (config !== undefined) {
-      const { rows, problems } = parseBankStatement(bytes, config);
-      return { bank: config.bank, draft: bankDraftFromRows(rows, problems) };
-    }
     try {
       const { rows, problems } = await readBankCsvByRecipe(
         bytes,

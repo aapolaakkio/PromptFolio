@@ -12,6 +12,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
 import { BankDraft } from "./bank-draft.ts";
+import { OP_BANK_CSV_RECIPE } from "./recipe/op-csv-reference.ts";
 import { OP_STATEMENT_RECIPE } from "./recipe/op-reference.ts";
 import { VERIFY_TOOL_NAME } from "./recipe/verify-tool.ts";
 
@@ -32,6 +33,8 @@ beforeAll(async () => {
   bank = await import("./bank-service.ts");
   setClassifierClient = bank._setClassifierClient;
   setReaderClient = bank._setReaderClient;
+  // Every statement is read by a recipe; this stands in for the model.
+  setReaderClient(reader());
   undoImport = (await import("./service.ts")).undo;
 });
 
@@ -167,17 +170,22 @@ const commit = async (userId: string, accountId: number, bytes?: ArrayBuffer) =>
  * itself, not from anything scripted here.
  */
 const reader = () => ({
-  run: () =>
-    Promise.resolve({
-      text: "",
-      toolCalls: [
-        {
-          id: "call_0",
-          name: VERIFY_TOOL_NAME,
-          arguments: JSON.stringify({ recipe: OP_STATEMENT_RECIPE }),
-        },
-      ],
-    }),
+  run: (params: { readonly tools: readonly unknown[] }) =>
+    Promise.resolve(
+      // A CSV is described in one structured reply, with no tools offered.
+      params.tools.length === 0
+        ? { text: JSON.stringify(OP_BANK_CSV_RECIPE), toolCalls: [] }
+        : {
+            text: "",
+            toolCalls: [
+              {
+                id: "call_0",
+                name: VERIFY_TOOL_NAME,
+                arguments: JSON.stringify({ recipe: OP_STATEMENT_RECIPE }),
+              },
+            ],
+          },
+    ),
 });
 
 const cashTotal = async (userId: string, on: string): Promise<string> =>
@@ -190,7 +198,7 @@ describe("POST /api/imports/bank/preview", () => {
 
     const body = PreviewSchema.parse((await preview(userId, accountId)).body);
 
-    expect(body.bank).toBe("op");
+    expect(body.bank).toBe("csv");
     expect(body.draft.rows.length).toBe(5);
     expect(body.draft.rows[0]?.date).toBe("2025-09-01");
     expect(body.draft.rows.at(-1)?.date).toBe("2026-01-02");
@@ -228,7 +236,7 @@ describe("POST /api/imports/bank/preview", () => {
       expect(response.status).toBe(400);
       expect(ErrorSchema.parse(response.body).error).toContain("tiliotteeksi");
     } finally {
-      setReaderClient(null);
+      setReaderClient(reader());
     }
   });
 });
