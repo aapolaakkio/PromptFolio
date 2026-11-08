@@ -8,7 +8,7 @@ import { ensureFxRate, fxRateOn } from "../fx.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import { contentHash, type Draft, type DraftTxn } from "./map.ts";
 
-export type ImportKind = "csv_nordnet" | "csv_op" | "pdf" | "vision" | "manual";
+export type ImportKind = "csv_nordnet" | "csv_op" | "csv" | "paste" | "pdf" | "vision" | "manual";
 
 export type CommitResult = {
   readonly importId: number;

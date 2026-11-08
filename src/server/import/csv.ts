@@ -1,4 +1,3 @@
-import { BROKER_CONFIGS } from "./brokers.ts";
 import type { BrokerCsvConfig, CsvProblem, RawRow } from "./types.ts";
 
 /**
@@ -119,12 +118,4 @@ export const parseCsv = (bytes: ArrayBuffer, config: CsvDialect) => {
     });
   }
   return { rows, headers, problems };
-};
-
-export const detectBroker = (headers: readonly string[]): BrokerCsvConfig | null => {
-  const present = new Set(headers);
-  for (const config of BROKER_CONFIGS) {
-    if (config.signature.every((h) => present.has(h))) return config;
-  }
-  return null;
 };

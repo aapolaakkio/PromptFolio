@@ -34,7 +34,7 @@ export const loadRecipe = (userId: string, fingerprint: string): Promise<BankRec
 export const saveRecipe = async (
   userId: string,
   fingerprint: string,
-  recipe: BankRecipe | { readonly kind: "bank-csv" },
+  recipe: { readonly kind: (typeof importRecipes.$inferInsert)["kind"] },
 ): Promise<void> => {
   await db
     .insert(importRecipes)

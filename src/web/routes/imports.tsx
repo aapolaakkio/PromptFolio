@@ -114,11 +114,10 @@ const editableRows = (draft: DraftResponse): EditableTxn[] => [
   ...draft.problems.map(rowFromProblem),
 ];
 
-/** Which import record the commit writes: the paste is always an OP CSV. */
-const kindOf = (entry: Previewed): "csv_nordnet" | "csv_op" | "pdf" => {
-  if (entry.file === null) return "csv_op";
-  if (entry.draft.broker === "pdf") return "pdf";
-  return entry.draft.broker === "nordnet" ? "csv_nordnet" : "csv_op";
+/** Which import record the commit writes. */
+const kindOf = (entry: Previewed): "csv" | "paste" | "pdf" => {
+  if (entry.file === null) return "paste";
+  return entry.draft.broker === "pdf" ? "pdf" : "csv";
 };
 
 const TXN_COLUMNS: readonly Column<EditableTxn>[] = [

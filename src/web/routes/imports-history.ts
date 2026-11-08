@@ -13,7 +13,7 @@
  */
 export type ImportRecord = {
   id: number;
-  kind: "csv_nordnet" | "csv_op" | "csv_bank" | "pdf" | "vision" | "manual";
+  kind: "csv_nordnet" | "csv_op" | "csv_bank" | "csv" | "paste" | "pdf" | "vision" | "manual";
   filename: string;
   createdAt: string;
   inserted: number;
@@ -24,6 +24,8 @@ export type ImportRecord = {
 /** Finnish label for each `imports.kind` value this table shows in its "Lähde" column. */
 export const IMPORT_KIND_LABELS = {
   csv_nordnet: "Nordnet (CSV)",
+  csv: "CSV",
+  paste: "Liitetty taulukko",
   csv_op: "OP (CSV)",
   csv_bank: "Tiliote",
   pdf: "PDF",

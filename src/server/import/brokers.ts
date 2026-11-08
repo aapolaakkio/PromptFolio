@@ -162,9 +162,3 @@ export const OP_WEB_PASTE: OpPasteConfig = {
     "yhdistely - otto": 1,
   },
 };
-
-/**
- * Every delimited broker config, for `parseCsv` and `detectBroker`. `OP_WEB_PASTE`
- * is not one and never goes through them.
- */
-export const BROKER_CONFIGS: readonly BrokerCsvConfig[] = [NORDNET];

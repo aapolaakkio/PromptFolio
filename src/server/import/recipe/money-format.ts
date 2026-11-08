@@ -66,8 +66,11 @@ const strip = (text: string, format: MoneyFormat) => {
   return { body: body.replace(/^\+/, "").trim(), negative };
 };
 
-/** Signed minor units, read exactly as the format describes. */
-export const readAmount = (text: string, format: MoneyFormat): bigint => {
+/**
+ * The figure as a plain signed decimal (`-1234.5678`), every decimal kept: a
+ * quantity has more of them than money does.
+ */
+export const readDecimal = (text: string, format: MoneyFormat): string => {
   const { body, negative } = strip(text, format);
   const withoutThousands =
     format.thousands === ""
@@ -75,9 +78,12 @@ export const readAmount = (text: string, format: MoneyFormat): bigint => {
       : body.replace(new RegExp(escapeForClass(format.thousands), "g"), "");
   const plain = withoutThousands.replace(format.decimal, ".").replace(/\s/g, "");
   if (!/^\d+(\.\d+)?$/.test(plain)) throw UNREADABLE(text);
-  const { minor } = parseMoney(plain, EUR);
-  return negative ? -minor : minor;
+  return negative ? `-${plain}` : plain;
 };
+
+/** Signed minor units, read exactly as the format describes. */
+export const readAmount = (text: string, format: MoneyFormat): bigint =>
+  parseMoney(readDecimal(text, format), EUR).minor;
 
 /**
  * A statement that prints unsigned figures in two columns: which column the

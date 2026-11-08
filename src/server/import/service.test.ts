@@ -8,11 +8,11 @@ import { addInstrument } from "../instruments/store.ts";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
 import { HttpError } from "../errors.ts";
-import { NORDNET } from "../import/brokers.ts";
+import { NORDNET_TABLE_RECIPE } from "./recipe/broker-reference.ts";
 import type { DraftBody } from "./txn-draft.ts";
 
 // This file exercises the import service (preview/commit/undo) and
-// detectBrokerConfig against a real, migrated database and a real Better
+// the recipe reader against a real, migrated database and a real Better
 // Auth session, mirroring src/server/accounts.test.ts's setup —
 // including its reliance on ../test-setup.ts (a vitest.config.ts [test]
 // preload script) to have already pinned the shared database to a
@@ -27,9 +27,13 @@ import type { DraftBody } from "./txn-draft.ts";
 
 type Service = typeof import("./service.ts");
 
+/** A model that describes every table as Nordnet's export. */
+const nordnetReader = {
+  run: () => Promise.resolve({ text: JSON.stringify(NORDNET_TABLE_RECIPE), toolCalls: [] }),
+};
+
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: Service;
-let detectBrokerConfig: Service["detectBrokerConfig"];
 let UndoInput: Service["UndoInput"];
 let PasteBody: Service["PasteBody"];
 
@@ -38,7 +42,8 @@ beforeAll(async () => {
   service = await import("./service.ts");
   UndoInput = service.UndoInput;
   PasteBody = service.PasteBody;
-  detectBrokerConfig = service.detectBrokerConfig;
+  // Every broker file is read by a recipe; this stands in for the model.
+  service._setReaderClient(nordnetReader);
 });
 
 /**
@@ -67,7 +72,7 @@ const commitPreviewed = async (
   userId: string,
   previewed: Answer<unknown>,
   accountId: number,
-  kind: "csv_nordnet" | "csv_op" | "pdf",
+  kind: "csv" | "paste" | "pdf",
 ) => {
   if (previewed.status !== 200) return previewed;
   // SAFETY: a 200 from either preview is `{ broker, filename, sha256, txns, problems, unknownIsins }`,
@@ -244,53 +249,6 @@ const uploadForm = (file: File | undefined, accountId: number | string | undefin
 const fixtureBytes = (name: string) =>
   readBytes(`${import.meta.dirname}/../import/fixtures/${name}`);
 
-// --- detectBrokerConfig (delimiter/encoding independence) ---
-
-describe("detectBrokerConfig", () => {
-  test("still detects a real Nordnet export with the default broker list", async () => {
-    const bytes = await fixtureBytes("nordnet-sample.csv"); // already UTF-16LE on disk
-    expect(detectBrokerConfig(bytes)?.broker).toBe("nordnet");
-  });
-
-  // OP's web-paste view is newline-separated with no delimiter at all (see
-  // src/server/import/op-paste.ts) -- it is not a `BrokerCsvConfig` and is
-  // deliberately absent from `BROKER_CONFIGS`, so `detectBrokerConfig`
-  // (which only ever tries `parseCsv`-shaped candidates) correctly does
-  // not, and cannot, detect it. This stays true even after Task 20 wired
-  // OP paste into its own routes (see the "op-paste" describe blocks
-  // below): those routes call `buildPasteDraft`/`parseOpPaste` directly and
-  // never go through `detectBrokerConfig`/`buildDraft`'s file-upload path
-  // at all -- see brokers.ts's `BROKER_CONFIGS` comment.
-  test("does not detect an OP paste -- it is not wired into the CSV-upload broker list", async () => {
-    const text = await readText(
-      `${import.meta.dirname}/../import/fixtures/op-web-paste-sample.txt`,
-    );
-    const bytes = new TextEncoder().encode(text).buffer;
-    expect(detectBrokerConfig(bytes)).toBeNull();
-  });
-
-  test("detects a broker whose export uses a different delimiter than the real config", () => {
-    // `BROKER_CONFIGS` only has one real entry (Nordnet, tab-delimited)
-    // now, so this forces a different (comma) delimiter via the `configs`
-    // parameter to prove detectBrokerConfig tries each candidate's own
-    // delimiter/encoding rather than one hardcoded pair (what the task
-    // brief originally coded, see task-12-report.md).
-    const header = NORDNET_HEADER.replaceAll("\t", ",");
-    const bytes = new TextEncoder().encode(`${header}\n`).buffer;
-    const commaDelimited = { ...NORDNET, delimiter: ",", encoding: "utf-8" as const };
-    expect(detectBrokerConfig(bytes, [commaDelimited])?.broker).toBe("nordnet");
-    // The same bytes, probed only with the real (tab-delimited, UTF-16LE)
-    // config, must NOT be detected -- confirms the substitution above is
-    // actually doing something, not a no-op.
-    expect(detectBrokerConfig(bytes, [NORDNET])).toBeNull();
-  });
-
-  test("returns null when no configured broker's signature matches", () => {
-    const bytes = new TextEncoder().encode("Date;Amount\n2025-01-01;5\n").buffer;
-    expect(detectBrokerConfig(bytes)).toBeNull();
-  });
-});
-
 // --- POST /api/imports/preview ---
 
 describe("POST /api/imports/preview", () => {
@@ -360,7 +318,7 @@ describe("POST /api/imports/preview", () => {
     expect(response.status).toBe(413);
   });
 
-  test("rejects a CSV whose broker cannot be identified", async () => {
+  test("rejects a CSV the model cannot describe", async () => {
     const { userId } = await signUp(`imp-preview-unknown-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     const response = await answer(() =>
@@ -370,7 +328,7 @@ describe("POST /api/imports/preview", () => {
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
     const body = response.body as { error: string };
-    expect(body.error).toContain("välittäjää");
+    expect(body.error).toContain("tapahtumaluetteloksi");
   });
 
   test("previews a real Nordnet export and reports the unresolved isins", async () => {
@@ -388,7 +346,7 @@ describe("POST /api/imports/preview", () => {
       txns: unknown[];
       unknownIsins: Array<{ isin: string | null }>;
     };
-    expect(body.broker).toBe("nordnet");
+    expect(body.broker).toBe("csv");
     // 13 data rows in the fixture, one of them (the fractional adjustment's
     // cash-only twin) reported rather than booked -- see brokers.ts's
     // ignoredTypes -- so 12 reach the draft as transactions.
@@ -408,14 +366,13 @@ describe("POST /api/imports/commit", () => {
     const owner = await signUp(`imp-commit-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`imp-commit-stranger-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(owner.userId);
+    // A header alone is no transaction list: a recipe has nothing to read.
+    const sample = await fixtureBytes("nordnet-sample.csv");
     const previewed = await answer(() =>
-      service.previewUpload(
-        owner.userId,
-        uploadForm(binaryFile(nordnetBytes(`${NORDNET_HEADER}\n`)), accountId),
-      ),
+      service.previewUpload(owner.userId, uploadForm(binaryFile(sample), accountId)),
     );
     expect(previewed.status).toBe(200);
-    const response = await commitPreviewed(stranger.userId, previewed, accountId, "csv_nordnet");
+    const response = await commitPreviewed(stranger.userId, previewed, accountId, "csv");
     expect(response.status).toBe(404);
   });
 
@@ -426,7 +383,7 @@ describe("POST /api/imports/commit", () => {
     const previewed = await answer(() =>
       service.previewUpload(userId, uploadForm(binaryFile(nordnetBytesFile), accountId)),
     );
-    const response = await commitPreviewed(userId, previewed, accountId, "csv_nordnet");
+    const response = await commitPreviewed(userId, previewed, accountId, "csv");
     expect(response.status).toBe(400);
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
@@ -513,7 +470,7 @@ describe("POST /api/imports/commit", () => {
     const previewed = await answer(() =>
       service.previewUpload(userId, uploadForm(nordnetFile(row), accountId)),
     );
-    const commitResponse = await commitPreviewed(userId, previewed, accountId, "csv_nordnet");
+    const commitResponse = await commitPreviewed(userId, previewed, accountId, "csv");
     // SAFETY: as above -- a commit reports how many rows it inserted.
     const commitBody = commitResponse.body as { inserted: number };
     expect(commitBody.inserted).toBe(1);
@@ -552,7 +509,7 @@ describe("POST /api/imports/:id/undo", () => {
     const previewed = await answer(() =>
       service.previewUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
     );
-    const commitResponse = await commitPreviewed(owner.userId, previewed, accountId, "csv_nordnet");
+    const commitResponse = await commitPreviewed(owner.userId, previewed, accountId, "csv");
     // SAFETY: commit succeeded (the csv above is a plain EUR deposit,
     // nothing to resolve), so the body carries an importId.
     const { importId } = commitResponse.body as { importId: number };
@@ -673,7 +630,7 @@ describe("POST /api/imports/op-paste/commit", () => {
     const accountId = await openAccount(userId, "op");
     const text = await opPasteText();
     const previewed = await answer(() => service.previewPaste(userId, { text, accountId }));
-    const response = await commitPreviewed(userId, previewed, accountId, "csv_op");
+    const response = await commitPreviewed(userId, previewed, accountId, "paste");
     expect(response.status).toBe(400);
     // SAFETY: handle()'s HttpError branch (asserted above via status 400)
     // always shapes its body as `{ error }`.
@@ -750,7 +707,7 @@ describe("a broker PDF", () => {
   // test in this file that uploads a PDF-shaped file never silently reuses
   // whichever reading the last PDF test scripted.
   afterEach(() => {
-    service._setReaderClient(null);
+    service._setReaderClient(nordnetReader);
   });
 
   test("previews through the reader and commits like any draft", async () => {
@@ -867,7 +824,7 @@ describe("GET /api/imports", () => {
     const previewed = await answer(() =>
       service.previewUpload(owner.userId, uploadForm(nordnetFile(row), accountId)),
     );
-    await commitPreviewed(owner.userId, previewed, accountId, "csv_nordnet");
+    await commitPreviewed(owner.userId, previewed, accountId, "csv");
     const ownerList = await answer(() => service.listImports(owner.userId));
     const strangerList = await answer(() => service.listImports(stranger.userId));
     expect(ownerList.status).toBe(200);
@@ -894,7 +851,7 @@ describe("GET /api/imports", () => {
     const firstPreviewed = await answer(() =>
       service.previewUpload(userId, uploadForm(nordnetFile(first, "first.csv"), accountId)),
     );
-    const firstCommit = await commitPreviewed(userId, firstPreviewed, accountId, "csv_nordnet");
+    const firstCommit = await commitPreviewed(userId, firstPreviewed, accountId, "csv");
     // SAFETY: a successful commit answers with the row it wrote.
     const { importId: firstId } = firstCommit.body as { importId: number };
 
@@ -907,7 +864,7 @@ describe("GET /api/imports", () => {
     const secondPreviewed = await answer(() =>
       service.previewUpload(userId, uploadForm(nordnetFile(second, "second.csv"), accountId)),
     );
-    const secondCommit = await commitPreviewed(userId, secondPreviewed, accountId, "csv_nordnet");
+    const secondCommit = await commitPreviewed(userId, secondPreviewed, accountId, "csv");
     // SAFETY: as above.
     const { importId: secondId } = secondCommit.body as { importId: number };
 
@@ -933,7 +890,7 @@ describe("GET /api/imports", () => {
     expect(list[1]!.id).toBe(firstId);
 
     const secondEntry = list.find((r) => r.id === secondId)!;
-    expect(secondEntry.kind).toBe("csv_nordnet");
+    expect(secondEntry.kind).toBe("csv");
     expect(secondEntry.filename).toBe("second.csv");
     expect(secondEntry.inserted).toBe(1);
     expect(secondEntry.skipped).toBe(0);

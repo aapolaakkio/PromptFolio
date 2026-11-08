@@ -137,7 +137,7 @@ export const imports = sqliteTable("imports", {
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
   kind: text("kind", {
-    enum: ["csv_nordnet", "csv_op", "csv_bank", "pdf", "vision", "manual"],
+    enum: ["csv_nordnet", "csv_op", "csv_bank", "csv", "paste", "pdf", "vision", "manual"],
   }).notNull(),
   filename: text("filename").notNull(),
   sha256: text("sha256").notNull(),
@@ -403,8 +403,8 @@ export const importRecipes = sqliteTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     fingerprint: text("fingerprint").notNull(),
-    kind: text("kind", { enum: ["bank", "bank-csv"] }).notNull(),
-    /** The validated recipe (BankRecipe or BankCsvRecipe) as JSON. Re-validated on read. */
+    kind: text("kind", { enum: ["bank", "bank-csv", "broker-table", "broker-record"] }).notNull(),
+    /** The validated recipe as JSON, of the kind named beside it. Re-validated on read. */
     recipe: text("recipe").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()

@@ -1,6 +1,6 @@
 import { readBytes } from "../files.ts";
 import { test, expect } from "vitest";
-import { parseCsv, detectBroker } from "./csv.ts";
+import { parseCsv } from "./csv.ts";
 import { NORDNET } from "./brokers.ts";
 
 const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
@@ -32,17 +32,6 @@ test("parses the real-format Nordnet fixture into labelled rows", async () => {
   expect(rows[0]!.values["ISIN"]).toBe("IE0002Y8CX98");
   expect(rows[0]!.values["Summa"]).toBe("-68,00");
   expect(rows[0]!.line).toBe(2);
-});
-
-// OP's web-paste view is not delimited at all (newline-separated, no
-// fixed column count per row -- see op-paste.ts and op-paste.test.ts for
-// its own parser and tests) so it no longer has a parseCsv/detectBroker
-// test here; `BROKER_CONFIGS` (brokers.ts) carries only NORDNET now.
-
-test("detects the broker from the header row", async () => {
-  const nordnet = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
-  expect(detectBroker(nordnet.headers)?.broker).toBe("nordnet");
-  expect(detectBroker(["Date", "Amount"])).toBeNull();
 });
 
 // --- Task 15's duplicate-column fix: five columns named "Valuutta" -------

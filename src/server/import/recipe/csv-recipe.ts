@@ -1,19 +1,16 @@
 import { z } from "zod";
 
-import { type ChatClient, type ChatMessage } from "../../chat/runner.ts";
+import type { ChatClient } from "../../chat/runner.ts";
 import { type BankRow, type BankStatement, noteOf, rowType } from "../bank-statement.ts";
 import { parseCsv } from "../csv.ts";
 import type { BrokerCsvConfig, RawRow } from "../types.ts";
+import { askForRecipe } from "./ask.ts";
 import { readDate } from "./date-format.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { readAmount, readTwoColumn } from "./money-format.ts";
 import { forgetRecipe, loadParsed, saveRecipe } from "./store.ts";
 import { MoneyFormatSchema } from "./types.ts";
 
-const MODEL = "claude-opus-5-5";
-const MAX_TOKENS = 16000;
-/** Attempts at a recipe before settling for the best one, unsaved. */
-const MAX_ATTEMPTS = 3;
 /** Data lines the model is shown: enough to see every shape, few enough to stay cheap. */
 const SAMPLE_ROWS = 30;
 /** Failed rows quoted back to the model on a retry. */
@@ -81,7 +78,7 @@ export const encodingOf = (bytes: ArrayBuffer): BrokerCsvConfig["encoding"] => {
   }
 };
 
-const linesOf = (bytes: ArrayBuffer): string[] =>
+export const linesOf = (bytes: ArrayBuffer): string[] =>
   new TextDecoder(encodingOf(bytes))
     .decode(bytes)
     .replace(/^﻿/, "")
@@ -169,63 +166,21 @@ const failuresOf = (run: CsvRun): string => {
     .join("\n");
 };
 
-/** The reply's JSON, or null when the model wrote something else. */
-const recipeOf = (text: string): BankCsvRecipe | null => {
-  try {
-    const parsed = BankCsvRecipeSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Asks for a recipe, runs it over the whole file, and on failure shows the
- * model what went wrong. The conversation only grows, so each retry sees its
- * own earlier answer and the rows that answer could not read.
+ * model the rows it could not read.
  */
-export const generateCsvRecipe = async (
-  bytes: ArrayBuffer,
-  client: ChatClient,
-): Promise<{ recipe: BankCsvRecipe; run: CsvRun; verified: boolean } | null> => {
-  const sample = linesOf(bytes)
-    .slice(0, SAMPLE_ROWS + 1)
-    .join("\n");
-  let messages: readonly ChatMessage[] = [
-    { role: "system", content: INSTRUCTIONS },
-    { role: "user", content: sample },
-  ];
-  let best: { recipe: BankCsvRecipe; run: CsvRun } | null = null;
-
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    const reply = await client.run({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      messages,
-      tools: [],
-      response_format: { type: "json_schema", json_schema: z.toJSONSchema(BaseCsvRecipe) },
-    });
-    const recipe = recipeOf(reply.text);
-    const run = recipe === null ? null : runCsvRecipe(bytes, recipe);
-    if (recipe !== null && run !== null && passes(run)) return { recipe, run, verified: true };
-    if (recipe !== null && run !== null && run.rows.length > (best?.run.rows.length ?? 0)) {
-      best = { recipe, run };
-    }
-    const feedback =
-      run === null
-        ? "Vastaus ei ollut kelvollinen kuvaus. Vastaa pelkällä JSON-oliolla."
-        : failuresOf(run);
-    messages = [
-      ...messages,
-      { role: "assistant", content: reply.text },
-      {
-        role: "user",
-        content: `Kuvaus ei vielä toimi:\n${feedback}\nKorjaa ja vastaa koko kuvauksella.`,
-      },
-    ];
-  }
-  return best === null ? null : { ...best, verified: false };
-};
+export const generateCsvRecipe = (bytes: ArrayBuffer, client: ChatClient) =>
+  askForRecipe({
+    client,
+    instructions: INSTRUCTIONS,
+    sample: linesOf(bytes)
+      .slice(0, SAMPLE_ROWS + 1)
+      .join("\n"),
+    schema: BankCsvRecipeSchema,
+    run: (recipe: BankCsvRecipe) => runCsvRecipe(bytes, recipe),
+    judge: (run) => ({ passed: passes(run), score: run.rows.length, feedback: failuresOf(run) }),
+  });
 
 /** The layout's identity: its header row, digits blanked like a PDF's first lines. */
 export const csvRecipeKey = (bytes: ArrayBuffer): string =>

@@ -6,53 +6,20 @@ import { db } from "../db/index.ts";
 import { imports, instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
-import { BROKER_CONFIGS, OP_WEB_PASTE } from "./brokers.ts";
+import { OP_WEB_PASTE } from "./brokers.ts";
 import { commitDraft, undoImport } from "./commit.ts";
-import { detectBroker, parseCsv } from "./csv.ts";
 import { mapRows, type Draft } from "./map.ts";
 import { portfoliosNamed } from "./portfolios.ts";
 import { parseOpPaste } from "./op-paste.ts";
-import type { BrokerCsvConfig } from "./types.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
 import { extractPages, readTransactionsPdf } from "./pdf-read.ts";
+import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
 import { DraftBody, transactionsDraftFrom } from "./txn-draft.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
 const MAX_PASTE_CHARS = 2_000_000;
-
-const probeHeaderLine = (bytes: ArrayBuffer, encoding: BrokerCsvConfig["encoding"]): string =>
-  new TextDecoder(encoding).decode(bytes.slice(0, 4096)).split(/\r?\n/)[0] ?? "";
-
-/**
- * Which broker produced this upload, without assuming a delimiter or encoding.
- *
- * Every distinct pair the configs use is tried in turn, and each broker's own
- * pair only ever decodes headers for its own signature, so a mismatch cannot
- * detect the wrong broker. Probing with one hardcoded pair meant a broker using
- * any other was never detected, though its rows parsed fine once handed a config.
- *
- * `configs` is a parameter so a test can use a pair no shipped broker has: the
- * real ones share theirs today, and a regression would pass every fixture test.
- */
-export const detectBrokerConfig = (
-  bytes: ArrayBuffer,
-  configs: readonly BrokerCsvConfig[] = BROKER_CONFIGS,
-): BrokerCsvConfig | null => {
-  const tried = new Set<string>();
-  for (const candidate of configs) {
-    const key = `${candidate.encoding}|${candidate.delimiter}`;
-    if (tried.has(key)) continue;
-    tried.add(key);
-    const headers = probeHeaderLine(bytes, candidate.encoding)
-      .split(candidate.delimiter)
-      .map((h) => h.trim());
-    const detected = detectBroker(headers);
-    if (detected) return detected;
-  }
-  return null;
-};
 
 /**
  * Every known instrument, indexed two ways: by ISIN (Nordnet, and any
@@ -106,7 +73,7 @@ const buildPdfDraft = async (bytes: ArrayBuffer, accountId: number): Promise<Dra
   }
 };
 
-const buildDraft = async (file: File, accountId: number) => {
+const buildDraft = async (file: File, userId: string, accountId: number) => {
   const bytes = await file.arrayBuffer();
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
 
@@ -114,15 +81,26 @@ const buildDraft = async (file: File, accountId: number) => {
     return { broker: "pdf" as const, draft: await buildPdfDraft(bytes, accountId), sha256 };
   }
 
-  const config = detectBrokerConfig(bytes);
-  if (!config) throw new HttpError(400, "Tuntematon CSV-muoto: välittäjää ei tunnistettu");
-
-  const { rows, problems: csvProblems } = parseCsv(bytes, config);
+  const known = await knownInstrumentMaps();
+  let run: Awaited<ReturnType<typeof readBrokerTableByRecipe>>;
+  try {
+    run = await readBrokerTableByRecipe(
+      bytes,
+      userId,
+      readerClient ?? createClient(),
+      known,
+      accountId,
+    );
+  } catch (cause) {
+    throw cause instanceof HttpError
+      ? cause
+      : new HttpError(400, cause instanceof Error ? cause.message : "Tiedostoa ei voitu lukea");
+  }
 
   // Refused, not split: importing rows from two accounts under one of them is
   // what made a real portfolio's returns unreproducible. The owner exports per
   // account instead -- and the message names the accounts so they know which.
-  const portfolios = portfoliosNamed(rows, config);
+  const portfolios = portfoliosNamed(run.rows, { columns: { portfolio: "portfolio" } });
   if (portfolios.length > 1) {
     throw new HttpError(
       400,
@@ -131,16 +109,7 @@ const buildDraft = async (file: File, accountId: number) => {
     );
   }
 
-  const { knownIsins, knownNames } = await knownInstrumentMaps();
-  // Task 10's structural problems (bad column count, malformed quoting)
-  // are merged into the draft here so the review screen gets one
-  // line-ordered list of everything wrong with the file, instead of a
-  // separate list the caller would have to stitch back together itself.
-  return {
-    broker: config.broker,
-    draft: mapRows(rows, config, knownIsins, { accountId, csvProblems, knownNames }),
-    sha256,
-  };
+  return { broker: "csv" as const, draft: run.draft, sha256 };
 };
 
 /**
@@ -230,7 +199,7 @@ export const listImports = async (userId: string) =>
 export const previewUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
   await assertAccountOwned(userId, accountId);
-  const { broker, draft, sha256 } = await buildDraft(file, accountId);
+  const { broker, draft, sha256 } = await buildDraft(file, userId, accountId);
   return { broker, filename: file.name, sha256, ...draft };
 };
 
@@ -239,7 +208,7 @@ export const CommitDraftBody = z
     accountId: z.number().int().positive(),
     filename: z.string().min(1).max(255),
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
-    kind: z.enum(["csv_nordnet", "csv_op", "pdf"]),
+    kind: z.enum(["csv", "paste", "pdf"]),
     draft: DraftBody,
   })
   .strict();
@@ -275,12 +244,12 @@ export const commitUpload = async (userId: string, form: FormData) => {
   // on an account the caller cannot use must not first read the file, which
   // for a PDF means asking the model to read it.
   await assertAccountOwned(userId, accountId);
-  const { broker, draft, sha256 } = await buildDraft(file, accountId);
+  const { broker, draft, sha256 } = await buildDraft(file, userId, accountId);
   return commitDraftBody(userId, {
     accountId,
     filename: file.name,
     sha256,
-    kind: broker === "nordnet" ? "csv_nordnet" : broker === "pdf" ? "pdf" : "csv_op",
+    kind: broker,
     draft,
   });
 };
@@ -305,7 +274,7 @@ export const commitPaste = async (userId: string, body: z.infer<typeof PasteBody
     accountId,
     filename: OP_PASTE_FILENAME,
     sha256,
-    kind: "csv_op",
+    kind: "paste",
     draft,
   });
 };
