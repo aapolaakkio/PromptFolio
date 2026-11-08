@@ -31,6 +31,8 @@ type DraftProblem = {
   readonly message: string;
   readonly raw: Record<string, string>;
   readonly rawLine?: string;
+  /** A row skipped on purpose (`ignoredTypes`), not one that failed to read. */
+  readonly ignored?: boolean;
 };
 
 export type Draft = {
@@ -198,6 +200,7 @@ export const mapRows = (
           line: row.line,
           message: `${cell(row, "type")}: ${ignored}`,
           raw: row.values,
+          ignored: true,
         });
         continue;
       }

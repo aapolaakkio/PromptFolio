@@ -43,6 +43,7 @@ export type DraftResponse = {
     message: string;
     raw: Record<string, string>;
     rawLine?: string;
+    ignored?: boolean;
   }>;
   unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
 };

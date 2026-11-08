@@ -109,10 +109,20 @@ const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn
   note: problem.rawLine ?? problem.message,
 });
 
+/**
+ * A row skipped on purpose is reported, not offered for editing: the other leg
+ * of its event already carries it, and filling it in would book it twice.
+ */
 const editableRows = (draft: DraftResponse): EditableTxn[] => [
   ...draft.txns.map(toEditable),
-  ...draft.problems.map(rowFromProblem),
+  ...draft.problems.filter((problem) => problem.ignored !== true).map(rowFromProblem),
 ];
+
+/** Rows still missing what every transaction needs, by their source line. */
+const unfinishedLines = (rows: readonly EditableTxn[]): number[] =>
+  rows
+    .filter((row) => !/^\d{4}-\d{2}-\d{2}$/.test(row.tradeDate) || row.amountEur.trim() === "")
+    .map((row) => row.line);
 
 /** Which import record the commit writes. */
 const kindOf = (entry: Previewed): "csv" | "paste" | "pdf" => {
@@ -330,6 +340,7 @@ export const ImportsPage = () => {
   // The rows on screen are what will be imported, so the count and the
   // can-commit rule read them rather than the draft the server first sent.
   const editedRows = (previews ?? []).reduce((sum, entry) => sum + entry.rows.length, 0);
+  const unfinished = (previews ?? []).flatMap((entry) => unfinishedLines(entry.rows));
   const summary =
     previews === null
       ? null
@@ -337,7 +348,11 @@ export const ImportsPage = () => {
           ...summariseAll(drafts),
           good: editedRows,
           problems: 0,
-          canCommit: previews.length > 0 && editedRows > 0 && unknown.length === 0,
+          canCommit:
+            previews.length > 0 &&
+            editedRows > 0 &&
+            unknown.length === 0 &&
+            unfinished.length === 0,
         };
 
   const setRows = (index: number, rows: EditableTxn[]) =>
@@ -520,6 +535,13 @@ export const ImportsPage = () => {
                 </section>
               )}
 
+              {unfinished.length > 0 && (
+                <p role="alert" className="mt-6 text-loss">
+                  {unfinished.length === 1 ? "Rivi" : "Rivit"} {unfinished.join(", ")}: päivä tai
+                  summa puuttuu. Täydennä tai poista ne ennen tuontia.
+                </p>
+              )}
+
               <button
                 type="button"
                 className="mt-6"
@@ -577,6 +599,17 @@ const PreviewCard = ({
       {unknownCount > 0 && `, ${unknownCount} tuntematonta arvopaperia`}. Korjaa rivit tarvittaessa
       ennen tuontia.
     </p>
+    {entry.draft.problems.some((problem) => problem.ignored === true) && (
+      <ul className="text-muted text-sm">
+        {entry.draft.problems
+          .filter((problem) => problem.ignored === true)
+          .map((problem) => (
+            <li key={problem.line}>
+              Ohitettu rivi {problem.line}: {problem.message}
+            </li>
+          ))}
+      </ul>
+    )}
 
     {/*
         Every row, editable and scrollable, rather than the first 50 and a count

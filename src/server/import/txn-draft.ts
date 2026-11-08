@@ -41,6 +41,7 @@ export const DraftBody = z
           message: z.string(),
           raw: z.record(z.string(), z.string()),
           rawLine: z.string().optional(),
+          ignored: z.boolean().optional(),
         })
         .strict(),
     ),
