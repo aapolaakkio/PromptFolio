@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   availableCashEur,
   cashBalancesAt,
+  cashSeries,
   lockedCashEur,
   totalCashEur,
   valueCash,
@@ -243,5 +244,40 @@ describe("available and locked cash", () => {
     ];
     expect(formatMoney(availableCashEur(unpriced))).toBe("0.00");
     expect(formatMoney(lockedCashEur(unpriced))).toBe("0.00");
+  });
+});
+
+describe("cashSeries", () => {
+  const noFx = () => null;
+
+  test("gives each day the balance cashBalancesAt would, in one pass", () => {
+    const txns = [
+      txn("DEPOSIT", 1, "1000.00", EUR, "2026-01-01"),
+      txn("WITHDRAWAL", 1, "-300.00", EUR, "2026-01-03"),
+      txn("INTEREST", 1, "1.50", EUR, "2026-01-03"),
+    ];
+    const series = cashSeries(txns, noFx, "2026-01-01", "2026-01-04");
+
+    expect(series.map((p) => [p.date, formatMoney(p.cashEur)])).toEqual([
+      ["2026-01-01", "1000.00"],
+      ["2026-01-02", "1000.00"],
+      ["2026-01-03", "701.50"],
+      ["2026-01-04", "701.50"],
+    ]);
+    for (const point of series) {
+      expect(
+        formatMoney(totalCashEur(valueCash(cashBalancesAt(txns, point.date), noFx, point.date))),
+      ).toBe(formatMoney(point.cashEur));
+    }
+  });
+
+  test("leaves a currency with no rate that day out of the total, never as euros", () => {
+    const series = cashSeries(
+      [txn("DEPOSIT", 1, "100.00"), txn("DEPOSIT", 1, "500.00", SEK)],
+      noFx,
+      "2026-01-10",
+      "2026-01-10",
+    );
+    expect(formatMoney(series[0]!.cashEur)).toBe("100.00");
   });
 });

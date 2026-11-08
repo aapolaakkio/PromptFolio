@@ -27,6 +27,8 @@ export type SeriesPoint = {
    * its own line so it is never read as real value.
    */
   estimated?: boolean;
+  /** Cash on bank and broker accounts that day, when the caller has it. */
+  cash?: number;
 };
 
 /**
@@ -80,15 +82,24 @@ const RANGES = [
   { label: "Koko jakso", months: null },
 ] as const;
 
-export type PlotRow = { at: number; value: number; invested: number | null; estimated: boolean };
+export type PlotRow = {
+  at: number;
+  value: number;
+  invested: number | null;
+  estimated: boolean;
+  cash: number | null;
+};
 
 /** Every point, as the chart plots them. */
 export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
   points.map((point) => ({
     at: asMillis(point.date),
-    value: point.value,
+    // The whole portfolio: holdings plus the cash beside them, which is also
+    // drawn on its own line.
+    value: point.value + (point.cash ?? 0),
     invested: point.invested ?? null,
     estimated: point.estimated === true,
+    cash: point.cash ?? null,
   }));
 
 /**
@@ -156,6 +167,17 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
                   stroke: colourFor(1),
                   strokeWidth: 2,
                   strokeDasharray: "4 3",
+                }),
+              ]
+            : []),
+          ...(rows.some((row) => row.cash !== null && row.cash !== 0)
+            ? [
+                lineY(rows, {
+                  id: "cash",
+                  x: "at",
+                  y: "cash",
+                  stroke: colourFor(2),
+                  strokeWidth: 2,
                 }),
               ]
             : []),
@@ -262,7 +284,10 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           // collided with the axis the chart draws for itself.
           <span className="ml-auto flex items-center gap-3 self-center text-muted">
             <span className="flex items-center gap-1.5">
-              <span className="h-0.5 w-4" style={{ background: colourFor(0) }} /> Arvo
+              <span className="h-0.5 w-4" style={{ background: colourFor(0) }} />
+              {rows.some((row) => row.cash !== null && row.cash !== 0)
+                ? "Arvo (sis. käteinen)"
+                : "Arvo"}
             </span>
             <span className="flex items-center gap-1.5">
               <span
@@ -273,6 +298,11 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
               />
               Sijoitettu
             </span>
+            {rows.some((row) => row.cash !== null && row.cash !== 0) && (
+              <span className="flex items-center gap-1.5">
+                <span className="h-0.5 w-4" style={{ background: colourFor(2) }} /> Käteinen
+              </span>
+            )}
             {split.estimate.length > 0 && (
               <span
                 className="flex items-center gap-1.5"

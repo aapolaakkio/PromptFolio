@@ -8,6 +8,7 @@ import {
   type Money,
 } from "./money.ts";
 import { accountsMissingCashRecord, upTo } from "./ledger.ts";
+import { datesBetween } from "./returns.ts";
 import type { IsoDate, TransactionType, Txn } from "./types.ts";
 
 /**
@@ -131,3 +132,44 @@ export const totalCashEur = (valued: readonly ValuedCash[]): Money =>
     (sum, balance) => (balance.valueEur === null ? sum : addMoney(sum, balance.valueEur)),
     zeroMoney(EUR),
   );
+
+/**
+ * Cash in euros on every day from `from` to `to`, by the same rules as
+ * `cashBalancesAt`, in one pass: each transaction is added once as the days
+ * reach it, rather than every balance being summed again for every day of a
+ * twenty-year ledger. A balance in a currency with no rate that day is left out
+ * of that day, as `totalCashEur` leaves out an unvalued one.
+ */
+export const cashSeries = (
+  txns: readonly Txn[],
+  fxOn: (currency: Currency, on: IsoDate) => FxRate | null,
+  from: IsoDate,
+  to: IsoDate,
+): { date: IsoDate; cashEur: Money }[] => {
+  const unrecorded = new Set(accountsMissingCashRecord(txns));
+  const moving = txns
+    .filter((txn) => !unrecorded.has(txn.accountId) && CASH_MOVING.has(txn.type))
+    .toSorted((a, b) => (a.tradeDate < b.tradeDate ? -1 : a.tradeDate > b.tradeDate ? 1 : 0));
+  const byCurrency = new Map<Currency, Money>();
+  let next = 0;
+  return datesBetween(from, to).map((date) => {
+    while (next < moving.length && (moving[next]?.tradeDate ?? "") <= date) {
+      const txn = moving[next]!;
+      byCurrency.set(
+        txn.currency,
+        addMoney(byCurrency.get(txn.currency) ?? zeroMoney(txn.currency), txn.amount),
+      );
+      next += 1;
+    }
+    let cashEur = zeroMoney(EUR);
+    for (const [currency, amount] of byCurrency) {
+      if (currency === EUR) {
+        cashEur = addMoney(cashEur, amount);
+        continue;
+      }
+      const rate = fxOn(currency, date);
+      if (rate !== null) cashEur = addMoney(cashEur, toEur(amount, rate, "half-up"));
+    }
+    return { date, cashEur };
+  });
+};

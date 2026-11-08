@@ -351,6 +351,7 @@ describe("GET /api/value-series", () => {
       investedEur: "100.00",
       stale: false,
       costValued: false,
+      cashEur: "0.00",
       excludedInstrumentIds: [],
     });
     expect(body.at(-1)).toEqual({
@@ -359,6 +360,7 @@ describe("GET /api/value-series", () => {
       investedEur: "100.00",
       stale: false,
       costValued: false,
+      cashEur: "0.00",
       excludedInstrumentIds: [],
     });
     // 2024-01-02..04 carry the 1.1. price forward -- stale.
@@ -425,6 +427,7 @@ describe("GET /api/value-series", () => {
         investedEur: "0.00",
         stale: false,
         costValued: false,
+        cashEur: "0.00",
         excludedInstrumentIds: [],
       },
     ]);

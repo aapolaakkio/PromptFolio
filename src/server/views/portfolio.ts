@@ -13,6 +13,7 @@ import { allocateBy, type Dimension } from "../../core/allocation.ts";
 import {
   availableCashEur,
   cashBalancesAt,
+  cashSeries,
   lockedCashEur,
   totalCashEur,
   valueCash,
@@ -80,7 +81,7 @@ export const valueSeriesView = async (
   from: IsoDate | undefined,
   to: IsoDate,
 ) => {
-  const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
+  const { investedTxns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
   // Without a start given, the ledger's own first day -- a fixed floor like
   // 1900 draws a century of flat zero before anything happened, and bills a
   // point per day for it.
@@ -88,10 +89,13 @@ export const valueSeriesView = async (
   // Both series are one point per calendar day over the same range, so the two
   // line up index for index and the chart can draw them together.
   const invested = investedSeries(investedTxns, start, to);
+  // Cash on the same days, from the bank and broker rows that move money.
+  const cash = cashSeries(cashTxns, prices.fxOn, start, to);
   return valueSeries(investedTxns, instruments, prices, start, to).map((point, index) => ({
     date: point.date,
     valueEur: formatMoney(point.valueEur),
     investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
+    cashEur: formatMoney(cash[index]?.cashEur ?? zeroMoney(EUR)),
     stale: point.stale,
     // A holding with no price yet that day, valued at what was paid for it:
     // the chart draws these days apart, since they show no real movement.

@@ -170,6 +170,7 @@ export const DashboardPage = () => {
                 date: p.date,
                 value: Number(p.valueEur),
                 invested: Number(p.investedEur),
+                cash: Number(p.cashEur),
                 estimated: p.costValued,
               }))}
             />
