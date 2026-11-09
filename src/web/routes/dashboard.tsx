@@ -64,19 +64,6 @@ export const DashboardPage = () => {
     <>
       <h1>Dashboard</h1>
 
-      {staleFrom && (
-        <div className="mb-6">
-          <span className="inline-block rounded-full border border-line px-3 py-1 text-xs text-muted">
-            Some values are stale until {formatDate(staleFrom.date)}
-          </span>
-          <p className="mt-1 max-w-prose text-xs text-muted">
-            Price history for funds (e.g. Nordnet) only accumulates from the day the automatic price
-            refresh first ran -- before that, the value is based on the last known price, not the
-            actual price of the day.
-          </p>
-        </div>
-      )}
-
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Stat
           label="Portfolio value"
@@ -145,6 +132,14 @@ export const DashboardPage = () => {
                 estimated: p.costValued,
               }))}
             />
+            {staleFrom && (
+              <p className="mt-2 max-w-prose text-xs text-muted">
+                Some values are stale until {formatDate(staleFrom.date)}. Price history for funds
+                (e.g. Nordnet) only accumulates from the day the automatic price refresh first ran
+                -- before that, the value is based on the last known price, not the actual price of
+                the day.
+              </p>
+            )}
           </section>
 
           <section className="card mt-6">
