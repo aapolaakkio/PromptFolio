@@ -11,6 +11,7 @@ import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { getCash } from "../server/portfolio.ts";
 import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
 import { Modal } from "./Modal.tsx";
+import { usePublishSelection } from "./assistant-context.ts";
 
 /** What a person can record by hand, as the ledger stores it. */
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
@@ -32,6 +33,7 @@ export const CashPage = () => {
 
   const bankAccounts = (accounts.data ?? []).filter((account) => account.kind === "bank");
   const chosen = accountId ?? bankAccounts[0]?.id ?? null;
+  usePublishSelection({ accountId: chosen ?? undefined });
 
   const entries = useQuery({
     queryKey: ["cash-entries", chosen],

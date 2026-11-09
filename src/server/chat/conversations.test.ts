@@ -156,6 +156,35 @@ describe("choosing a model", () => {
   });
 });
 
+describe("the page the owner asks from", () => {
+  test("reaches the model as the app's own line, and a foreign account is refused", async () => {
+    const { seed } = await import("./proposal-test-kit.ts");
+    let system: string[] = [];
+    setChatClient({
+      run: (params) => {
+        system = params.messages.flatMap((m) => (m.role === "system" ? [m.content] : []));
+        return Promise.resolve(assistantSaying("ok"));
+      },
+    });
+    const owner = await seed();
+    const stranger = await seed();
+
+    await eventsOf(
+      await turn(owner.userId, {
+        message: "hi",
+        context: { page: "cash", selection: { accountId: owner.accountId } },
+      }),
+    );
+    expect(system).toContain(
+      `The owner is on the Cash page. Selected account: "Nordnet" (account #${owner.accountId}).`,
+    );
+
+    const foreign = { page: "cash" as const, selection: { accountId: stranger.accountId } };
+    expect(await statusOf(() => turn(owner.userId, { message: "hi", context: foreign }))).toBe(404);
+    expect(chat.Ask.safeParse({ message: "hi", context: { page: "admin" } }).success).toBe(false);
+  });
+});
+
 describe("a client that goes away mid-turn", () => {
   test("stops the model loop and reports nothing, instead of throwing into the log", async () => {
     // An aborted turn must stop asking the model.

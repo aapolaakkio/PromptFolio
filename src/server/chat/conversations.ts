@@ -19,12 +19,15 @@ import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
 import { buildForecastTools } from "./tools-forecast.ts";
 import { createTurnState } from "./turn-state.ts";
+import { PageContext } from "./page-context.ts";
+import { pageLine } from "./page-line.ts";
 
 export const Ask = z
   .object({
     conversationId: z.number().int().positive().optional(),
     message: z.string().trim().min(1, "The question cannot be empty").max(2000),
     model: z.enum(CHAT_MODEL_IDS).optional(),
+    context: PageContext.optional(),
   })
   .strict();
 
@@ -211,8 +214,10 @@ export const startTurn = async (
   input: z.infer<typeof Ask>,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> => {
-  const { conversationId, message, model = DEFAULT_CHAT_MODEL } = Ask.parse(input);
+  const { conversationId, message, model = DEFAULT_CHAT_MODEL, context } = Ask.parse(input);
   const client = clientOverride ?? resolveClient();
+  // Resolved before anything is stored, so a foreign id refuses the turn without leaving a conversation behind.
+  const where = context === undefined ? null : await pageLine(db, userId, context);
 
   const conversation =
     conversationId === undefined
@@ -256,7 +261,7 @@ export const startTurn = async (
       };
       send({ type: "conversation", id: conversation.id });
       try {
-        for await (const event of runTurn(client, tools, history, signal, model)) {
+        for await (const event of runTurn(client, tools, history, signal, model, where)) {
           if (event.type === "tool") used.push(event.name);
           if (event.type === "proposal") {
             await db

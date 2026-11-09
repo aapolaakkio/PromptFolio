@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ChatChartSchema } from "../../server/chat/chart-schema.ts";
 import type { ChatModel } from "../../server/chat/models.ts";
+import type { PageContext } from "../../server/chat/page-context.ts";
 import { ProposalSchema } from "../../server/chat/proposal-schema.ts";
 import { askTurn } from "../server/chat.ts";
 
@@ -32,7 +33,12 @@ export const takeEvents = (buffer: string) => {
   return { events, rest };
 };
 
-type AskBody = { message: string; conversationId?: number; model?: ChatModel };
+type AskBody = {
+  message: string;
+  conversationId?: number;
+  model?: ChatModel;
+  context?: PageContext;
+};
 type Turn = (body: AskBody) => Promise<Response>;
 
 // `fetch`, not `EventSource`: the question travels in the body, not a URL and its access logs.

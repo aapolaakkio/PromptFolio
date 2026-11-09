@@ -13,6 +13,7 @@ import { AdjustRow } from "./AdjustRow.tsx";
 import { SnapshotForm } from "./SnapshotForm.tsx";
 import { SnapshotPaste } from "./SnapshotPaste.tsx";
 import { explain, needsAttention, type ReconcileRow } from "./reconcile-view.ts";
+import { usePublishSelection } from "./assistant-context.ts";
 
 const SOURCE_LABELS = new Map<string, string>([
   ["pdf", "PDF statement"],
@@ -32,6 +33,7 @@ export const ReconcilePage = () => {
   });
 
   const chosenAccount = accountId ?? accounts.data?.[0]?.id ?? null;
+  usePublishSelection({ accountId: chosenAccount ?? undefined });
 
   const snapshots = useQuery({
     queryKey: ["snapshots", chosenAccount],

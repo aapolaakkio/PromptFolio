@@ -28,23 +28,30 @@ test("resolved with no session renders nothing at all", () => {
   expect(html).toBe("");
 });
 
-test("resolved with a session renders the nav, sign-out button and the routed page", async () => {
-  // <Outlet/> and <Link/> need a router context; a minimal in-memory one provides it.
+// <Outlet/> and <Link/> need a router context; a minimal in-memory one provides it.
+const renderAt = async (path: string): Promise<string> => {
   const testRoot = createRootRoute({
     component: () => SessionGate({ isPending: false, hasSession: true, onSignOut: noop }),
   });
-  const child = createRoute({
-    getParentRoute: () => testRoot,
-    path: "/",
-    component: () => "PROTECTED_PAGE_MARKER",
-  });
+  const children = ["/", "/chat"].map((childPath) =>
+    createRoute({
+      getParentRoute: () => testRoot,
+      path: childPath,
+      component: () => "PROTECTED_PAGE_MARKER",
+    }),
+  );
   const router = createRouter({
-    routeTree: testRoot.addChildren([child]),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: testRoot.addChildren(children),
+    history: createMemoryHistory({ initialEntries: [path] }),
   });
   await router.load();
+  return renderToStaticMarkup(RouterProvider({ router }));
+};
 
-  const html = renderToStaticMarkup(RouterProvider({ router }));
+const TOGGLE = /<button[^>]*aria-controls="assistant-panel"[^>]*>Chat<\/button>/;
+
+test("resolved with a session renders the nav, sign-out button and the routed page", async () => {
+  const html = await renderAt("/");
 
   expect(html).toContain("PromptFolio");
   expect(html).toContain("Sign out");
@@ -52,5 +59,19 @@ test("resolved with a session renders the nav, sign-out button and the routed pa
   expect(html).toContain("Imports");
   // Forecast sits right after Rebalance in the nav.
   expect(html).toMatch(/>Rebalance<\/a><a[^>]*href="\/forecast"[^>]*>Forecast<\/a>/);
+  expect(html).toContain("PROTECTED_PAGE_MARKER");
+});
+
+test("a normal page has the assistant toggle, closed, and Chat is no longer a nav link", async () => {
+  const html = await renderAt("/");
+  expect(html).toMatch(TOGGLE);
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toMatch(/<aside[^>]*aria-label="Assistant"/);
+  expect(html).not.toMatch(/<nav.*href="\/chat".*<\/nav>/);
+});
+
+test("the full Chat page hides the toggle, since the page is the chat", async () => {
+  const html = await renderAt("/chat");
+  expect(html).not.toMatch(TOGGLE);
   expect(html).toContain("PROTECTED_PAGE_MARKER");
 });

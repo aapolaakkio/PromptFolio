@@ -77,6 +77,27 @@ describe("runTurn", () => {
     ]);
   });
 
+  test("the page line is its own system message after the rules, which stay unchanged", async () => {
+    const seen: Seen = { requests: [] };
+    const line = "The owner is on the Cash page.";
+    await drain(
+      runTurn(
+        scripted([says("ok")], seen),
+        [],
+        [{ role: "user", content: "hi" }],
+        undefined,
+        DEFAULT_CHAT_MODEL,
+        line,
+      ),
+    );
+
+    expect(seen.requests[0]?.messages).toEqual([
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: line },
+      { role: "user", content: "hi" },
+    ]);
+  });
+
   test("hands a tool's result back to the model as JSON, under the call that asked for it", async () => {
     const seen: Seen = { requests: [] };
     const client = scripted([calls("get_holdings"), says("ok")], seen);

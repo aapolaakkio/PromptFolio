@@ -31,6 +31,7 @@ import { type Column, DraftTable } from "./DraftTable.tsx";
 import { firstThenRest } from "./preview-order.ts";
 import { clearEdited, pickSuggested } from "./draft-edit.ts";
 import { Modal } from "./Modal.tsx";
+import { usePublishSelection } from "./assistant-context.ts";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
@@ -175,6 +176,7 @@ export const ImportsPage = () => {
   // The import an undo is in flight for; disables only that entry's button.
   const [undoingId, setUndoingId] = useState<number | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
+  usePublishSelection({ accountId: accountId ?? undefined });
 
   const accounts = useQuery({
     queryKey: ["accounts"],

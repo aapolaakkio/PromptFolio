@@ -328,12 +328,15 @@ export async function* runTurn(
   history: readonly { role: "user" | "assistant"; content: string }[],
   signal?: AbortSignal,
   model: string = DEFAULT_CHAT_MODEL,
+  // Where the owner asks from, written by the app (page-line.ts); its own message, so the rules above it stay whole.
+  pageLine: string | null = null,
 ): AsyncGenerator<ChatEvent> {
   const definitions = toolDefinitions(tools);
   const proposable = proposalList(tools);
   let messages: readonly ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     ...(proposable === null ? [] : [{ role: "system" as const, content: proposable }]),
+    ...(pageLine === null ? [] : [{ role: "system" as const, content: pageLine }]),
     ...history,
   ];
   // Every round's words, as the owner saw them stream; the stored answer is all of them.
