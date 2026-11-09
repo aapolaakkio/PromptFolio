@@ -370,6 +370,11 @@ describe("redacted", () => {
     expect(redacted(`viite ${value} loppu`)).toBe(`viite ${mask} loppu`);
   });
 
+  test.each(["RF1212345678", "FI1234567891"])(
+    "%s is ISIN-shaped without a valid check digit and is masked",
+    (value) => expect(redacted(value)).toBe("[REF]"),
+  );
+
   test.each([
     "1 234 567,89",
     "12.03.2026",

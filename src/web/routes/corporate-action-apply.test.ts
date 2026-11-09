@@ -25,6 +25,7 @@ const bought: EditableTxn = {
 
 const split: Proposal = {
   lines: [3, 4],
+  skipped: [3],
   kind: "split",
   terms: "1:10",
   effectiveDate: "2024-06-10",
@@ -73,4 +74,13 @@ test("a row the preview skipped is added with its own note; a missing cost basis
     (line) => `skipped ${line}`,
   );
   expect(applied[1]).toMatchObject({ line: 4, amountEur: "", note: "skipped 4", suggested: true });
+});
+
+test("applying one action leaves every row it does not name, even on the same day", () => {
+  const otherOut = blankRow(5, "SPLIT OTTO");
+  const otherIn = blankRow(6, "SPLIT JÄTTÖ");
+  const rows = [blankRow(3, "SPLIT OTTO"), blankRow(4, "SPLIT JÄTTÖ"), otherOut, otherIn];
+  const applied = applyProposal(rows, { ...split, lines: [3, 4, 5, 6] }, () => "");
+  expect(applied.map((row) => row.line)).toEqual([4, 5, 6]);
+  expect(applied.slice(1)).toEqual([otherOut, otherIn]);
 });

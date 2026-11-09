@@ -38,6 +38,7 @@ export type DraftResponse = {
   /** Checked booking proposals for corporate-action rows; the owner applies or ignores each. */
   corporateActions?: ReadonlyArray<{
     readonly lines: readonly number[];
+    readonly skipped: readonly number[];
     readonly kind: string;
     readonly terms: string;
     readonly effectiveDate: string;

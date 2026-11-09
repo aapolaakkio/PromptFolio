@@ -91,6 +91,7 @@ describe("proposeActions", () => {
     expect(rest).toEqual([]);
     expect(proposal).toMatchObject({
       lines: [4, 5],
+      skipped: [4],
       kind: "split",
       terms: "1:10",
       effectiveDate: "2024-06-10",
@@ -251,5 +252,109 @@ describe("proposeActions", () => {
       .object({ actions: z.array(z.object({ id: z.number() })) })
       .parse(JSON.parse(client.asked[0]?.messages[1]?.content ?? ""));
     expect(sent.actions.map((a) => a.id)).toEqual([...Array(MAX_ACTIONS).keys()]);
+  });
+});
+
+const leg = (line: number, type: string, isin: string, quantity: string, date = "2024-03-01") =>
+  row(line, { tradeDate: date, type, isin, quantity });
+const booking = (line: number, type: string, quantityText: string, tradeDate = "2024-03-01") => ({
+  line,
+  type,
+  tradeDate,
+  quantityText,
+});
+const sentActions = (client: { asked: TurnParams[] }) =>
+  z
+    .object({
+      actions: z.array(z.object({ id: z.number(), rows: z.array(z.object({ line: z.number() })) })),
+    })
+    .parse(JSON.parse(client.asked[0]?.messages[1]?.content ?? ""))
+    .actions.map((a) => a.rows.map((r) => r.line));
+
+describe("proposeActions books only whole, unit-moving actions", () => {
+  const swapOut = leg(7, "VAIHTO AP-OTTO", "IE00BG5J1M21", "30");
+  const swapIn = leg(8, "VAIHTO AP-JÄTTÖ", "IE00BJQTJ848", "12.5952");
+  const swap = (rows: readonly ReturnType<typeof booking>[]) =>
+    action({ kind: "share swap", effectiveDate: "2024-03-01", rows: [...rows] });
+
+  test.each(["SELL", "BUY"])("a %s booking is dropped", async (type) => {
+    const bad = swap([booking(7, type, "30"), booking(8, "TRANSFER_IN", "12.5952")]);
+    expect(await proposeActions(scripted(reply([bad])), [swapOut, swapIn])).toEqual([]);
+  });
+
+  test("a swap whose OTTO prints a positive quantity books both legs with the rows' quantities", async () => {
+    const good = swap([booking(7, "TRANSFER_OUT", "30"), booking(8, "TRANSFER_IN", "12.59520")]);
+    const [proposal] = await proposeActions(scripted(reply([good])), [swapOut, swapIn]);
+    expect(proposal?.rows.map((r) => [r.line, r.type, r.quantityText])).toEqual([
+      [7, "TRANSFER_OUT", "30"],
+      [8, "TRANSFER_IN", "12.5952"],
+    ]);
+    expect(proposal?.skipped).toEqual([]);
+  });
+
+  test("a quantity that only matches under another reading of the marks is dropped", async () => {
+    const big = leg(5, "SPLIT JÄTTÖ", "FI0009000681", "1000", "2024-06-10");
+    const bad = action({ rows: [booking(5, "SPLIT", "1.000", "2024-06-10")] });
+    expect(await proposeActions(scripted(reply([bad])), [OUT, big])).toEqual([]);
+  });
+
+  test("a positive-quantity row cannot be TRANSFER_OUT", async () => {
+    const merged = leg(9, "FUUSIO", "FI4000567029", "40");
+    const bad = action({
+      kind: "merger",
+      effectiveDate: "2024-03-01",
+      rows: [booking(9, "TRANSFER_OUT", "40")],
+    });
+    expect(await proposeActions(scripted(reply([bad])), [merged])).toEqual([]);
+  });
+
+  test("a negative-quantity row cannot be TRANSFER_IN", async () => {
+    const merged = leg(9, "FUUSIO", "FI4000567029", "-40");
+    const bad = action({
+      kind: "merger",
+      effectiveDate: "2024-03-01",
+      rows: [booking(9, "TRANSFER_IN", "40")],
+    });
+    expect(await proposeActions(scripted(reply([bad])), [merged])).toEqual([]);
+  });
+
+  test("a swap booking only its in-leg is dropped", async () => {
+    const bad = swap([booking(8, "TRANSFER_IN", "12.5952")]);
+    expect(await proposeActions(scripted(reply([bad])), [swapOut, swapIn])).toEqual([]);
+  });
+
+  test("a SPLIT without an out-leg of the same ISIN is dropped", async () => {
+    const bad = action({ rows: [booking(5, "SPLIT", "1000", "2024-06-10")] });
+    expect(await proposeActions(scripted(reply([bad])), [IN])).toEqual([]);
+  });
+
+  test("two same-day splits of different instruments are separate actions", async () => {
+    const otherOut = leg(10, "SPLIT OTTO", "US0378331005", "-5", "2024-06-10");
+    const otherIn = leg(11, "SPLIT JÄTTÖ", "US0378331005", "20", "2024-06-10");
+    const second = action({ group: 1, rows: [booking(11, "SPLIT", "20", "2024-06-10")] });
+    const client = scripted(reply([second]));
+    const proposals = await proposeActions(client, [OUT, IN, otherOut, otherIn]);
+    expect(sentActions(client)).toEqual([
+      [4, 5],
+      [10, 11],
+    ]);
+    expect(proposals.map((p) => [p.lines, p.skipped])).toEqual([[[10, 11], [10]]]);
+  });
+
+  test("a row of another action on the same day drops the proposal", async () => {
+    const otherIn = leg(11, "SPLIT JÄTTÖ", "US0378331005", "20", "2024-06-10");
+    const otherOut = leg(10, "SPLIT OTTO", "US0378331005", "-5", "2024-06-10");
+    const bad = action({
+      rows: [booking(5, "SPLIT", "1000", "2024-06-10"), booking(11, "SPLIT", "20", "2024-06-10")],
+    });
+    expect(await proposeActions(scripted(reply([bad])), [OUT, IN, otherOut, otherIn])).toEqual([]);
+  });
+
+  test("two same-day swaps cannot be told apart and are not sent", async () => {
+    const client = scripted(reply([]));
+    const moreOut = leg(20, "VAIHTO AP-OTTO", "FI0009000681", "10");
+    const moreIn = leg(21, "VAIHTO AP-JÄTTÖ", "FI4000567029", "4");
+    expect(await proposeActions(client, [swapOut, swapIn, moreOut, moreIn])).toEqual([]);
+    expect(client.asked).toHaveLength(0);
   });
 });

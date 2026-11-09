@@ -15,7 +15,6 @@ export const CorporateActionCard = ({
   readonly onApply: () => void;
   readonly onIgnore: () => void;
 }) => {
-  const unbooked = proposal.lines.filter((line) => !proposal.rows.some((row) => row.line === line));
   return (
     <section className="mt-3 rounded border border-accent p-3 text-sm">
       <p>
@@ -34,7 +33,7 @@ export const CorporateActionCard = ({
       </p>
       <p className="mt-1 text-muted">
         Books {proposal.rows.map((row) => `row ${row.line} as ${row.type}`).join(", ")}
-        {unbooked.length > 0 && `; ${rowList(unbooked)} not booked`}.
+        {proposal.skipped.length > 0 && `; ${rowList(proposal.skipped)} not booked`}.
       </p>
       {proposal.costBasisNeeded.length > 0 && (
         <p className="mt-1 text-loss">
