@@ -227,6 +227,8 @@ const viaFoundPage = async (
 ): Promise<InstrumentLookup> => {
   // ponytail: with no currency there is nothing to check the page's against.
   if (ask.currency === null) return classify(resolved, ask.currency);
+  // ponytail: with no ISIN to find on the page, a name match is too weak to trust a recipe.
+  if (isin === null) return classify(resolved, ask.currency);
   const hit = known === undefined ? await findPage(ask, page, isin) : known;
   if (hit === null || hit.html === null) return classify(resolved, ask.currency);
 

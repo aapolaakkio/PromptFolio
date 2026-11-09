@@ -1,8 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
 import type { ChatClient, ModelReply, TurnParams } from "../chat/runner.ts";
-import { webSearchFinder } from "./find-page.ts";
+import { isTransientFailure } from "../chat/transient.ts";
+import { MODEL_TIMEOUT_MS, webSearchFinder, withModelTimeout } from "./find-page.ts";
 
 const EUR = parseCurrency("EUR");
 const ISIN = "SE0005993102";
@@ -123,5 +124,52 @@ describe("webSearchFinder", () => {
     await expect(webSearchFinder(client)({ isin: ISIN, name: "X", currency: EUR })).rejects.toThrow(
       "malli alhaalla",
     );
+  });
+});
+
+describe("withModelTimeout", () => {
+  const params: TurnParams = { model: "m", max_tokens: 1, messages: [], tools: [] };
+
+  test("every run gets a timeout signal", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const client = withModelTimeout({
+      run: async (_params, options) => {
+        seen.push(options?.signal);
+        return text("");
+      },
+    });
+    await client.run(params);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(MODEL_TIMEOUT_MS).toBe(60_000);
+  });
+
+  test("a caller's signal still aborts the run", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const client = withModelTimeout({
+      run: async (_params, options) => {
+        seen.push(options?.signal);
+        return text("");
+      },
+    });
+    const caller = new AbortController();
+    await client.run(params, { signal: caller.signal });
+    expect(seen[0]?.aborted).toBe(false);
+    caller.abort();
+    expect(seen[0]?.aborted).toBe(true);
+  });
+
+  test("a timeout abort reads as transient", async () => {
+    const client = withModelTimeout({
+      run: async (_params, options) => {
+        options?.signal?.throwIfAborted();
+        return text("");
+      },
+    });
+    const spy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => AbortSignal.abort(new DOMException("t", "TimeoutError")));
+    const failure = await client.run(params).catch((cause) => cause);
+    spy.mockRestore();
+    expect(isTransientFailure(failure)).toBe(true);
   });
 });

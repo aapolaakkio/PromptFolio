@@ -1,11 +1,18 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { EUR } from "../../core/money.ts";
 import type { ChatClient, ModelReply } from "../chat/runner.ts";
 import { testDb } from "../db/test-db.ts";
 import { instruments, pageRecipes, priceFetchLog, prices } from "../db/schema.ts";
-import { fetchPage, isPublicPageUrl, PageGoneError, refreshPage } from "./page.ts";
+import {
+  fetchPage,
+  isPublicPageUrl,
+  PAGE_FETCH_TIMEOUT_MS,
+  PageGoneError,
+  refreshPage,
+} from "./page.ts";
+import { MAX_PAGE_CHARS } from "./page-recipe.ts";
 import type { PageRecipe } from "./page-recipe.ts";
 import { urlOf } from "./types.ts";
 
@@ -419,4 +426,34 @@ test("a stored private sourceKey is never fetched and marks attention", async ()
   expect(outcome).toBe("attention");
   expect(requests).toBe(0);
   expect(await statusOf(db, seeded.id)).toBe("attention");
+});
+
+describe("fetchPage limits", () => {
+  const URL_ = "https://fund.example.com/a";
+
+  test("sends a timeout signal; a timeout is a transient error, not a gone page", async () => {
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      init?.signal?.throwIfAborted();
+      return new Response("ok");
+    };
+    const failure = await fetchPage(URL_, fetchImpl).catch((cause) => cause);
+    expect(timeout).toHaveBeenCalledWith(PAGE_FETCH_TIMEOUT_MS);
+    timeout.mockRestore();
+    expect(failure).toBeInstanceOf(DOMException);
+    expect(failure).not.toBeInstanceOf(PageGoneError);
+  });
+
+  test("refuses a declared content-length over the limit before reading the body", async () => {
+    let read = false;
+    const response = new Response("x", { headers: { "content-length": `${MAX_PAGE_CHARS + 1}` } });
+    response.text = async () => {
+      read = true;
+      return "x";
+    };
+    await expect(fetchPage(URL_, async () => response)).rejects.toThrow();
+    expect(read).toBe(false);
+  });
 });

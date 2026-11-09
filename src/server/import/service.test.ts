@@ -738,7 +738,7 @@ describe("an import with an instrument nobody has added yet", () => {
     const { userId } = await signUp(`imp-auto-model-down-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     const isin = freshIsin();
-    const down = (): Promise<never> => Promise.reject(new Error("malli alhaalla"));
+    const down = (): Promise<never> => Promise.reject(new TypeError("fetch failed"));
     service._setPageLookup({ find: down, client: { run: down } });
 
     try {

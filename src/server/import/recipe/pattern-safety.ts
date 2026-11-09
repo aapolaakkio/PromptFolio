@@ -222,7 +222,7 @@ function isAmbiguousBody(body: string, depth = 0): boolean {
 export const mayBacktrackForever = (source: string): boolean =>
   groupsOf(source).some((group) => group.quantifier !== "" && isAmbiguousBody(group.body));
 
-/** Most unbounded wildcard repetitions (`.*`, `[\\s\\S]+`, `[^x]*?`) a page pattern may carry. */
+/** Most unbounded wildcard repetitions (`.*`, `[\\s\\S]+`, `[^x]*?`, `{n,}`) a page pattern may carry. */
 const MAX_WILDCARD_REPEATS = 1;
 
 /**
@@ -232,9 +232,10 @@ const MAX_WILDCARD_REPEATS = 1;
  */
 export const hasManyWildcards = (source: string): boolean => {
   const folded = source
+    .replace(/\[(?:\\w\\W|\\W\\w|\\d\\D|\\D\\d|\\s\\S|\\S\\s)\]|\[\^\]/g, "W")
+    .replace(/\(\?:(?:\.\|\\n|\\n\|\.)\)/g, "W")
     .replace(/\\[^sS]/g, "x")
-    .replace(/\[\\s\\S\]/g, "W")
     .replace(/\[\^[^\]]*\]/g, "N")
     .replace(/\[[^\]]*\]/g, "x");
-  return (folded.match(/[.WN][*+]/g) ?? []).length > MAX_WILDCARD_REPEATS;
+  return (folded.match(/[.WN](?:[*+]|\{\d+,\})/g) ?? []).length > MAX_WILDCARD_REPEATS;
 };

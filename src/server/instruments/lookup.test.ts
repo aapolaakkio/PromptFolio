@@ -648,6 +648,19 @@ describe("lookupInstrument, a page found by web search", () => {
     expect(urls.filter((url) => url === PAGE_URL)).toHaveLength(1);
   });
 
+  test("an ISIN-less row whose page shows no ISIN makes no recipe call and goes to the form", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: null });
+    const client = recipeClient(GOOD);
+    const result = await lookupWithSpacing(null, FUND_NAME, EUR, stubFetch(await misses()), 0, {
+      find,
+      client,
+      referenceMinor: null,
+    });
+
+    expect(result).toMatchObject({ outcome: "form", priceSource: null, pageRecipe: null });
+    expect(client.calls).toBe(0);
+  });
+
   test("a page-claimed ISIN whose OpenFIGI name differs goes to the form", async () => {
     const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
     const client = recipeClient(GOOD);

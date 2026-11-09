@@ -689,6 +689,33 @@ test("refreshPrices spaces page fetches and still runs Yahoo", async () => {
   expect(pageAt[1]! - pageAt[0]!).toBeGreaterThanOrEqual(35);
 });
 
+test("refreshPrices writes the Yahoo prices before it reads any page", async () => {
+  const { db } = await testDb();
+  const listed = await seedHeld(db);
+  await seedHeld(db, {
+    isin: crypto.randomUUID(),
+    name: "Sivurahasto",
+    kind: "fund",
+    priceSource: "page",
+    sourceKey: "https://example.test/a",
+    ticker: null,
+  });
+  let yahooRowsWhenPageRead = -1;
+  const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
+    if (urlOf(url).includes("example.test")) {
+      yahooRowsWhenPageRead = (
+        await db.select().from(prices).where(eq(prices.instrumentId, listed.id)).all()
+      ).length;
+      return new Response("<p>ei mitään</p>");
+    }
+    return yahooStub(4.31)();
+  };
+
+  await refreshPrices(db, { yahooSpacingMs: 0, pageSpacingMs: 0, fetchImpl, today: "2026-08-27" });
+
+  expect(yahooRowsWhenPageRead).toBe(1);
+});
+
 test("a direct backfill of a page instrument does not throw and writes nothing", async () => {
   const { db } = await testDb();
   const fund = await seedHeld(db, {

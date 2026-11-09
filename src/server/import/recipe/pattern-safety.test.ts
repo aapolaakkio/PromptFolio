@@ -57,7 +57,18 @@ describe("mayBacktrackForever", () => {
 });
 
 describe("hasManyWildcards", () => {
-  test.each([String.raw`.*a.*b`, String.raw`[\s\S]*?x[^}]+y`, ".+a.*?"])("refuses %s", (p) => {
+  test.each([
+    String.raw`.*a.*b`,
+    String.raw`[\s\S]*?x[^}]+y`,
+    ".+a.*?",
+    String.raw`[\w\W]*a[\W\w]*b`,
+    String.raw`[\d\D]*a[\D\d]+b`,
+    String.raw`[\S\s]*a[^]*b`,
+    String.raw`.{0,}a.{1,}b`,
+    String.raw`.{2,}a.*b`,
+    String.raw`(?:.|\n)*a(?:.|\n)*b`,
+    String.raw`(?:.|\n)*a.*b`,
+  ])("refuses %s", (p) => {
     expect(hasManyWildcards(p)).toBe(true);
   });
   test.each([

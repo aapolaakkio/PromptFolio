@@ -108,10 +108,22 @@ export const webSearchFinder =
     return { url: found.url, isin };
   };
 
+export const MODEL_TIMEOUT_MS = 60_000;
+
+/** Every run is cut off after MODEL_TIMEOUT_MS, whatever signal the caller also passes. */
+export const withModelTimeout = (client: ChatClient): ChatClient => ({
+  run: (params, options) => {
+    const timeout = AbortSignal.timeout(MODEL_TIMEOUT_MS);
+    const signal =
+      options?.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout]);
+    return client.run(params, { ...options, signal });
+  },
+});
+
 /** The production finder, or null when no model is configured: the lookup then runs without it. */
 export const pageDeps = (): PageDeps | null => {
   try {
-    const client = createClient();
+    const client = withModelTimeout(createClient());
     return { find: webSearchFinder(client), client };
   } catch {
     return null;

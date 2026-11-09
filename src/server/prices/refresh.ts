@@ -20,42 +20,6 @@ const describeFailure = (cause: unknown): string =>
   cause instanceof Error ? cause.message : "Tuntematon virhe";
 
 /**
- * How far back the daily refresh accepts a price. A fund publishes its value
- * for the previous business day, so on a Monday the latest NAV is Friday's;
- * asking for today alone dropped every fund price, every day.
- */
-const RECENT_DAYS = 7;
-
-const daysBefore = (iso: string, days: number): string =>
-  new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
-
-/** A fund or other non-Yahoo source, one page per instrument. */
-const refreshFromPage = async (
-  db: Db,
-  instrument: Priced,
-  opts: { readonly fetchImpl?: FetchImpl; readonly asOf: string },
-): Promise<boolean> => {
-  const source = sourceFor(instrument.priceSource);
-  try {
-    const points = await source.fetch({
-      sourceKey: instrument.sourceKey,
-      from: daysBefore(opts.asOf, RECENT_DAYS),
-      to: opts.asOf,
-      fetchImpl: opts.fetchImpl,
-    });
-    return await recordPoints(db, instrument, points);
-  } catch (cause) {
-    await logAttempt(db, {
-      source: source.id,
-      instrumentId: instrument.id,
-      ok: false,
-      message: describeFailure(cause),
-    });
-    return false;
-  }
-};
-
-/**
  * Every Yahoo listing's latest quote, asked through the gate. A pause stops
  * Yahoo for the rest of the run: what was found is kept, the rest waits for
  * the next run without a log row each.
@@ -107,12 +71,16 @@ const refreshPageSafely = async (
   try {
     return await refreshPage(db, instrument, opts);
   } catch (cause) {
-    await logAttempt(db, {
-      source: "page",
-      instrumentId: instrument.id,
-      ok: false,
-      message: describeFailure(cause),
-    });
+    try {
+      await logAttempt(db, {
+        source: "page",
+        instrumentId: instrument.id,
+        ok: false,
+        message: describeFailure(cause),
+      });
+    } catch (logCause) {
+      console.error("Sivun haun lokirivin kirjoitus epäonnistui", logCause);
+    }
     return "failed";
   }
 };
@@ -140,28 +108,26 @@ export const refreshPrices = async (
 
   let ok = 0;
   let failed = 0;
-  const spacingMs = opts.pageSpacingMs ?? PAGE_SPACING_MS;
-  let pagesFetched = 0;
-  for (const instrument of priced.filter((row) => row.priceSource !== "yahoo")) {
-    if (instrument.priceSource === "page") {
-      if (pagesFetched > 0) await sleep(spacingMs);
-      pagesFetched++;
-      const outcome = await refreshPageSafely(db, instrument, {
-        fetchImpl: opts.fetchImpl ?? fetch,
-        client: opts.client ?? null,
-        today: asOf,
-        now: Date.now(),
-      });
-      if (outcome === "ok") ok++;
-      else failed++;
-    } else if (await refreshFromPage(db, instrument, { fetchImpl: opts.fetchImpl, asOf })) ok++;
-    else failed++;
-  }
+  // Yahoo first: a page that misbehaves must not cost the listed prices.
   const yahoo = await refreshFromYahoo(
     db,
     priced.filter((row) => row.priceSource === "yahoo"),
     { fetchImpl: opts.fetchImpl, spacingMs: opts.yahooSpacingMs },
   );
+  const spacingMs = opts.pageSpacingMs ?? PAGE_SPACING_MS;
+  let pagesFetched = 0;
+  for (const instrument of priced.filter((row) => row.priceSource === "page")) {
+    if (pagesFetched > 0) await sleep(spacingMs);
+    pagesFetched++;
+    const outcome = await refreshPageSafely(db, instrument, {
+      fetchImpl: opts.fetchImpl ?? fetch,
+      client: opts.client ?? null,
+      today: asOf,
+      now: Date.now(),
+    });
+    if (outcome === "ok") ok++;
+    else failed++;
+  }
   return { ok: ok + yahoo.ok, failed: failed + yahoo.failed, paused: yahoo.paused };
 };
 

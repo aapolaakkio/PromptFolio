@@ -5,6 +5,7 @@ import type { Db } from "../db/index.ts";
 import { instruments, pageRecipes, prices } from "../db/schema.ts";
 import {
   judgePageRead,
+  MAX_PAGE_CHARS,
   PageRecipeSchema,
   runPageRecipe,
   type PageExpect,
@@ -102,6 +103,7 @@ export const isPublicPageUrl = (url: string): boolean => {
   return !PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));
 };
 
+export const PAGE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -116,7 +118,10 @@ export const fetchPage = async (
   redirectsLeft: number = MAX_REDIRECTS,
 ): Promise<string> => {
   if (!isPublicPageUrl(url)) throw new Error("Sivun osoite ei ole julkinen https-osoite");
-  const response = await fetchImpl(url, { redirect: "manual" });
+  const response = await fetchImpl(url, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
+  });
   if (REDIRECT_STATUSES.has(response.status)) {
     const location = response.headers.get("location");
     if (location === null || redirectsLeft === 0 || !URL.canParse(location, url)) {
@@ -127,7 +132,12 @@ export const fetchPage = async (
   if (GONE_STATUSES.has(response.status)) {
     throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
   }
-  return await (await requireOk(response, "Sivu")).text();
+  const ok = await requireOk(response, "Sivu");
+  // ponytail: only a declared length is checked; a body with none is cut by the recipe's own limit.
+  if (Number(ok.headers.get("content-length")) > MAX_PAGE_CHARS) {
+    throw new Error("Sivu on liian suuri luettavaksi");
+  }
+  return await ok.text();
 };
 
 /**

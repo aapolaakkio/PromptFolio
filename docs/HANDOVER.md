@@ -22,7 +22,7 @@ undo removes exactly one import and refuses if a later sale depends on its units
 is chosen by the holding's own currency so a EUR holding is not priced from a USD listing of the
 same ISIN. A holding with no ISIN resolves by name.
 
-**Prices.** Yahoo, Nordnet fund pages, OP fund pages, or manual. ECB SDMX for FX. Nightly refresh
+**Prices.** Yahoo, found price pages read by verified recipes, or manual. ECB SDMX for FX. Nightly refresh
 at 19:30 Europe/Helsinki, production only. Yahoo-priced instruments backfill real history; the two
 fund sources cannot, and accumulate from first deployment.
 
@@ -108,7 +108,7 @@ Each of these was arrived at by getting it wrong first.
 - **Dividend withholding is absent from the ledger.** Both broker exports publish one combined
   "Kulut / Korot / Verot" column, so a dividend's amount is what arrived and the taxable 85 % is
   computed on it. Where the payer withheld, the true gross is higher; every such row is badged.
-- **Fund NAV history** for Nordnet- and OP-priced funds starts at your deployment. Cost basis and
+- **Fund NAV history** for page-priced funds starts at your deployment. Cost basis and
   current value are right from day one; the historical curve is short.
 - **OP's securities export records no cash**, so those accounts show no balance and their
   money-weighted return is measured from purchases rather than deposits.
