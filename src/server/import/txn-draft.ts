@@ -67,7 +67,7 @@ export const DraftBody = z
             name: z.string(),
             kind: z.enum(["stock", "etf", "fund"]),
             currency: z.string(),
-            priceSource: z.enum(["yahoo", "op_fund"]).nullable(),
+            priceSource: z.enum(["yahoo", "op_fund", "page"]).nullable(),
             sourceKey: z.string().nullable(),
             pending: z.boolean(),
           })

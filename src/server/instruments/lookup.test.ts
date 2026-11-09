@@ -1,12 +1,15 @@
 import { readText } from "../files.ts";
 import { urlOf } from "../prices/types.ts";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
+import type { ChatClient } from "../chat/runner.ts";
+import type { PageRecipe } from "../prices/page-recipe.ts";
 import { gatedFetch } from "../prices/yahoo-gate.ts";
 import { db } from "../db/index.ts";
 import { yahooGate } from "../db/schema.ts";
 import { lookupInstrument as lookupWithSpacing } from "./lookup.ts";
+import type { PageFinder } from "./find-page.ts";
 import { figiLookup } from "./openfigi.ts";
 import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
@@ -232,6 +235,7 @@ describe("lookupInstrument", () => {
       listingCurrency: EUR,
       outcome: "found",
       formReason: null,
+      pageRecipe: null,
     });
   });
 
@@ -370,6 +374,7 @@ describe("lookupInstrument", () => {
       listingCurrency: null,
       outcome: "form",
       formReason: "nothing",
+      pageRecipe: null,
     });
   });
 
@@ -561,5 +566,241 @@ describe("lookupInstrument, paused Yahoo and request cost", () => {
     const result = await lookupInstrument("FI0009000681", "NOKIA", EUR, stub);
     expect(result.sourceKey).toBe("B.HE");
     expect(state.quoteRequests).toBe(2);
+  });
+});
+
+describe("lookupInstrument, a page found by web search", () => {
+  const FUND_ISIN = "SE0005993102";
+  const FUND_NAME = "Nordnet Suomi Indeksi";
+  const PAGE_URL = "https://www.nordnet.fi/rahastot/suomi-indeksi";
+  const GOOD: PageRecipe = {
+    kind: "page",
+    pattern:
+      String.raw`\\"currency\\":\\"(?<currency>[A-Z]{3})\\"\}\},\\"navInfo\\":\{[^}]*?\\"latestNav\\":` +
+      String.raw`\{\\"date\\":\\"(?<date>\d{4}-\d{2}-\d{2})\\",\\"value\\":(?<price>[\d.]+)\}`,
+    dateFormat: "yyyy-mm-dd",
+    money: { decimal: ".", thousands: "", negative: "leading", twoColumn: false },
+    currency: null,
+  };
+  const BAD: PageRecipe = { ...GOOD, pattern: String.raw`(?<date>nope)(?<price>nope)` };
+
+  const page = () =>
+    readText(new URL("../prices/fixtures/nordnet-fund-suomi.html", import.meta.url));
+
+  const recipeClient = (recipe: PageRecipe | Error): ChatClient & { calls: number } => {
+    const state = { calls: 0 };
+    return {
+      get calls() {
+        return state.calls;
+      },
+      run: async () => {
+        state.calls += 1;
+        if (recipe instanceof Error) throw recipe;
+        return { text: JSON.stringify(recipe), toolCalls: [] };
+      },
+    };
+  };
+
+  const finder = (answer: { url: string; isin: string | null } | null | Error) => {
+    const asked: Array<Parameters<PageFinder>[0]> = [];
+    const find: PageFinder = async (q) => {
+      asked.push(q);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    };
+    return { asked, find };
+  };
+
+  /** Every URL the lookup asked for, so a request that should not happen is seen. */
+  const recording = (routes: Record<string, { body: string; status?: number }>) => {
+    const urls: string[] = [];
+    const inner = stubFetch(routes);
+    // SAFETY: only a URL is passed and only the Response is read, as in stubFetch.
+    const stub = (async (input: RequestInfo | URL) => {
+      urls.push(urlOf(input));
+      return await inner(input);
+    }) as typeof fetch;
+    return { urls, stub };
+  };
+
+  const misses = async () => ({
+    openfigi: { body: await fixture("figi-unknown.json") },
+    "finance/search": { body: await fixture("yahoo-search-none.json") },
+    "op.fi": { body: "", status: 404 },
+    [PAGE_URL]: { body: await page() },
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-27T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("a fund OpenFIGI and Yahoo miss is found by web search and verified", async () => {
+    const { asked, find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const client = recipeClient(GOOD);
+    const result = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find,
+        client,
+        referenceMinor: 36_000,
+      },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "found",
+      formReason: null,
+      priceSource: "page",
+      sourceKey: PAGE_URL,
+      isin: FUND_ISIN,
+      listingCurrency: EUR,
+      pageRecipe: GOOD,
+    });
+    expect(asked).toEqual([{ isin: FUND_ISIN, name: FUND_NAME, currency: EUR }]);
+  });
+
+  test("a found page whose recipe fails goes to the form", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const result = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find,
+        client: recipeClient(BAD),
+        referenceMinor: null,
+      },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "form",
+      formReason: "nothing",
+      priceSource: null,
+      sourceKey: null,
+      pageRecipe: null,
+    });
+  });
+
+  test("a hostile page priced far from the reference goes to the form", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const result = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find,
+        client: recipeClient(GOOD),
+        referenceMinor: 1_000,
+      },
+    );
+
+    expect(result.outcome).toBe("form");
+    expect(result.priceSource).toBeNull();
+  });
+
+  test("an ISIN-less row gets its ISIN from the found page and is then priced by Yahoo", async () => {
+    const { asked, find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const client = recipeClient(GOOD);
+    const result = await lookupWithSpacing(
+      null,
+      FUND_NAME,
+      EUR,
+      stubFetch({
+        ...(await misses()),
+        openfigi: { body: await fixture("figi-op-maailma.json") },
+        [`finance/search?q=${FUND_ISIN}`]: {
+          body: JSON.stringify({ quotes: [{ symbol: "0P0000ABCD.F", quoteType: "MUTUALFUND" }] }),
+        },
+        "chart/0P0000ABCD.F": chart("EUR"),
+      }),
+      0,
+      { find, client, referenceMinor: null },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "found",
+      priceSource: "yahoo",
+      sourceKey: "0P0000ABCD.F",
+      isin: FUND_ISIN,
+      pageRecipe: null,
+    });
+    expect(asked).toEqual([{ isin: null, name: FUND_NAME, currency: EUR }]);
+    expect(client.calls).toBe(0);
+  });
+
+  test("an ISIN found on the page but unpriced by Yahoo reuses the page: one search, one fetch", async () => {
+    const { asked, find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const { urls, stub } = recording(await misses());
+    const result = await lookupWithSpacing(null, FUND_NAME, EUR, stub, 0, {
+      find,
+      client: recipeClient(GOOD),
+      referenceMinor: null,
+    });
+
+    expect(result).toMatchObject({ outcome: "found", priceSource: "page", isin: FUND_ISIN });
+    expect(asked).toHaveLength(1);
+    expect(urls.filter((url) => url === PAGE_URL)).toHaveLength(1);
+  });
+
+  test("an ISIN the page does not contain is not used", async () => {
+    const { asked, find } = finder({ url: PAGE_URL, isin: "FI0000000003" });
+    const { urls, stub } = recording(await misses());
+    const result = await lookupWithSpacing(null, FUND_NAME, EUR, stub, 0, {
+      find,
+      client: recipeClient(BAD),
+      referenceMinor: null,
+    });
+
+    expect(result.isin).toBeNull();
+    expect(urls.some((url) => url.includes("openfigi") || url.includes("FI0000000003"))).toBe(
+      false,
+    );
+    expect(asked).toHaveLength(1);
+  });
+
+  test("the finder or the model throwing is pending, never the form", async () => {
+    const throwing = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find: finder(new Error("haku alhaalla")).find,
+        client: recipeClient(GOOD),
+        referenceMinor: null,
+      },
+    );
+    expect(throwing).toMatchObject({ outcome: "pending", isin: FUND_ISIN, formReason: null });
+
+    const modelDown = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find: finder({ url: PAGE_URL, isin: FUND_ISIN }).find,
+        client: recipeClient(new Error("malli alhaalla")),
+        referenceMinor: null,
+      },
+    );
+    expect(modelDown).toMatchObject({ outcome: "pending", isin: FUND_ISIN });
+  });
+
+  test("without `page` a miss is the form, as before", async () => {
+    const result = await lookupWithSpacing(FUND_ISIN, FUND_NAME, EUR, stubFetch(await misses()), 0);
+    expect(result).toMatchObject({ outcome: "form", formReason: "nothing", pageRecipe: null });
   });
 });

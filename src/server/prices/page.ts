@@ -80,10 +80,11 @@ const stillAttention = (instrument: PageInstrument): PageOutcome =>
 
 const GONE_STATUSES = new Set([404, 410]);
 
-class PageGoneError extends Error {}
+export class PageGoneError extends Error {}
 
-const fetchPage = async (instrument: PageInstrument, fetchImpl: FetchImpl): Promise<string> => {
-  const response = await fetchImpl(instrument.sourceKey);
+/** One plain GET of a price page; a 404 or 410 is a page gone, not a hiccup. */
+export const fetchPage = async (url: string, fetchImpl: FetchImpl): Promise<string> => {
+  const response = await fetchImpl(url);
   if (GONE_STATUSES.has(response.status)) {
     throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
   }
@@ -106,7 +107,7 @@ export const refreshPage = async (
 ): Promise<PageOutcome> => {
   let html: string;
   try {
-    html = await fetchPage(instrument, opts.fetchImpl);
+    html = await fetchPage(instrument.sourceKey, opts.fetchImpl);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Tuntematon virhe";
     await logAttempt(db, { source: SOURCE, instrumentId: instrument.id, ok: false, message });

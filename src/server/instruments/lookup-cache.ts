@@ -4,22 +4,29 @@ import { z } from "zod";
 import type { Currency } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
 import { instrumentLookups } from "../db/schema.ts";
+import { PageRecipeSchema } from "../prices/page-recipe.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import { gatedFetch } from "../prices/yahoo-gate.ts";
-import { lookupInstrument, type InstrumentLookup } from "./lookup.ts";
+import { lookupInstrument, type InstrumentLookup, type PageLookup } from "./lookup.ts";
 
-/** "Nothing found" may be a listing Yahoo gains later, so it is asked again. */
+/**
+ * "Nothing found" may be a listing Yahoo gains later, so it is asked again. A
+ * page the web search found but no recipe could verify is "form" too, so it
+ * is searched for again no sooner than this.
+ */
 const FORM_RETRY_MS = 7 * 24 * 60 * 60_000;
 
 const StoredLookup = z.object({
   kind: z.enum(["stock", "etf", "fund"]).nullable(),
   name: z.string().nullable(),
-  priceSource: z.enum(["yahoo", "op_fund"]).nullable(),
+  priceSource: z.enum(["yahoo", "op_fund", "page"]).nullable(),
   sourceKey: z.string().nullable(),
   isin: z.string().nullable(),
   listingCurrency: z.string().nullable(),
   outcome: z.enum(["found", "form", "pending"]),
   formReason: z.enum(["nothing", "currency", "name"]).nullable(),
+  // Absent from rows written before page sources existed.
+  pageRecipe: PageRecipeSchema.nullable().default(null),
 });
 
 export const lookupKey = (isin: string | null, name: string): string =>
@@ -88,6 +95,7 @@ export const rememberedLookup = async (
   fetchImpl: FetchImpl,
   now: () => number = Date.now,
   quoteSpacingMs?: number,
+  page?: PageLookup,
 ): Promise<InstrumentLookup> => {
   const key = lookupKey(isin, name);
   const cached = await readCached(db, key, now());
@@ -110,6 +118,7 @@ export const rememberedLookup = async (
     currency,
     gatedFetch(db, fetchImpl, now),
     quoteSpacingMs,
+    page,
   );
   await storeLookup(db, key, result, new Date(now()));
   return result;

@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 
 import type { Db } from "../db/index.ts";
-import { instruments } from "../db/schema.ts";
+import { instruments, pageRecipes, transactions } from "../db/schema.ts";
 import type { FetchImpl } from "../prices/types.ts";
+import type { PageDeps } from "./find-page.ts";
 import type { InstrumentLookup } from "./lookup.ts";
 import { yahooPausedUntil } from "../prices/yahoo-gate.ts";
 import { rememberedLookup } from "./lookup-cache.ts";
@@ -30,8 +31,41 @@ const applyFound = async (db: Db, row: Pending, found: InstrumentLookup): Promis
     .where(stillPending(row.id))
     .returning({ id: instruments.id })
     .all();
-  return written.length > 0;
+  if (written.length === 0) return false;
+  if (found.priceSource === "page" && found.pageRecipe !== null) {
+    await db
+      .insert(pageRecipes)
+      .values({
+        instrumentId: row.id,
+        recipe: JSON.stringify(found.pageRecipe),
+        askedAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: pageRecipes.instrumentId,
+        set: { recipe: JSON.stringify(found.pageRecipe), askedAt: Date.now() },
+      })
+      .run();
+  }
+  return true;
 };
+
+/** The first buy's unit price: what a found page's price must be plausible against. */
+const firstBuyPrice = async (db: Db, instrumentId: number): Promise<number | null> =>
+  (
+    await db
+      .select({ unitPrice: transactions.unitPrice })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.instrumentId, instrumentId),
+          eq(transactions.type, "BUY"),
+          isNotNull(transactions.unitPrice),
+        ),
+      )
+      .orderBy(asc(transactions.tradeDate), asc(transactions.id))
+      .limit(1)
+      .get()
+  )?.unitPrice ?? null;
 
 const markAttention = async (db: Db, id: number): Promise<boolean> => {
   const written = await db
@@ -52,6 +86,7 @@ export const resolvePending = async (
   db: Db,
   fetchImpl: FetchImpl = fetch,
   quoteSpacingMs?: number,
+  page?: PageDeps,
 ): Promise<{ resolved: number; attention: number }> => {
   if ((await yahooPausedUntil(db)) !== null) return { resolved: 0, attention: 0 };
   const pending = await db
@@ -71,6 +106,9 @@ export const resolvePending = async (
         fetchImpl,
         Date.now,
         quoteSpacingMs,
+        page === undefined
+          ? undefined
+          : { ...page, referenceMinor: await firstBuyPrice(db, row.id) },
       );
       if (lookup.outcome === "found" && sameCurrency(row, lookup)) {
         if (await applyFound(db, row, lookup)) resolved += 1;

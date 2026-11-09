@@ -121,7 +121,8 @@ describe("rememberedLookup", () => {
     const result = await rememberedLookup(db, isin, "ABC", EUR, stub.fetch, () => NOW, 0);
 
     expect(stub.calls()).toBe(0);
-    expect(result).toEqual({ ...usd, outcome: "form", formReason: "currency" });
+    // A row stored before page sources existed reads with no recipe.
+    expect(result).toEqual({ ...usd, outcome: "form", formReason: "currency", pageRecipe: null });
     const row = await db
       .select()
       .from(instrumentLookups)

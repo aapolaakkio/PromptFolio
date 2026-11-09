@@ -5,6 +5,7 @@ import type {
   BetaMessage,
   BetaMessageParam,
   BetaTool,
+  BetaWebSearchTool20260318,
 } from "@anthropic-ai/sdk/resources/beta";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
@@ -71,12 +72,14 @@ export type ChatMessage =
   | { readonly role: "tool"; readonly content: string; readonly tool_call_id: string };
 
 export type ToolDefinition = BetaTool;
+/** Anthropic runs it; its results come back in the same reply, not as tool calls. */
+export type ServerTool = BetaWebSearchTool20260318;
 
 export type TurnParams = {
   readonly model: string;
   readonly max_tokens: number;
   readonly messages: readonly ChatMessage[];
-  readonly tools: readonly ToolDefinition[];
+  readonly tools: readonly (ToolDefinition | ServerTool)[];
   /** JSON mode, for a reading rather than a conversation. Sent as structured output. */
   readonly response_format?: {
     readonly type: "json_schema";

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
+import type { InstrumentLookup } from "../../server/instruments/lookup.ts";
 import { rememberedLookup } from "../../server/instruments/lookup-cache.ts";
 import {
   addInstrument,
@@ -18,6 +19,26 @@ export const getInstruments = createServerFn()
   .middleware([authed])
   .handler(() => listInstruments(db));
 
+type FormLookup = Omit<InstrumentLookup, "priceSource"> & {
+  readonly priceSource: "yahoo" | "op_fund" | null;
+};
+
+/**
+ * The form cannot register a page source: its recipe lives with the import
+ * that found it. A page result an import remembered reads here as nothing found.
+ */
+const forTheForm = (result: InstrumentLookup): FormLookup =>
+  result.priceSource === "page"
+    ? {
+        ...result,
+        priceSource: null,
+        sourceKey: null,
+        pageRecipe: null,
+        outcome: "form",
+        formReason: "nothing",
+      }
+    : { ...result, priceSource: result.priceSource };
+
 /** Asks the price sources what a security is, before anyone registers it: gated and remembered. */
 export const lookUpInstrument = createServerFn()
   .middleware([authed])
@@ -29,7 +50,9 @@ export const lookUpInstrument = createServerFn()
     }),
   )
   .handler(({ data }) =>
-    readable(() => rememberedLookup(db, data.isin, data.name, data.currency, fetch)),
+    readable(async () =>
+      forTheForm(await rememberedLookup(db, data.isin, data.name, data.currency, fetch)),
+    ),
   );
 
 /** Registers one, refusing a duplicate by ISIN, or by name when it has none. */

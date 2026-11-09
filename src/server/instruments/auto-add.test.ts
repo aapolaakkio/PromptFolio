@@ -1,11 +1,14 @@
 import { eq, inArray } from "drizzle-orm";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { parseCurrency } from "../../core/money.ts";
 import { db } from "../db/index.ts";
-import { instrumentLookups, instruments, yahooGate } from "../db/schema.ts";
+import type { ChatClient } from "../chat/runner.ts";
+import { readText } from "../files.ts";
+import { instrumentLookups, instruments, pageRecipes, yahooGate } from "../db/schema.ts";
 import type { Draft, DraftTxn } from "../import/map.ts";
-import type { FetchImpl } from "../prices/types.ts";
+import type { PageRecipe } from "../prices/page-recipe.ts";
+import { urlOf, type FetchImpl } from "../prices/types.ts";
 import { createAdded, resolveUnknown } from "./auto-add.ts";
 import type { InstrumentLookup } from "./lookup.ts";
 import { lookupKey } from "./lookup-cache.ts";
@@ -30,6 +33,7 @@ const found = (isin: string | null, over: Partial<InstrumentLookup> = {}): Instr
   listingCurrency: EUR,
   outcome: "found",
   formReason: null,
+  pageRecipe: null,
   ...over,
 });
 
@@ -243,6 +247,70 @@ describe("resolveUnknown", () => {
   });
 });
 
+const GOOD: PageRecipe = {
+  kind: "page",
+  pattern:
+    String.raw`\\"currency\\":\\"(?<currency>[A-Z]{3})\\"\}\},\\"navInfo\\":\{[^}]*?\\"latestNav\\":` +
+    String.raw`\{\\"date\\":\\"(?<date>\d{4}-\d{2}-\d{2})\\",\\"value\\":(?<price>[\d.]+)\}`,
+  dateFormat: "yyyy-mm-dd",
+  money: { decimal: ".", thousands: "", negative: "leading", twoColumn: false },
+  currency: null,
+};
+
+describe("resolveUnknown with a page finder", () => {
+  const FUND_ISIN = "SE0005993102";
+  const PAGE_URL = "https://www.nordnet.fi/rahastot/suomi-indeksi";
+
+  const recipeClient: ChatClient = {
+    run: async () => ({ text: JSON.stringify(GOOD), toolCalls: [] }),
+  };
+  /** OpenFIGI, Yahoo and OP know nothing; only the found page answers. */
+  const onlyThePage = async (): Promise<FetchImpl> => {
+    const html = await readText(
+      new URL("../prices/fixtures/nordnet-fund-suomi.html", import.meta.url),
+    );
+    return async (input) =>
+      urlOf(input) === PAGE_URL ? new Response(html) : new Response("", { status: 404 });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const preview = async (unitPrice: number) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-27T12:00:00Z"));
+    track(FUND_ISIN);
+    const draft = draftOf(
+      [
+        txn({ isin: FUND_ISIN, type: "DIVIDEND", unitPrice: 5 }),
+        txn({ isin: FUND_ISIN, unitPrice, line: 3 }),
+      ],
+      [{ isin: FUND_ISIN, name: "Nordnet Suomi Indeksi", currency: EUR }],
+    );
+    return await resolveUnknown(db, draft, await onlyThePage(), 0, {
+      find: async () => ({ url: PAGE_URL, isin: FUND_ISIN }),
+      client: recipeClient,
+    });
+  };
+
+  test("the first buy's unit price lets a plausible page through", async () => {
+    const resolved = await preview(36_000);
+
+    expect(resolved.unknownIsins).toEqual([]);
+    expect(resolved.added).toMatchObject([
+      { isin: FUND_ISIN, priceSource: "page", sourceKey: PAGE_URL, pending: false },
+    ]);
+  });
+
+  test("the first buy's unit price refuses a page priced far from it", async () => {
+    const resolved = await preview(1_000);
+
+    expect(resolved.added).toEqual([]);
+    expect(resolved.unknownIsins).toHaveLength(1);
+  });
+});
+
 const stored = (isin: string) =>
   db.select().from(instruments).where(eq(instruments.isin, isin)).all();
 
@@ -347,5 +415,28 @@ describe("createAdded", () => {
     const [row] = await stored(isin);
     expect(row).toMatchObject({ priceSource: "op_fund", sourceKey: "op-testi", name });
     expect(created.txns[0]?.instrumentId).toBe(row?.id);
+  });
+
+  test("a created page instrument has its recipe stored", async () => {
+    const isin = track(freshIsin());
+    const url = "https://example.fi/rahasto";
+    await remember(
+      isin,
+      found(isin, { kind: "fund", priceSource: "page", sourceKey: url, pageRecipe: GOOD }),
+    );
+
+    await createAdded(db, draftOf([txn({ isin, instrumentName: "RAHASTO" })], []));
+
+    const [row] = await stored(isin);
+    expect(row).toMatchObject({ priceSource: "page", sourceKey: url, lookupStatus: "ok" });
+    const recipe = await db
+      .select()
+      .from(pageRecipes)
+      .where(eq(pageRecipes.instrumentId, row?.id ?? -1))
+      .get();
+    expect(
+      recipe?.recipe === null || recipe === undefined ? null : JSON.parse(recipe.recipe),
+    ).toEqual(GOOD);
+    expect(recipe?.askedAt).toEqual(expect.any(Number));
   });
 });

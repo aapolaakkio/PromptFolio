@@ -59,6 +59,8 @@ beforeAll(async () => {
   // Every unknown instrument is looked up; by default nothing is found.
   service._setLookupFetch(async () => new Response("", { status: 404 }));
   service._setQuoteSpacingMs(0);
+  // No web search unless a test scripts one: the real model is never reached.
+  service._setPageLookup(null);
 });
 
 /**
@@ -772,6 +774,35 @@ describe("an import with an instrument nobody has added yet", () => {
       expect(linked.every((r) => r.instrumentId === fund?.id)).toBe(true);
     } finally {
       await db.delete(instrumentLookups).where(inArray(instrumentLookups.key, keys));
+    }
+  });
+
+  test("the model failing at preview leaves the import committable with the instrument pending", async () => {
+    const { userId } = await signUp(`imp-auto-model-down-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    const isin = freshIsin();
+    const down = (): Promise<never> => Promise.reject(new Error("malli alhaalla"));
+    service._setPageLookup({ find: down, client: { run: down } });
+
+    try {
+      const previewed = await previewOne(userId, accountId, isin);
+      // SAFETY: a 200 preview carries the draft, `added` included.
+      const body = previewed.body as {
+        unknownIsins: unknown[];
+        added: Array<{ isin: string; pending: boolean }>;
+      };
+      expect(body.unknownIsins).toEqual([]);
+      expect(body.added).toMatchObject([{ isin, pending: true }]);
+
+      const committed = await commitPreviewed(userId, previewed, accountId, "csv");
+      expect(committed.status).toBe(200);
+      // SAFETY: a 200 commit answers with the import it wrote.
+      const result = committed.body as { importId: number };
+      const created = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
+      expect(created).toMatchObject({ priceSource: "manual", lookupStatus: "pending" });
+      expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
+    } finally {
+      service._setPageLookup(null);
     }
   });
 });

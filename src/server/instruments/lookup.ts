@@ -1,8 +1,13 @@
 import { z } from "zod";
 
 import type { Currency } from "../../core/money.ts";
+import type { ChatClient } from "../chat/runner.ts";
+import { fetchPage } from "../prices/page.ts";
+import { writePageRecipe } from "../prices/page-ask.ts";
+import type { PageRecipe } from "../prices/page-recipe.ts";
 import { fetchLatestQuotes } from "../prices/yahoo-batch.ts";
 import { YahooPausedError } from "../prices/yahoo-gate.ts";
+import type { PageFinder } from "./find-page.ts";
 import { figiLookup, type InstrumentKind } from "./openfigi.ts";
 import { resolveOpSlug } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
@@ -44,7 +49,8 @@ export type InstrumentLookup = {
   readonly kind: InstrumentKind | null;
   /** The registry's own name, for the user to sanity-check against the broker's. */
   readonly name: string | null;
-  readonly priceSource: "yahoo" | "op_fund" | null;
+  readonly priceSource: "yahoo" | "op_fund" | "page" | null;
+  /** The page's URL when `priceSource` is "page". */
   readonly sourceKey: string | null;
   /**
    * The ISIN, which for an OP paste import is discovered here rather than
@@ -67,7 +73,23 @@ export type InstrumentLookup = {
   readonly outcome: "found" | "form" | "pending";
   /** Why the form is needed; null unless `outcome` is "form". */
   readonly formReason: "nothing" | "currency" | "name" | null;
+  /** The recipe that read the page's price, when `priceSource` is "page". */
+  readonly pageRecipe: PageRecipe | null;
 };
+
+/** The web search and the model that verifies what it finds; see `lookupInstrument`. */
+export type PageLookup = {
+  readonly find: PageFinder;
+  readonly client: ChatClient;
+  /** What the page's price must be plausible against: a hostile page can name any number. */
+  readonly referenceMinor: number | null;
+};
+
+/** What the finder answered, once: the page itself is kept so it is fetched once too. */
+type Hit = { readonly url: string; readonly isin: string | null; readonly html: string | null };
+
+/** The finder or the model threw: nothing is known yet, which is not "nothing found". */
+class PagePendingError extends Error {}
 
 type Resolved = Omit<InstrumentLookup, "outcome" | "formReason">;
 
@@ -78,6 +100,7 @@ const NOTHING: Resolved = {
   sourceKey: null,
   isin: null,
   listingCurrency: null,
+  pageRecipe: null,
 };
 
 /**
@@ -92,30 +115,137 @@ const NOTHING: Resolved = {
  * Every leg fails soft: an unresolved instrument is an inconvenience, a wrongly
  * resolved one silently prices the wrong security.
  */
-export const lookupInstrument = async (
+export const lookupInstrument = (
   isin: string | null,
   name: string,
   currency: Currency | null,
   fetchImpl: typeof fetch = fetch,
   quoteSpacingMs?: number,
+  page?: PageLookup,
+): Promise<InstrumentLookup> =>
+  lookupWith({ name, currency, fetchImpl, quoteSpacingMs, page: page ?? null }, isin, undefined);
+
+type Ask = {
+  readonly name: string;
+  readonly currency: Currency | null;
+  readonly fetchImpl: typeof fetch;
+  readonly quoteSpacingMs: number | undefined;
+  readonly page: PageLookup | null;
+};
+
+/**
+ * `hit` is undefined until the finder has been asked, and then whatever it
+ * answered, null included: one web search per instrument, however the
+ * lookup recurses.
+ */
+const lookupWith = async (
+  ask: Ask,
+  isin: string | null,
+  hit: Hit | null | undefined,
 ): Promise<InstrumentLookup> => {
   try {
     // OP's paste import carries no ISIN column, so the fund's own page is the
     // only way to learn its ISIN. It is learned first, so a Yahoo pause after
     // that still reports the ISIN rather than losing it.
     if (isin === null) {
-      const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
-      if (discovered !== null) {
-        return await lookupInstrument(discovered.isin, name, currency, fetchImpl, quoteSpacingMs);
+      const discovered = await settle(resolveOpSlug(ask.name, null, ask.fetchImpl));
+      if (discovered !== null) return await lookupWith(ask, discovered.isin, hit);
+      if (ask.page !== null && hit === undefined) {
+        const found = await findPage(ask, ask.page, null);
+        // The finder's ISIN is only a claim until the page itself shows it.
+        const shown =
+          found !== null && found.isin !== null && found.html?.includes(found.isin) === true;
+        if (shown) return await lookupWith(ask, found.isin, found);
+        return await resolveThenPage(ask, null, found === null ? null : { ...found, isin: null });
       }
     }
-    return classify(await resolve(isin, name, currency, fetchImpl, quoteSpacingMs), currency);
+    return await resolveThenPage(ask, isin, hit);
   } catch (err) {
-    if (err instanceof YahooPausedError) {
+    if (err instanceof YahooPausedError || err instanceof PagePendingError) {
       return { ...NOTHING, isin, outcome: "pending", formReason: null };
     }
     throw err;
   }
+};
+
+/** OpenFIGI and Yahoo first; a found page only when they have nothing to price. */
+const resolveThenPage = async (
+  ask: Ask,
+  isin: string | null,
+  hit: Hit | null | undefined,
+): Promise<InstrumentLookup> => {
+  const resolved = await resolve(isin, ask.name, ask.currency, ask.fetchImpl, ask.quoteSpacingMs);
+  if (ask.page !== null && resolved.priceSource === null && mayHavePage(resolved)) {
+    return await viaFoundPage(ask, ask.page, resolved, isin, hit);
+  }
+  return classify(resolved, ask.currency);
+};
+
+/** A share Yahoo cannot price has no NAV page to find; a fund or an unknown might. */
+const mayHavePage = (resolved: Resolved): boolean =>
+  resolved.kind === null || resolved.kind === "fund";
+
+/** Asks the finder and fetches what it names. A page that will not load has no html. */
+const findPage = async (ask: Ask, page: PageLookup, isin: string | null): Promise<Hit | null> => {
+  let found: Awaited<ReturnType<PageFinder>>;
+  try {
+    found = await page.find({ isin, name: ask.name, currency: ask.currency });
+  } catch (cause) {
+    console.error(`Sivun haku arvopaperille ${isin ?? ask.name} epäonnistui`, cause);
+    throw new PagePendingError("Sivun haku epäonnistui", { cause });
+  }
+  if (found === null) return null;
+  return { ...found, html: await settle(fetchPage(found.url, ask.fetchImpl)) };
+};
+
+const today = (): string => new Date().toISOString().slice(0, 10);
+
+/**
+ * OpenFIGI and Yahoo found nothing to price. A page the web search finds is
+ * used only once a recipe the app runs has read a plausible, current price
+ * for this ISIN (or name) and currency off it.
+ */
+const viaFoundPage = async (
+  ask: Ask,
+  page: PageLookup,
+  resolved: Resolved,
+  isin: string | null,
+  known: Hit | null | undefined,
+): Promise<InstrumentLookup> => {
+  // ponytail: with no currency there is nothing to check the page's against.
+  if (ask.currency === null) return classify(resolved, ask.currency);
+  const hit = known === undefined ? await findPage(ask, page, isin) : known;
+  if (hit === null || hit.html === null) return classify(resolved, ask.currency);
+
+  let written: Awaited<ReturnType<typeof writePageRecipe>>;
+  try {
+    written = await writePageRecipe(
+      hit.html,
+      {
+        identity: isin ?? ask.name,
+        currency: ask.currency,
+        referenceMinor: page.referenceMinor,
+        today: today(),
+      },
+      page.client,
+    );
+  } catch (cause) {
+    console.error(`Sivun ${hit.url} kuvauksen kysyminen epäonnistui`, cause);
+    throw new PagePendingError("Mallia ei tavoitettu", { cause });
+  }
+  if ("error" in written) return classify(resolved, ask.currency);
+  return classify(
+    {
+      ...resolved,
+      kind: resolved.kind ?? "fund",
+      priceSource: "page",
+      sourceKey: hit.url,
+      isin,
+      listingCurrency: ask.currency,
+      pageRecipe: written.recipe,
+    },
+    ask.currency,
+  );
 };
 
 /**
@@ -175,6 +305,7 @@ const resolve = async (
       sourceKey: listing.symbol,
       isin,
       listingCurrency: listing.currency,
+      pageRecipe: null,
     };
   }
 
@@ -205,6 +336,7 @@ const viaOpFundPage = async (
     sourceKey: op.slug,
     isin: op.isin,
     listingCurrency: null,
+    pageRecipe: null,
   };
 };
 
@@ -280,6 +412,7 @@ const byName = async (
     sourceKey: listing.symbol,
     isin: null,
     listingCurrency: listing.currency,
+    pageRecipe: null,
   };
 };
 

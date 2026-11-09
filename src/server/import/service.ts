@@ -16,6 +16,7 @@ import { readBrokerRecordByRecipe } from "./recipe/broker-record.ts";
 import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
 import { DraftBody } from "./txn-draft.ts";
 import { createAdded, resolveUnknown } from "../instruments/auto-add.ts";
+import { pageDeps, type PageDeps } from "../instruments/find-page.ts";
 import type { FetchImpl } from "../prices/types.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
@@ -66,9 +67,21 @@ export const _setQuoteSpacingMs = (ms: number | undefined): void => {
   quoteSpacingMs = ms;
 };
 
+/** Injected by tests: null runs the lookup without web search, as when no model is configured. */
+let pageLookup: PageDeps | null | undefined;
+export const _setPageLookup = (deps: PageDeps | null | undefined): void => {
+  pageLookup = deps;
+};
+
 /** Looks up what the draft could not resolve; only the lookup cache is written. */
 const withLookups = (draft: Draft): Promise<Draft> =>
-  resolveUnknown(db, draft, lookupFetch ?? fetch, quoteSpacingMs);
+  resolveUnknown(
+    db,
+    draft,
+    lookupFetch ?? fetch,
+    quoteSpacingMs,
+    (pageLookup === undefined ? pageDeps() : pageLookup) ?? undefined,
+  );
 
 /**
  * A broker PDF's text, read by a record recipe into the same draft a CSV

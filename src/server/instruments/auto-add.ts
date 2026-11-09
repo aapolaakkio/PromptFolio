@@ -1,9 +1,10 @@
 import { eq, inArray } from "drizzle-orm";
 
 import type { Db } from "../db/index.ts";
-import { instrumentLookups, instruments } from "../db/schema.ts";
+import { instrumentLookups, instruments, pageRecipes } from "../db/schema.ts";
 import type { AddedInstrument, Draft, DraftTxn } from "../import/map.ts";
 import type { FetchImpl } from "../prices/types.ts";
+import type { PageDeps } from "./find-page.ts";
 import type { InstrumentLookup } from "./lookup.ts";
 import {
   lookupKey,
@@ -21,6 +22,7 @@ const lookUp = async (
   entry: Unknown,
   fetchImpl: FetchImpl,
   quoteSpacingMs: number | undefined,
+  page: { readonly deps: PageDeps; readonly referenceMinor: number | null } | null,
 ): Promise<InstrumentLookup | null> => {
   try {
     return await rememberedLookup(
@@ -31,6 +33,7 @@ const lookUp = async (
       fetchImpl,
       Date.now,
       quoteSpacingMs,
+      page === null ? undefined : { ...page.deps, referenceMinor: page.referenceMinor },
     );
   } catch (cause) {
     console.error(`Arvopaperin ${entry.isin ?? entry.name} haku epäonnistui`, cause);
@@ -55,6 +58,23 @@ const addable = (entry: Unknown, result: InstrumentLookup | null): AddedInstrume
   };
 };
 
+/**
+ * The first buy's unit price for this instrument: what a found page's price
+ * must be plausible against, so a hostile page cannot name any number.
+ */
+const firstBuyPrice = (txns: readonly DraftTxn[], entry: Unknown): number | null => {
+  const key = lookupKey(entry.isin, entry.name);
+  const buy = txns.find(
+    (txn) =>
+      txn.type === "BUY" &&
+      txn.unitPrice !== null &&
+      (entry.isin === null
+        ? txn.isin === null && lookupKey(null, txn.instrumentName ?? "") === key
+        : txn.isin === entry.isin),
+  );
+  return buy?.unitPrice ?? null;
+};
+
 /** A row without an ISIN whose instrument's lookup discovered one. */
 const withDiscoveredIsin = (txn: DraftTxn, discovered: ReadonlyMap<string, string>): DraftTxn => {
   if (txn.isin !== null || txn.instrumentId !== null || txn.instrumentName === undefined) {
@@ -76,6 +96,7 @@ export const resolveUnknown = async (
   draft: Draft,
   fetchImpl: FetchImpl,
   quoteSpacingMs?: number,
+  page?: PageDeps,
 ): Promise<Draft> => {
   const distinct = new Map<string, Unknown>();
   for (const entry of draft.unknownIsins) {
@@ -87,7 +108,13 @@ export const resolveUnknown = async (
   const unknownIsins: Unknown[] = [];
   const discovered = new Map<string, string>();
   for (const entry of distinct.values()) {
-    const lookup = await lookUp(db, entry, fetchImpl, quoteSpacingMs);
+    const lookup = await lookUp(
+      db,
+      entry,
+      fetchImpl,
+      quoteSpacingMs,
+      page === undefined ? null : { deps: page, referenceMinor: firstBuyPrice(draft.txns, entry) },
+    );
     const result = addable(entry, lookup);
     if (lookup === null || result === null) {
       unknownIsins.push(entry);
@@ -135,7 +162,7 @@ const rememberedFor = async (
   return null;
 };
 
-/** Creates the instrument a remembered lookup describes, and returns its id. */
+/** Creates the instrument a remembered lookup describes, and returns its id. A page's recipe is stored with it. */
 const createFrom = async (
   db: Db,
   isin: string,
@@ -158,6 +185,16 @@ const createFrom = async (
     currency: lookup.listingCurrency ?? row.currency,
     ...source,
   });
+  if (source.priceSource === "page" && lookup.pageRecipe !== null) {
+    await db
+      .insert(pageRecipes)
+      .values({
+        instrumentId: created.id,
+        recipe: JSON.stringify(lookup.pageRecipe),
+        askedAt: Date.now(),
+      })
+      .run();
+  }
   return created.id;
 };
 

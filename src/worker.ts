@@ -1,6 +1,7 @@
 import handler from "@tanstack/react-start/server-entry";
 
 import { db } from "./server/db/index.ts";
+import { pageDeps } from "./server/instruments/find-page.ts";
 import { resolvePending } from "./server/instruments/resolve-pending.ts";
 import { refreshIntraday } from "./server/prices/intraday.ts";
 import { runScheduledRefresh } from "./server/prices/refresh.ts";
@@ -38,7 +39,7 @@ export default {
       (async () => {
         await attempt("hinnat", prices);
         await attempt("haut", async () => {
-          await resolvePending(db);
+          await resolvePending(db, fetch, undefined, pageDeps() ?? undefined);
         });
       })(),
     );

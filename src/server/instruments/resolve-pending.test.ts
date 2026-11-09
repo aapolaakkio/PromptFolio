@@ -43,6 +43,7 @@ const lookup = (isin: string, over: Partial<InstrumentLookup>): InstrumentLookup
   listingCurrency: USD,
   outcome: "found",
   formReason: null,
+  pageRecipe: null,
   ...over,
 });
 
