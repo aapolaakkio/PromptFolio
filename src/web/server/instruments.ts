@@ -2,10 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import {
+  FundChargeInput,
+  InstrumentCreate,
   InstrumentEdit,
-  KEY_TOO_LONG,
-  MAX_PAGE_URL,
-  tooLongKey,
+  Isin,
 } from "../../server/action-inputs.ts";
 import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
@@ -34,8 +34,6 @@ const pageDeps = (): PageDeps => ({
 
 /** What saving told the form: the price a page was read for, null for any other source. */
 type SaveResult = { readonly price: FetchedPrice | null };
-
-const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN is invalid");
 
 /** Every instrument the household knows: shared reference data, not ledger rows. */
 export const getInstruments = createServerFn()
@@ -67,31 +65,7 @@ export const lookUpInstrument = createServerFn()
 /** Registers one, refusing a duplicate by ISIN, or by name when it has none. */
 export const createInstrument = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(
-    z
-      .object({
-        // Optional only for `manual`: a delisted share has no ISIN any registry gives.
-        isin: Isin.optional(),
-        ticker: z.string().min(1).max(20).nullable(),
-        name: z.string().min(1).max(200),
-        kind: z.enum(["stock", "etf", "fund", "cash"]),
-        currency: currencyField,
-        priceSource: z.enum(["yahoo", "page", "manual"]),
-        sourceKey: z.string().max(MAX_PAGE_URL).optional(),
-      })
-      .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
-        message: KEY_TOO_LONG,
-        path: ["sourceKey"],
-      })
-      .refine((body) => body.priceSource === "manual" || (body.sourceKey ?? "") !== "", {
-        message: "Source code is required when the price source fetches prices automatically",
-        path: ["sourceKey"],
-      })
-      .refine((body) => body.priceSource === "manual" || (body.isin ?? "") !== "", {
-        message: "ISIN is required when the price source fetches prices automatically",
-        path: ["isin"],
-      }),
-  )
+  .validator(InstrumentCreate)
   .handler(({ data }) =>
     readable(async (): Promise<SaveResult> => {
       if (data.priceSource !== "page") {
@@ -121,7 +95,7 @@ export const editInstrument = createServerFn({ method: "POST" })
 /** The owner's own ongoing charge in percent ("0,20"); empty clears it so a lookup may fill it again. */
 export const setFundCharge = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(z.object({ id: z.number().int().positive(), percent: z.string().max(20) }))
+  .validator(FundChargeInput)
   .handler(({ data }) =>
     readable(async () => {
       const text = data.percent.trim();

@@ -1,12 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { db } from "./db/index.ts";
-import {
-  CreateAccount,
-  listAccounts,
-  openAccount as openAccountRow,
-  updateAccount,
-  UpdateAccount,
-} from "./accounts.ts";
+import { listAccounts, openAccount as openAccountRow, updateAccount } from "./accounts.ts";
+import { CreateAccount, UpdateAccount } from "./action-inputs.ts";
 import { beforeAll, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

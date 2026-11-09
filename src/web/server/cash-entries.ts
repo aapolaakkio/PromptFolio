@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import { CashEntry } from "../../server/action-inputs.ts";
+import { CashEntry, CashEntryRemove } from "../../server/action-inputs.ts";
 import { addCashEntry, listCashEntries, removeCashEntry } from "../../server/cash-entries.ts";
 import { authed, readable } from "./guard.ts";
 
@@ -22,5 +22,5 @@ export const saveCashEntry = createServerFn({ method: "POST" })
 /** Deletes one, refusing anything an import wrote. */
 export const deleteCashEntry = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(z.object({ id: AccountId }))
+  .validator(CashEntryRemove)
   .handler(({ data, context }) => readable(() => removeCashEntry(context.userId, data.id)));

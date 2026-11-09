@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
+import { openAccount as openAccountRow } from "../accounts.ts";
+import { CreateAccount } from "../action-inputs.ts";
 import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { readBytes } from "../files.ts";

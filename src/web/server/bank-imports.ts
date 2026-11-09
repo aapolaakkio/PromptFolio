@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+import { BalanceSave } from "../../server/action-inputs.ts";
 import {
-  BalanceInput,
   CommitBankDraft,
   commitBankDraft,
   previewBankStatement,
@@ -25,5 +25,5 @@ export const commitBankDraftImport = createServerFn({ method: "POST" })
 
 export const recordAccountBalance = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(BalanceInput)
+  .validator(BalanceSave)
   .handler(({ data, context }) => readable(() => setAccountBalance(context.userId, data)));

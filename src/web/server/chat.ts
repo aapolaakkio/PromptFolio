@@ -3,7 +3,6 @@ import { getRequest } from "@tanstack/react-start/server";
 
 import {
   Ask,
-  ConversationId,
   conversationMessages,
   deleteConversation,
   listConversations,
@@ -11,6 +10,7 @@ import {
   recordProposalOutcome,
   startTurn,
 } from "../../server/chat/conversations.ts";
+import { ConversationId } from "../../server/action-inputs.ts";
 import { HttpError } from "../../server/errors.ts";
 import { authed, readable } from "./guard.ts";
 

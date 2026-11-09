@@ -1,6 +1,7 @@
 import { APIConnectionError } from "@anthropic-ai/sdk";
 import { readBytes, readText } from "../files.ts";
-import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
+import { openAccount as openAccountRow } from "../accounts.ts";
+import { CreateAccount, UndoInput } from "../action-inputs.ts";
 import { eq, inArray } from "drizzle-orm";
 import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
@@ -29,13 +30,11 @@ const nordnetReader = {
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: Service;
-let UndoInput: Service["UndoInput"];
 let PasteBody: Service["PasteBody"];
 
 beforeAll(async () => {
   auth = (await import("../auth.ts")).getAuth();
   service = await import("./service.ts");
-  UndoInput = service.UndoInput;
   PasteBody = service.PasteBody;
   service._setReaderClient(nordnetReader);
   service._setLookupFetch(async () => new Response("", { status: 404 }));

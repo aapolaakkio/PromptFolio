@@ -28,8 +28,6 @@ export const Ask = z
   })
   .strict();
 
-export const ConversationId = z.object({ id: z.number().int().positive() });
-
 export const Outcome = z
   .object({
     conversationId: z.number().int().positive(),

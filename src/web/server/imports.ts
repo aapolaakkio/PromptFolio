@@ -8,8 +8,8 @@ import {
   previewPaste,
   previewUpload,
   undo,
-  UndoInput,
 } from "../../server/import/service.ts";
+import { UndoInput } from "../../server/action-inputs.ts";
 import { sortUploads } from "../../server/import/sort-service.ts";
 import { authed, readable } from "./guard.ts";
 

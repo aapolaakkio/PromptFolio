@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 
 import { EUR } from "../../core/money.ts";
-import { CreateAccount, openAccount } from "../accounts.ts";
+import { openAccount } from "../accounts.ts";
+import { CreateAccount } from "../action-inputs.ts";
 import { db } from "../db/index.ts";
 import { imports, instruments, prices, transactions, user } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";

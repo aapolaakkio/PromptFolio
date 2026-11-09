@@ -5,6 +5,7 @@ import { reconcile, type SnapshotPosition } from "../../core/reconcile.ts";
 import { EUR, formatQuantity, parseQuantity } from "../../core/money.ts";
 import type { Txn } from "../../core/types.ts";
 import { assertAccountOwned } from "../accounts.ts";
+import { AdjustSave, CreateSnapshot } from "../action-inputs.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
 import { db } from "../db/index.ts";
 import { imports, instruments, snapshotRows, snapshots, transactions } from "../db/schema.ts";
@@ -30,15 +31,6 @@ const IsoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the form YYYY-MM-DD");
 
-/**
- * Resolves one reconciliation row into a transaction. `costEur` is required when units arrive and refused when they leave:
- * a defaulted-to-zero cost would report the holding's whole value as gain. The UI may offer the statement's NAV, but a person chooses the stored figure.
- */
-const Adjust = z.object({
-  instrumentId: z.number().int().positive(),
-  costEur: z.string().min(1).optional(),
-});
-
 /** A holdings statement as supplied: what the broker says was held on a date. Quantities are decimal strings, never JSON numbers. */
 const PasteSnapshot = z.object({
   asOf: IsoDateSchema,
@@ -46,23 +38,6 @@ const PasteSnapshot = z.object({
     .string()
     .min(1, "Paste the table first")
     .max(MAX_PASTE_CHARS, "The pasted text is too large"),
-});
-
-const CreateSnapshot = z.object({
-  accountId: z.number().int().positive(),
-  asOf: IsoDateSchema,
-  source: z.enum(["pdf", "vision", "manual"]),
-  rows: z
-    .array(
-      z.object({
-        instrumentId: z.number().int().positive(),
-        quantity: z.string().min(1),
-        nav: z.string().min(1).optional(),
-        marketValue: z.string().min(1).optional(),
-      }),
-    )
-    .min(1, "A snapshot without rows says nothing"),
-  statedTotalEur: z.string().nullable().optional(),
 });
 
 /** Minor-unit integer from a decimal string, or a 400 naming the field. */
@@ -74,8 +49,6 @@ const toMinor = (text: string, label: string): number => {
 
 /** Snapshots are compared against the ledger, never merged into it: a misread statement can at worst show a difference the user dismisses. Nothing here writes a transaction. */
 export const AccountQuery = z.object({ accountId: z.number().int().positive() });
-export const SnapshotQuery = z.object({ snapshotId: z.number().int().positive() });
-export const AdjustInput = z.intersection(SnapshotQuery, Adjust);
 
 export const listSnapshots = async (userId: string, accountId: number) => {
   await assertAccountOwned(userId, accountId);
@@ -294,21 +267,36 @@ export const deleteSnapshot = async (userId: string, snapshotId: number) => {
   return { deleted: snapshotId };
 };
 
-export const adjustSnapshotRow = async (
-  userId: string,
-  snapshotId: number,
-  body: z.infer<typeof Adjust>,
-) => {
-  const input = Adjust.parse(body);
+/** The row a reconcile adjustment would correct, as of now; the chat card and the save both read it. */
+const AdjustBody = AdjustSave.omit({ snapshotId: true });
+
+export const adjustmentRow = async (userId: string, snapshotId: number, instrumentId: number) => {
   const snapshot = await ownedSnapshot(userId, snapshotId);
   const stated = await statedRows(snapshotId);
 
   const { txns } = await loadPortfolio(db, userId);
   const own = txns.filter((t) => t.accountId === snapshot.accountId);
   const row = reconcile(own, stated, snapshot.asOf).find(
-    (candidate) => candidate.instrumentId === input.instrumentId,
+    (candidate) => candidate.instrumentId === instrumentId,
   );
   if (!row) throw new HttpError(404, "Row not found in this statement");
+  return { snapshot, row };
+};
+
+export const adjustSnapshotRow = async (
+  userId: string,
+  snapshotId: number,
+  body: z.infer<typeof AdjustBody>,
+) => {
+  const input = AdjustBody.parse(body);
+  const { snapshot, row } = await adjustmentRow(userId, snapshotId, input.instrumentId);
+  // A card showed this quantity; a ledger changed since would make the save book a different one unseen.
+  if (input.expectQuantity !== undefined && input.expectQuantity !== formatQuantity(row.delta)) {
+    throw new HttpError(
+      409,
+      "The statement's difference changed since the card was made. Ask again.",
+    );
+  }
 
   // Identifiable forever and idempotent: the unique (accountId, externalId) index makes a repeat a conflict, not a duplicate.
   const externalId = `adjustment:${snapshotId}:${input.instrumentId}`;
@@ -435,4 +423,4 @@ export const explainSnapshot = async (
   }
 };
 
-export { Adjust, CreateSnapshot, PasteSnapshot };
+export { PasteSnapshot };

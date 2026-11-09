@@ -1,12 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+import { AdjustSave, CreateSnapshot, SnapshotQuery } from "../../server/action-inputs.ts";
 import {
   AccountQuery,
   adjustSnapshotRow,
-  AdjustInput,
   createSnapshot,
-  CreateSnapshot,
   deleteSnapshot,
   explainSnapshot,
   listSnapshots,
@@ -15,7 +14,6 @@ import {
   proposeFromPaste,
   proposeFromPdf,
   reconcileSnapshot,
-  SnapshotQuery,
 } from "../../server/snapshot/service.ts";
 import { authed, readable } from "./guard.ts";
 
@@ -58,7 +56,7 @@ export const removeSnapshot = createServerFn({ method: "POST" })
 
 export const adjustSnapshot = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(AdjustInput)
+  .validator(AdjustSave)
   .handler(({ data, context }) =>
     readable(() => adjustSnapshotRow(context.userId, data.snapshotId, data)),
   );

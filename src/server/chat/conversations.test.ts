@@ -238,7 +238,8 @@ describe("deleteConversation", () => {
 describe("proposals in a conversation", () => {
   const withAccount = async (): Promise<{ userId: string; accountId: number }> => {
     const userId = await signUp();
-    const { CreateAccount, openAccount } = await import("../accounts.ts");
+    const { openAccount } = await import("../accounts.ts");
+    const { CreateAccount } = await import("../action-inputs.ts");
     const { db } = await import("../db/index.ts");
     const account = await openAccount(
       db,

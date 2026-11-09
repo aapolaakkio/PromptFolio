@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
-import { CreateAccount, openAccount } from "../accounts.ts";
+import { openAccount } from "../accounts.ts";
+import { CreateAccount } from "../action-inputs.ts";
 import type { ChatClient, TurnParams } from "../chat/runner.ts";
 import { db } from "../db/index.ts";
 import { HttpError } from "../errors.ts";

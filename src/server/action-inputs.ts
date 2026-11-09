@@ -134,3 +134,162 @@ export const PlanSave = z
   );
 
 export const PlanRemoveInput = z.object({ instrumentId: z.number().int().positive() }).strict();
+
+const accountKind = z.enum(["brokerage", "bank"]);
+
+/** Each kind's own types: brokerage is a regular securities account or an equity savings account (OST, which decides taxation); bank is current, savings or fixed-term (which decides whether money can be reached). Kept apart: neither set means anything for the other kind. */
+export const BROKERAGE_TYPES = ["aot", "ost", "other"] as const;
+// "credit" is a bank-kind account holding no money of its own (card purchases and settling payments), kept out of cash figures (see valuation.ts `cashTxns`); no rate or maturity.
+export const BANK_TYPES = ["current", "savings", "fixed_term", "credit"] as const;
+
+const accountType = z.enum([...BROKERAGE_TYPES, ...BANK_TYPES]);
+
+/** A fixed-term deposit's terms. The rate stays a decimal string ("3.25") here, so a card re-validated in the browser still matches the form; storage converts it to basis points. */
+const terms = {
+  maturityDate: IsoDateSchema.nullable().optional(),
+  interestRate: z
+    .string()
+    .regex(/^\d{1,2}([.,]\d{1,2})?$/, "Rate in the format 3.25")
+    .nullable()
+    .optional(),
+};
+
+/** Name and type only: broker and base currency are what stored rows were interpreted under. The type is editable because it decides tax treatment and a guessed, frozen one makes a tax report confidently wrong. */
+export const UpdateAccount = z
+  .object({
+    name: z.string().trim().min(1, "Name cannot be empty").max(100).optional(),
+    accountType: accountType.nullable().optional(),
+    ...terms,
+  })
+  .refine(
+    (body) =>
+      body.name !== undefined ||
+      body.accountType !== undefined ||
+      body.maturityDate !== undefined ||
+      body.interestRate !== undefined,
+    { message: "No fields to change" },
+  );
+
+export const EditAccountInput = z.object({
+  id: z.number().int().positive(),
+  changes: UpdateAccount,
+});
+
+export const CreateAccount = z.object({
+  name: z.string().min(1).max(100),
+  broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
+  baseCurrency: currencyField.default(EUR),
+  kind: accountKind.default("brokerage"),
+  // Optional at creation: an owner importing an export may not know yet which account it covers.
+  accountType: accountType.optional(),
+  ...terms,
+});
+
+/** A bank account's balance on a date, from which the app derives the opening balance. */
+export const BalanceInput = z
+  .object({
+    accountId: z.number().int().positive(),
+    on: IsoDateSchema,
+    balance: z.string().regex(/^-?\d+([.,]\d{1,2})?$/, "Balance in the format 1234.56"),
+  })
+  .strict();
+
+/** What a chat card saves: the app adds the opening balance it showed, so a ledger changed in between is refused rather than written unseen. */
+export const BalanceSave = BalanceInput.extend({
+  expectOpeningEur: z
+    .string()
+    .regex(/^-?\d+\.\d{2}$/)
+    .optional(),
+  expectOpeningDate: IsoDateSchema.optional(),
+}).strict();
+
+export const SnapshotQuery = z.object({ snapshotId: z.number().int().positive() });
+
+/** A holdings statement as supplied: what the broker says was held on a date. Quantities are decimal strings, never JSON numbers. */
+export const CreateSnapshot = z.object({
+  accountId: z.number().int().positive(),
+  asOf: IsoDateSchema,
+  source: z.enum(["pdf", "vision", "manual"]),
+  rows: z
+    .array(
+      z.object({
+        instrumentId: z.number().int().positive(),
+        quantity: z.string().min(1).max(40),
+        nav: z.string().min(1).max(30).optional(),
+        marketValue: z.string().min(1).max(30).optional(),
+      }),
+    )
+    .min(1, "A snapshot without rows says nothing")
+    .max(200),
+  statedTotalEur: z.string().max(30).nullable().optional(),
+});
+
+/**
+ * Resolves one reconciliation row into a transaction. `costEur` is required when units arrive and refused when they leave:
+ * a defaulted-to-zero cost would report the holding's whole value as gain. The UI may offer the statement's NAV, but a person chooses the stored figure.
+ */
+export const AdjustInput = z.object({
+  snapshotId: z.number().int().positive(),
+  instrumentId: z.number().int().positive(),
+  costEur: z.string().min(1).max(30).optional(),
+});
+
+/** What a chat card saves: the app adds the signed quantity it showed, so a ledger changed in between is refused rather than corrected unseen. */
+export const AdjustSave = AdjustInput.extend({
+  expectQuantity: z.string().max(40).optional(),
+});
+
+export const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN is invalid");
+
+/** A new instrument as the instrument form sends it. */
+export const InstrumentCreate = z
+  .object({
+    // Optional only for `manual`: a delisted share has no ISIN any registry gives.
+    isin: Isin.optional(),
+    ticker: z.string().min(1).max(20).nullable(),
+    name: z.string().min(1).max(200),
+    kind: z.enum(["stock", "etf", "fund", "cash"]),
+    currency: currencyField,
+    priceSource: z.enum(["yahoo", "page", "manual"]),
+    sourceKey: z.string().max(MAX_PAGE_URL).optional(),
+  })
+  .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
+    message: KEY_TOO_LONG,
+    path: ["sourceKey"],
+  })
+  .refine((body) => body.priceSource === "manual" || (body.sourceKey ?? "") !== "", {
+    message: "Source code is required when the price source fetches prices automatically",
+    path: ["sourceKey"],
+  })
+  .refine((body) => body.priceSource === "manual" || (body.isin ?? "") !== "", {
+    message: "ISIN is required when the price source fetches prices automatically",
+    path: ["isin"],
+  });
+
+/** The owner's own ongoing charge in percent ("0,20"); empty clears it. */
+export const FundChargeInput = z
+  .object({ id: z.number().int().positive(), percent: z.string().max(20) })
+  .strict();
+
+export const CashEntryRemove = z.object({ id: z.number().int().positive() }).strict();
+
+export const UndoInput = z.object({ importId: z.number().int().positive() });
+
+export const ConversationId = z.object({ id: z.number().int().positive() });
+
+const RulePattern = z.string().trim().min(3).max(60);
+
+export const SpendingRulesSave = z
+  .object({
+    rules: z
+      .array(z.object({ pattern: RulePattern, category: z.string() }))
+      .min(1)
+      .max(50),
+  })
+  .strict();
+
+export const SpendingRuleChange = z
+  .object({ pattern: RulePattern, category: z.string().max(60) })
+  .strict();
+
+export const SpendingRuleRemove = z.object({ pattern: z.string().min(1).max(120) }).strict();

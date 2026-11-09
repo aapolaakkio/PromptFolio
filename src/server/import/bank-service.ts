@@ -7,6 +7,7 @@ import { z } from "zod";
 import { cashBalancesAt } from "../../core/cash.ts";
 import { EUR, formatMoney, parseMoney, subMoney, zeroMoney, type Money } from "../../core/money.ts";
 import { assertAccountOwned } from "../accounts.ts";
+import { BalanceInput, BalanceSave } from "../action-inputs.ts";
 import { commitBankStatement } from "./bank-commit.ts";
 import {
   BankDraft,
@@ -27,10 +28,6 @@ import { createClient, type ChatClient } from "../chat/runner.ts";
 import { withModelTimeout } from "../instruments/find-page.ts";
 import { suggestRows } from "./suggest-rows.ts";
 import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.ts";
-
-const IsoDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the format YYYY-MM-DD");
 
 const asBadRequest = (cause: unknown): HttpError =>
   new HttpError(
@@ -223,14 +220,6 @@ const dayBefore = (date: string): string => {
   return parsed.toISOString().slice(0, 10);
 };
 
-export const BalanceInput = z
-  .object({
-    accountId: z.number().int().positive(),
-    on: IsoDateSchema,
-    balance: z.string().regex(/^-?\d+([.,]\d{1,2})?$/, "Balance in the format 1234.56"),
-  })
-  .strict();
-
 const EXAMPLE_ROWS = 5;
 
 /** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. Only rows with their printed source line are asked about. */
@@ -328,7 +317,8 @@ export const commitBankDraft = async (userId: string, body: z.infer<typeof Commi
   };
 };
 
-export const setAccountBalance = async (userId: string, body: z.infer<typeof BalanceInput>) => {
+/** What recording a balance would write: the opening balance that makes the rows add up to it, and the one it replaces. Shared by the save and the chat card. */
+export const balancePlan = async (userId: string, body: z.infer<typeof BalanceInput>) => {
   const { accountId, on, balance } = BalanceInput.parse(body);
   await assertAccountOwned(userId, accountId);
 
@@ -361,6 +351,24 @@ export const setAccountBalance = async (userId: string, body: z.infer<typeof Bal
     .orderBy(asc(transactions.tradeDate))
     .get();
   const openingDate = dayBefore(firstRow?.tradeDate ?? on);
+  return { accountId, on, stated, derived, opening, openingDate, existingOpening };
+};
+
+export const setAccountBalance = async (userId: string, body: z.infer<typeof BalanceSave>) => {
+  const input = BalanceSave.parse(body);
+  const { accountId, on, stated, derived, opening, openingDate, existingOpening } =
+    await balancePlan(userId, {
+      accountId: input.accountId,
+      on: input.on,
+      balance: input.balance,
+    });
+  // A card showed this figure; rows imported since would make the save write a different one unseen.
+  const changed =
+    (input.expectOpeningEur !== undefined && input.expectOpeningEur !== formatMoney(opening)) ||
+    (input.expectOpeningDate !== undefined && input.expectOpeningDate !== openingDate);
+  if (changed) {
+    throw new HttpError(409, "The account's rows changed since the card was made. Ask again.");
+  }
 
   const replacement = db.insert(transactions).values({
     accountId,

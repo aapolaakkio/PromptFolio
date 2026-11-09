@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
-import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
+import { openAccount as openAccountRow } from "./accounts.ts";
+import { CreateAccount } from "./action-inputs.ts";
 import { db } from "./db/index.ts";
 import { cashView } from "./views/portfolio.ts";
 

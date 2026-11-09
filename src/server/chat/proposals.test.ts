@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
 import { EUR } from "../../core/money.ts";
-import { CreateAccount, openAccount } from "../accounts.ts";
+import { openAccount } from "../accounts.ts";
+import { CreateAccount } from "../action-inputs.ts";
 import { db } from "../db/index.ts";
 import { addInstrument } from "../instruments/store.ts";
 import type { ChatClient, ChatEvent, ModelReply, TurnParams } from "./runner.ts";

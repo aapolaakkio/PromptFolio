@@ -1,10 +1,6 @@
 import { readBytes } from "../files.ts";
-import {
-  CreateAccount,
-  openAccount as openAccountRow,
-  updateAccount,
-  UpdateAccount,
-} from "../accounts.ts";
+import { openAccount as openAccountRow, updateAccount } from "../accounts.ts";
+import { CreateAccount, UpdateAccount } from "../action-inputs.ts";
 import { cashView, spendingView } from "../views/portfolio.ts";
 import { db } from "../db/index.ts";
 import { removeRule, rulesFor } from "../spending/rules.ts";

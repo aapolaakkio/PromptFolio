@@ -1,14 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { db } from "../../server/db/index.ts";
-import { z } from "zod";
 
-import {
-  CreateAccount,
-  listAccounts,
-  openAccount,
-  updateAccount,
-  UpdateAccount,
-} from "../../server/accounts.ts";
+import { CreateAccount, EditAccountInput } from "../../server/action-inputs.ts";
+import { listAccounts, openAccount, updateAccount } from "../../server/accounts.ts";
 import { authed, readable } from "./guard.ts";
 
 /** Every account the signed-in person owns, brokerage and bank alike. */
@@ -25,7 +19,7 @@ export const createAccount = createServerFn({ method: "POST" })
 /** Renames one, or changes its type, maturity date or rate. */
 export const editAccount = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(z.object({ id: z.number().int().positive(), changes: UpdateAccount }))
+  .validator(EditAccountInput)
   .handler(({ data, context }) =>
     readable(() => updateAccount(db, context.userId, data.id, data.changes)),
   );
