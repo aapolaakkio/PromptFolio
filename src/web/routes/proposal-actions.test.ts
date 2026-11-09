@@ -60,7 +60,11 @@ describe("confirmProposal for the plan", () => {
       summary: "Invest 100.00 EUR per month in Acme Fund.",
       title: "Set a monthly plan row",
       facts: [],
-      input: { mode: "add", rows: [{ instrumentId: 4, amountEur: "100" }] },
+      input: {
+        rows: [{ instrumentId: 4, amountEur: "100" }],
+        removeInstrumentIds: [],
+        fingerprint: "",
+      },
     };
     const fns = actions();
     expect(await confirmProposal(plan, fns)).toEqual({ outcome: "saved" });

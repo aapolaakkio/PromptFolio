@@ -4,7 +4,7 @@ import { z } from "zod";
 import { EUR, parseMoney } from "../../core/money.ts";
 import {
   DimensionInput,
-  PlanInput,
+  PlanSave,
   PlanRemoveInput,
   PlanRowInput,
   TargetAllocationInput,
@@ -114,5 +114,5 @@ export const deletePlanRow = createServerFn({ method: "POST" })
 /** The whole plan at once, from a chat card the owner confirmed; atomic. */
 export const savePlan = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(PlanInput)
+  .validator(PlanSave)
   .handler(({ data, context }) => setPlanRows(db, context.userId, data));

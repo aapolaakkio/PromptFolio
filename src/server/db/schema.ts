@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  unique,
+} from "drizzle-orm/sqlite-core";
 import { EUR, type Currency } from "../../core/money.ts";
 
 // --- Better Auth tables (shape fixed by the adapter) ---
@@ -384,7 +392,10 @@ export const monthlyPlan = sqliteTable(
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
   },
-  (t) => [unique().on(t.userId, t.instrumentId)],
+  (t) => [
+    unique().on(t.userId, t.instrumentId),
+    check("monthly_plan_amount_positive", sql`${t.amountMinor} > 0`),
+  ],
 );
 
 /** The owner's own expected yearly growth for an instrument, replacing the one measured from prices. */

@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   CashEntry,
   InstrumentEdit,
-  PlanInput,
+  PlanSave,
   PriceInput,
   TargetAllocationInput,
 } from "../action-inputs.ts";
@@ -40,7 +40,7 @@ export const ProposalSchema = z.discriminatedUnion("action", [
   z.object({ ...base, action: z.literal("cash_entry"), input: CashEntry }),
   z.object({ ...base, action: z.literal("target_allocation"), input: TargetAllocationInput }),
   z.object({ ...base, action: z.literal("price_source"), input: InstrumentEdit }),
-  z.object({ ...base, action: z.literal("monthly_plan"), input: PlanInput }),
+  z.object({ ...base, action: z.literal("monthly_plan"), input: PlanSave }),
 ]);
 
 export type Proposal = z.infer<typeof ProposalSchema>;

@@ -410,6 +410,24 @@ describe("propose_monthly_plan", () => {
     expect(proposals[0]?.facts.at(-1)).toMatchObject({ amount: "150.00" });
   });
 
+  test("the card carries the exact removals and a fingerprint, and a later row makes Confirm refuse", async () => {
+    const { userId, instrumentId } = await seed();
+    const [old, later] = [await second("Old Fund"), await second("Later Fund")];
+    const { setPlanRow, setPlanRows } = await import("../monthly-plan.ts");
+    await setPlanRow(db, userId, { instrumentId: old, amountEur: "50" });
+    const { proposals } = await propose(userId, "propose_monthly_plan", {
+      mode: "replace",
+      rows: [{ instrumentId, amountEur: "100" }],
+    });
+    const input = proposals[0]?.action === "monthly_plan" ? proposals[0].input : undefined;
+    expect(input?.removeInstrumentIds).toEqual([old]);
+    await setPlanRow(db, userId, { instrumentId: later, amountEur: "30" });
+    await expect(setPlanRows(db, userId, input!)).rejects.toThrow("The plan changed");
+    expect(new Set((await planOf(userId)).map((row) => row.instrumentId))).toEqual(
+      new Set([old, later]),
+    );
+  });
+
   test("a duplicate instrument is refused", async () => {
     const { userId, instrumentId } = await seed();
     const { proposals } = await propose(userId, "propose_monthly_plan", {

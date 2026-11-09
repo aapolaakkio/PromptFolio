@@ -20,7 +20,7 @@ import {
 } from "../action-inputs.ts";
 import { HttpError } from "../errors.ts";
 import { listInstruments } from "../instruments/store.ts";
-import { listPlan } from "../monthly-plan.ts";
+import { listPlan, planFingerprint } from "../monthly-plan.ts";
 import { driftReportFor } from "../rebalance.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { isPublicPageUrl } from "../prices/page.ts";
@@ -302,7 +302,11 @@ const proposePlan = async (db: Db, userId: string, raw: ToolArgs): Promise<Propo
       `${replacing ? "Set the monthly plan to" : "Add to the monthly plan"}: ${lines}.` +
       (removedNames.length === 0 ? "" : ` Removes: ${removedNames.join(", ")}.`) +
       ` The plan then totals ${total} ${EUR} per month.`,
-    input,
+    input: {
+      rows: input.rows,
+      removeInstrumentIds: removed.map((row) => row.instrumentId),
+      fingerprint: await planFingerprint(db, userId),
+    },
   };
 };
 

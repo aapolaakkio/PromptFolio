@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
 import { EUR } from "../core/money.ts";
-import { PlanInput, PlanRowInput } from "./action-inputs.ts";
+import { PlanRowInput, PlanSave } from "./action-inputs.ts";
 import { db } from "./db/index.ts";
 import { addInstrument } from "./instruments/store.ts";
 
@@ -98,50 +98,88 @@ describe("monthly plan", () => {
 });
 
 describe("setPlanRows", () => {
-  test("replace removes the unlisted rows; add keeps them", async () => {
+  const save = async (
+    userId: string,
+    rows: { instrumentId: number; amountEur: string }[],
+    removeInstrumentIds: number[] = [],
+    fingerprint?: string,
+  ) =>
+    plan.setPlanRows(db, userId, {
+      rows,
+      removeInstrumentIds,
+      fingerprint: fingerprint ?? (await plan.planFingerprint(db, userId)),
+    });
+
+  test("removes only the listed ids and keeps the rest", async () => {
     const userId = await signUp();
     const [a, b, c] = [await fund("A"), await fund("B"), await fund("C")];
-    await plan.setPlanRows(db, userId, {
-      mode: "add",
-      rows: [
-        { instrumentId: a, amountEur: "10" },
-        { instrumentId: b, amountEur: "20" },
-      ],
-    });
-    await plan.setPlanRows(db, userId, {
-      mode: "add",
-      rows: [{ instrumentId: c, amountEur: "5" }],
-    });
+    await save(userId, [
+      { instrumentId: a, amountEur: "10" },
+      { instrumentId: b, amountEur: "20" },
+    ]);
+    await save(userId, [{ instrumentId: c, amountEur: "5" }]);
     expect((await plan.listPlan(db, userId)).totalEur).toBe("35.00");
-    await plan.setPlanRows(db, userId, {
-      mode: "replace",
-      rows: [{ instrumentId: c, amountEur: "7" }],
-    });
+    await save(userId, [{ instrumentId: c, amountEur: "7" }], [a, b]);
     expect((await plan.listPlan(db, userId)).rows.map((row) => row.name)).toEqual(["C"]);
   });
 
-  test("one unknown instrument saves nothing, even on replace", async () => {
+  test("a row added after the proposal was made is not deleted: the save is refused", async () => {
+    const userId = await signUp();
+    const [x, old, y] = [await fund("X"), await fund("Old"), await fund("Y")];
+    await plan.setPlanRow(db, userId, { instrumentId: old, amountEur: "50" });
+    const proposedAgainst = await plan.planFingerprint(db, userId);
+    await plan.setPlanRow(db, userId, { instrumentId: y, amountEur: "30" });
+    await expect(
+      save(userId, [{ instrumentId: x, amountEur: "10" }], [old], proposedAgainst),
+    ).rejects.toThrow("The plan changed since this was proposed; ask again");
+    expect((await plan.listPlan(db, userId)).rows.map((row) => row.name)).toEqual(["Old", "Y"]);
+  });
+
+  test("an unchanged plan is saved as shown", async () => {
+    const userId = await signUp();
+    const [x, old] = [await fund("X"), await fund("Old")];
+    await plan.setPlanRow(db, userId, { instrumentId: old, amountEur: "50" });
+    await save(userId, [{ instrumentId: x, amountEur: "10" }], [old]);
+    expect((await plan.listPlan(db, userId)).rows.map((row) => row.name)).toEqual(["X"]);
+  });
+
+  test("one unknown instrument saves nothing", async () => {
     const userId = await signUp();
     const a = await fund("A");
     await plan.setPlanRow(db, userId, { instrumentId: a, amountEur: "10" });
     await expect(
-      plan.setPlanRows(db, userId, {
-        mode: "replace",
-        rows: [
+      save(
+        userId,
+        [
           { instrumentId: a, amountEur: "99" },
           { instrumentId: 999_999_999, amountEur: "1" },
         ],
-      }),
+        [],
+      ),
     ).rejects.toThrow("Instrument not found");
     expect((await plan.listPlan(db, userId)).totalEur).toBe("10.00");
   });
 
-  test("the schema refuses a duplicate instrument and an empty or oversized list", () => {
+  test("the schema refuses a duplicate, an empty or oversized list, and a row both set and removed", () => {
     const row = { instrumentId: 1, amountEur: "1" };
-    expect(PlanInput.safeParse({ mode: "add", rows: [row, row] }).success).toBe(false);
-    expect(PlanInput.safeParse({ mode: "add", rows: [] }).success).toBe(false);
+    const base = { removeInstrumentIds: [], fingerprint: "" };
+    expect(PlanSave.safeParse({ ...base, rows: [row, row] }).success).toBe(false);
+    expect(PlanSave.safeParse({ ...base, rows: [] }).success).toBe(false);
     const many = Array.from({ length: 31 }, (_, i) => ({ instrumentId: i + 1, amountEur: "1" }));
-    expect(PlanInput.safeParse({ mode: "add", rows: many }).success).toBe(false);
+    expect(PlanSave.safeParse({ ...base, rows: many }).success).toBe(false);
+    expect(PlanSave.safeParse({ ...base, rows: [row], removeInstrumentIds: [1] }).success).toBe(
+      false,
+    );
+    expect(PlanSave.safeParse({ ...base, rows: [row] }).success).toBe(true);
+  });
+
+  test("the table refuses an amount of 0", async () => {
+    const userId = await signUp();
+    const a = await fund("A");
+    const { monthlyPlan } = await import("./db/schema.ts");
+    await expect(
+      db.insert(monthlyPlan).values({ userId, instrumentId: a, amountMinor: 0 }).run(),
+    ).rejects.toThrow();
   });
 });
 

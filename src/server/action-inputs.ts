@@ -98,15 +98,39 @@ export const PlanRowInput = z
 export const MAX_PLAN_ROWS = 30;
 
 /** The whole plan in one go: `replace` makes it exactly these rows, `add` upserts them and keeps the rest. */
+const noDuplicates = (rows: readonly { readonly instrumentId: number }[]): boolean =>
+  new Set(rows.map((row) => row.instrumentId)).size === rows.length;
+
+const planRows = z.array(PlanRowInput).min(1).max(MAX_PLAN_ROWS);
+
+/** What the model proposes: `replace` makes the plan exactly these rows, `add` upserts them and keeps the rest. */
 export const PlanInput = z
-  .object({
-    rows: z.array(PlanRowInput).min(1).max(MAX_PLAN_ROWS),
-    mode: z.enum(["replace", "add"]),
-  })
+  .object({ rows: planRows, mode: z.enum(["replace", "add"]) })
   .strict()
-  .refine((plan) => new Set(plan.rows.map((row) => row.instrumentId)).size === plan.rows.length, {
+  .refine((plan) => noDuplicates(plan.rows), {
     message: "An instrument appears twice in the plan",
     path: ["rows"],
   });
+
+/** What Confirm saves: the app fills `removeInstrumentIds` and `fingerprint` when it builds the card, so a row added afterwards is never deleted unseen. */
+export const PlanSave = z
+  .object({
+    rows: planRows,
+    removeInstrumentIds: z.array(z.number().int().positive()).max(200),
+    fingerprint: z.string().max(4000),
+  })
+  .strict()
+  .refine((plan) => noDuplicates(plan.rows), {
+    message: "An instrument appears twice in the plan",
+    path: ["rows"],
+  })
+  .refine(
+    (plan) =>
+      !plan.removeInstrumentIds.some((id) => plan.rows.some((row) => row.instrumentId === id)),
+    {
+      message: "A row is both set and removed",
+      path: ["removeInstrumentIds"],
+    },
+  );
 
 export const PlanRemoveInput = z.object({ instrumentId: z.number().int().positive() }).strict();

@@ -17,6 +17,7 @@ export const MonthlyPlan = () => {
   const [instrumentId, setInstrumentId] = useState("");
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [refusals, setRefusals] = useState(0);
 
   const save = useMutation({
     mutationFn: (row: { instrumentId: number; amountEur: string }) => savePlanRow({ data: row }),
@@ -25,7 +26,10 @@ export const MonthlyPlan = () => {
       void queryClient.invalidateQueries({ queryKey: FORECAST_QUERY_KEY });
       return queryClient.invalidateQueries({ queryKey: QUERY_KEY });
     },
-    onError: (cause) => setError(errorMessage(cause, "Could not save")),
+    onError: (cause) => {
+      setError(errorMessage(cause, "Could not save"));
+      setRefusals((count) => count + 1);
+    },
   });
   const remove = useMutation({
     mutationFn: (id: number) => deletePlanRow({ data: { instrumentId: id } }),
@@ -65,8 +69,8 @@ export const MonthlyPlan = () => {
                 <td className="text-muted">{row.isin ?? "—"}</td>
                 <td className="text-right">
                   <input
-                    // Remounts with the stored sum after a save or a refused edit.
-                    key={row.amountEur}
+                    // Remounts with the stored sum after a save, and after a refused edit so the bad text goes.
+                    key={`${row.amountEur}-${refusals}`}
                     defaultValue={row.amountEur}
                     inputMode="decimal"
                     aria-label={`${row.name} per month in euros`}
