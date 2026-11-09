@@ -6,24 +6,37 @@ import { commitBankDraftImport, previewBankImport } from "../server/bank-imports
 import { firstThenRest } from "./preview-order.ts";
 import { eur, formatDate } from "../lib/format.ts";
 import { describeImport, describeMaturity, describeReconciliation } from "./cash-view.ts";
-import { bankBalanceCheck, problemToRow } from "./draft-edit.ts";
+import { BANK_ROW_TYPES } from "../../core/types.ts";
+import { bankBalanceCheck, clearEdited, problemToRow } from "./draft-edit.ts";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 
 type BankCommitResult = Awaited<ReturnType<typeof commitBankDraftImport>>;
 type BankPreview = Awaited<ReturnType<typeof previewBankImport>>;
 type BankDraftRow = BankPreview["draft"]["rows"][number];
+/** Prefilled from a model suggestion the owner has not touched; stripped before the commit. */
+type BankEditRow = BankDraftRow & { readonly suggested?: boolean };
+type BankEntry = {
+  name: string;
+  preview: Omit<BankPreview, "draft"> & {
+    draft: Omit<BankPreview["draft"], "rows"> & { rows: BankEditRow[] };
+  };
+};
 
-const BANK_COLUMNS: readonly Column<BankDraftRow>[] = [
+const withoutFlag = ({ suggested: _suggested, ...row }: BankEditRow): BankDraftRow => row;
+
+const BANK_TYPE_LABELS = {
+  DEPOSIT: "Deposit",
+  WITHDRAWAL: "Withdrawal",
+  INTEREST: "Interest",
+} as const satisfies Record<(typeof BANK_ROW_TYPES)[number], string>;
+
+const BANK_COLUMNS: readonly Column<BankEditRow>[] = [
   { key: "date", label: "Date", kind: "date" },
   {
     key: "type",
     label: "Type",
     kind: "select",
-    options: [
-      { value: "DEPOSIT", label: "Deposit" },
-      { value: "WITHDRAWAL", label: "Withdrawal" },
-      { value: "INTEREST", label: "Interest" },
-    ],
+    options: BANK_ROW_TYPES.map((value) => ({ value, label: BANK_TYPE_LABELS[value] })),
   },
   { key: "amountEur", label: "Amount", kind: "decimal", numeric: true },
   { key: "counterparty", label: "Counterparty", kind: "text" },
@@ -31,9 +44,10 @@ const BANK_COLUMNS: readonly Column<BankDraftRow>[] = [
 ];
 
 /** A row the reader could not parse, as a blank row the owner fills in rather than loses. */
-const rowFromProblem = (problem: BankPreview["draft"]["problems"][number]): BankDraftRow => ({
+const rowFromProblem = (problem: BankPreview["draft"]["problems"][number]): BankEditRow => ({
   ...problemToRow(problem),
   label: "",
+  suggested: problem.suggestion !== undefined,
 });
 
 /** A bank account's statements, CSV or PDF: previewed, edited, then imported. */
@@ -46,9 +60,7 @@ export const BankStatementImport = ({
 }) => {
   const queryClient = useQueryClient();
   const [files, setFiles] = useState<File[]>([...initialFiles]);
-  const [drafts, setDrafts] = useState<
-    { name: string; preview: BankPreview; suggestedLines: ReadonlySet<number> }[]
-  >([]);
+  const [drafts, setDrafts] = useState<BankEntry[]>([]);
   const [imported, setImported] = useState<{ name: string; data: BankCommitResult }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,11 +92,6 @@ export const BankStatementImport = ({
       setDrafts(
         results.map(({ name, data }) => ({
           name,
-          suggestedLines: new Set(
-            data.draft.problems.flatMap((problem) =>
-              problem.suggestion === undefined ? [] : [problem.line],
-            ),
-          ),
           preview: {
             ...data,
             draft: {
@@ -109,7 +116,7 @@ export const BankStatementImport = ({
               accountId,
               filename: entry.preview.filename,
               sha256: entry.preview.sha256,
-              draft: entry.preview.draft,
+              draft: { ...entry.preview.draft, rows: entry.preview.draft.rows.map(withoutFlag) },
             },
           });
           setImported((prev) => [...prev, { name: entry.name, data }]);
@@ -201,8 +208,8 @@ export const BankStatementImport = ({
             <DraftTable
               rows={entry.preview.draft.rows}
               columns={BANK_COLUMNS}
-              isSuggested={(row) => entry.suggestedLines.has(row.line)}
-              blank={(): BankDraftRow => ({
+              isSuggested={(row) => row.suggested === true}
+              blank={(): BankEditRow => ({
                 line: entry.preview.draft.rows.length + 1,
                 date: "",
                 type: "DEPOSIT",
@@ -216,7 +223,16 @@ export const BankStatementImport = ({
                 setDrafts((current) =>
                   current.map((d, at) =>
                     at === index
-                      ? { ...d, preview: { ...d.preview, draft: { ...d.preview.draft, rows } } }
+                      ? {
+                          ...d,
+                          preview: {
+                            ...d.preview,
+                            draft: {
+                              ...d.preview.draft,
+                              rows: clearEdited(d.preview.draft.rows, rows),
+                            },
+                          },
+                        }
                       : d,
                   ),
                 )

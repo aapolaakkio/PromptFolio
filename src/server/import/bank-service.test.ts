@@ -286,7 +286,7 @@ describe("bank preview suggestions", () => {
         JSON.stringify({
           rows: [
             {
-              line: 2,
+              id: 0,
               fields: {
                 date: "2025-09-02",
                 type: "WITHDRAWAL",
@@ -327,6 +327,32 @@ describe("bank preview suggestions", () => {
     } finally {
       setReaderClient(reader());
     }
+  });
+});
+
+describe("bank commit ignores preview-only problem fields", () => {
+  test("a suggestion or raw text on a problem changes nothing that is written or answered", async () => {
+    const { userId } = await signUp();
+    const accountId = await openAccount(userId, "current");
+    const previewed = PreviewSchema.parse((await preview(userId, accountId)).body);
+    const draft = {
+      ...previewed.draft,
+      problems: [{ line: 99, text: "odd", raw: "secret", suggestion: { amountEur: "1.00" } }],
+    };
+    const committed = CommitSchema.parse(
+      (
+        await answer(() =>
+          bank.commitBankDraft(userId, {
+            accountId,
+            filename: previewed.filename,
+            sha256: previewed.sha256,
+            draft,
+          }),
+        )
+      ).body,
+    );
+    expect(committed.inserted).toBe(previewed.draft.rows.length);
+    expect(committed.problems).toEqual([{ line: 99, message: "odd" }]);
   });
 });
 

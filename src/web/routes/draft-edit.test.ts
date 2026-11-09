@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   appendRow,
   bankBalanceCheck,
+  clearEdited,
   holdingsTotalCheck,
   pickSuggested,
   problemToRow,
@@ -72,5 +73,25 @@ describe("pickSuggested", () => {
   test("keeps only the listed keys", () => {
     expect(pickSuggested({ a: "1", b: "2" }, ["a", "c"])).toEqual({ a: "1" });
     expect(pickSuggested(undefined, ["a"])).toEqual({});
+  });
+});
+
+describe("clearEdited", () => {
+  test("an edited row loses its suggested mark; untouched and added rows keep theirs", () => {
+    type Row = { a: string; suggested?: boolean };
+    const rows: Row[] = [
+      { a: "1", suggested: true },
+      { a: "2", suggested: true },
+    ];
+    const edited = clearEdited(rows, [...updateRow(rows, 0, { a: "x" }), { a: "new" }]);
+    expect(edited.map((row) => row.suggested)).toEqual([false, true, false]);
+  });
+
+  test("a removed row leaves the others marked", () => {
+    const rows = [
+      { a: "1", suggested: true },
+      { a: "2", suggested: true },
+    ];
+    expect(clearEdited(rows, removeRow(rows, 0))).toEqual([{ a: "2", suggested: true }]);
   });
 });

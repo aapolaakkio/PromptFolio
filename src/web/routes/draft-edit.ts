@@ -1,3 +1,4 @@
+import { BANK_ROW_TYPES } from "../../core/types.ts";
 import { minorToEur } from "./imports-draft.ts";
 
 /** Pure preview editing; the server re-validates every draft. */
@@ -54,6 +55,12 @@ export const holdingsTotalCheck = (
   return { ok: difference === 0, differenceEur: minorToEur(difference) };
 };
 
+/** Rows the owner changed lose their "suggested" mark: a row is new when `updateRow` made it. */
+export const clearEdited = <T extends { readonly suggested?: boolean }>(
+  before: readonly T[],
+  after: readonly T[],
+): T[] => after.map((row) => (before.includes(row) ? row : { ...row, suggested: false }));
+
 /** The suggested values for the listed fields only: the server's answer is not trusted to name fields. */
 export const pickSuggested = <K extends string>(
   suggestion: Readonly<Record<string, string>> | undefined,
@@ -66,8 +73,6 @@ export const pickSuggested = <K extends string>(
       return value === undefined ? [] : [[key, value]];
     }),
   ) as Partial<Record<K, string>>;
-
-const BANK_TYPES = ["DEPOSIT", "WITHDRAWAL", "INTEREST"] as const;
 
 /** A problem the reader reported, as a row to fill in; the printed text stays visible until replaced. A suggestion only prefills. */
 export const problemToRow = (problem: {
@@ -84,7 +89,7 @@ export const problemToRow = (problem: {
   return {
     line: problem.line,
     date: suggested.date ?? "",
-    type: BANK_TYPES.find((type) => type === suggested.type) ?? "DEPOSIT",
+    type: BANK_ROW_TYPES.find((type) => type === suggested.type) ?? "DEPOSIT",
     amountEur: suggested.amountEur ?? "",
     counterparty: suggested.counterparty ?? "",
     message: problem.text,

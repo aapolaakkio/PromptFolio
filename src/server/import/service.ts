@@ -145,7 +145,9 @@ const exampleOf = (txn: Draft["txns"][number]) => ({
 
 /** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. */
 const withSuggestions = async (draft: Draft): Promise<Draft> => {
-  const open = draft.problems.filter((problem) => problem.ignored !== true);
+  const open = draft.problems.flatMap((problem, at) =>
+    problem.ignored === true ? [] : [{ problem, at }],
+  );
   if (open.length === 0) return draft;
   let client: ChatClient;
   try {
@@ -156,17 +158,23 @@ const withSuggestions = async (draft: Draft): Promise<Draft> => {
   const found = await suggestRows(
     client,
     "broker",
-    open.map((problem) => ({
+    open.map(({ problem }) => ({
       line: problem.line,
       raw: rawTextOf(problem),
       message: problem.message,
     })),
     draft.txns.slice(0, EXAMPLE_ROWS).map(exampleOf),
   );
+  const byPosition = new Map(
+    open.flatMap(({ at }, k) => {
+      const suggestion = found.get(k);
+      return suggestion === undefined ? [] : [[at, suggestion] as const];
+    }),
+  );
   return {
     ...draft,
-    problems: draft.problems.map((problem) => {
-      const suggestion = found.get(problem.line);
+    problems: draft.problems.map((problem, at) => {
+      const suggestion = byPosition.get(at);
       return suggestion === undefined ? problem : { ...problem, suggestion };
     }),
   };

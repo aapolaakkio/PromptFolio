@@ -233,9 +233,12 @@ export const BalanceInput = z
 
 const EXAMPLE_ROWS = 5;
 
-/** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. */
+/** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. Only rows with their printed source line are asked about. */
 const withSuggestions = async (draft: BankDraft): Promise<BankDraft> => {
-  if (draft.problems.length === 0) return draft;
+  const printed = draft.problems.flatMap((problem, at) =>
+    problem.raw === undefined ? [] : [{ problem, raw: problem.raw, at }],
+  );
+  if (printed.length === 0) return draft;
   let client: ChatClient;
   try {
     client = withModelTimeout(readerClient ?? createClient());
@@ -245,11 +248,7 @@ const withSuggestions = async (draft: BankDraft): Promise<BankDraft> => {
   const found = await suggestRows(
     client,
     "bank",
-    draft.problems.map((problem) => ({
-      line: problem.line,
-      raw: problem.raw ?? problem.text,
-      message: problem.text,
-    })),
+    printed.map(({ problem, raw }) => ({ line: problem.line, raw, message: problem.text })),
     draft.rows.slice(0, EXAMPLE_ROWS).map((row) => ({
       date: row.date,
       type: row.type,
@@ -257,10 +256,16 @@ const withSuggestions = async (draft: BankDraft): Promise<BankDraft> => {
       counterparty: row.counterparty,
     })),
   );
+  const byPosition = new Map(
+    printed.flatMap(({ at }, k) => {
+      const suggestion = found.get(k);
+      return suggestion === undefined ? [] : [[at, suggestion] as const];
+    }),
+  );
   return {
     ...draft,
-    problems: draft.problems.map((problem) => {
-      const suggestion = found.get(problem.line);
+    problems: draft.problems.map((problem, at) => {
+      const suggestion = byPosition.get(at);
       return suggestion === undefined ? problem : { ...problem, suggestion };
     }),
   };

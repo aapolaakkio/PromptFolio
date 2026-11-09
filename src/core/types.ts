@@ -2,6 +2,9 @@ import type { Currency, FxRate, Money, Quantity } from "./money.ts";
 
 export type IsoDate = string;
 
+/** The types a bank statement row can have. */
+export const BANK_ROW_TYPES = ["DEPOSIT", "WITHDRAWAL", "INTEREST"] as const;
+
 export type TransactionType =
   | "BUY"
   | "SELL"

@@ -1084,7 +1084,7 @@ describe("preview suggestions for rows the recipe could not read", () => {
         JSON.stringify({
           rows: [
             {
-              line: 3,
+              id: 0,
               fields: {
                 tradeDate: "2025-02-03",
                 type: "BUY",
@@ -1106,7 +1106,6 @@ describe("preview suggestions for rows the recipe could not read", () => {
     expect(body.problems).toHaveLength(1);
     expect(body.problems[0]?.suggestion).toEqual({
       tradeDate: "2025-02-03",
-      type: "BUY",
       isin: "FI0009000681",
       quantityText: "100",
     });

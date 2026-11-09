@@ -71,7 +71,7 @@ describe("bankDraftFromStatement", () => {
   test("a line nobody could account for becomes a problem the owner sees", () => {
     const draft = bankDraftFromStatement(statement, [{ line: 2, text: "EXAMPLE ASIAKAS" }]);
     expect(draft.problems).toEqual([
-      { line: 2, text: "Unrecognised line: EXAMPLE ASIAKAS" },
+      { line: 2, text: "Unrecognised line: EXAMPLE ASIAKAS", raw: "EXAMPLE ASIAKAS" },
       { line: 9, text: "unclear row" },
     ]);
   });

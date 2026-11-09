@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { BANK_ROW_TYPES } from "../../core/types.ts";
 import { EUR, formatMoney, parseMoney } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
 import type { PdfStatement } from "./bank-pdf.ts";
@@ -25,7 +26,7 @@ export const BankDraft = z
           .object({
             line: z.number().int(),
             date: IsoDate,
-            type: z.enum(["DEPOSIT", "WITHDRAWAL", "INTEREST"]),
+            type: z.enum(BANK_ROW_TYPES),
             amountEur: Amount,
             counterparty: z.string(),
             label: z.string(),
@@ -117,7 +118,11 @@ export const bankDraftFromStatement = (
   }),
   problems: [
     ...statement.problems.map((problem) => ({ line: problem.line, text: problem.message })),
-    ...unclaimed.map((entry) => ({ line: entry.line, text: `Unrecognised line: ${entry.text}` })),
+    ...unclaimed.map((entry) => ({
+      line: entry.line,
+      text: `Unrecognised line: ${entry.text}`,
+      raw: entry.text,
+    })),
   ].sort((a, b) => a.line - b.line),
 });
 

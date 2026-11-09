@@ -26,7 +26,7 @@ import { BankStatementImport } from "./BankStatementImport.tsx";
 import { DocumentDrop } from "./DocumentDrop.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 import { firstThenRest } from "./preview-order.ts";
-import { pickSuggested } from "./draft-edit.ts";
+import { clearEdited, pickSuggested } from "./draft-edit.ts";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
@@ -339,7 +339,10 @@ export const ImportsPage = () => {
 
   const setRows = (index: number, rows: EditableTxn[]) =>
     setPreviews(
-      (current) => current?.map((entry, at) => (at === index ? { ...entry, rows } : entry)) ?? null,
+      (current) =>
+        current?.map((entry, at) =>
+          at === index ? { ...entry, rows: clearEdited(entry.rows, rows) } : entry,
+        ) ?? null,
     );
 
   // Broker files sorted by the drop box go through this page's own flow below.
