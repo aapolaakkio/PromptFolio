@@ -123,7 +123,7 @@ export const instruments = sqliteTable("instruments", {
   // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
   currency: text("currency").$type<Currency>().notNull(),
   priceSource: text("price_source", {
-    enum: ["yahoo", "nordnet_fund", "op_fund", "page", "manual"],
+    enum: ["yahoo", "page", "manual"],
   }).notNull(),
   sourceKey: text("source_key").notNull(),
   // "pending" while a registry lookup is still owed, "attention" when it needs the user.

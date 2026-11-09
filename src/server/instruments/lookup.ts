@@ -9,7 +9,6 @@ import { fetchLatestQuotes } from "../prices/yahoo-batch.ts";
 import { YahooPausedError } from "../prices/yahoo-gate.ts";
 import type { PageFinder } from "./find-page.ts";
 import { figiLookup, type InstrumentKind } from "./openfigi.ts";
-import { resolveOpSlug } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
 
 /**
@@ -49,7 +48,7 @@ export type InstrumentLookup = {
   readonly kind: InstrumentKind | null;
   /** The registry's own name, for the user to sanity-check against the broker's. */
   readonly name: string | null;
-  readonly priceSource: "yahoo" | "op_fund" | "page" | null;
+  readonly priceSource: "yahoo" | "page" | null;
   /** The page's URL when `priceSource` is "page". */
   readonly sourceKey: string | null;
   /**
@@ -144,12 +143,9 @@ const lookupWith = async (
   hit: Hit | null | undefined,
 ): Promise<InstrumentLookup> => {
   try {
-    // OP's paste import carries no ISIN column, so the fund's own page is the
-    // only way to learn its ISIN. It is learned first, so a Yahoo pause after
-    // that still reports the ISIN rather than losing it.
+    // OP's paste import carries no ISIN column, so the finder is the only way
+    // to learn it.
     if (isin === null) {
-      const discovered = await settle(resolveOpSlug(ask.name, null, ask.fetchImpl));
-      if (discovered !== null) return await lookupWith(ask, discovered.isin, hit);
       if (ask.page !== null && ask.currency !== null && hit === undefined) {
         const found = await findPage(ask, ask.page, null);
         // The finder's ISIN is only a claim until the page itself shows it.
@@ -265,8 +261,7 @@ const viaFoundPage = async (
 
 /**
  * Sends to the form: nothing found; the only listing is in another currency
- * than the holding; or a row with no ISIN that a name search resolved (an OP
- * fund resolved through its page has its ISIN by then, so it is not one).
+ * than the holding; or a row with no ISIN that a name search resolved.
  */
 const classify = (resolved: Resolved, currency: Currency | null): InstrumentLookup => {
   if (resolved.priceSource === null) return { ...resolved, outcome: "form", formReason: "nothing" };
@@ -288,10 +283,6 @@ const resolve = async (
   fetchImpl: typeof fetch,
   quoteSpacingMs: number | undefined,
 ): Promise<Resolved> => {
-  // An OP fund's ISIN was already learned from its page by now, so the
-  // ordinary path below prices it from Yahoo when Yahoo has it (it does have
-  // OP's funds, under 0P... symbols) and only falls back to OP's page when it
-  // does not.
   if (isin === null) {
     // A share has no such page. Yahoo can still be searched by name, which
     // fills in everything except the ISIN -- no free source checked maps a
@@ -328,31 +319,7 @@ const resolve = async (
   if (kind !== null && kind !== "fund") {
     return { ...NOTHING, kind, name: figi?.name ?? null, isin };
   }
-  return await viaOpFundPage(name, isin, figi?.name ?? null, fetchImpl);
-};
-
-/**
- * OP's own fund page, reached by slugifying the fund's name and confirmed
- * against the page before use. This is the only path for OP's paste import,
- * whose rows carry no ISIN at all -- the page is where the ISIN comes from.
- */
-const viaOpFundPage = async (
-  name: string,
-  isin: string | null,
-  registryName: string | null,
-  fetchImpl: typeof fetch,
-): Promise<Resolved> => {
-  const op = await settle(resolveOpSlug(name, isin, fetchImpl));
-  if (op === null) return { ...NOTHING, name: registryName, isin };
-  return {
-    kind: "fund",
-    name: registryName,
-    priceSource: "op_fund",
-    sourceKey: op.slug,
-    isin: op.isin,
-    listingCurrency: null,
-    pageRecipe: null,
-  };
+  return { ...NOTHING, kind, name: figi?.name ?? null, isin };
 };
 
 type Listing = { readonly symbol: string; readonly currency: Currency };

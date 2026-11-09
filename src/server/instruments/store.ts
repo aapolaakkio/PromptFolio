@@ -17,7 +17,7 @@ export type NewInstrument = {
   readonly name: string;
   readonly kind: "stock" | "etf" | "fund" | "cash";
   readonly currency: Currency;
-  readonly priceSource: "yahoo" | "nordnet_fund" | "op_fund" | "page" | "manual";
+  readonly priceSource: "yahoo" | "page" | "manual";
   readonly sourceKey?: string | undefined;
   /** "pending" for one added while its lookup is still owed; "ok" otherwise. */
   readonly lookupStatus?: "ok" | "pending" | "attention" | undefined;

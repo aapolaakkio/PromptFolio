@@ -163,8 +163,8 @@ test("a held fund is left to the evening run", async () => {
   const accountId = await seedAccount(db);
   const fund = await seedInstrument(db, {
     kind: "fund",
-    priceSource: "op_fund",
-    sourceKey: "op-maailma-indeksi",
+    priceSource: "page",
+    sourceKey: "https://www.op.fi/rahasto/op-maailma-indeksi",
     ticker: null,
   });
   await seedTxn(db, { accountId, instrumentId: fund, type: "BUY", quantity: 1_000_000 });

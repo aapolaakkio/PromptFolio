@@ -4,7 +4,7 @@ import { parseCurrency, parseMoney } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
 import { instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
-import { requirePositiveMinor } from "./types.ts";
+import { requirePositiveMinor, type FetchedPrice, type PriceSource } from "./types.ts";
 import { writePrices } from "./write.ts";
 
 /**
@@ -55,4 +55,11 @@ export const recordManualPrice = async (
   );
 
   return { written: outcome.written };
+};
+
+export const MANUAL: PriceSource = {
+  id: "manual",
+  async fetch(): Promise<FetchedPrice[]> {
+    return [];
+  },
 };

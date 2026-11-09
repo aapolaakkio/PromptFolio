@@ -24,7 +24,7 @@ export type TransactionType =
 
 export type InstrumentKind = "stock" | "etf" | "fund" | "cash";
 
-export type PriceSourceId = "yahoo" | "nordnet_fund" | "op_fund" | "page" | "manual";
+export type PriceSourceId = "yahoo" | "page" | "manual";
 
 export type Instrument = {
   readonly id: number;

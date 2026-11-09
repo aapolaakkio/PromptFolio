@@ -6,29 +6,39 @@ import { db } from "../db/index.ts";
 import { instrumentLookups, yahooGate } from "../db/schema.ts";
 import { readText } from "../files.ts";
 import type { FetchImpl } from "../prices/types.ts";
-import { lookupKey, rememberedLookup } from "./lookup-cache.ts";
+import { lookupKey, readStoredLookup, rememberedLookup } from "./lookup-cache.ts";
 
 const EUR = parseCurrency("EUR");
 const WEEK_MS = 7 * 24 * 60 * 60_000;
 const NOW = 1_800_000_000_000;
 
-const NAME_FOUND = "OP-MAAILMA INDEKSI A";
+const ISIN_FOUND = "FI0009000681";
 const NAME_NOTHING = `Nothing Cache Test ${crypto.randomUUID()}`;
-const keys = [lookupKey(null, NAME_FOUND), lookupKey(null, NAME_NOTHING)];
+const keys = [ISIN_FOUND, lookupKey(null, NAME_NOTHING)];
 
-const counted = (respond: () => Promise<Response>) => {
+const counted = (respond: (input: RequestInfo | URL) => Promise<Response>) => {
   let n = 0;
   return {
-    fetch: (async () => {
+    fetch: (async (input: RequestInfo | URL) => {
       n += 1;
-      return respond();
+      return respond(input);
     }) satisfies FetchImpl,
     calls: () => n,
   };
 };
 
-const opFund = async (): Promise<Response> =>
-  new Response(await readText(new URL("./fixtures/op-fund-maailma.html", import.meta.url)));
+const nokia = async (input: RequestInfo | URL): Promise<Response> => {
+  const url = String(input instanceof Request ? input.url : input);
+  const fixture = (name: string) => readText(new URL(`./fixtures/${name}`, import.meta.url));
+  if (url.includes("openfigi")) return new Response(await fixture("figi-nokia.json"));
+  if (url.includes("finance/search")) return new Response(await fixture("yahoo-search-nokia.json"));
+  const chart = { meta: { currency: "EUR" }, timestamp: [1_700_000_000] };
+  return new Response(
+    JSON.stringify({
+      chart: { result: [{ ...chart, indicators: { quote: [{ close: [1.5] }] } }] },
+    }),
+  );
+};
 const empty = async (): Promise<Response> => new Response(JSON.stringify({ quotes: [] }));
 const tooMany = async (): Promise<Response> => new Response("", { status: 429 });
 
@@ -47,12 +57,28 @@ describe("lookupKey", () => {
   });
 });
 
+describe("readStoredLookup", () => {
+  test("a row stored with the removed op_fund source is a miss, not a crash", () => {
+    const stored = JSON.stringify({
+      kind: "fund",
+      name: "OP-Maailma Indeksi A",
+      priceSource: "op_fund",
+      sourceKey: "op-maailma-indeksi-a",
+      isin: "FI0000000001",
+      listingCurrency: null,
+      outcome: "found",
+      formReason: null,
+    });
+    expect(readStoredLookup(stored)).toBeNull();
+  });
+});
+
 describe("rememberedLookup", () => {
   test("a found lookup is asked once", async () => {
-    const stub = counted(opFund);
-    const first = await rememberedLookup(db, null, NAME_FOUND, EUR, stub.fetch, () => NOW, 0);
+    const stub = counted(nokia);
+    const first = await rememberedLookup(db, ISIN_FOUND, "NOKIA", EUR, stub.fetch, () => NOW, 0);
     const callsAfterFirst = stub.calls();
-    const second = await rememberedLookup(db, null, NAME_FOUND, EUR, stub.fetch, () => NOW, 0);
+    const second = await rememberedLookup(db, ISIN_FOUND, "NOKIA", EUR, stub.fetch, () => NOW, 0);
     expect(first.outcome).toBe("found");
     expect(callsAfterFirst).toBeGreaterThan(0);
     expect(stub.calls()).toBe(callsAfterFirst);

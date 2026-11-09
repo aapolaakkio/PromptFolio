@@ -105,10 +105,10 @@ test(`accepts a move of exactly ${MAX_PLAUSIBLE_RATIO}x -- the boundary is inclu
 test("never compares across a currency change -- accepted regardless of magnitude", async () => {
   const { db } = await testDb();
   const instrument = await seedInstrument(db);
-  await writePrices(db, instrument.id, "nordnet_fund", [
+  await writePrices(db, instrument.id, "page", [
     { date: "2026-08-26", closeMinor: 400, currency: EUR },
   ]);
-  const result = await writePrices(db, instrument.id, "nordnet_fund", [
+  const result = await writePrices(db, instrument.id, "page", [
     { date: "2026-08-27", closeMinor: 400 * MAX_PLAUSIBLE_RATIO * 5, currency: SEK },
   ]);
   expect(result).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 0 });

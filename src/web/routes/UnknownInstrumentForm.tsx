@@ -4,19 +4,16 @@ import { formatMoney, money } from "../../core/money.ts";
 import type { FetchedPrice } from "../../server/prices/types.ts";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
-/** The four sources a price can come from, as the instrument store defines them. */
-export type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "page" | "manual";
+/** The three sources a price can come from, as the instrument store defines them. */
+export type PriceSource = "yahoo" | "page" | "manual";
 
 /**
  * Every source a person may choose. Yahoo prices listed shares and many funds
- * (under synthetic `0P...` symbols); a fund's own page at Nordnet or OP is the
- * way to price one Yahoo does not, or will not serve. The source code for
- * those is the last part of the fund page's address.
+ * (under synthetic `0P...` symbols); a fund's own page is the way to price one
+ * Yahoo does not, or will not serve.
  */
 export const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },
-  { id: "nordnet_fund", label: "Nordnet-rahasto (rahaston sivun osoitteen loppuosa)" },
-  { id: "op_fund", label: "OP-rahasto (rahaston sivun osoitteen loppuosa)" },
   { id: "page", label: "Hintasivu (osoite)" },
   { id: "manual", label: "Syötän arvon itse" },
 ] as const;
@@ -43,7 +40,7 @@ const isKind = (value: string): value is Kind => KIND_VALUES.some((k) => k === v
 const LookupSchema = z.object({
   kind: z.enum(KIND_VALUES).nullable(),
   name: z.string().nullable(),
-  priceSource: z.enum(["yahoo", "op_fund", "page"]).nullable(),
+  priceSource: z.enum(["yahoo", "page"]).nullable(),
   sourceKey: z.string().nullable(),
   isin: z.string().nullable(),
   listingCurrency: z.string().nullable(),
@@ -269,13 +266,9 @@ export const UnknownInstrumentForm = ({
           placeholder={
             priceSource === "yahoo"
               ? "esim. NOKIA.HE"
-              : priceSource === "nordnet_fund"
-                ? "esim. nordnet-suomi-indeksi-eur-a401761d"
-                : priceSource === "op_fund"
-                  ? "esim. op-maailma-indeksi"
-                  : priceSource === "page"
-                    ? "https://www.example.fi/rahasto"
-                    : "rahaston tunnus"
+              : priceSource === "page"
+                ? "https://www.example.fi/rahasto"
+                : "rahaston tunnus"
           }
         />
         {priceSource === "manual" && (

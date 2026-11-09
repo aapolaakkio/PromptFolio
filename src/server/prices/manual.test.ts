@@ -3,8 +3,8 @@ import { recordManualPrice } from "./manual.ts";
 import { PriceInput } from "../../web/server/prices.ts";
 import { EUR, type Currency } from "../../core/money.ts";
 
-/** The four sources a price can come from, as the instrument store defines them. */
-type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
+/** The three sources a price can come from, as the instrument store defines them. */
+type PriceSource = "yahoo" | "manual";
 import { addInstrument } from "../instruments/store.ts";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.ts";

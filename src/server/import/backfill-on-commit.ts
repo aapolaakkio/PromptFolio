@@ -21,7 +21,7 @@ import type { Draft } from "./map.ts";
  * how an instrument that predates this feature (or whose backfill previously failed) gets
  * caught up without waiting for the nightly sweep. `backfillMany`'s own `needsBackfill` check is
  * what actually decides whether a network call happens at all -- an instrument whose history
- * already reaches its earliest transaction, or one that is `manual`/`nordnet_fund`/`op_fund`, is
+ * already reaches its earliest transaction, or one that is `manual` or `page`, is
  * a no-op here, so a routine re-import costs nothing extra.
  *
  * Also fires `fx.ts`'s `backfillFxRates` (the historical-file counterpart to the nightly

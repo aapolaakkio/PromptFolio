@@ -42,8 +42,8 @@ const instruments: Instrument[] = [
     name: "OP-Suomi A",
     kind: "fund",
     currency: EUR,
-    priceSource: "op_fund",
-    sourceKey: "op-suomi-a",
+    priceSource: "page",
+    sourceKey: "https://www.op.fi/rahasto/op-suomi-a",
   },
 ];
 

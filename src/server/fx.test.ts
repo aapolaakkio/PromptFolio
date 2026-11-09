@@ -277,8 +277,8 @@ test("fetches a currency held only by an instrument's own quotation currency, wi
       name: "Nordnet Sverige Indeks",
       kind: "fund",
       currency: SEK,
-      priceSource: "nordnet_fund",
-      sourceKey: "nordnet-sverige",
+      priceSource: "page",
+      sourceKey: "https://www.nordnet.fi/rahastot/lista/nordnet-sverige",
     })
     .run();
   const stub = async (): Promise<Response> => new Response(await fixtureText());
@@ -300,8 +300,8 @@ test("unions transaction and instrument currencies without fetching a currency t
       name: "Nordnet Sverige Indeks",
       kind: "fund",
       currency: SEK, // same currency the transaction already carries
-      priceSource: "nordnet_fund",
-      sourceKey: "nordnet-sverige",
+      priceSource: "page",
+      sourceKey: "https://www.nordnet.fi/rahastot/lista/nordnet-sverige",
     })
     .run();
   let calls = 0;

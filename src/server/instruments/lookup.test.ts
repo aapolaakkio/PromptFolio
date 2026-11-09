@@ -11,7 +11,6 @@ import { yahooGate } from "../db/schema.ts";
 import { lookupInstrument as lookupWithSpacing } from "./lookup.ts";
 import type { PageFinder } from "./find-page.ts";
 import { figiLookup } from "./openfigi.ts";
-import { opSlugFor, resolveOpSlug, stripShareClass } from "./op-slug.ts";
 import { candidateSymbols } from "./venues.ts";
 
 const EUR = parseCurrency("EUR");
@@ -152,68 +151,6 @@ describe("candidateSymbols", () => {
   });
 });
 
-describe("opSlugFor", () => {
-  test("slugifies a fund name the way OP's own URLs do", () => {
-    expect(opSlugFor("OP-Maailma Indeksi A")).toBe("op-maailma-indeksi");
-    expect(opSlugFor("OP-MAAILMA INDEKSI A")).toBe("op-maailma-indeksi");
-    expect(opSlugFor("OP-Suomi Indeksi")).toBe("op-suomi-indeksi");
-  });
-
-  test("drops a share-class suffix but not a word ending in one", () => {
-    expect(stripShareClass("OP-Ilmasto A")).toBe("op ilmasto");
-    expect(stripShareClass("OP-Ilmasto")).toBe("op ilmasto");
-    expect(stripShareClass("OP-Maailma Indeksi (kasvu)")).toBe("op maailma indeksi");
-  });
-});
-
-describe("resolveOpSlug", () => {
-  test("confirms a guessed slug against the page's own ISIN", async () => {
-    expect(
-      await resolveOpSlug(
-        "OP-MAAILMA INDEKSI A",
-        "FI4000261128",
-        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
-      ),
-    ).toEqual({ slug: "op-maailma-indeksi", isin: "FI4000261128", name: "OP-MAAILMA INDEKSI A" });
-  });
-
-  test("refuses a page whose ISIN is not the one asked for", async () => {
-    expect(
-      await resolveOpSlug(
-        "OP-MAAILMA INDEKSI A",
-        "FI4000315692",
-        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
-      ),
-    ).toBeNull();
-  });
-
-  test("harvests the ISIN when the import carried none, proving the match by name", async () => {
-    expect(
-      await resolveOpSlug(
-        "OP-MAAILMA INDEKSI A",
-        null,
-        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
-      ),
-    ).toEqual({ slug: "op-maailma-indeksi", isin: "FI4000261128", name: "OP-MAAILMA INDEKSI A" });
-  });
-
-  test("refuses a page whose title is a different fund", async () => {
-    expect(
-      await resolveOpSlug(
-        "OP-Suomi Indeksi",
-        null,
-        stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
-      ),
-    ).toBeNull();
-  });
-
-  test("returns null when the guessed slug has no page", async () => {
-    expect(
-      await resolveOpSlug("Ei Olemassa", null, stubFetch({ "op.fi": { body: "", status: 404 } })),
-    ).toBeNull();
-  });
-});
-
 describe("lookupInstrument", () => {
   test("a listed share resolves to its home listing", async () => {
     const result = await lookupInstrument(
@@ -323,35 +260,6 @@ describe("lookupInstrument", () => {
     expect(result.priceSource).toBe("yahoo");
     expect(result.sourceKey).toBe("0P0001BP5K.F");
     expect(result.kind).toBe("fund");
-  });
-
-  test("an OP paste row with no ISIN at all still resolves, ISIN included", async () => {
-    const result = await lookupInstrument(
-      null,
-      "OP-MAAILMA INDEKSI A",
-      EUR,
-      stubFetch({ "op.fi": { body: await fixture("op-fund-maailma.html") } }),
-    );
-    expect(result.priceSource).toBe("op_fund");
-    expect(result.sourceKey).toBe("op-maailma-indeksi");
-    expect(result.isin).toBe("FI4000261128");
-    expect(result.outcome).toBe("found");
-    expect(result.formReason).toBeNull();
-  });
-
-  test("a fund with no Yahoo listing falls back to OP's own page", async () => {
-    const result = await lookupInstrument(
-      "FI4000261128",
-      "OP-MAAILMA INDEKSI A",
-      EUR,
-      stubFetch({
-        openfigi: { body: await fixture("figi-op-maailma.json") },
-        "finance/search": { body: await fixture("yahoo-search-none.json") },
-        "op.fi": { body: await fixture("op-fund-maailma.html") },
-      }),
-    );
-    expect(result.priceSource).toBe("op_fund");
-    expect(result.sourceKey).toBe("op-maailma-indeksi");
   });
 
   test("resolves nothing rather than guessing when every source comes up empty", async () => {
@@ -470,22 +378,6 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
     expect((await lookupInstrument(null, "NOKIA OYJ", USD, stubFetch(routes))).sourceKey).toBe(
       "NOK",
     );
-  });
-
-  test("a fund still resolves through OP's page, which is where its ISIN comes from", async () => {
-    const result = await lookupInstrument(
-      null,
-      "OP-MAAILMA INDEKSI A",
-      EUR,
-      stubFetch({
-        "op.fi": { body: await fixture("op-fund-maailma.html") },
-        openfigi: { body: await fixture("figi-op-maailma.json") },
-        "finance/search": { body: JSON.stringify({ quotes: [{ symbol: "0P0001BP5K.F" }] }) },
-        "chart/0P0001BP5K.F": chart("EUR"),
-      }),
-    );
-    expect(result.isin).toBe("FI4000261128");
-    expect(result.sourceKey).toBe("0P0001BP5K.F");
   });
 });
 

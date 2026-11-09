@@ -268,13 +268,7 @@ export const backfillInstrument = async (
       earliestReturned === null
         ? "ei yhtään pistettä"
         : `varhaisin saatu piste ${earliestReturned}`;
-    const knownReason =
-      instrument.priceSource === "nordnet_fund"
-        ? " -- nordnet_fund tarjoaa julkisesti vain kaksi tuoreinta NAV-arvoa, ei historiaa " +
-          "(katso funds.ts:n NORDNET_FUND-kommentti); täydennä historia päivittäisellä " +
-          "hintapäivityksellä ajan myötä"
-        : "";
-    parts.push(`taustatäyttö jäi vajaaksi: pyydetty alkaen ${from}, ${coverage}${knownReason}`);
+    parts.push(`taustatäyttö jäi vajaaksi: pyydetty alkaen ${from}, ${coverage}`);
   }
 
   // A re-baseline outranks stray rejections: the points confirming it are part
@@ -287,12 +281,12 @@ export const backfillInstrument = async (
 };
 
 /**
- * Sources whose public page carries one or two NAV points and so can never
- * complete a backfill. They would look incomplete forever, and the nightly sweep
- * would spend a request on each one every night for nothing. Only the sweep's
+ * Sources whose page carries only the latest NAV and so can never complete a
+ * backfill. They would look incomplete forever, and the nightly sweep would spend
+ * a request on each one every night for nothing. Only the sweep's
  * selection is affected; a direct call still attempts them.
  */
-const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund", "page"]);
+const NEVER_BACKFILLABLE = new Set(["page"]);
 
 /**
  * Whether an instrument's stored history still falls short of its earliest

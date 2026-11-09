@@ -294,8 +294,8 @@ test("a holding with no stored price is valued at the price it was last traded a
       "OP-Maailma Indeksi A",
       "fund",
       "EUR",
-      "op_fund",
-      "op-maailma-indeksi",
+      "page",
+      "https://www.op.fi/rahasto/op-maailma-indeksi",
     )
     .first<{ id: number }>();
   if (fund === null) throw new Error("insert returned no id");
@@ -399,8 +399,8 @@ test("a position priced today in a currency with no fx rate for today reports no
       "Nordnet Sverige Indeks",
       "fund",
       "SEK",
-      "nordnet_fund",
-      "nordnet-sverige",
+      "page",
+      "https://www.nordnet.fi/rahastot/lista/nordnet-sverige",
     )
     .first()) as {
     id: number;
@@ -413,7 +413,7 @@ test("a position priced today in a currency with no fx rate for today reports no
     .run();
   await binding
     .prepare(
-      "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-07-01', 1000, 'SEK', 'nordnet_fund', 0)",
+      "INSERT INTO prices (instrument_id, date, close, currency, source, fetched_at) VALUES (?, '2025-07-01', 1000, 'SEK', 'page', 0)",
     )
     .bind(sekFund.id)
     .run();

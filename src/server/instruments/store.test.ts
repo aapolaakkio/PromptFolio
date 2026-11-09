@@ -168,13 +168,15 @@ describe("updateInstrument", () => {
 
     const updated = await updateInstrument(db, fund.id, {
       currency: parseCurrency("NOK"),
-      priceSource: "nordnet_fund",
-      sourceKey: "nordnet-norge-indeks-nok-52540035",
+      priceSource: "page",
+      sourceKey: "https://www.nordnet.fi/rahastot/lista/nordnet-norge-indeks-nok-52540035",
     });
 
     expect(updated.currency).toBe("NOK");
-    expect(updated.priceSource).toBe("nordnet_fund");
-    expect(updated.sourceKey).toBe("nordnet-norge-indeks-nok-52540035");
+    expect(updated.priceSource).toBe("page");
+    expect(updated.sourceKey).toBe(
+      "https://www.nordnet.fi/rahastot/lista/nordnet-norge-indeks-nok-52540035",
+    );
     expect(await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all()).toEqual(
       [],
     );
@@ -204,7 +206,7 @@ describe("updateInstrument", () => {
   test("refuses an automatic source with no source code, and an unknown instrument", async () => {
     const fund = await add();
     await expect(
-      updateInstrument(db, fund.id, { currency: EUR, priceSource: "nordnet_fund", sourceKey: " " }),
+      updateInstrument(db, fund.id, { currency: EUR, priceSource: "page", sourceKey: " " }),
     ).rejects.toThrow("Lähdetunnus");
     await expect(
       updateInstrument(db, 999_999, { currency: EUR, priceSource: "manual", sourceKey: "" }),

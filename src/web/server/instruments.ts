@@ -78,7 +78,7 @@ export const createInstrument = createServerFn({ method: "POST" })
         name: z.string().min(1).max(200),
         kind: z.enum(["stock", "etf", "fund", "cash"]),
         currency: currencyField,
-        priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
+        priceSource: z.enum(["yahoo", "page", "manual"]),
         sourceKey: z.string().max(MAX_PAGE_URL).optional(),
       })
       .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
@@ -113,7 +113,7 @@ export const editInstrument = createServerFn({ method: "POST" })
       .object({
         id: z.number().int().positive(),
         currency: currencyField,
-        priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
+        priceSource: z.enum(["yahoo", "page", "manual"]),
         sourceKey: z.string().max(MAX_PAGE_URL),
       })
       .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {

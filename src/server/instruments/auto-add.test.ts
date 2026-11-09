@@ -154,7 +154,11 @@ describe("resolveUnknown", () => {
     const name = `OP-TESTI ${crypto.randomUUID()}`;
     await remember(
       lookupKey(null, name),
-      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+      found(isin, {
+        kind: "fund",
+        priceSource: "page",
+        sourceKey: "https://www.op.fi/rahasto/op-testi",
+      }),
     );
     const draft = draftOf(
       [txn({ instrumentName: name }), txn({ instrumentName: "OTHER", line: 3 })],
@@ -164,7 +168,7 @@ describe("resolveUnknown", () => {
     const resolved = await resolveUnknown(db, draft, noNetwork);
 
     expect(resolved.txns.map((t) => t.isin)).toEqual([isin, null]);
-    expect(resolved.added.map((a) => [a.isin, a.priceSource])).toEqual([[isin, "op_fund"]]);
+    expect(resolved.added.map((a) => [a.isin, a.priceSource])).toEqual([[isin, "page"]]);
     expect(resolved.unknownIsins).toEqual([]);
   });
 
@@ -173,7 +177,11 @@ describe("resolveUnknown", () => {
     const name = `OP-TESTI ${crypto.randomUUID()}`;
     await remember(
       lookupKey(null, name),
-      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+      found(isin, {
+        kind: "fund",
+        priceSource: "page",
+        sourceKey: "https://www.op.fi/rahasto/op-testi",
+      }),
     );
     const resolved = await resolveUnknown(
       db,
@@ -186,7 +194,10 @@ describe("resolveUnknown", () => {
     const created = await createAdded(db, draftOf(withoutName, resolved.unknownIsins));
 
     const [row] = await stored(isin);
-    expect(row).toMatchObject({ priceSource: "op_fund", sourceKey: "op-testi" });
+    expect(row).toMatchObject({
+      priceSource: "page",
+      sourceKey: "https://www.op.fi/rahasto/op-testi",
+    });
     expect(created.txns[0]?.instrumentId).toBe(row?.id);
   });
 
@@ -196,7 +207,11 @@ describe("resolveUnknown", () => {
     await remember(isin, found(isin, { sourceKey: "REAL.HE" }));
     await remember(
       lookupKey(null, name),
-      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+      found(isin, {
+        kind: "fund",
+        priceSource: "page",
+        sourceKey: "https://www.op.fi/rahasto/op-testi",
+      }),
     );
 
     await resolveUnknown(
@@ -218,7 +233,11 @@ describe("resolveUnknown", () => {
     const name = `OP-TESTI ${crypto.randomUUID()}`;
     await remember(
       lookupKey(null, name),
-      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+      found(isin, {
+        kind: "fund",
+        priceSource: "page",
+        sourceKey: "https://www.op.fi/rahasto/op-testi",
+      }),
     );
     const lower = name.toLowerCase();
     const draft = draftOf(
@@ -379,7 +398,7 @@ describe("createAdded", () => {
           name: "NOKIA",
           kind: "etf",
           currency: "EUR",
-          priceSource: "op_fund",
+          priceSource: "page",
           sourceKey: "EVIL",
           pending: false,
         },
@@ -407,13 +426,21 @@ describe("createAdded", () => {
     const name = `OP-TESTI ${crypto.randomUUID()}`;
     await remember(
       lookupKey(null, name),
-      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+      found(isin, {
+        kind: "fund",
+        priceSource: "page",
+        sourceKey: "https://www.op.fi/rahasto/op-testi",
+      }),
     );
 
     const created = await createAdded(db, draftOf([txn({ isin, instrumentName: name })], []));
 
     const [row] = await stored(isin);
-    expect(row).toMatchObject({ priceSource: "op_fund", sourceKey: "op-testi", name });
+    expect(row).toMatchObject({
+      priceSource: "page",
+      sourceKey: "https://www.op.fi/rahasto/op-testi",
+      name,
+    });
     expect(created.txns[0]?.instrumentId).toBe(row?.id);
   });
 

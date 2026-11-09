@@ -19,7 +19,7 @@ const FORM_RETRY_MS = 7 * 24 * 60 * 60_000;
 const StoredLookup = z.object({
   kind: z.enum(["stock", "etf", "fund"]).nullable(),
   name: z.string().nullable(),
-  priceSource: z.enum(["yahoo", "op_fund", "page"]).nullable(),
+  priceSource: z.enum(["yahoo", "page"]).nullable(),
   sourceKey: z.string().nullable(),
   isin: z.string().nullable(),
   listingCurrency: z.string().nullable(),

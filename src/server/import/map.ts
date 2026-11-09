@@ -62,7 +62,7 @@ export type AddedInstrument = {
   readonly name: string;
   readonly kind: InstrumentKind;
   readonly currency: string;
-  readonly priceSource: "yahoo" | "op_fund" | "page" | null;
+  readonly priceSource: "yahoo" | "page" | null;
   readonly sourceKey: string | null;
   /** Yahoo is paused: added as manual now, priced once the lookup is done. */
   readonly pending: boolean;

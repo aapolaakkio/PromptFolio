@@ -1,5 +1,5 @@
 import type { PriceSourceId } from "../../core/types.ts";
-import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds.ts";
+import { MANUAL } from "./manual.ts";
 import type { PriceSource } from "./types.ts";
 import { YAHOO } from "./yahoo.ts";
 
@@ -13,8 +13,6 @@ const PAGE: PriceSource = {
 
 const SOURCES = {
   yahoo: YAHOO,
-  nordnet_fund: NORDNET_FUND,
-  op_fund: OP_FUND,
   page: PAGE,
   manual: MANUAL,
 } satisfies Record<PriceSourceId, PriceSource>;

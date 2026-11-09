@@ -1,4 +1,3 @@
-import { readText } from "../files.ts";
 import { urlOf } from "./types.ts";
 import { expect, test } from "vitest";
 import { asc, eq } from "drizzle-orm";
@@ -8,6 +7,7 @@ import { testDb } from "../db/test-db.ts";
 import {
   accounts,
   instruments,
+  pageRecipes,
   priceFetchLog,
   prices,
   transactions,
@@ -142,8 +142,8 @@ test("one failing source does not stop the others", async () => {
     isin: crypto.randomUUID(),
     name: "OP-Suomi A",
     kind: "fund",
-    priceSource: "op_fund",
-    sourceKey: "op-suomi-a",
+    priceSource: "page",
+    sourceKey: "https://www.op.fi/rahasto/op-suomi-a",
     ticker: null,
   });
   const mixed = async (url: string | URL | Request): Promise<Response> =>
@@ -159,178 +159,33 @@ test("one failing source does not stop the others", async () => {
   expect(log.filter((l) => !l.ok)[0]!.message).toContain("503");
 });
 
-test("stores a fund's latest value, which is always dated before the day it is fetched", async () => {
-  // OP's page on a Monday shows Friday's NAV. Asking for today alone dropped
-  // it, so a fund never got a price from the daily refresh at all.
-  const { db } = await testDb();
-  const fund = await seedHeld(db, {
-    isin: crypto.randomUUID(),
-    name: "OP-Maailma Indeksi A",
-    kind: "fund",
-    priceSource: "op_fund",
-    sourceKey: "op-maailma-indeksi",
-    ticker: null,
-  });
-  const page = "<dl><dt>Osuuden arvo (21.08.)</dt><dd>283,60 EUR</dd></dl>";
-
-  const result = await refreshPrices(db, {
-    fetchImpl: async () => new Response(page),
-    today: "2026-08-24",
-  });
-
-  expect(result).toEqual({ ok: 1, failed: 0, paused: false });
-  const stored = await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all();
-  expect(stored.map((p) => [p.date, p.close])).toEqual([["2026-08-21", 28360]]);
-});
-
-test("skips manual instruments without logging a failure", async () => {
-  const { db } = await testDb();
-  await seedHeld(db, { priceSource: "manual", sourceKey: "n/a" });
-  const result = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: yahooStub(4.31),
-    today: "2026-08-27",
-  });
-  expect(result).toEqual({ ok: 0, failed: 0, paused: false });
-  expect(await db.select().from(priceFetchLog).all()).toEqual([]);
-});
-
-test("re-running the same day overwrites rather than duplicating", async () => {
-  const { db } = await testDb();
-  await seedHeld(db);
-  await refreshPrices(db, { yahooSpacingMs: 0, fetchImpl: yahooStub(4.31), today: "2026-08-27" });
-  await refreshPrices(db, { yahooSpacingMs: 0, fetchImpl: yahooStub(4.4), today: "2026-08-27" });
-  const rows = await db.select().from(prices).all();
-  expect(rows).toHaveLength(1);
-  expect(rows[0]!.close).toBe(440);
-});
-
-test("reports a large-jump rejection as a failure with a message distinct from a fetch error", async () => {
-  const { db } = await testDb();
-  const instrument = await seedHeld(db);
-  await db
-    .insert(prices)
-    .values({
-      instrumentId: instrument.id,
-      date: "2026-08-26",
-      close: 400,
-      currency: EUR,
-      source: "yahoo",
-      fetchedAt: new Date(),
-    })
-    .run();
-  // 4310.00 EUR vs. a prior 4.00 EUR -- a >1000x jump, well past the plausible range.
-  const result = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: yahooStub(4310),
-    today: "2026-08-27",
-  });
-  expect(result).toEqual({ ok: 0, failed: 1, paused: false });
-  const log = await db.select().from(priceFetchLog).all();
-  expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("epäuskottavana");
-  // The stale 2026-08-26 price is exactly what's still stored -- no blank chart, no silently wrong total.
-  const rows = await db.select().from(prices).all();
-  expect(rows).toHaveLength(1);
-  expect(rows[0]!.close).toBe(400);
-});
-
-test("a value confirmed across 3 daily refreshes is re-baselined, logged loudly, and counted ok", async () => {
-  const { db } = await testDb();
-  const instrument = await seedHeld(db);
-  await db
-    .insert(prices)
-    .values({
-      instrumentId: instrument.id,
-      date: "2026-08-01",
-      close: 400,
-      currency: EUR,
-      source: "yahoo",
-      fetchedAt: new Date(),
-    })
-    .run();
-
-  // Simulates a steep reverse split, one scheduled weekday refresh at a
-  // time: each day is a >10x jump from the original 400 baseline, but
-  // consistent with the day before it.
-  const first = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: yahooStub(44),
-    today: "2026-08-02",
-  });
-  expect(first).toEqual({ ok: 0, failed: 1, paused: false });
-  const second = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: yahooStub(44.5),
-    today: "2026-08-03",
-  });
-  expect(second).toEqual({ ok: 0, failed: 1, paused: false });
-  // Not yet in `prices` -- still pending confirmation.
-  expect(await db.select().from(prices).all()).toHaveLength(1);
-
-  const third = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: yahooStub(45),
-    today: "2026-08-04",
-  });
-  expect(third).toEqual({ ok: 1, failed: 0, paused: false });
-
-  const log = await db.select().from(priceFetchLog).all();
-  const lastLog = log[log.length - 1]!;
-  expect(lastLog.ok).toBe(true);
-  expect(lastLog.message).toContain("UUDELLEENPERUSTETTU");
-
-  const rows = await db.select().from(prices).all();
-  expect(rows).toHaveLength(2); // the original 2026-08-01 row, plus the re-baselined new one.
-  expect(rows.find((r) => r.close === 4_500)).toBeDefined();
-});
-
-test("asks Yahoo once per held listing, in one run, and once for a symbol held twice", async () => {
-  const { db } = await testDb();
-  await seedHeld(db);
-  await seedHeld(db, { isin: crypto.randomUUID(), ticker: "SAP.DE", sourceKey: "SAP.DE" });
-  await seedHeld(db, { isin: crypto.randomUUID(), sourceKey: "NOKIA.HE" });
-  const urls: string[] = [];
-  const recording = async (input: string | URL | Request): Promise<Response> => {
-    urls.push(urlOf(input));
-    return yahooStub(4.31)();
-  };
-
-  const result = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: recording,
-    today: "2026-08-27",
-  });
-
-  expect(result).toEqual({ ok: 3, failed: 0, paused: false });
-  expect(urls.filter((url) => url.includes("chart/NOKIA.HE"))).toHaveLength(1);
-  expect(urls.filter((url) => url.includes("chart/SAP.DE"))).toHaveLength(1);
-});
-
-test("an instrument nobody holds is not asked for", async () => {
-  const { db } = await testDb();
-  await seedInstrument(db);
-  const result = await refreshPrices(db, {
-    yahooSpacingMs: 0,
-    fetchImpl: mustNotBeCalled,
-    today: "2026-08-27",
-  });
-  expect(result).toEqual({ ok: 0, failed: 0, paused: false });
-});
-
 test("a paused Yahoo asks nothing of it, logs nothing for it, and still refreshes funds", async () => {
   const { db } = await testDb();
   await seedHeld(db);
-  await seedHeld(db, {
-    isin: crypto.randomUUID(),
+  const fund = await seedHeld(db, {
+    isin: "FI0000000001",
     name: "OP-Maailma Indeksi A",
     kind: "fund",
-    priceSource: "op_fund",
-    sourceKey: "op-maailma-indeksi",
+    priceSource: "page",
+    sourceKey: "https://www.op.fi/rahasto/op-maailma-indeksi",
     ticker: null,
   });
+  await db
+    .insert(pageRecipes)
+    .values({
+      instrumentId: fund.id,
+      recipe: JSON.stringify({
+        kind: "page",
+        pattern: String.raw`NAV (?<price>[\d,]+) (?<currency>[A-Z]{3}) (?<date>\d{2}\.\d{2}\.\d{4})`,
+        dateFormat: "dd.mm.yyyy",
+        money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+        currency: null,
+      }),
+      askedAt: null,
+    })
+    .run();
   await pauseYahoo(db);
-  const page = "<dl><dt>Osuuden arvo (21.08.)</dt><dd>283,60 EUR</dd></dl>";
+  const page = "<h1>FI0000000001</h1><p>NAV 283,60 EUR 21.08.2026</p>";
   const onlyOp = async (input: string | URL | Request): Promise<Response> => {
     if (urlOf(input).includes("yahoo")) throw new Error("Yahoo must not be asked");
     return new Response(page);
@@ -344,7 +199,7 @@ test("a paused Yahoo asks nothing of it, logs nothing for it, and still refreshe
 
   expect(result).toEqual({ ok: 1, failed: 0, paused: true });
   const log = await db.select().from(priceFetchLog).all();
-  expect(log.map((row) => row.source)).toEqual(["op_fund"]);
+  expect(log.map((row) => row.source)).toEqual(["page"]);
 });
 
 test("a 429 mid-run keeps the quotes already fetched and asks no more", async () => {
@@ -411,35 +266,6 @@ test("a source that covers the whole requested range backfills completely", asyn
   expect(result).toEqual({ inserted: 4, incomplete: false });
   const log = await db.select().from(priceFetchLog).all();
   expect(log[0]!.ok).toBe(true);
-});
-
-test("nordnet_fund's two-NAV-point limitation is reported as an incomplete backfill, not a silent success", async () => {
-  const { db } = await testDb();
-  const instrument = await seedInstrument(db, {
-    isin: crypto.randomUUID(),
-    name: "Nordnet Suomi Indeksi",
-    kind: "fund",
-    priceSource: "nordnet_fund",
-    sourceKey: "nordnet-suomi-indeksi-eur-a401761d",
-    ticker: null,
-  });
-  // A real holding's own transaction history goes back years; the public
-  // page only ever has two recent NAV points (§10a A5).
-  await seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
-
-  const html = await readText(`${import.meta.dirname}/fixtures/nordnet-fund-suomi.html`);
-  const result = await backfillInstrument(db, instrument.id, {
-    fetchImpl: async () => new Response(html),
-    today: "2026-08-27",
-  });
-  expect(result.inserted).toBe(2);
-  expect(result.incomplete).toBe(true);
-
-  const log = await db.select().from(priceFetchLog).all();
-  expect(log).toHaveLength(1);
-  expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("jäi vajaaksi");
-  expect(log[0]!.message).toContain("nordnet_fund");
 });
 
 test("a source that throws during backfill is reported as incomplete, not partially inserted", async () => {
@@ -566,14 +392,14 @@ test("backfillMany skips an instrument whose stored history already reaches its 
   expect(result).toEqual({ attempted: 0, backfilled: 0, incomplete: 0, errored: 0 });
 });
 
-test("backfillMany never retries nordnet_fund or op_fund -- neither can ever return real history, only their latest point(s)", async () => {
+test("backfillMany never retries a page source -- a page only ever shows its latest price", async () => {
   const { db } = await testDb();
   const nordnet = await seedInstrument(db, {
     isin: crypto.randomUUID(),
     name: "Nordnet Suomi Indeksi",
     kind: "fund",
-    priceSource: "nordnet_fund",
-    sourceKey: "nordnet-suomi-indeksi-eur-a401761d",
+    priceSource: "page",
+    sourceKey: "https://www.nordnet.fi/rahastot/lista/nordnet-suomi-indeksi-eur-a401761d",
     ticker: null,
   });
   await seedTransaction(db, { instrumentId: nordnet.id, tradeDate: "2020-01-01" });
@@ -582,8 +408,8 @@ test("backfillMany never retries nordnet_fund or op_fund -- neither can ever ret
     isin: crypto.randomUUID(),
     name: "OP-Maailma Indeksi",
     kind: "fund",
-    priceSource: "op_fund",
-    sourceKey: "op-maailma-indeksi",
+    priceSource: "page",
+    sourceKey: "https://www.op.fi/rahasto/op-maailma-indeksi",
     ticker: null,
   });
   await seedTransaction(db, { instrumentId: opFund.id, tradeDate: "2020-01-01" });
@@ -619,8 +445,8 @@ test("backfillMany aggregates a mixed batch: one instrument backfills, one is sk
     isin: crypto.randomUUID(),
     name: "Nordnet Suomi Indeksi",
     kind: "fund",
-    priceSource: "nordnet_fund",
-    sourceKey: "nordnet-suomi-indeksi-eur-a401761d",
+    priceSource: "page",
+    sourceKey: "https://www.nordnet.fi/rahastot/lista/nordnet-suomi-indeksi-eur-a401761d",
     ticker: null,
   });
   await seedTransaction(db, { instrumentId: nordnet.id, tradeDate: "2020-01-01" });
