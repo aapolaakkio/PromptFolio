@@ -602,6 +602,15 @@ const PreviewCard = ({
       {unknownCount > 0 && `, ${unknownCount} tuntematonta arvopaperia`}. Korjaa rivit tarvittaessa
       ennen tuontia.
     </p>
+    {entry.draft.added.length > 0 && (
+      <ul className="text-sm">
+        {entry.draft.added.map((added) => (
+          <li key={added.isin}>
+            Lisätään: {added.name} — {added.sourceKey ?? "haetaan tunnusta"} · {added.currency}
+          </li>
+        ))}
+      </ul>
+    )}
     {entry.draft.problems.some((problem) => problem.ignored === true) && (
       <ul className="text-muted text-sm">
         {entry.draft.problems

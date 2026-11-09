@@ -293,6 +293,10 @@ export type HoldingView = {
   readonly name: string;
   readonly kind: Instrument["kind"];
   readonly currency: Currency;
+  readonly priceSource: Instrument["priceSource"];
+  readonly sourceKey: string;
+  /** "pending" while a registry lookup is owed, "attention" when it needs the owner. */
+  readonly lookupStatus: "ok" | "pending" | "attention";
   readonly quantity: string;
   /**
    * Null exactly when `costBasisError` is set: a disposal with no matching
@@ -356,6 +360,14 @@ const explainValuationFailure = (
 export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<HoldingView[]> => {
   const { txns, instruments: all, prices: lookup } = await loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
+  const statusById = new Map(
+    (
+      await db
+        .select({ id: instruments.id, lookupStatus: instruments.lookupStatus })
+        .from(instruments)
+        .all()
+    ).map((row) => [row.id, row.lookupStatus]),
+  );
   const costs = costBasisPerInstrument(txns, on);
 
   // Everything but `weight`, which needs the total across every other row.
@@ -427,6 +439,9 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
       name: row.instrument.name,
       kind: row.instrument.kind,
       currency: row.instrument.currency,
+      priceSource: row.instrument.priceSource,
+      sourceKey: row.instrument.sourceKey,
+      lookupStatus: statusById.get(row.instrumentId) ?? "ok",
       quantity: formatQuantity(row.quantity),
       costEur: row.costEur === null ? null : formatMoney(row.costEur),
       valueEur: row.valuedEur === null ? null : formatMoney(row.valuedEur),

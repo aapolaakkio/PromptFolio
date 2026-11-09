@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eur, qty, share, fiDate } from "../lib/format.ts";
+import { instrumentLabel } from "./holdings-label.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
@@ -164,7 +165,7 @@ export const HoldingsPage = () => {
             <tr key={row.instrumentId}>
               <td>
                 {row.name}
-                <div className="text-xs text-muted">{row.isin}</div>
+                <div className="text-xs text-muted">{instrumentLabel(row)}</div>
               </td>
               <td>{KIND_LABELS[row.kind]}</td>
               <td>{row.currency}</td>
@@ -241,6 +242,9 @@ export const HoldingsPage = () => {
                   >
                     {editFor === row.instrumentId ? "Sulje" : "Muokkaa"}
                   </button>
+                  {row.lookupStatus === "attention" && (
+                    <span className="ml-1 text-xs text-loss">Hintalähdettä ei löytynyt</span>
+                  )}
                   {editFor === row.instrumentId && (
                     <EditInstrumentForm
                       instrumentId={row.instrumentId}

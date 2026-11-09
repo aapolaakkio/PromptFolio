@@ -35,6 +35,7 @@ const draft = (over: Partial<DraftResponse> = {}): DraftResponse => ({
   txns: [],
   problems: [],
   unknownIsins: [],
+  added: [],
   ...over,
 });
 

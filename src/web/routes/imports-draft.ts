@@ -48,6 +48,8 @@ export type DraftResponse = {
     ignored?: boolean;
   }>;
   unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
+  /** Instruments the commit adds by itself; `sourceKey` is null while Yahoo is paused. */
+  added: Array<{ isin: string; name: string; currency: string; sourceKey: string | null }>;
 };
 
 export type CommitResult = {

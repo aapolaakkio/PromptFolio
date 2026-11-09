@@ -224,6 +224,12 @@ test("holdings carry quantity, cost, value, gain and staleness as strings", asyn
   expect(nokia.weight).toBe(1);
 });
 
+test("holdings carry the price source and lookup status the label shows", async () => {
+  const { db } = await seed();
+  const [nokia] = await holdingsFor(db, "u1", "2025-07-01");
+  expect(nokia).toMatchObject({ priceSource: "yahoo", sourceKey: "NOKIA.HE", lookupStatus: "ok" });
+});
+
 // Weight is a ratio (a number on the wire, like allocation.ts's own `weight`), never a
 // decimal string, and is computed against the sum of holdings that COULD be valued --
 // not every holding the ledger knows about. A second, independently priced instrument

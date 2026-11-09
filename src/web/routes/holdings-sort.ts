@@ -46,6 +46,9 @@ export type Holding = {
   name: string;
   kind: "stock" | "etf" | "fund" | "cash";
   currency: string;
+  priceSource: string;
+  sourceKey: string;
+  lookupStatus: "ok" | "pending" | "attention";
   quantity: string;
   costEur: string | null;
   valueEur: string | null;
