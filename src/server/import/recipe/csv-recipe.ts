@@ -110,7 +110,7 @@ export const runCsvRecipe = (bytes: ArrayBuffer, recipe: BankCsvRecipe): CsvRun 
     (header): header is string => header !== null && !present.has(header),
   );
   const rows: BankRow[] = [];
-  const problems = parsed.problems.map(({ line, message }) => ({ line, message }));
+  const problems = parsed.problems.map(({ line, message, raw }) => ({ line, message, raw }));
   if (missingHeaders.length > 0) return { rows, problems, missingHeaders };
   for (const row of parsed.rows) {
     try {
@@ -119,6 +119,7 @@ export const runCsvRecipe = (bytes: ArrayBuffer, recipe: BankCsvRecipe): CsvRun 
       problems.push({
         line: row.line,
         message: cause instanceof Error ? cause.message : "Failed to process the row",
+        raw: row.cells.join(recipe.delimiter),
       });
     }
   }

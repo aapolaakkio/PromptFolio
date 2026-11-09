@@ -24,6 +24,8 @@ import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { DEFAULT_CHAT_MODEL } from "../chat/models.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
+import { withModelTimeout } from "../instruments/find-page.ts";
+import { suggestRows } from "./suggest-rows.ts";
 import { classifyNewMerchants, type ClassifyResult } from "../spending/classify.ts";
 
 const IsoDateSchema = z
@@ -229,13 +231,50 @@ export const BalanceInput = z
   })
   .strict();
 
+const EXAMPLE_ROWS = 5;
+
+/** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. */
+const withSuggestions = async (draft: BankDraft): Promise<BankDraft> => {
+  if (draft.problems.length === 0) return draft;
+  let client: ChatClient;
+  try {
+    client = withModelTimeout(readerClient ?? createClient());
+  } catch {
+    return draft;
+  }
+  const found = await suggestRows(
+    client,
+    "bank",
+    draft.problems.map((problem) => ({
+      line: problem.line,
+      raw: problem.raw ?? problem.text,
+      message: problem.text,
+    })),
+    draft.rows.slice(0, EXAMPLE_ROWS).map((row) => ({
+      date: row.date,
+      type: row.type,
+      amountEur: row.amountEur,
+      counterparty: row.counterparty,
+    })),
+  );
+  return {
+    ...draft,
+    problems: draft.problems.map((problem) => {
+      const suggestion = found.get(problem.line);
+      return suggestion === undefined ? problem : { ...problem, suggestion };
+    }),
+  };
+};
+
 export const previewBankStatement = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
   await assertAccountOwned(userId, accountId);
   await assertBankAccount(accountId);
 
   const bytes = await file.arrayBuffer();
-  const { bank, draft } = await readStatement(bytes, userId);
+  const read = await readStatement(bytes, userId);
+  const { bank } = read;
+  const draft = await withSuggestions(read.draft);
   const sha256 = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   return { bank, filename: file.name, sha256, draft, check: checkBankDraft(draft) };
 };

@@ -10,7 +10,7 @@ export type BankRow = {
 
 export type BankStatement = {
   readonly rows: BankRow[];
-  readonly problems: Array<{ line: number; message: string }>;
+  readonly problems: Array<{ line: number; message: string; raw?: string }>;
 };
 
 /** Type comes from the amount sign, not the bank label: only cash is at stake. */

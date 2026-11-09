@@ -35,7 +35,14 @@ export const BankDraft = z
           .strict(),
       )
       .max(5000),
-    problems: z.array(z.object({ line: z.number().int(), text: z.string() })),
+    problems: z.array(
+      z.object({
+        line: z.number().int(),
+        text: z.string(),
+        raw: z.string().optional(),
+        suggestion: z.record(z.string(), z.string()).optional(),
+      }),
+    ),
   })
   .strict();
 export type BankDraft = z.infer<typeof BankDraft>;
@@ -61,7 +68,7 @@ const splitNote = (note: string, counterparty: string) => {
 
 export const bankDraftFromRows = (
   rows: readonly BankRow[],
-  problems: readonly { line: number; message: string }[],
+  problems: readonly { line: number; message: string; raw?: string }[],
 ): BankDraft => ({
   statement: null,
   rows: rows.map((row) => {
@@ -77,7 +84,11 @@ export const bankDraftFromRows = (
       externalId: row.externalId,
     };
   }),
-  problems: problems.map((problem) => ({ line: problem.line, text: problem.message })),
+  problems: problems.map((problem) => ({
+    line: problem.line,
+    text: problem.message,
+    raw: problem.raw,
+  })),
 });
 
 export const bankDraftFromStatement = (

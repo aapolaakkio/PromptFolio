@@ -1039,3 +1039,88 @@ describe("GET /api/imports", () => {
     expect(firstEntry.undone).toBe(true);
   });
 });
+
+describe("preview suggestions for rows the recipe could not read", () => {
+  const ASKED = "could not be read by the reading recipe";
+  const suggesting = (text: string) => ({
+    run: (params: { readonly messages: readonly { readonly content: string }[] }) =>
+      params.messages[0]?.content.includes(ASKED)
+        ? Promise.resolve({ text, toolCalls: [] })
+        : nordnetReader.run(params),
+  });
+  const PreviewProblems = z.object({
+    problems: z.array(
+      z.object({ line: z.number(), suggestion: z.record(z.string(), z.string()).optional() }),
+    ),
+  });
+  const goodRow = nordnetRow({
+    id: "3000",
+    date: "2025-02-01",
+    type: "OSTO",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "10",
+    price: "4,00",
+    amount: "-40,00",
+  });
+  const badRow = nordnetRow({
+    id: "3001",
+    date: "2025-02-03",
+    type: "TUNTEMATON",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "100",
+    price: "4,15",
+    amount: "-415,00",
+  });
+
+  afterEach(() => service._setReaderClient(nordnetReader));
+
+  test("a problem row carries the checked suggestion; an invented amount is dropped", async () => {
+    const { userId } = await signUp(`imp-suggest-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    service._setReaderClient(
+      suggesting(
+        JSON.stringify({
+          rows: [
+            {
+              line: 3,
+              fields: {
+                tradeDate: "2025-02-03",
+                type: "BUY",
+                isin: "FI0009000681",
+                quantityText: "100",
+                amountEur: "777.77",
+                feeEur: null,
+                currency: null,
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const previewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(nordnetFileOf([goodRow, badRow]), accountId)),
+    );
+    const body = PreviewProblems.parse(previewed.body);
+    expect(body.problems).toHaveLength(1);
+    expect(body.problems[0]?.suggestion).toEqual({
+      tradeDate: "2025-02-03",
+      type: "BUY",
+      isin: "FI0009000681",
+      quantityText: "100",
+    });
+  });
+
+  test("a failing model leaves the problem without a suggestion", async () => {
+    const { userId } = await signUp(`imp-suggest-down-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    service._setReaderClient(suggesting("nope"));
+    const previewed = await answer(() =>
+      service.previewUpload(userId, uploadForm(nordnetFileOf([goodRow, badRow]), accountId)),
+    );
+    const body = PreviewProblems.parse(previewed.body);
+    expect(body.problems).toHaveLength(1);
+    expect(body.problems[0]?.suggestion).toBeUndefined();
+  });
+});

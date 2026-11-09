@@ -25,6 +25,7 @@ import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 import { BankStatementImport } from "./BankStatementImport.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 import { firstThenRest } from "./preview-order.ts";
+import { pickSuggested } from "./draft-edit.ts";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
@@ -48,6 +49,8 @@ type EditableTxn = {
   readonly feeEur: string;
   readonly currency: string;
   readonly note: string;
+  /** Prefilled from a model suggestion the owner has not checked yet; never sent to the commit. */
+  readonly suggested?: boolean;
 };
 
 const QUANTITY_SCALE = 1_000_000;
@@ -91,17 +94,32 @@ const fromEditable = (
 });
 
 /** A line the reader could not parse becomes a blank row carrying its text, to fill in or remove. */
-const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn => ({
-  line: problem.line,
-  tradeDate: "",
-  type: "BUY",
-  isin: "",
-  quantityText: "",
-  amountEur: "",
-  feeEur: "0",
-  currency: "EUR",
-  note: problem.rawLine ?? problem.message,
-});
+const SUGGESTED_FIELDS = [
+  "tradeDate",
+  "type",
+  "isin",
+  "quantityText",
+  "amountEur",
+  "feeEur",
+  "currency",
+] as const;
+
+const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn => {
+  const suggested = pickSuggested(problem.suggestion, SUGGESTED_FIELDS);
+  return {
+    line: problem.line,
+    tradeDate: "",
+    type: "BUY",
+    isin: "",
+    quantityText: "",
+    amountEur: "",
+    feeEur: "0",
+    currency: "EUR",
+    ...suggested,
+    note: problem.rawLine ?? problem.message,
+    suggested: Object.keys(suggested).length > 0,
+  };
+};
 
 /** A row skipped on purpose is reported, not editable: the other leg of its event carries it. */
 const editableRows = (draft: DraftResponse): EditableTxn[] => [
@@ -588,6 +606,7 @@ const PreviewCard = ({
       rows={entry.rows}
       columns={TXN_COLUMNS}
       onChange={onRows}
+      isSuggested={(row) => row.suggested === true}
       blank={(): EditableTxn => ({
         line: entry.rows.length + 1,
         tradeDate: "",

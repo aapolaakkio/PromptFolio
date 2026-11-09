@@ -16,6 +16,7 @@ export const DraftTable = <T extends { readonly line: number }>({
   onChange,
   blank,
   fieldErrors = {},
+  isSuggested = () => false,
 }: {
   readonly rows: readonly T[];
   readonly columns: readonly Column<T>[];
@@ -23,6 +24,8 @@ export const DraftTable = <T extends { readonly line: number }>({
   readonly blank: () => T;
   /** Server-side complaints keyed by line, shown under the row they name. */
   readonly fieldErrors?: Record<number, string>;
+  /** Rows whose values came from a model suggestion, marked until the owner has checked them. */
+  readonly isSuggested?: (row: T) => boolean;
 }) => (
   <div className="grid gap-2">
     <div className="max-h-112 overflow-auto rounded border border-line">
@@ -41,7 +44,17 @@ export const DraftTable = <T extends { readonly line: number }>({
         <tbody>
           {rows.map((row, index) => (
             <tr key={`${row.line}-${index}`}>
-              <td className="num">{row.line}</td>
+              <td className="num">
+                {row.line}
+                {isSuggested(row) && (
+                  <span
+                    className="ml-2 rounded-full border border-accent px-2 py-0.5 text-xs text-accent"
+                    title="Values suggested by AI from the printed text"
+                  >
+                    AI suggestion — check
+                  </span>
+                )}
+              </td>
               {columns.map((column) => {
                 const value = String(row[column.key] ?? "");
                 const set = (next: string) =>

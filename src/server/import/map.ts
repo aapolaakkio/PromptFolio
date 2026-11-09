@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money.ts";
 import { assertReal } from "./recipe/date-format.ts";
 import type { InstrumentKind } from "../instruments/openfigi.ts";
+import type { Suggestion } from "./suggest-rows.ts";
 import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types.ts";
 
 export type DraftTxn = {
@@ -29,6 +30,7 @@ type DraftProblem = {
   readonly raw: Record<string, string>;
   readonly rawLine?: string;
   readonly ignored?: boolean;
+  readonly suggestion?: Suggestion;
 };
 
 export type Draft = {

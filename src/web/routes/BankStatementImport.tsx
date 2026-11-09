@@ -31,10 +31,7 @@ const BANK_COLUMNS: readonly Column<BankDraftRow>[] = [
 ];
 
 /** A row the reader could not parse, as a blank row the owner fills in rather than loses. */
-const rowFromProblem = (problem: {
-  readonly line: number;
-  readonly text: string;
-}): BankDraftRow => ({
+const rowFromProblem = (problem: BankPreview["draft"]["problems"][number]): BankDraftRow => ({
   ...problemToRow(problem),
   label: "",
 });
@@ -43,7 +40,9 @@ const rowFromProblem = (problem: {
 export const BankStatementImport = ({ accountId }: { readonly accountId: number }) => {
   const queryClient = useQueryClient();
   const [files, setFiles] = useState<File[]>([]);
-  const [drafts, setDrafts] = useState<{ name: string; preview: BankPreview }[]>([]);
+  const [drafts, setDrafts] = useState<
+    { name: string; preview: BankPreview; suggestedLines: ReadonlySet<number> }[]
+  >([]);
   const [imported, setImported] = useState<{ name: string; data: BankCommitResult }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,6 +74,11 @@ export const BankStatementImport = ({ accountId }: { readonly accountId: number 
       setDrafts(
         results.map(({ name, data }) => ({
           name,
+          suggestedLines: new Set(
+            data.draft.problems.flatMap((problem) =>
+              problem.suggestion === undefined ? [] : [problem.line],
+            ),
+          ),
           preview: {
             ...data,
             draft: {
@@ -191,6 +195,7 @@ export const BankStatementImport = ({ accountId }: { readonly accountId: number 
             <DraftTable
               rows={entry.preview.draft.rows}
               columns={BANK_COLUMNS}
+              isSuggested={(row) => entry.suggestedLines.has(row.line)}
               blank={(): BankDraftRow => ({
                 line: entry.preview.draft.rows.length + 1,
                 date: "",

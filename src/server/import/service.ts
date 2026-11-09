@@ -16,8 +16,9 @@ import { readBrokerRecordByRecipe } from "./recipe/broker-record.ts";
 import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
 import { DraftBody } from "./txn-draft.ts";
 import { createAdded, resolveUnknown } from "../instruments/auto-add.ts";
-import { pageDeps, type PageDeps } from "../instruments/find-page.ts";
+import { pageDeps, withModelTimeout, type PageDeps } from "../instruments/find-page.ts";
 import type { FetchImpl } from "../prices/types.ts";
+import { suggestRows } from "./suggest-rows.ts";
 
 export const MAX_PASTE_CHARS = 2_000_000;
 
@@ -123,6 +124,54 @@ const buildDraft = async (file: File, userId: string, accountId: number) => {
   return { broker: "csv" as const, draft: await withLookups(run.draft), sha256 };
 };
 
+const EXAMPLE_ROWS = 5;
+const QUANTITY_SCALE = 1_000_000;
+
+const rawTextOf = (problem: Draft["problems"][number]): string =>
+  problem.rawLine ??
+  Object.entries(problem.raw)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("; ");
+
+const exampleOf = (txn: Draft["txns"][number]) => ({
+  tradeDate: txn.tradeDate,
+  type: txn.type,
+  isin: txn.isin ?? "",
+  quantityText: String(txn.quantity / QUANTITY_SCALE),
+  amountEur: (txn.amount / 100).toFixed(2),
+  feeEur: (txn.fee / 100).toFixed(2),
+  currency: txn.currency,
+});
+
+/** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. */
+const withSuggestions = async (draft: Draft): Promise<Draft> => {
+  const open = draft.problems.filter((problem) => problem.ignored !== true);
+  if (open.length === 0) return draft;
+  let client: ChatClient;
+  try {
+    client = withModelTimeout(readerClient ?? createClient());
+  } catch {
+    return draft;
+  }
+  const found = await suggestRows(
+    client,
+    "broker",
+    open.map((problem) => ({
+      line: problem.line,
+      raw: rawTextOf(problem),
+      message: problem.message,
+    })),
+    draft.txns.slice(0, EXAMPLE_ROWS).map(exampleOf),
+  );
+  return {
+    ...draft,
+    problems: draft.problems.map((problem) => {
+      const suggestion = found.get(problem.line);
+      return suggestion === undefined ? problem : { ...problem, suggestion };
+    }),
+  };
+};
+
 const PasteBody = z.object({
   text: z
     .string()
@@ -199,7 +248,9 @@ export const listImports = async (userId: string) =>
 export const previewUpload = async (userId: string, form: FormData) => {
   const { file, accountId } = readUpload(form);
   await assertAccountOwned(userId, accountId);
-  const { broker, draft, sha256 } = await buildDraft(file, userId, accountId);
+  const built = await buildDraft(file, userId, accountId);
+  const { broker, sha256 } = built;
+  const draft = await withSuggestions(built.draft);
   return { broker, filename: file.name, sha256, ...draft };
 };
 
@@ -230,7 +281,9 @@ export const commitDraftBody = async (userId: string, body: z.infer<typeof Commi
 export const previewPaste = async (userId: string, body: z.infer<typeof PasteBody>) => {
   const { text, accountId } = PasteBody.parse(body);
   await assertAccountOwned(userId, accountId);
-  const { draft, sha256 } = await buildPasteDraft(text, userId, accountId);
+  const built = await buildPasteDraft(text, userId, accountId);
+  const draft = await withSuggestions(built.draft);
+  const { sha256 } = built;
   return { broker: "paste", filename: PASTE_FILENAME, sha256, ...draft };
 };
 

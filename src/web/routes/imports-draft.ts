@@ -33,6 +33,7 @@ export type DraftResponse = {
     raw: Record<string, string>;
     rawLine?: string;
     ignored?: boolean;
+    suggestion?: Record<string, string>;
   }>;
   unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
   added: Array<{ isin: string; name: string; currency: string; sourceKey: string | null }>;

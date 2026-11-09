@@ -257,6 +257,79 @@ describe("POST /api/imports/bank/commit", () => {
   });
 });
 
+describe("bank preview suggestions", () => {
+  const ASKED = "could not be read by the reading recipe";
+  const withSuggestions = (text: string) => {
+    const base = reader();
+    return {
+      run: (params: {
+        readonly tools: readonly unknown[];
+        readonly messages: readonly { readonly content: string }[];
+      }) =>
+        params.messages[0]?.content.includes(ASKED)
+          ? Promise.resolve({ text, toolCalls: [] })
+          : base.run(params),
+    };
+  };
+  const brokenStatement = async () =>
+    bytesOf(
+      new TextDecoder()
+        .decode(await statement())
+        .replace('"2025-09-01";"2025-09-01"', '"2.9.2025";"2025-09-01"'),
+    );
+
+  test("an unreadable row carries the checked suggestion to the page", async () => {
+    const { userId } = await signUp();
+    const accountId = await openAccount(userId, "current");
+    setReaderClient(
+      withSuggestions(
+        JSON.stringify({
+          rows: [
+            {
+              line: 2,
+              fields: {
+                date: "2025-09-02",
+                type: "WITHDRAWAL",
+                amountEur: "-42.15",
+                counterparty: "K-MARKET ESIMERKKI",
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    try {
+      const body = PreviewSchema.parse(
+        (await preview(userId, accountId, await brokenStatement())).body,
+      );
+      expect(body.draft.problems).toHaveLength(1);
+      expect(body.draft.problems[0]?.suggestion).toEqual({
+        date: "2025-09-02",
+        type: "WITHDRAWAL",
+        amountEur: "-42.15",
+        counterparty: "K-MARKET ESIMERKKI",
+      });
+    } finally {
+      setReaderClient(reader());
+    }
+  });
+
+  test("a model that fails leaves the problem as it is", async () => {
+    const { userId } = await signUp();
+    const accountId = await openAccount(userId, "current");
+    setReaderClient(withSuggestions("not json"));
+    try {
+      const body = PreviewSchema.parse(
+        (await preview(userId, accountId, await brokenStatement())).body,
+      );
+      expect(body.draft.problems).toHaveLength(1);
+      expect(body.draft.problems[0]?.suggestion).toBeUndefined();
+    } finally {
+      setReaderClient(reader());
+    }
+  });
+});
+
 describe("POST /api/accounts/:id/balance", () => {
   const setBalance = (userId: string, accountId: number, on: string, balance: string) =>
     answer(() => bank.setAccountBalance(userId, { accountId, on, balance }));

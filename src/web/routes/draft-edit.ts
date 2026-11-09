@@ -54,13 +54,40 @@ export const holdingsTotalCheck = (
   return { ok: difference === 0, differenceEur: minorToEur(difference) };
 };
 
-/** A problem the reader reported, as a row to fill in; the printed text stays visible until replaced. */
-export const problemToRow = (problem: { readonly line: number; readonly text: string }) => ({
-  line: problem.line,
-  date: "",
-  type: "DEPOSIT" as const,
-  amountEur: "",
-  counterparty: "",
-  message: problem.text,
-  externalId: null,
-});
+/** The suggested values for the listed fields only: the server's answer is not trusted to name fields. */
+export const pickSuggested = <K extends string>(
+  suggestion: Readonly<Record<string, string>> | undefined,
+  keys: readonly K[],
+): Partial<Record<K, string>> =>
+  // SAFETY: only the listed keys are copied.
+  Object.fromEntries(
+    keys.flatMap((key) => {
+      const value = suggestion?.[key];
+      return value === undefined ? [] : [[key, value]];
+    }),
+  ) as Partial<Record<K, string>>;
+
+const BANK_TYPES = ["DEPOSIT", "WITHDRAWAL", "INTEREST"] as const;
+
+/** A problem the reader reported, as a row to fill in; the printed text stays visible until replaced. A suggestion only prefills. */
+export const problemToRow = (problem: {
+  readonly line: number;
+  readonly text: string;
+  readonly suggestion?: Readonly<Record<string, string>> | undefined;
+}) => {
+  const suggested = pickSuggested(problem.suggestion, [
+    "date",
+    "type",
+    "amountEur",
+    "counterparty",
+  ]);
+  return {
+    line: problem.line,
+    date: suggested.date ?? "",
+    type: BANK_TYPES.find((type) => type === suggested.type) ?? "DEPOSIT",
+    amountEur: suggested.amountEur ?? "",
+    counterparty: suggested.counterparty ?? "",
+    message: problem.text,
+    externalId: null,
+  };
+};
