@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { db } from "../db/index.ts";
 import { yahooGate } from "../db/schema.ts";
-import type { FetchImpl } from "./types.ts";
+import { urlOf, type FetchImpl } from "./types.ts";
 import { YahooPausedError, gatedFetch, yahooPausedUntil } from "./yahoo-gate.ts";
 
 const MIN = 60_000;
@@ -95,7 +95,7 @@ describe("gatedFetch", () => {
   it("a non-Yahoo success between two Yahoo 429s does not reset the back-off", async () => {
     const { t, now } = clock(0);
     const routed = async (input: string | URL | Request): Promise<Response> =>
-      String(input).includes("finance.yahoo.com") ? tooMany() : new Response("ok", { status: 200 });
+      urlOf(input).includes("finance.yahoo.com") ? tooMany() : new Response("ok", { status: 200 });
     const gated = gatedFetch(db, routed, now);
     t.now = await pauseOf(gated);
     await gated("https://api.openfigi.com/v3/mapping");
