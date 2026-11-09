@@ -43,12 +43,12 @@ export const askForSummary = async (
       const text = Reply.parse(JSON.parse(reply.text)).text.trim();
       const problem = summaryProblem(text, factsText);
       if (problem === null) return text;
-      // The reason names a rule and at most one of the note's own words; never the facts.
-      console.warn("Weekly summary refused:", problem.split(":")[0]);
+      // Only the rule's fixed label: the message can quote the note, and the note can hold amounts.
+      console.warn("Weekly summary refused:", problem.rule);
       messages = [
         ...messages,
         { role: "assistant", content: reply.text },
-        { role: "user", content: `That note was refused. ${problem} Write it again.` },
+        { role: "user", content: `That note was refused. ${problem.message} Write it again.` },
       ];
     }
     return null;

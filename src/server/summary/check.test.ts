@@ -144,6 +144,17 @@ describe("natural English is not refused", () => {
       isCheckedSummary("Your portfolio is up 100.00 euros, while Beta is down 27.76 euros.", facts),
     ).toBe(true);
   });
+  test("a change printed with no direction word is refused", () => {
+    expect(summaryProblem("Beta changed by 27.76 euros.", facts)?.rule).toBe("direction");
+  });
+  test("a figure equally near an up and a down word is refused", () => {
+    expect(summaryProblem("Up 27.76 down.", facts)?.rule).toBe("direction");
+  });
+  test("the rule label never carries the note's own words", () => {
+    expect(summaryProblem("Your portfolio rose 999.99 euros.", facts)?.rule).toBe(
+      "invented-number",
+    );
+  });
   test("each figure is still held to its own direction", () => {
     expect(
       isCheckedSummary("Your portfolio is down 100.00 euros, while Beta is up 27.76 euros.", facts),
@@ -159,7 +170,7 @@ describe("summaryProblem says what to fix", () => {
     ["On 2026-11-03 it moved.", /date/i],
     [Array.from({ length: 121 }, () => "word").join(" "), /120/],
   ])("%s", (text, expected) => {
-    expect(summaryProblem(text, FACTS)).toMatch(expected);
+    expect(summaryProblem(text, FACTS)?.message).toMatch(expected);
   });
   test("a good text has no problem", () => {
     expect(summaryProblem("Up 1234.56 euros (12.3 %).", FACTS)).toBeNull();
