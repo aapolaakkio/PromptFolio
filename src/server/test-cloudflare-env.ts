@@ -43,3 +43,9 @@ export const env: Cloudflare.Env = Object.assign(proxy.env, {
 });
 
 await migrate(drizzle(env.DB), { migrationsFolder: "drizzle" });
+
+/**
+ * Stops this file's local workerd. Each test file gets its own worker, so each
+ * starts its own proxy; left running, every run leaked one workerd per file.
+ */
+export const disposePlatform = (): Promise<void> => proxy.dispose();
