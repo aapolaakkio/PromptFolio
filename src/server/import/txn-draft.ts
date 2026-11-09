@@ -2,10 +2,6 @@ import { z } from "zod";
 
 import { parseCurrency } from "../../core/money.ts";
 
-/**
- * A `Draft` as the browser sends it back after editing. Strict at every level:
- * a field the map never produced is a field the commit never expected.
- */
 export const DraftBody = z
   .object({
     txns: z
@@ -25,7 +21,7 @@ export const DraftBody = z
             tax: z.number().int(),
             currency: z
               .string()
-              .regex(/^[A-Z]{3}$/, "Valuuttakoodin on oltava kolme isoa kirjainta")
+              .regex(/^[A-Z]{3}$/, "Currency code must be three uppercase letters")
               .transform(parseCurrency),
             fxRateEur: z.number().int().nonnegative(),
             externalId: z.string().nullable(),
@@ -53,12 +49,11 @@ export const DraftBody = z
           name: z.string(),
           currency: z
             .string()
-            .regex(/^[A-Z]{3}$/, "Valuuttakoodin on oltava kolme isoa kirjainta")
+            .regex(/^[A-Z]{3}$/, "Currency code must be three uppercase letters")
             .transform(parseCurrency),
         })
         .strict(),
     ),
-    // Display only: the commit never reads it (see `createAdded`).
     added: z
       .array(
         z

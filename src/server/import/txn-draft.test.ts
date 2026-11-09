@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 
 import { DraftBody } from "./txn-draft.ts";
 
-/** A draft as `mapRows` builds one: one buy, nothing unresolved. */
 const draft = {
   txns: [
     {
@@ -51,13 +50,13 @@ describe("DraftBody", () => {
       expect(() =>
         DraftBody.safeParse({
           ...draft,
-          unknownIsins: [{ isin: null, name: "Uusi rahasto", currency }],
+          unknownIsins: [{ isin: null, name: "New fund", currency }],
         }),
       ).not.toThrow();
       expect(
         DraftBody.safeParse({
           ...draft,
-          unknownIsins: [{ isin: null, name: "Uusi rahasto", currency }],
+          unknownIsins: [{ isin: null, name: "New fund", currency }],
         }).success,
       ).toBe(false);
     }

@@ -2,25 +2,13 @@ import { EUR, parseMoney } from "../../../core/money.ts";
 import type { MoneyFormat } from "./types.ts";
 
 const UNREADABLE = (text: string): Error =>
-  new Error(`Summaa ei voitu lukea: ${JSON.stringify(text)}`);
+  new Error(`The amount could not be read: ${JSON.stringify(text)}`);
 
-/**
- * U+2212 is a minus sign that is not the hyphen any parser expects. Normalised
- * for every format: this is a character-identity fix, not a formatting choice
- * the model gets to describe.
- */
 const MINUS = /−/g;
 
 const escapeForClass = (text: string): string => text.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
 
-/**
- * `strip` entries are currency codes and symbols, printed only at the ends of
- * a figure. Removing them anywhere in the string (e.g. a naive `split/join`)
- * can eat digits that happen to match. Only a prefix or a suffix of the
- * trimmed body is removed, repeated until neither end matches any entry.
- * An empty entry is skipped: it would match every `startsWith`/`endsWith`
- * check without shrinking the body, spinning the loop forever.
- */
+/** An empty `strip` entry is skipped: it would never shrink the body and the loop would spin. */
 const stripEnds = (text: string, words: readonly string[]): string => {
   const nonEmpty = words.filter((word) => word.length > 0);
   let body = text.trim();
@@ -40,7 +28,6 @@ const stripEnds = (text: string, words: readonly string[]): string => {
   return body;
 };
 
-/** Sign and bare digits, with the format's own decorations taken off. */
 const strip = (text: string, format: MoneyFormat) => {
   let body = stripEnds(text.replace(MINUS, "-").trim(), format.strip ?? []);
 
@@ -56,9 +43,7 @@ const strip = (text: string, format: MoneyFormat) => {
     const token = (match?.[0] ?? "").toUpperCase();
     negative = (format.debitWords ?? []).some((word) => token === word.toUpperCase());
     body = match ? body.slice(0, match.index) : body;
-    // Only a format that says the minus leads may read one. A recipe declaring
-    // "trailing", "parentheses" or "suffix" and meeting `-1,00` has described
-    // the statement wrongly, and must fail loudly rather than read it right.
+    // Only a leading format may read a leading minus; another notation meeting `-1,00` must fail loudly.
   } else if (format.negative === "leading" && body.startsWith("-")) {
     negative = true;
     body = body.slice(1);
@@ -66,10 +51,6 @@ const strip = (text: string, format: MoneyFormat) => {
   return { body: body.replace(/^\+/, "").trim(), negative };
 };
 
-/**
- * The figure as a plain signed decimal (`-1234.5678`), every decimal kept: a
- * quantity has more of them than money does.
- */
 export const readDecimal = (text: string, format: MoneyFormat): string => {
   const { body, negative } = strip(text, format);
   const withoutThousands =
@@ -81,14 +62,9 @@ export const readDecimal = (text: string, format: MoneyFormat): string => {
   return negative ? `-${plain}` : plain;
 };
 
-/** Signed minor units, read exactly as the format describes. */
 export const readAmount = (text: string, format: MoneyFormat): bigint =>
   parseMoney(readDecimal(text, format), EUR).minor;
 
-/**
- * A statement that prints unsigned figures in two columns: which column the
- * figure sat in is the sign, and a row filling neither is not a transaction.
- */
 export const readTwoColumn = (debit: string, credit: string, format: MoneyFormat): bigint => {
   const hasDebit = debit.trim() !== "";
   const hasCredit = credit.trim() !== "";

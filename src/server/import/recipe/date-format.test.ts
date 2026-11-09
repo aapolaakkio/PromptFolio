@@ -20,7 +20,7 @@ describe("readDate", () => {
   });
 
   test("refuses a day the calendar does not have", () => {
-    expect(() => readDate("32.1.2026", "d.m.yyyy")).toThrow(/ei ole olemassa/);
+    expect(() => readDate("32.1.2026", "d.m.yyyy")).toThrow(/does not exist/);
   });
 
   test("refuses text that is not a date at all", () => {
@@ -32,9 +32,6 @@ describe("readDate", () => {
   });
 });
 
-// A statement prints its dates however its bank likes. The format names an
-// ORDER; the separator, the year's width and a spelled-out month are read as
-// they come, so one enum member covers a family of layouts.
 describe("the shapes one order accepts", () => {
   const dmy = "d.m.yyyy" as const;
 
@@ -65,6 +62,6 @@ describe("the shapes one order accepts", () => {
   });
 
   test("refuses a month name it does not know", () => {
-    expect(() => readDate("8 Elokuu-ish 2026", dmy)).toThrow(/ei kelpaa/);
+    expect(() => readDate("8 Elokuu-ish 2026", dmy)).toThrow(/Invalid date/);
   });
 });

@@ -38,8 +38,6 @@ describe("parseRecipe", () => {
     expect(parseRecipe(twoColumn).money.twoColumn).toBe(true);
   });
 
-  // The reference recipe the model is shown spends 202 characters on one skip
-  // alternation, and a statement with more page furniture than OP's needs more.
   test("accepts a skip alternation the size a real statement's furniture takes", () => {
     const words = Array.from({ length: 60 }, (_, at) => `Sana${at}`).join("|");
     const long = { ...valid, skip: [`^(?:${words})(?=\\s|$)`] };
@@ -72,27 +70,21 @@ describe("parseRecipe", () => {
   });
 });
 
-/**
- * A pattern's run time cannot be bounded once `exec` has been entered, so the
- * shapes that blow up are refused before they are ever compiled into a recipe.
- * `^(a+)+$` is seven characters -- far under the length cap -- and took over
- * two minutes on a 37-character line against a 500 ms budget.
- */
 describe("parseRecipe -- catastrophic pattern shapes", () => {
   const withSkip = (pattern: string) => ({ ...valid, skip: [pattern] });
 
   test("refuses a quantified group whose body is itself quantified", () => {
-    expect(() => parseRecipe(withSkip("^(a+)+$"))).toThrow(/jumiin/);
+    expect(() => parseRecipe(withSkip("^(a+)+$"))).toThrow(/may hang/);
   });
 
   test("refuses the other classic forms", () => {
     for (const pattern of ["^(a*)*$", "^(a+)*$", String.raw`(\d+)+`, "(?:[a-z]+)+"]) {
-      expect(() => parseRecipe(withSkip(pattern))).toThrow(/jumiin/);
+      expect(() => parseRecipe(withSkip(pattern))).toThrow(/may hang/);
     }
   });
 
   test("refuses a quantified group whose alternatives overlap", () => {
-    expect(() => parseRecipe(withSkip("^(a|aa)+$"))).toThrow(/jumiin/);
+    expect(() => parseRecipe(withSkip("^(a|aa)+$"))).toThrow(/may hang/);
   });
 
   test("keeps accepting the patterns real recipes are made of", () => {
@@ -111,9 +103,6 @@ describe("parseRecipe -- catastrophic pattern shapes", () => {
   });
 });
 
-// A layout that prints the date on its own line and the amount several lines
-// later -- one bank's savings statement does -- can only name the amount in a
-// continuation. Refusing that recipe left no way to describe the file at all.
 test("accepts a recipe whose amount is named by a continuation", () => {
   const split = {
     ...valid,

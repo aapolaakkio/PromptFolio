@@ -4,28 +4,21 @@ import type { ChatClient } from "../../chat/runner.ts";
 import { type BankRow, type BankStatement, noteOf, rowType } from "../bank-statement.ts";
 import { parseCsv } from "../csv.ts";
 import type { BrokerCsvConfig, RawRow } from "../types.ts";
-import { askForRecipe } from "./ask.ts";
+import { askForRecipe, FINNISH_CONTEXT } from "./ask.ts";
 import { readDate } from "./date-format.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { readAmount, readTwoColumn } from "./money-format.ts";
 import { forgetRecipe, loadParsed, saveRecipe } from "./store.ts";
 import { MoneyFormatSchema } from "./types.ts";
 
-/** Data lines the model is shown: enough to see every shape, few enough to stay cheap. */
 const SAMPLE_ROWS = 30;
-/** Failed rows quoted back to the model on a retry. */
 const QUOTED_FAILURES = 10;
 
-const NOT_A_STATEMENT = "Tiedostoa ei tunnistettu tiliotteeksi";
+const NOT_A_STATEMENT = "The file was not recognised as a bank statement";
 
 const Header = z.string().min(1).nullable();
 
-/**
- * A bank CSV described by header name. Row cutting is the CSV's own, so all a
- * recipe adds is which column means what and how dates and money are written.
- * Every key is required (nullable where a statement may lack it): structured
- * output fills a required field rather than leaving it out.
- */
+/** Every key is required (nullable where absent): structured output fills required fields. */
 const BaseCsvRecipe = z
   .object({
     kind: z.literal("bank-csv"),
@@ -48,12 +41,12 @@ const BaseCsvRecipe = z
   })
   .strict();
 
-export const BankCsvRecipeSchema = BaseCsvRecipe.superRefine((recipe, ctx) => {
+const BankCsvRecipeSchema = BaseCsvRecipe.superRefine((recipe, ctx) => {
   const { amount, debit, credit } = recipe.columns;
   if ((amount === null) === (debit === null || credit === null)) {
     ctx.addIssue({
       code: "custom",
-      message: "Nimeä joko amount tai debit ja credit, ei molempia eikä kumpaakaan",
+      message: "Name either amount or debit and credit, not both and not neither",
     });
   }
 });
@@ -63,10 +56,7 @@ export type BankCsvRecipe = z.infer<typeof BaseCsvRecipe>;
 // eslint-disable-next-line anti-slop/no-unknown-parameters
 const parseCsvRecipe = (raw: unknown): BankCsvRecipe => BankCsvRecipeSchema.parse(raw);
 
-/**
- * The bytes' encoding, decided here rather than by the model: a byte-order
- * mark settles it, and text that is not valid UTF-8 is a legacy Windows export.
- */
+/** A byte-order mark settles the encoding; non-UTF-8 text is a legacy Windows export. */
 export const encodingOf = (bytes: ArrayBuffer): BrokerCsvConfig["encoding"] => {
   const head = new Uint8Array(bytes.slice(0, 2));
   if (head[0] === 0xff && head[1] === 0xfe) return "utf-16le";
@@ -109,12 +99,10 @@ const readRow = (row: RawRow, recipe: BankCsvRecipe): BankRow => {
   };
 };
 
-export type CsvRun = BankStatement & {
-  /** Headers the recipe names that the file does not have. */
+type CsvRun = BankStatement & {
   readonly missingHeaders: readonly string[];
 };
 
-/** Reads every row the recipe can; a row it cannot is a problem, never a guess. */
 export const runCsvRecipe = (bytes: ArrayBuffer, recipe: BankCsvRecipe): CsvRun => {
   const parsed = parseCsv(bytes, { encoding: encodingOf(bytes), delimiter: recipe.delimiter });
   const present = new Set(parsed.headers);
@@ -130,47 +118,39 @@ export const runCsvRecipe = (bytes: ArrayBuffer, recipe: BankCsvRecipe): CsvRun 
     } catch (cause) {
       problems.push({
         line: row.line,
-        message: cause instanceof Error ? cause.message : "Rivin käsittely epäonnistui",
+        message: cause instanceof Error ? cause.message : "Failed to process the row",
       });
     }
   }
   return { rows, problems, missingHeaders };
 };
 
-/**
- * A CSV prints no balance, so the check is weaker than a PDF's arithmetic:
- * every header the recipe names exists, and every row reads. One unread row
- * fails it -- a statement that silently drops a line is the error to avoid.
- */
 const passes = (run: CsvRun): boolean =>
   run.missingHeaders.length === 0 && run.problems.length === 0 && run.rows.length > 0;
 
 const INSTRUCTIONS = [
-  "Saat pankin tiliotteen CSV-tiedoston alun. Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen rivin.",
-  "delimiter: sarake-erotin. columns: otsikkorivin sarakkeiden nimet täsmälleen kuten ne on kirjoitettu.",
-  "date on kirjauspäivän sarake. Summalle nimeä joko amount (etumerkillinen summa) tai debit ja credit (kaksi etumerkitöntä saraketta), ei molempia; käyttämätön on null.",
-  "label on tapahtuman laji tai selite, counterparty saaja tai maksaja, message viesti, externalId tapahtuman yksilöivä tunniste (esim. arkistointitunnus). Puuttuva on null.",
-  "dateFormat kertoo päivän osien järjestyksen. money kertoo desimaali- ja tuhaterottimen sekä miten negatiivinen summa merkitään.",
-  "interestLabels: lajit, joilla pankki maksaa korkoa tilille (esim. KORKO). Tyhjä lista jos ei ole.",
-  "Älä arvaa sarakkeen nimeä: käytä vain otsikkorivillä olevia.",
+  FINNISH_CONTEXT,
+  "You receive the start of a bank statement CSV file. Describe its format as a JSON object that the program uses to read every row.",
+  "delimiter: the column delimiter. columns: the names of the header-row columns exactly as written.",
+  "date is the booking date column. For the amount name either amount (a signed amount) or debit and credit (two unsigned columns), not both; the unused one is null.",
+  "label is the transaction type or description, counterparty the payee or payer, message the message, externalId a value that uniquely identifies the transaction (e.g. an archive id). A missing one is null.",
+  "dateFormat gives the order of the date parts. money gives the decimal and thousands separators and how a negative amount is written.",
+  "interestLabels: the types with which the bank pays interest into the account (e.g. KORKO, Finnish for interest). An empty list if there are none.",
+  "Do not guess a column name: use only those in the header row.",
 ].join("\n");
 
 const failuresOf = (run: CsvRun): string => {
   if (run.missingHeaders.length > 0) {
-    return `Näitä sarakkeita ei ole otsikkorivillä: ${run.missingHeaders.join(", ")}`;
+    return `These columns are not in the header row: ${run.missingHeaders.join(", ")}`;
   }
-  if (run.rows.length === 0 && run.problems.length === 0) return "Yhtään riviä ei luettu.";
+  if (run.rows.length === 0 && run.problems.length === 0) return "No rows were read.";
   return run.problems
     .slice(0, QUOTED_FAILURES)
-    .map((problem) => `rivi ${problem.line}: ${problem.message}`)
+    .map((problem) => `line ${problem.line}: ${problem.message}`)
     .join("\n");
 };
 
-/**
- * Asks for a recipe, runs it over the whole file, and on failure shows the
- * model the rows it could not read.
- */
-export const generateCsvRecipe = (bytes: ArrayBuffer, client: ChatClient) =>
+const generateCsvRecipe = (bytes: ArrayBuffer, client: ChatClient) =>
   askForRecipe({
     client,
     instructions: INSTRUCTIONS,
@@ -182,16 +162,9 @@ export const generateCsvRecipe = (bytes: ArrayBuffer, client: ChatClient) =>
     judge: (run) => ({ passed: passes(run), score: run.rows.length, feedback: failuresOf(run) }),
   });
 
-/** The layout's identity: its header row, digits blanked like a PDF's first lines. */
-export const csvRecipeKey = (bytes: ArrayBuffer): string =>
+const csvRecipeKey = (bytes: ArrayBuffer): string =>
   fingerprint("bank-csv", linesOf(bytes).slice(0, 1));
 
-/**
- * A bank CSV no built-in format knows. A stored recipe for this header is tried
- * first; one that no longer reads every row is forgotten and described again.
- * Only a recipe that read every row is stored -- a partial one still fills the
- * preview, with its unread rows listed, but is asked for again next time.
- */
 export const readBankCsvByRecipe = async (
   bytes: ArrayBuffer,
   userId: string,

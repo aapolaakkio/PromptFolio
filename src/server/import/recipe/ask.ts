@@ -1,35 +1,23 @@
 import { z } from "zod";
 
 import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
-/** The model that writes every recipe. */
+export const FINNISH_CONTEXT =
+  "This app serves Finnish customers: the documents come from Finnish banks and brokers, so Finnish law and conventions apply (Finnish number and date formats, Finnish transaction type labels, and Finnish tax rules wherever tax is involved).";
+
 export const RECIPE_MODEL = "claude-opus-5-5";
 const MAX_TOKENS = 16000;
-/**
- * The most of a document a model is shown. A sample is a layout's first rows;
- * a line long enough to blow past this is not a layout worth paying for.
- */
 const MAX_SAMPLE_CHARS = 40_000;
-/** Attempts at a recipe before settling for the best one, unsaved. */
 const MAX_ATTEMPTS = 3;
 
-/** What a recipe did when run over the whole document. */
 export type Judged = {
-  /** True when every row read and nothing the recipe named was missing. */
   readonly passed: boolean;
-  /** How much it read; the best partial recipe is the one that read the most. */
   readonly score: number;
-  /** What to tell the model when it did not pass. */
   readonly feedback: string;
 };
 
-export type Asked<R, Run> = { readonly recipe: R; readonly run: Run; readonly verified: boolean };
+type Asked<R, Run> = { readonly recipe: R; readonly run: Run; readonly verified: boolean };
 
-/**
- * Asks for a recipe as structured output, runs it over the whole document, and
- * on failure shows the model what went wrong. The conversation only grows, so
- * each retry sees its own earlier answer and what that answer could not read.
- * Null when no attempt produced a recipe that read anything at all.
- */
+/** On failure shows the model what went wrong; null when no attempt read anything. */
 export const askForRecipe = async <R, Run>(args: {
   readonly client: ChatClient;
   readonly instructions: string;
@@ -55,7 +43,7 @@ export const askForRecipe = async <R, Run>(args: {
     const parsed = recipeOf(reply.text, args.schema);
     let feedback = parsed.ok
       ? ""
-      : `Vastaus ei kelpaa: ${parsed.error}\nVastaa pelkällä JSON-oliolla.`;
+      : `Invalid answer: ${parsed.error}\nReply with a bare JSON object only.`;
     if (parsed.ok) {
       const run = args.run(parsed.recipe);
       const judged = args.judge(run);
@@ -69,14 +57,13 @@ export const askForRecipe = async <R, Run>(args: {
       { role: "assistant", content: reply.text },
       {
         role: "user",
-        content: `Kuvaus ei vielä toimi:\n${feedback}\nKorjaa ja vastaa koko kuvauksella.`,
+        content: `The recipe does not work yet:\n${feedback}\nFix it and reply with the whole recipe.`,
       },
     ];
   }
   return best === null ? null : { recipe: best.recipe, run: best.run, verified: false };
 };
 
-/** The reply as a recipe, or what was wrong with it -- told back to the model. */
 const recipeOf = <R>(
   text: string,
   schema: z.ZodType<R>,
@@ -85,7 +72,7 @@ const recipeOf = <R>(
   try {
     raw = JSON.parse(text);
   } catch {
-    return { ok: false, error: "ei JSON-muotoa" };
+    return { ok: false, error: "not valid JSON" };
   }
   const parsed = schema.safeParse(raw);
   return parsed.success

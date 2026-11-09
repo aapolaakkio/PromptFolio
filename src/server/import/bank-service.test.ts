@@ -16,10 +16,6 @@ import { OP_BANK_CSV_RECIPE } from "./recipe/op-csv-reference.ts";
 import { OP_STATEMENT_RECIPE } from "./recipe/op-reference.ts";
 import { VERIFY_TOOL_NAME } from "./recipe/verify-tool.ts";
 
-// Importing a statement writes several hundred cash rows at once, so these
-// tests care about the three ways that goes wrong: onto the wrong kind of
-// account, twice over, or without the balance that came before it.
-
 type BankService = typeof import("./bank-service.ts");
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
@@ -33,12 +29,10 @@ beforeAll(async () => {
   bank = await import("./bank-service.ts");
   setClassifierClient = bank._setClassifierClient;
   setReaderClient = bank._setReaderClient;
-  // Every statement is read by a recipe; this stands in for the model.
   setReaderClient(reader());
   undoImport = (await import("./service.ts")).undo;
 });
 
-/** What the caller sees: a value, or the status and message a refusal carries. */
 type Refusal = { error: string };
 type Answer<T> = { status: number; body: T | Refusal };
 
@@ -48,7 +42,7 @@ const answer = async <T>(run: () => T | Promise<T>): Promise<Answer<T>> => {
   } catch (cause) {
     if (cause instanceof HttpError) return { status: cause.status, body: { error: cause.message } };
     if (cause instanceof ZodError) {
-      return { status: 400, body: { error: cause.issues[0]?.message ?? "Virheellinen pyyntö" } };
+      return { status: 400, body: { error: cause.issues[0]?.message ?? "Invalid request" } };
     }
     throw cause;
   }
@@ -75,7 +69,7 @@ const signUp = async (): Promise<{ userId: string; cookie: string }> => {
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email always carries `{ user: { id } }`.
+  // SAFETY: the body has the shape the route returns.
   const body = (await response.json()) as { user: { id: string } };
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
@@ -88,12 +82,6 @@ const CommitSchema = z.object({
   enriched: z.number(),
   problems: z.array(z.object({ line: z.number(), message: z.string() })),
 });
-// `draft` is the real `BankDraft` schema, not a hand-picked subset: `commit`
-// below sends the parsed draft straight back into `commitBankDraft`, and a
-// plain `z.object()` covering only the fields a test happens to read would
-// strip the rest -- `counterparty`, `label`, `message`, `externalId` on a
-// row, `maturityDate` on the statement -- which `commitBankDraft`'s strict
-// `BankDraft` shape requires.
 const PreviewSchema = z.object({
   bank: z.string(),
   filename: z.string(),
@@ -129,7 +117,7 @@ const openAccount = async (userId: string, accountType: string | null): Promise<
     accountType === null
       ? { name: "Nordnet", broker: "nordnet" }
       : {
-          name: "OP käyttötili",
+          name: "OP current account",
           broker: "op",
           kind: BANK_TYPES.has(accountType) ? "bank" : "brokerage",
           accountType,
@@ -140,10 +128,7 @@ const openAccount = async (userId: string, accountType: string | null): Promise<
 const statement = async (): Promise<ArrayBuffer> =>
   readBytes(`${import.meta.dirname}/../import/fixtures/op-bank-sample.csv`);
 
-/**
- * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` over a plain
- * `ArrayBuffer`, never a `SharedArrayBuffer`, which the DOM union cannot say.
- */
+// SAFETY: the body has the shape the route returns.
 const bytesOf = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 
 const uploadForm = async (accountId: number, bytes?: ArrayBuffer): Promise<FormData> => {
@@ -163,16 +148,9 @@ const commit = async (userId: string, accountId: number, bytes?: ArrayBuffer) =>
   return answer(() => bank.commitBankDraft(userId, { accountId, filename, sha256, draft }));
 };
 
-/**
- * Never reaches Workers AI: the model is asked to describe the layout, and
- * offers the reference description of OP's own to the verify_recipe tool, which
- * is how a description reaches the reader. The rows then come from the fixture
- * itself, not from anything scripted here.
- */
 const reader = () => ({
   run: (params: { readonly tools: readonly unknown[] }) =>
     Promise.resolve(
-      // A CSV is described in one structured reply, with no tools offered.
       params.tools.length === 0
         ? { text: JSON.stringify(OP_BANK_CSV_RECIPE), toolCalls: [] }
         : {
@@ -205,7 +183,6 @@ describe("POST /api/imports/bank/preview", () => {
     expect(body.draft.rows[0]?.type).toBe("WITHDRAWAL");
     expect(body.draft.statement).toBeNull();
     expect(body.check).toBeNull();
-    // Nothing committed.
     expect(await cashTotal(userId, "2026-06-01")).toBe("0.00");
   });
 
@@ -215,7 +192,7 @@ describe("POST /api/imports/bank/preview", () => {
 
     const response = await preview(userId, brokerage);
     expect(response.status).toBe(400);
-    expect(ErrorSchema.parse(response.body).error).toContain("pankkitilille");
+    expect(ErrorSchema.parse(response.body).error).toContain("bank account");
   });
 
   test("refuses an unclassified account rather than guessing it is a bank one", async () => {
@@ -229,12 +206,12 @@ describe("POST /api/imports/bank/preview", () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
     const bytes = bytesOf("a;b\n1;2\n");
-    setReaderClient({ run: () => Promise.resolve({ text: "ei tiliote", toolCalls: [] }) });
+    setReaderClient({ run: () => Promise.resolve({ text: "not a statement", toolCalls: [] }) });
 
     try {
       const response = await preview(userId, accountId, bytes);
       expect(response.status).toBe(400);
-      expect(ErrorSchema.parse(response.body).error).toContain("tiliotteeksi");
+      expect(ErrorSchema.parse(response.body).error).toContain("bank statement");
     } finally {
       setReaderClient(reader());
     }
@@ -249,13 +226,11 @@ describe("POST /api/imports/bank/commit", () => {
     const first = CommitSchema.parse((await commit(userId, accountId)).body);
     expect(first.inserted).toBe(5);
     expect(first.skipped).toBe(0);
-    // -42,15 + 2750,00 - 1000,00 + 12,34 - 59,90
     expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
 
     const second = CommitSchema.parse((await commit(userId, accountId)).body);
     expect(second.inserted).toBe(0);
     expect(second.skipped).toBe(5);
-    // The balance is unchanged, which is the whole point of the archive id.
     expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
   });
 
@@ -282,23 +257,6 @@ describe("POST /api/imports/bank/commit", () => {
   });
 });
 
-// cash.tsx still uploads through commitBankStatementUpload; kept working so it
-// keeps compiling until the screen moves onto commitBankDraftImport. This is
-// a smoke test for that wrapper, not a second copy of the commit suite above.
-describe("the legacy commitBankStatementUpload wrapper", () => {
-  test("commits the upload directly, without going through a preview", async () => {
-    const { userId } = await signUp();
-    const accountId = await openAccount(userId, "current");
-
-    const body = CommitSchema.parse(
-      await bank.commitBankStatementUpload(userId, await uploadForm(accountId)),
-    );
-
-    expect(body.inserted).toBe(5);
-    expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
-  });
-});
-
 describe("POST /api/accounts/:id/balance", () => {
   const setBalance = (userId: string, accountId: number, on: string, balance: string) =>
     answer(() => bank.setAccountBalance(userId, { accountId, on, balance }));
@@ -308,8 +266,6 @@ describe("POST /api/accounts/:id/balance", () => {
     const accountId = await openAccount(userId, "current");
     await commit(userId, accountId);
 
-    // The bank says 9 000,00 today; the imported rows account for 1 660,29 of
-    // it, so the account held 7 339,71 before the statement begins.
     const body = BalanceSchema.parse(
       (await setBalance(userId, accountId, "2026-06-01", "9000.00")).body,
     );
@@ -378,7 +334,6 @@ describe("a PDF statement", () => {
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await pdf())).body);
 
     expect(body.inserted).toBe(2);
-    // 1 500,00 opening - 25,90 + 100,00 = 1 574,10, the printed closing balance.
     expect(body.reconciliation?.differenceEur).toBe("0.00");
     expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
@@ -428,8 +383,6 @@ describe("a PDF statement", () => {
         accountId,
         filename: "x.pdf",
         sha256: "0",
-        // A shape the type forbids reaching the parser, without a chained
-        // assertion: `JSON.parse` returns `any` on its own.
         draft: JSON.parse('{"statement":null,"rows":[],"problems":[],"extra":1}'),
       }),
     );
@@ -438,8 +391,6 @@ describe("a PDF statement", () => {
   });
 
   test("refuses one whose rows do not add up to its own closing balance", async () => {
-    // A statement claiming a closing balance its rows cannot reach: exactly what
-    // a mis-read layout produces, and the reason the check exists.
     const text = [
       "+100,00 Saldo 1.1.2026",
       "2.1.2026 −10,00 PKORTTIMAKSU 1 202601025UTZ00000001 J",
@@ -458,8 +409,6 @@ describe("a PDF this app cannot read", () => {
   test("is refused with the reason, not as a generic server error", async () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
-    // A valid PDF that is not a statement: the parser's complaint has to reach
-    // the owner, since "Palvelinvirhe" tells them nothing about what to do.
     const notAStatement = await readBytes(
       `${import.meta.dirname}/../import/fixtures/scanned-no-text.pdf`,
     );
@@ -467,16 +416,15 @@ describe("a PDF this app cannot read", () => {
     const response = await preview(userId, accountId, notAStatement);
 
     expect(response.status).toBe(400);
-    expect(ErrorSchema.parse(response.body).error).toContain("ei sisällä tekstiä");
+    expect(ErrorSchema.parse(response.body).error).toContain("contains no text");
   });
 
   test("a PDF with text but no balances says which is missing", async () => {
     const { parseOpStatementText } = await import("../import/bank-pdf.ts");
 
-    // The same path the route takes, on text that has rows but no balance line.
     expect(() =>
       parseOpStatementText("29.8.2025 −13,61 PKORTTIMAKSU 1 202508 J\nKAUPPA\n"),
-    ).toThrow(/alku- ja loppusaldoa/);
+    ).toThrow(/opening and closing balance/);
   });
 });
 
@@ -484,9 +432,6 @@ describe("importing several statements for one account", () => {
   const statementPdf = (name: string): Promise<ArrayBuffer> =>
     readBytes(`${import.meta.dirname}/../import/fixtures/${name}`);
 
-  // op-statement-earlier.pdf covers 31.12.2024 - 28.8.2025, opening 0,00 and
-  // closing 1 500,00; op-statement-sample.pdf picks up exactly there and ends
-  // at 1 574,10. Together they are one continuous history.
   const later = () => statementPdf("op-statement-sample.pdf");
   const earlier = () => statementPdf("op-statement-earlier.pdf");
 
@@ -499,8 +444,6 @@ describe("importing several statements for one account", () => {
     setReaderClient(reader());
     const second = PdfCommitSchema.parse((await commit(userId, accountId, await later())).body);
 
-    // The 2024 opening still stands: replacing it with the later statement's
-    // own opening while the earlier rows remain would count that period twice.
     expect(second.reconciliation?.openingBalanceWritten).toBe(false);
     expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
     expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
@@ -517,7 +460,6 @@ describe("importing several statements for one account", () => {
 
     expect(second.reconciliation?.openingBalanceWritten).toBe(true);
     expect(second.reconciliation?.openingBalanceDate).toBe("2024-12-31");
-    // Same total whichever order they arrive in, which is the point.
     expect(await cashTotal(userId, "2026-12-31")).toBe("1574.10");
   });
 
@@ -537,9 +479,6 @@ describe("a fixed-term deposit's maturity date", () => {
   const depositPdf = (): Promise<ArrayBuffer> =>
     readBytes(`${import.meta.dirname}/../import/fixtures/op-fixed-term-sample.pdf`);
 
-  // The fixture is a 5 000,00 deposit against a 0,00 opening balance, so the
-  // account's cash reads as exactly the amount the "locked without any further
-  // input" test below asserts.
   const accountRow = async (accountId: number) => {
     const { db } = await import("../db/index.ts");
     const { accounts } = await import("../db/schema.ts");
@@ -554,7 +493,6 @@ describe("a fixed-term deposit's maturity date", () => {
 
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
 
-    // The statement states it, so the owner does not have to type it again.
     expect(body.maturityDate).toBe("2027-02-01");
     expect((await accountRow(accountId))?.maturityDate).toBe("2027-02-01");
   });
@@ -568,8 +506,6 @@ describe("a fixed-term deposit's maturity date", () => {
     const body = PdfCommitSchema.parse((await commit(userId, accountId, await depositPdf())).body);
 
     expect(body.maturityDate).toBe("2027-12-31");
-    // A deposit whose stated term differs from the recorded one is worth
-    // looking at, not silently adopting.
     expect(body.maturityConflict).toBe("2027-02-01");
     expect((await accountRow(accountId))?.maturityDate).toBe("2027-12-31");
   });
@@ -599,7 +535,6 @@ describe("a fixed-term deposit's maturity date", () => {
 });
 
 describe("classifying an import's new merchants", () => {
-  /** A model that answers with one fixed text, whatever it is asked. */
   const replying = (text: string): Parameters<typeof setClassifierClient>[0] => ({
     run: () => Promise.resolve({ text, toolCalls: [] }),
   });
@@ -617,17 +552,12 @@ describe("classifying an import's new merchants", () => {
 
   test("teaches the rules a shop the file named, in one batch", async () => {
     setClassifierClient(
-      replying('{"rules":[{"pattern":"ESIMERKKI VAKUUTUS","category":"vakuutukset"}]}'),
+      replying('{"rules":[{"pattern":"ESIMERKKI VAKUUTUS","category":"insurance"}]}'),
     );
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
-    // Reading the rules is what seeds them for a new account; deleting before
-    // that would match nothing and the seed would put the pattern straight back.
     await rulesFor(db, userId);
-    // The seed rules already know the word "VAKUUTUS", so it is removed first:
-    // classification only ever runs on merchants no rule covers, and this is
-    // what one looks like.
     await removeRule(db, userId, "VAKUUTUS");
 
     const body = ClassifiedSchema.parse((await commit(userId, accountId)).body);
@@ -635,9 +565,8 @@ describe("classifying an import's new merchants", () => {
     expect(body.classified?.added).toBeGreaterThan(0);
     expect(body.classified?.error).toBeNull();
 
-    // ...and the rule holds for the next question about spending.
     const spending = await spendingView(db, userId, "2025-01-01", "2026-12-31", "category", 15);
-    expect(spending.groups.some((group) => group.key === "vakuutukset")).toBe(true);
+    expect(spending.groups.some((group) => group.key === "insurance")).toBe(true);
 
     setClassifierClient(null);
   });
@@ -652,7 +581,6 @@ describe("classifying an import's new merchants", () => {
     const response = await commit(userId, accountId);
     const body = ClassifiedSchema.parse(response.body);
 
-    // The rows are in; only the classification failed, and it says so.
     expect(response.status).toBe(200);
     expect(body.classified?.error).toBe("upstream unavailable");
     expect(await cashTotal(userId, "2026-06-01")).toBe("1660.29");
@@ -678,8 +606,6 @@ describe("a statement that knows more than the one already imported", () => {
     const { userId } = await signUp();
     const accountId = await openAccount(userId, "current");
 
-    // OP's CSV leaves the payee column empty for some card payments; its PDF
-    // names the shop, and both carry the same archive id.
     const blank = bytesOf(
       [
         '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"',
@@ -704,7 +630,6 @@ describe("a statement that knows more than the one already imported", () => {
     expect(second.skipped).toBe(1);
     expect(second.enriched).toBe(1);
     expect(await noteOf("20250910ESIM00000009")).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
-    // The balance is untouched: this is the same row, better described.
     expect(await cashTotal(userId, "2026-06-01")).toBe("-7.27");
   });
 

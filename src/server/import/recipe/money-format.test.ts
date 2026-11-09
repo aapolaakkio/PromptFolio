@@ -62,12 +62,6 @@ describe("readAmount", () => {
     expect(readAmount("250,00 CAD", format)).toBe(25_000n);
   });
 
-  /**
-   * A leading minus belongs to `negative: "leading"` and to nothing else. When
-   * every mode accepted one, a recipe that had described the sign wrongly
-   * still read `-25,90` correctly, and the balance check -- the whole safety
-   * net -- never saw the mistake.
-   */
   test("refuses a leading minus when the format says the minus trails", () => {
     expect(() => readAmount("-1 234,56", { ...base, negative: "trailing" })).toThrow();
   });

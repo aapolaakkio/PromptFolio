@@ -1,13 +1,8 @@
 import { readBytes, readText } from "../files.ts";
 import { describe, expect, test } from "vitest";
 
-import { extractStatementText, parseOpStatementText, verifyStatement } from "./bank-pdf.ts";
-
-// The fixture is the text layer of an OP statement, in the exact shapes a real
-// one uses: a unicode minus, a non-breaking thousands separator, an amount that
-// therefore splits across two tokens, the counterparty on the following line,
-// and the page furniture between them. Verified against a real statement,
-// where the printed closing balance was reached to the cent.
+import { parseOpStatementText, verifyStatement } from "./bank-pdf.ts";
+import { extractPages } from "./pdf-read.ts";
 
 const fixture = (): Promise<string> =>
   readText(`${import.meta.dirname}/fixtures/op-statement-sample.txt`);
@@ -55,7 +50,6 @@ describe("parseOpStatementText", () => {
   test("takes the archive id, not the payment reference, as the row's identity", async () => {
     const { rows } = parseOpStatementText(await fixture());
 
-    // The card payment's line carries a receipt number before the archive id.
     expect(rows[0]?.externalId).toBe("20250829ESIM00000001");
     expect(rows[1]?.externalId).toBe("20250901ESIM00000002");
     expect(new Set(rows.map((row) => row.externalId)).size).toBe(rows.length);
@@ -64,7 +58,7 @@ describe("parseOpStatementText", () => {
   test("refuses a document with no balance lines rather than importing rows alone", async () => {
     expect(() =>
       parseOpStatementText("29.8.2025 −13,61 PKORTTIMAKSU 1 202508 J\nKAUPPA\n"),
-    ).toThrow(/alku- ja loppusaldoa/);
+    ).toThrow(/opening and closing balance/);
   });
 });
 
@@ -73,7 +67,6 @@ describe("verifyStatement", () => {
     const statement = parseOpStatementText(await fixture());
     const result = verifyStatement(statement);
 
-    // 1500,00 - 25,90 + 2750,00 - 1000,00 + 12,34 = 3236,44
     expect(result.ok).toBe(true);
     expect(result.differenceEur).toBe(0n);
   });
@@ -84,30 +77,18 @@ describe("verifyStatement", () => {
 
     const result = verifyStatement(missingOne);
     expect(result.ok).toBe(false);
-    // The dropped row was -25,90, so the ledger would come out that much high.
     expect(result.differenceEur).toBe(-2590n);
   });
 });
 
-describe("extractStatementText", () => {
-  const pdf = (name: string): Promise<ArrayBuffer> =>
-    readBytes(`${import.meta.dirname}/fixtures/${name}`);
+test("a real PDF's text layer reads into a statement that balances", async () => {
+  const pages = await extractPages(
+    await readBytes(`${import.meta.dirname}/fixtures/op-statement-sample.pdf`),
+  );
+  const statement = parseOpStatementText(pages.map((page) => page.text).join("\n"));
 
-  test("reads a real PDF's text layer, balances and all", async () => {
-    const text = await extractStatementText(await pdf("op-statement-sample.pdf"));
-    const statement = parseOpStatementText(text);
-
-    expect(statement.rows).toHaveLength(2);
-    expect(verifyStatement(statement).ok).toBe(true);
-  });
-
-  test("refuses a scan rather than reporting a statement with no transactions", async () => {
-    // A PDF with no text layer parses to nothing, which would otherwise look
-    // exactly like a statement covering a quiet month.
-    await expect(extractStatementText(await pdf("scanned-no-text.pdf"))).rejects.toThrow(
-      /ei sisällä tekstiä/,
-    );
-  });
+  expect(statement.rows).toHaveLength(2);
+  expect(verifyStatement(statement).ok).toBe(true);
 });
 
 describe("a row the parser cannot read", () => {
@@ -120,11 +101,9 @@ describe("a row the parser cannot read", () => {
     ].join("\n");
 
     const statement = parseOpStatementText(text);
-    // The date does not exist, so the row is reported rather than stored as
-    // "2026-13-32", which would sort and filter wrongly everywhere downstream.
     expect(statement.rows).toHaveLength(0);
     expect(statement.problems).toHaveLength(1);
-    expect(statement.problems[0]?.message).toContain("ei ole olemassa");
+    expect(statement.problems[0]?.message).toContain("does not exist");
   });
 });
 
@@ -135,8 +114,6 @@ describe("a fixed-term deposit's statement", () => {
   test("reads balances that carry no sign", async () => {
     const statement = parseOpStatementText(await fixedTerm());
 
-    // An account opened during the period starts at a bare "0,00", with no "+".
-    // Requiring the sign refused a real statement as "not an OP statement".
     expect(statement.openingBalance.minor).toBe(0n);
     expect(statement.closingBalance.minor).toBe(500_000n);
   });
@@ -154,8 +131,6 @@ describe("a fixed-term deposit's statement", () => {
   });
 
   test("is not confused by the deposit and withdrawal totals into extra rows", async () => {
-    // "5 000,00 Panot yhteensä 1 kpl" is a summary, not a transaction: it
-    // carries an amount but no date, so it must not be read as one.
     const { rows } = parseOpStatementText(await fixedTerm());
     expect(rows).toHaveLength(1);
     expect(verifyStatement(parseOpStatementText(await fixedTerm())).ok).toBe(true);
@@ -168,9 +143,6 @@ describe("a fixed-term deposit's statement", () => {
 
 describe("a row continued across a page break", () => {
   test("does not take the statement's own period line as its counterparty", () => {
-    // The period sits directly under a page's repeated header, which is where a
-    // row broken across pages looks for its counterparty. Seventeen payments in
-    // a real statement were filed under a date range as though it were a shop.
     const text = [
       "+100,00 Saldo 1.1.2026",
       "2.1.2026 −10,00 PKORTTIMAKSU 1 202601025UTZ00000001 J",
@@ -190,8 +162,6 @@ describe("a row continued across a page break", () => {
 
 describe("a label of more than one word", () => {
   test("is kept whole, so a rule written against it matches", () => {
-    // "LUOTON MAKSU" was truncated to "LUOTON", and credit repayments then sat
-    // unclassified while a seed rule for them existed.
     const text = [
       "+100,00 Saldo 1.1.2026",
       "2.1.2026 −10,00 LUOTON MAKSU 202601025UTZ00000001 J",
@@ -216,8 +186,6 @@ describe("a label of more than one word", () => {
 
 describe("the message a payer wrote", () => {
   test("is kept, since it is often what identifies a bill", () => {
-    // A rent payment's payee can be a housing company's account number; the
-    // message is where it says what the money was for.
     const text = [
       "+1 000,00 Saldo 1.1.2026",
       "2.1.2026 −300,00 MAKSUPALVELU 20260102000000000001 A",
@@ -243,16 +211,11 @@ describe("the message a payer wrote", () => {
       "+88,00 Saldo 31.1.2026",
     ].join("\n");
 
-    // The masked card number and terminal codes say nothing about the purchase
-    // and would bury the shop's name beside them.
     expect(parseOpStatementText(text).rows[0]?.note).toBe("PKORTTIMAKSU — K-MARKET ESIMERKKI");
   });
 });
 
 describe("a transaction continued across a page break", () => {
-  // The real statement puts the payee of a page's last row at the top of the
-  // next page, past the footer and the whole repeated header. A dozen payments
-  // in a real statement landed that way and lost their payee entirely.
   const acrossPages = [
     "+100,00 Saldo 1.1.2026",
     "Tilinumero FI00 0000 0000 0000 00",
@@ -289,8 +252,6 @@ describe("a transaction continued across a page break", () => {
   });
 
   test("still treats an IBAN in a payee's place as a payee", () => {
-    // Only the account's own number is furniture. A transfer to someone the
-    // bank did not name is identified by their account number and nothing else.
     const text = [
       "+100,00 Saldo 1.1.2026",
       "Tilinumero FI00 0000 0000 0000 00",

@@ -1,20 +1,13 @@
 import type { BankRecipe } from "./types.ts";
 
 const DATE = String.raw`\d{1,2}\.\d{1,2}\.\d{4}`;
-/** The sign is optional, and the thousands separator is either kind of space. */
 const AMOUNT = String.raw`[+−-]?\d{1,3}(?:[  ]\d{3})*,\d{2}`;
-/** A word of a label, with the dots and hyphens OP puts in "TALLETUSAUTOM.". */
 const WORD = String.raw`[A-ZÄÖÅ][A-ZÄÖÅ.-]*`;
 
-/**
- * OP's PDF statement, written as a recipe rather than as code. The patterns are
- * `bank-pdf.ts`'s own, restated: this is the reference the interpreter is held
- * to, and the worked example the generation prompt shows the model.
- */
+/** `bank-pdf.ts` patterns restated: the reference the interpreter is held to. Finnish keywords are OP page furniture. */
 export const OP_STATEMENT_RECIPE: BankRecipe = {
   kind: "bank",
-  // Each keyword ends at a word boundary: a payee named "BIC-ATRIA OY" is not
-  // furniture.
+  // Each keyword ends at a word boundary: a payee named "BIC-ATRIA OY" is not furniture.
   skip: [
     String.raw`^(?:Tilinumero|BIC|Kirjauspäivä|Kirjaus-|päivä|Arvopäivä|Määrä,|euroa|Selitys|Maksunsaaja/maksaja|Viesti|Viite|Saajan|Tiliote|Käyttötili|Määräaikainen|Eräpäivä|Ajalta|Asiakkaan tulostama|Jatkuu)(?=\s|$)`,
     String.raw`^\d+ \(\d+\)$`,
@@ -30,8 +23,7 @@ export const OP_STATEMENT_RECIPE: BankRecipe = {
     `^(?<date>${DATE})\\s+(?<amount>${AMOUNT})` +
     `(?:\\s+(?<label>${WORD}(?:\\s+${WORD})*)(?=\\s|$))?` +
     String.raw`(?:.*?\s(?<externalId>[0-9A-Z]{16,})(?=\s|$))?.*$`,
-  // The standalone archive id must carry a digit; without that, a payee printed
-  // as one long unspaced word is eaten as an id and the name is lost.
+  // The archive id must carry a digit, or a payee printed as one long unspaced word is eaten as an id.
   continuation: [
     String.raw`^Viesti:\n(?<message>.+)$`,
     String.raw`^Viesti:$`,

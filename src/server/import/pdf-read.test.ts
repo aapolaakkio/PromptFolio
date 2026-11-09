@@ -14,6 +14,8 @@ describe("extractPages", () => {
   });
 
   test("refuses a scanned PDF with no text layer, naming the way round it", async () => {
-    await expect(extractPages(await fixture("scanned-no-text.pdf"))).rejects.toThrow(/skannattu/);
+    await expect(extractPages(await fixture("scanned-no-text.pdf"))).rejects.toThrow(
+      /scanned image/,
+    );
   });
 });

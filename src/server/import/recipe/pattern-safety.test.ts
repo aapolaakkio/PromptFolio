@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import { hasManyWildcards, mayBacktrackForever } from "./pattern-safety.ts";
 
-/** The shapes the check has always refused. None of them may start passing. */
 const CLASSIC = [
   "^(a+)+$",
   "(a|a)*$",
@@ -16,14 +15,8 @@ const CLASSIC = [
   "^(?:a+)+$",
 ];
 
-/**
- * Exponential patterns an earlier check accepted: it looked one level down,
- * so any group boundary between the outer repetition and the inner quantifier
- * hid it. Each of these doubles its run time every two input characters.
- */
 const NESTED = ["^(?:(a+))+$", "^((a)+)+$", String.raw`^([a-z]+\s?)+$`, String.raw`^(\w+\s?)*$`];
 
-/** Every pattern the reference recipe is made of, flattened. */
 const referencePatterns = (): string[] => [
   ...OP_STATEMENT_RECIPE.skip,
   OP_STATEMENT_RECIPE.recordStart,

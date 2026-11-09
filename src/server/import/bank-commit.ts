@@ -8,38 +8,16 @@ import type { BankRow } from "./bank-statement.ts";
 export type BankCommitResult = {
   readonly importId: number;
   readonly inserted: number;
-  /** Rows the account already had, matched on the bank's own archive id. */
   readonly skipped: number;
-  /**
-   * Stored rows that gained a payee from this file. The CSV leaves the column
-   * empty where the PDF names the shop, and both carry the same archive id, so
-   * dropping the second as a duplicate would throw that away.
-   */
   readonly enriched: number;
 };
 
-/** What one row is stored as: its identity, and the archive id worth keeping. */
 type Identity = { readonly contentHash: string; readonly externalId: string | null };
 
 const materialOf = (accountId: number, row: BankRow): string =>
   `bank:${accountId}:${row.date}:${row.amount}:${row.note}`;
 
-/**
- * Every row's identity, decided across the whole file rather than row by row.
- *
- * The bank's archive id identifies a row only when this file prints it on one
- * row alone. An id on two rows is not an archive id -- a recipe that reads a
- * payer's identifier or an LEI off a detail line hands every payment to one
- * company the same string -- and taking it at its word dropped the second row
- * as already imported, money the balance check then could not account for.
- *
- * What is left falls back to the row's own material, with the count of
- * identical earlier rows appended. Two genuinely identical payments on one day
- * stay two rows, and the same file imported twice still matches itself: the
- * rows arrive in the same order, so they are numbered the same way. The first
- * occurrence keeps the bare material, which is what rows stored before this
- * numbering existed were written under.
- */
+/** An archive id counts only when printed on one row alone; the rest hash material plus the count of identical earlier rows. */
 const identitiesOf = (accountId: number, rows: readonly BankRow[]): readonly Identity[] => {
   const idCounts = new Map<string, number>();
   for (const row of rows) {
@@ -52,8 +30,7 @@ const identitiesOf = (accountId: number, rows: readonly BankRow[]): readonly Ide
     if (row.externalId !== null && idCounts.get(row.externalId) === 1) {
       return { contentHash: row.externalId, externalId: row.externalId };
     }
-    // The id is dropped as well as ignored: `txn_external_uq` would refuse the
-    // second row carrying it, and refuse the whole batch with it.
+    // Drop the id too: `txn_external_uq` would refuse the whole batch.
     const material = materialOf(accountId, row);
     const before = seen.get(material) ?? 0;
     seen.set(material, before + 1);
@@ -64,13 +41,6 @@ const identitiesOf = (accountId: number, rows: readonly BankRow[]): readonly Ide
   });
 };
 
-/**
- * Writes a statement under one import record, so the whole file undoes as a unit.
- *
- * Bank rows carry no instrument, so none of the securities machinery applies. The
- * ledger's unique index still does, and is checked first so a duplicate is
- * reported as a skip rather than thrown by the insert.
- */
 export const commitBankStatement = async (
   db: Db,
   args: {
@@ -85,8 +55,7 @@ export const commitBankStatement = async (
   let skipped = 0;
   let enriched = 0;
 
-  // The import record first, because every row below references its id and D1
-  // has no interactive transaction to read a generated id inside.
+  // First: every row references its id, and D1 has no interactive transaction.
   const record = await db
     .insert(imports)
     .values({
@@ -99,13 +68,9 @@ export const commitBankStatement = async (
     })
     .returning()
     .get();
-  if (record === undefined) throw new Error("Tuontitietueen luonti epäonnistui");
+  if (record === undefined) throw new Error("Creating the import record failed");
 
-  // Every hash this file would write, looked up in bulk rather than one query
-  // per row: a year of card payments is several hundred rows, and a statement
-  // is normally re-imported with most of it already stored. D1 caps bound
-  // parameters per statement, so the lookup goes out in chunks rather than as
-  // one IN list.
+  // Looked up in bulk, not per row; chunked because D1 caps bound parameters per statement.
   const HASH_CHUNK = 90;
   const identities = identitiesOf(args.accountId, args.rows);
   const hashes = identities.map((identity) => identity.contentHash);
@@ -131,8 +96,7 @@ export const commitBankStatement = async (
   const stored = new Map(found.map((row) => [row.contentHash, row]));
   const existing = new Set(stored.keys());
 
-  // The loop only decides -- it reads nothing -- so every write it produces can
-  // go out as one batch, which D1 runs as a single transaction.
+  // The loop only decides, so all writes go out as one batch (one D1 transaction).
   const writes = [];
 
   for (const [order, row] of args.rows.entries()) {
@@ -140,9 +104,6 @@ export const commitBankStatement = async (
     const { contentHash, externalId } = identities[order]!;
     if (existing.has(contentHash)) {
       skipped++;
-      // Only ever fills a blank: a note this file can say more about gets the
-      // fuller text, and one that already names a payee is left alone. The
-      // amounts, dates and identity are the same row either way.
       const previous = stored.get(contentHash);
       if (previous && row.counterparty !== "" && !(previous.note ?? "").includes(" — ")) {
         writes.push(
@@ -183,8 +144,7 @@ export const commitBankStatement = async (
       .where(eq(imports.id, record.id)),
   );
 
-  // SAFETY: `db.batch` is typed as a non-empty tuple; the `imports` update
-  // pushed immediately above is what establishes `writes` is non-empty.
+  // SAFETY: `db.batch` wants a non-empty tuple; the `imports` update above makes it non-empty.
   await db.batch(writes as [(typeof writes)[number], ...typeof writes]);
 
   return { importId: record.id, inserted, skipped, enriched };

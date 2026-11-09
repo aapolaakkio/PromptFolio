@@ -17,22 +17,13 @@ import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
 import { commitDraft } from "./commit.ts";
 import type { Draft, DraftTxn } from "./map.ts";
 
-/**
- * Mirrors commit.test.ts's own `seed`/`draftTxn`/`draftOf` helpers -- this file exercises the
- * same `commitDraft` these tests do, immediately followed by `backfillCommittedInstruments`,
- * exactly as `src/server/import/service.ts`'s two commit paths wire the two together. A fresh,
- * isolated `testDb()` per test (not the process-wide shared handle `imports.test.ts` uses) is
- * deliberate here too: `backfillCommittedInstruments` takes `db` as an explicit parameter
- * (like `commitDraft`), so it needs no HTTP layer, real auth, or a random ISIN to stay isolated
- * from every other test file sharing that process-wide database.
- */
 const seed = async () => {
   const { db } = await testDb();
   await db
     .insert(user)
     .values({
       id: "u1",
-      name: "Testi",
+      name: "Test",
       email: "t@example.com",
       emailVerified: true,
       createdAt: new Date(),
@@ -99,7 +90,7 @@ const onePointAt2020_06_15: FetchImpl = async () =>
       result: [
         {
           meta: { currency: "EUR" },
-          timestamp: [1592179200], // 2020-06-15T00:00:00Z
+          timestamp: [1592179200],
           indicators: { quote: [{ close: [3.0] }] },
         },
       ],
@@ -108,7 +99,7 @@ const onePointAt2020_06_15: FetchImpl = async () =>
 
 test("does nothing, and touches no network, when the committed draft has no instrument rows", async () => {
   const { db, accountId } = await seed();
-  const draft = draftOf([draftTxn({ accountId })]); // a plain deposit, instrumentId stays null
+  const draft = draftOf([draftTxn({ accountId })]);
   await commitDraft(db, commitArgs(accountId, draft));
 
   await expect(
@@ -209,13 +200,11 @@ test("never rejects when the price source fails -- the commit it followed must n
     }),
   ]);
   const commitResult = await commitDraft(db, commitArgs(accountId, draft));
-  expect(commitResult.inserted).toBe(1); // the commit itself succeeded...
+  expect(commitResult.inserted).toBe(1);
 
   const throwing: FetchImpl = async () => {
-    throw new Error("Yahoo on poissa käytöstä");
+    throw new Error("Yahoo is unavailable");
   };
-  // ...and this, called right after exactly as imports.ts calls it, resolves rather than
-  // rejecting even though the price source it drives is completely down.
   await expect(
     backfillCommittedInstruments(db, draft, { fetchImpl: throwing }),
   ).resolves.toBeUndefined();
@@ -227,8 +216,7 @@ test("never rejects when the price source fails -- the commit it followed must n
     .all();
   expect(log).toHaveLength(1);
   expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("Yahoo on poissa käytöstä");
-  // The committed transaction itself is untouched by the failed backfill.
+  expect(log[0]!.message).toContain("Yahoo is unavailable");
   expect(await db.select().from(transactions).all()).toHaveLength(1);
 });
 

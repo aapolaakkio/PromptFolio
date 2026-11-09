@@ -4,9 +4,6 @@ import { NORDNET } from "./fixtures/broker-mappings.ts";
 import { portfoliosNamed } from "./portfolios.ts";
 import type { RawRow } from "./types.ts";
 
-// Nordnet's export names the column `Salkku`, so the parser hands it over in
-// `values` under that heading; `cells` matters only for a config that addresses
-// a repeated header positionally (Nordnet's five `Valuutta` columns).
 const row = (portfolio: string, line: number): RawRow => ({
   line,
   cells: [],

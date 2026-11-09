@@ -70,7 +70,7 @@ describe("the verify_recipe handler", () => {
     const result = await session.tool.run({ recipe: { kind: "bank" } });
 
     expect(result.ok).toBe(false);
-    expect(String(result.error)).toContain("kelpaa");
+    expect(String(result.error)).toContain("not valid");
     expect(session.best()).toBeNull();
   });
 
@@ -80,7 +80,7 @@ describe("the verify_recipe handler", () => {
     const result = await session.tool.run({ recipe: noBalances });
 
     expect(result.ok).toBe(false);
-    expect(String(result.error)).toMatch(/saldo/i);
+    expect(String(result.error)).toMatch(/balance/i);
   });
 
   test("keeps the best attempt: the one that read the most rows", async () => {

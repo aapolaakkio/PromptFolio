@@ -4,18 +4,10 @@ import { describe, expect, test } from "vitest";
 import { runCsvRecipe } from "./csv-recipe.ts";
 import { OP_BANK_CSV_RECIPE, OP_CREDIT_CSV_RECIPE } from "./op-csv-reference.ts";
 
-// The fixture is a synthetic OP export in the real format: semicolon-delimited,
-// quoted, ISO dates, Finnish decimal comma, and OP's own column names. These are
-// the assertions the hand-written OP parser was held to, now held by its recipe.
-
 const fixture = (): Promise<ArrayBuffer> =>
   readBytes(`${import.meta.dirname}/../fixtures/op-bank-sample.csv`);
 
-/**
- * SAFETY: `TextEncoder.encode` always returns a `Uint8Array` backed by a plain
- * `ArrayBuffer` (never a `SharedArrayBuffer`), which the DOM type union cannot
- * express.
- */
+// SAFETY: the body has the shape the route returns.
 const bytesOf = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 
 const textOf = async (): Promise<string> => new TextDecoder().decode(await fixture());
@@ -34,7 +26,6 @@ describe("OP account export", () => {
     expect(byLabel.get("PKORTTIMAKSU")?.type).toBe("WITHDRAWAL");
     expect(byLabel.get("PALKKA")?.type).toBe("DEPOSIT");
     expect(byLabel.get("MAKSUPALVELU")?.type).toBe("WITHDRAWAL");
-    // A transfer is both directions depending on the day; the label cannot say.
     expect(byLabel.get("TILISIIRTO")?.type).toBe("WITHDRAWAL");
   });
 
@@ -64,7 +55,6 @@ describe("OP account export", () => {
     const { rows } = runCsvRecipe(await fixture(), OP_BANK_CSV_RECIPE);
 
     expect(rows[1]?.note).toBe("PALKKA — ESIMERKKI OYJ — PALKKA 09/2025");
-    // An empty counterparty leaves no dangling separator.
     expect(rows[3]?.note).toBe("TALLETUSKORKO");
   });
 
@@ -78,13 +68,11 @@ describe("OP account export", () => {
   });
 
   test("passes a structurally broken line through as a problem", async () => {
-    // Content after a closing quote, before the delimiter: the CSV layer itself
-    // refuses this line, and its complaint must reach the same list.
     const broken = (await textOf()).replace('"PKORTTIMAKSU"', '"PKORTTIMAKSU"x');
 
     const { rows, problems } = runCsvRecipe(bytesOf(broken), OP_BANK_CSV_RECIPE);
     expect(rows).toHaveLength(4);
-    expect(problems[0]?.message).toContain("lainausmerkkien");
+    expect(problems[0]?.message).toContain("closing quote");
   });
 
   test("reports a row whose amount is missing rather than importing a zero", async () => {
@@ -96,7 +84,6 @@ describe("OP account export", () => {
   });
 });
 
-/** OP's credit card log: the real header, and rows shaped like the real ones. */
 const CARD_CSV = [
   '"Kirjauspäivä";"Arvopäivä";"Määrä";"Kurssi";"Selite";"Maksaja";"Saaja";"Arkistointitunnus"',
   '"2026-08-27";"2026-08-28";-23.82;"EUR";"ESIMERKKI ENERGIA";"MAKSAJA NIMI";"ESIMERKKI ENERGIA";"10000000000000000000001"',
@@ -105,8 +92,6 @@ const CARD_CSV = [
 
 describe("OP credit card log", () => {
   test("is not readable by the account export's recipe", () => {
-    // The card log has no `Määrä EUROA`, so the account recipe names a header
-    // that is not there, and reads nothing rather than misreading it.
     expect(runCsvRecipe(bytesOf(CARD_CSV), OP_BANK_CSV_RECIPE).missingHeaders).toContain(
       "Määrä EUROA",
     );
@@ -119,14 +104,10 @@ describe("OP credit card log", () => {
     const purchase = rows.find((row) => row.counterparty === "ESIMERKKI ENERGIA");
     expect(purchase?.amount).toBe(-2382n);
     expect(purchase?.type).toBe("WITHDRAWAL");
-    // The note is what the spending rules match on, so the shop's name has to
-    // reach it.
     expect(purchase?.note).toContain("ESIMERKKI ENERGIA");
   });
 
   test("reads a settlement as money arriving on the card", () => {
-    // The credit side of the monthly bill, paired with its debit elsewhere by
-    // `spending/internal.ts`.
     const { rows } = runCsvRecipe(bytesOf(CARD_CSV), OP_CREDIT_CSV_RECIPE);
     const settlement = rows.find((row) => row.note === "Suoritus");
 

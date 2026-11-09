@@ -54,7 +54,7 @@ describe("verifyRun", () => {
     const verdict = verifyRun(run({ closingBalance: money(999_999n, EUR) }));
 
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.report).toMatch(/Saldotarkistus/);
+    if (!verdict.ok) expect(verdict.report).toMatch(/Balance check/);
   });
 
   test("names the difference so the model can see a sign error", () => {
@@ -78,7 +78,7 @@ describe("verifyRun", () => {
       { line: 6, text: "Maksajan viite:" },
       { line: 7, text: "T20250101-000000" },
       { line: 9, text: "Kolikot yht 12,34 EUR" },
-      { line: 10, text: "Esimerkkipankki Oy, Y-tunnus 0000000-0, PL 1, 00100 Helsinki" },
+      { line: 10, text: "Examplebank Oy, Y-tunnus 0000000-0, PL 1, 00100 Helsinki" },
     ];
 
     expect(verifyRun(run({}, detail))).toEqual({ ok: true });
@@ -110,7 +110,7 @@ describe("verifyRun", () => {
   });
 
   test("tolerates an unclaimed line before the first row when rows are present", () => {
-    const verdict = verifyRun(run({}, [{ line: 1, text: "28.08.2025 -25,90 ESIMERKKI ASIAKAS" }]));
+    const verdict = verifyRun(run({}, [{ line: 1, text: "28.08.2025 -25,90 EXAMPLE ASIAKAS" }]));
 
     expect(verdict).toEqual({ ok: true });
   });
@@ -129,7 +129,7 @@ describe("verifyRun", () => {
   test("fails and names only the unclaimed line at or after the first row", () => {
     const verdict = verifyRun(
       run({}, [
-        { line: 1, text: "28.08.2025 -25,90 ESIMERKKI ASIAKAS" },
+        { line: 1, text: "28.08.2025 -25,90 EXAMPLE ASIAKAS" },
         { line: 7, text: "28.08.2025 -25,90 K-MARKET" },
       ]),
     );
@@ -137,16 +137,11 @@ describe("verifyRun", () => {
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.report).toContain("K-MARKET");
-      expect(verdict.report).not.toContain("ESIMERKKI ASIAKAS");
+      expect(verdict.report).not.toContain("EXAMPLE ASIAKAS");
     }
   });
 });
 
-/**
- * Every line the reference OP recipe drops through `skip` on the two real
- * fixtures, plus the noise a card terminal prints. None of it may trip the
- * "this was a transaction" probe.
- */
 const OP_FURNITURE = [
   "Tilinumero FI00 0000 0000 0000 00",
   "BIC OKOYFIHH",
@@ -223,10 +218,6 @@ describe("verifyRun -- money hidden by skip", () => {
   });
 });
 
-/**
- * Date and amount shapes an earlier, narrower probe let through. Each one
- * hides a real transfer while the arithmetic still balances.
- */
 const EVASIONS = [
   "1.8.26 −250,00 SIIRTO",
   "29/08/2025 −250,00 SIIRTO",
@@ -274,7 +265,6 @@ describe("the running balance a statement prints after each row", () => {
   });
 
   test("passes when every row agrees with the balance printed beside it", () => {
-    // 1 500,00 opening; rows -25,90 then +1 762,34.
     expect(verifyRun(chained([147_410n, 323_644n]))).toEqual({ ok: true });
   });
 
@@ -282,7 +272,7 @@ describe("the running balance a statement prints after each row", () => {
     const verdict = verifyRun(chained([147_410n, 999_999n]));
 
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.report).toMatch(/juokseva saldo/i);
+    if (!verdict.ok) expect(verdict.report).toMatch(/running balance/i);
   });
 
   test("says nothing when the statement prints no running balance", () => {

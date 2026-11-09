@@ -3,66 +3,32 @@ import { z } from "zod";
 import { EUR, formatMoney, parseMoney } from "../../../core/money.ts";
 import type { ChatClient } from "../../chat/runner.ts";
 import { parseCsv } from "../csv.ts";
-import { askForRecipe } from "./ask.ts";
+import { askForRecipe, FINNISH_CONTEXT } from "./ask.ts";
 import { readDate } from "./date-format.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { readDecimal } from "./money-format.ts";
-import { mayBacktrackForever } from "./pattern-safety.ts";
 import { forgetRecipe, loadParsed, saveRecipe } from "./store.ts";
-import { MAX_PATTERN_LENGTH, MoneyFormatSchema } from "./types.ts";
+import { groupNames, MoneyFormatSchema, Pattern } from "./types.ts";
 
 const SAMPLE_LINES = 120;
 const QUOTED_FAILURES = 10;
-const NOT_READABLE = "Tekstiä ei tunnistettu omistusluetteloksi";
-
-const Pattern = z
-  .string()
-  .min(1)
-  .max(MAX_PATTERN_LENGTH)
-  .refine(
-    (source) => {
-      try {
-        new RegExp(source, "u");
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    { message: "Säännöllistä lauseketta ei voitu kääntää" },
-  )
-  .refine((source) => !mayBacktrackForever(source), {
-    message: "Säännöllinen lauseke voi jäädä jumiin (sisäkkäinen toisto)",
-  });
+const NOT_READABLE = "The text was not recognised as a holdings list";
 
 const HOLDING_FIELDS = ["name", "isin", "quantity", "marketValue", "cost", "currency"] as const;
 type HoldingField = (typeof HOLDING_FIELDS)[number];
 const FIELD_NAMES: ReadonlySet<string> = new Set(HOLDING_FIELDS);
 const isField = (name: string): name is HoldingField => FIELD_NAMES.has(name);
 
-const groupNames = (source: string): string[] =>
-  [...source.matchAll(/\(\?<([A-Za-z][A-Za-z0-9]*)>/g)].map((m) => m[1] ?? "");
-
-/**
- * A holdings statement: a table read by header, or values one per line read
- * record by record, as OP's web view copies and a PDF extracts. The statement's
- * own date and printed total are read by patterns over the whole text, each
- * naming its figure as the group `value`.
- */
 const BaseHoldings = z
   .object({
     kind: z.literal("holdings"),
     layout: z.enum(["table", "record"]),
-    /** Table layout: the column separator. */
     delimiter: z.enum([";", ",", "\t", "|"]).nullable(),
-    /** Table layout: which header is which field. */
     columns: z
       .array(z.object({ field: z.enum(HOLDING_FIELDS), header: z.string().min(1) }).strict())
       .max(HOLDING_FIELDS.length),
-    /** Lines dropped first -- headings, section titles, a table's title or total. */
     skip: z.array(Pattern).max(40),
-    /** Record layout: the line a holding starts on. */
     recordStart: Pattern.nullable(),
-    /** Record layout: one whole holding, lines joined with \n, fields as named groups. */
     record: Pattern.nullable(),
     asOf: Pattern.nullable(),
     total: Pattern.nullable(),
@@ -78,15 +44,15 @@ const fieldsOf = (recipe: HoldingsRecipe): HoldingField[] =>
 
 export const HoldingsRecipeSchema = BaseHoldings.superRefine((recipe, ctx) => {
   if (recipe.layout === "table" && recipe.delimiter === null) {
-    ctx.addIssue({ code: "custom", message: "Taulukolla on oltava delimiter" });
+    ctx.addIssue({ code: "custom", message: "A table must have a delimiter" });
   }
   if (recipe.layout === "record" && (recipe.record === null || recipe.recordStart === null)) {
-    ctx.addIssue({ code: "custom", message: "Tietueella on oltava recordStart ja record" });
+    ctx.addIssue({ code: "custom", message: "A record layout must have recordStart and record" });
   }
   const fields = fieldsOf(recipe);
   for (const required of ["name", "quantity", "marketValue"] as const) {
     if (!fields.includes(required)) {
-      ctx.addIssue({ code: "custom", message: `Kenttä puuttuu: ${required}` });
+      ctx.addIssue({ code: "custom", message: `Missing field: ${required}` });
     }
   }
 });
@@ -99,15 +65,13 @@ const parseHoldingsRecipe = (raw: unknown): HoldingsRecipe => HoldingsRecipeSche
 export type Holding = {
   readonly name: string;
   readonly isin: string | null;
-  /** A plain decimal, every printed decimal kept. */
   readonly quantity: string;
-  /** In cents, as a plain decimal: a broker's extra decimals are false precision. */
   readonly marketValueEur: string;
   readonly costEur: string;
   readonly currency: string;
 };
 
-export type HoldingsRun = {
+type HoldingsRun = {
   readonly asOf: string | null;
   readonly statedTotalEur: string | null;
   readonly holdings: readonly Holding[];
@@ -123,7 +87,7 @@ const toCents = (text: string, recipe: HoldingsRecipe): string =>
 
 const holdingOf = (raw: Partial<Record<HoldingField, string>>, recipe: HoldingsRecipe): Holding => {
   const name = (raw.name ?? "").trim();
-  if (name === "") throw new Error("Nimi puuttuu");
+  if (name === "") throw new Error("Name is missing");
   const cost = (raw.cost ?? "").trim();
   return {
     name,
@@ -142,8 +106,6 @@ const valueOf = (source: string | null, text: string): string | null => {
 };
 
 const tableRows = (text: string, recipe: HoldingsRecipe) => {
-  // A title or a total printed around the table is dropped before the header
-  // row is looked for, the same `skip` the record layout uses.
   const skip = recipe.skip.map((source) => new RegExp(source, "u"));
   const kept = text
     .split(/\r?\n/)
@@ -158,7 +120,7 @@ const tableRows = (text: string, recipe: HoldingsRecipe) => {
       problems: [
         {
           line: 1,
-          message: `Näitä sarakkeita ei ole otsikkorivillä: ${missing.map((c) => c.header).join(", ")}`,
+          message: `These columns are not in the header row: ${missing.map((c) => c.header).join(", ")}`,
           raw: parsed.headers.join(" | "),
         },
       ],
@@ -198,7 +160,7 @@ const recordRows = (text: string, recipe: HoldingsRecipe) => {
     const joined = block.lines.join("\n");
     const match = record.exec(joined);
     if (match === null) {
-      problems.push({ line: block.line, message: `Riviä ei luettu: ${joined}`, raw: joined });
+      problems.push({ line: block.line, message: `Row not read: ${joined}`, raw: joined });
       continue;
     }
     rows.push({ line: block.line, raw: joined, fields: { ...match.groups } });
@@ -217,7 +179,7 @@ export const runHoldingsRecipe = (text: string, recipe: HoldingsRecipe): Holding
     } catch (cause) {
       allProblems.push({
         line: row.line,
-        message: cause instanceof Error ? cause.message : "Riviä ei luettu",
+        message: cause instanceof Error ? cause.message : "Row not read",
         raw: row.raw,
       });
     }
@@ -238,44 +200,35 @@ const sumOf = (holdings: readonly Holding[]): string =>
     currency: EUR,
   });
 
-/**
- * Every row read, and -- when the statement prints a total -- the holdings add
- * up to it to the cent. The total is the real check: a recipe that drops or
- * misreads a holding cannot also reach the printed figure.
- */
 const judge = (run: HoldingsRun, needsAsOf: boolean) => {
   const reasons: string[] = run.problems
     .slice(0, QUOTED_FAILURES)
-    .map((p) => `rivi ${p.line}: ${p.message}`);
-  if (run.holdings.length === 0) reasons.push("Yhtään omistusta ei luettu.");
-  if (needsAsOf && run.asOf === null) reasons.push("asOf ei löytänyt otteen päivää.");
+    .map((p) => `line ${p.line}: ${p.message}`);
+  if (run.holdings.length === 0) reasons.push("No holdings were read.");
+  if (needsAsOf && run.asOf === null) reasons.push("asOf did not find the statement date.");
   if (run.statedTotalEur !== null && sumOf(run.holdings) !== run.statedTotalEur) {
     reasons.push(
-      `Omistusten summa ${sumOf(run.holdings)} ei vastaa otteen kokonaisarvoa ${run.statedTotalEur}.`,
+      `The holdings sum to ${sumOf(run.holdings)}, which does not match the statement total ${run.statedTotalEur}.`,
     );
   }
   return { passed: reasons.length === 0, score: run.holdings.length, feedback: reasons.join("\n") };
 };
 
 const INSTRUCTIONS = [
-  "Saat arvopapereiden omistusotteen tekstinä: taulukko (CSV tai kopioitu), verkkopalvelusta kopioitu näkymä jossa jokainen arvo on omalla rivillään, tai PDF:stä poimittu teksti. Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen omistuksen.",
-  "layout: table jos tekstissä on otsikkorivi ja sarakkeet; silloin delimiter ja columns (otsikot täsmälleen kuten kirjoitettu). Muuten record: skip poistaa otsikot ja väliotsikot, recordStart on rivi josta omistus alkaa, record on säännöllinen lauseke joka vastaa yhtä kokonaista omistusta (rivit yhdistettynä \\n-merkillä).",
-  "Kentät (columns tai recordin nimetyt ryhmät): name, isin, quantity kappalemäärä, marketValue markkina-arvo, cost hankinta-arvo, currency. Pakolliset: name, quantity, marketValue.",
-  "asOf: säännöllinen lauseke jonka ryhmä value on otteen päivä, tai null. total: lauseke jonka ryhmä value on otteen ilmoittama kokonaisarvo, tai null jos sitä ei ole.",
-  "money kertoo desimaali- ja tuhaterottimen, negatiivisen merkinnän ja strip-listassa yksiköt jotka poistetaan (esim. kpl, EUR).",
+  FINNISH_CONTEXT,
+  "You receive a securities holdings statement as text: a table (CSV or copied), a view copied from a web service where every value is on its own line, or text extracted from a PDF. Describe its format as a JSON object that the program uses to read every holding.",
+  "layout: table if the text has a header row and columns; then delimiter and columns (headers exactly as written). Otherwise record: skip removes headings and subheadings, recordStart is the line a holding starts at, record is a regular expression matching one whole holding (its lines joined with \\n).",
+  "Fields (columns or the record's named groups): name, isin, quantity number of units, marketValue market value, cost cost basis, currency. Required: name, quantity, marketValue.",
+  "asOf: a regular expression whose group value is the statement date, or null. total: a pattern whose group value is the total value the statement states, or null if there is none.",
+  "money gives the decimal and thousands separators, the negative notation, and in the strip list the units to remove (e.g. kpl, EUR).",
 ].join("\n");
 
-export const holdingsRecipeKey = (text: string): string =>
+const holdingsRecipeKey = (text: string): string =>
   fingerprint(
     "holdings",
     text.split(/\r?\n/).filter((line) => line.trim() !== ""),
   );
 
-/**
- * A holdings statement, read by a recipe: a stored one for this layout when it
- * still reads everything, otherwise one the model writes. `needsAsOf` is for a
- * statement whose date only the document itself states.
- */
 export const readHoldingsByRecipe = async (
   text: string,
   userId: string,
@@ -302,10 +255,6 @@ export const readHoldingsByRecipe = async (
   return asked.run;
 };
 
-/**
- * A holdings file's text. A byte-order mark settles the encoding; anything
- * else is read as UTF-8.
- */
 export const decodeHoldingsFile = (bytes: Uint8Array): string => {
   const utf16le = bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe;
   const utf16be = bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff;

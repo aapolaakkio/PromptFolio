@@ -14,15 +14,9 @@ const USER = "recipe-read-user";
 const pdf = (): Promise<ArrayBuffer> =>
   readBytes(`${import.meta.dirname}/../fixtures/op-statement-sample.pdf`);
 
-/** The key `readBankPdfByRecipe` will look under for this document. */
 const keyFor = async (bytes: ArrayBuffer): Promise<string> =>
   recipeKey(bytes, (await extractPages(bytes))[0]?.text ?? "");
 
-/**
- * A model that offers each scripted recipe in turn as a `verify_recipe` call --
- * the only way a recipe reaches `generateRecipe` now -- and counts the asks. A
- * reply that is not a recipe is answered as plain words.
- */
 type Stub = ChatClient & { readonly calls: number };
 
 const asCall = (reply: string): ModelReply => {
@@ -58,11 +52,6 @@ const stub = (...replies: string[]): Stub => {
   };
 };
 
-/**
- * A description that no longer fits its statement: its record-start matches no
- * line, so it reads the file as having no transactions at all and the printed
- * balances cannot be reached.
- */
 const BROKEN_RECIPE = {
   ...OP_STATEMENT_RECIPE,
   recordStart: String.raw`^EI-OSU (?<date>\d{1,2}\.\d{1,2}\.\d{4}) (?<amount>\d+,\d{2})$`,
@@ -74,7 +63,7 @@ beforeEach(async () => {
     .insert(user)
     .values({
       id: USER,
-      name: "Testi",
+      name: "Test",
       email: `${USER}@example.test`,
       emailVerified: true,
       createdAt: new Date(),
@@ -98,7 +87,7 @@ describe("readBankPdfByRecipe", () => {
     const first = stub(JSON.stringify(OP_STATEMENT_RECIPE));
     await readBankPdfByRecipe(await pdf(), USER, first);
 
-    const second = stub("tätä ei pitäisi kysyä");
+    const second = stub("this should not be asked");
     const run = await readBankPdfByRecipe(await pdf(), USER, second);
 
     expect(second.calls).toBe(0);
@@ -117,7 +106,6 @@ describe("readBankPdfByRecipe", () => {
     const client = stub(JSON.stringify(OP_STATEMENT_RECIPE));
     const run = await readBankPdfByRecipe(bytes, USER, client);
 
-    // The stored description was found, failed, and was replaced by one that works.
     expect(client.calls).toBe(1);
     expect(run.statement.rows.length).toBeGreaterThan(0);
     const stored = await db.select().from(importRecipes).all();
@@ -146,9 +134,7 @@ describe("readBankPdfByRecipe", () => {
     });
 
     const client = stub(JSON.stringify(OP_STATEMENT_RECIPE));
-    // A budget of -1 stands in for a pathological pattern: the stored recipe
-    // cannot finish. Swallowed, it would burn the same CPU every month.
-    await expect(readBankPdfByRecipe(bytes, USER, client, -1)).rejects.toThrow(/kesti liian kauan/);
+    await expect(readBankPdfByRecipe(bytes, USER, client, -1)).rejects.toThrow(/took too long/);
     expect(client.calls).toBe(0);
     expect(await db.select().from(importRecipes).all()).toHaveLength(0);
   });
@@ -157,6 +143,6 @@ describe("readBankPdfByRecipe", () => {
     const scanned = await readBytes(`${import.meta.dirname}/../fixtures/scanned-no-text.pdf`);
     await expect(
       readBankPdfByRecipe(scanned, USER, stub(JSON.stringify(OP_STATEMENT_RECIPE))),
-    ).rejects.toThrow(/tekstiä/);
+    ).rejects.toThrow(/text/);
   });
 });

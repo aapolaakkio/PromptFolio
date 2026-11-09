@@ -12,10 +12,7 @@ const fixture = (): Promise<ArrayBuffer> =>
 
 const known = { knownIsins: new Map<string, number>(), knownNames: new Map<string, number>() };
 
-/**
- * SAFETY: `TextEncoder.encode` returns a Uint8Array over a plain ArrayBuffer,
- * never a SharedArrayBuffer.
- */
+// SAFETY: the body has the shape the route returns.
 const bytesOf = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 
 describe("the Nordnet reference recipe", () => {
@@ -97,7 +94,7 @@ describe("runBrokerTable", () => {
       ...recipe,
       types: [
         ...recipe.types,
-        { label: "Reinvest", type: "IGNORE" as const, reason: "Toisella rivillä", sign: null },
+        { label: "Reinvest", type: "IGNORE" as const, reason: "On another row", sign: null },
       ],
     };
     const run = runBrokerTable(bytesOf(PASTED), withIgnore, known, 1);

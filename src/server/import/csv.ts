@@ -1,25 +1,6 @@
 import type { BrokerCsvConfig, CsvProblem, RawRow } from "./types.ts";
 
-/**
- * Split one CSV line, honouring double-quoted fields.
- *
- * A `"` only opens quoting when it appears at the very start of a field
- * (i.e. nothing has been accumulated into that field yet). A `"` appearing
- * anywhere else in an unquoted field is treated as a literal character —
- * this matches how real-world CSV producers/consumers behave and avoids a
- * single stray quote silently swallowing the rest of the line, delimiters
- * and all. Inside a quoted field, `""` is the escape for a literal `"`,
- * and the closing `"` ends quoting.
- *
- * Two situations are malformed quoting and throw rather than producing a
- * silently-wrong field: a field left open at end-of-line (no closing `"`),
- * and non-delimiter content directly following a field's closing `"`
- * (e.g. `"abc"def`) — RFC 4180 allows nothing but the delimiter or
- * end-of-line right after a closing quote, and silently concatenating that
- * trailing text would drop the quote characters without any signal.
- * `parseCsv` catches these per-row and turns them into `problems` instead
- * of aborting the whole file; see its own comment for why.
- */
+/** `"` opens quoting only at a field start, `""` inside quotes is literal; malformed quoting throws. */
 const splitLine = (line: string, delimiter: string, lineNumber: number): string[] => {
   const out: string[] = [];
   let field = "";
@@ -39,7 +20,7 @@ const splitLine = (line: string, delimiter: string, lineNumber: number): string[
       }
     } else if (quoteClosed && char !== delimiter) {
       throw new Error(
-        `CSV rivi ${lineNumber}: lainausmerkkien jälkeen ylimääräistä sisältöä ennen erotinta`,
+        `CSV line ${lineNumber}: extra content after the closing quote, before the delimiter`,
       );
     } else if (char === '"' && field === "") {
       quoted = true;
@@ -52,29 +33,12 @@ const splitLine = (line: string, delimiter: string, lineNumber: number): string[
     }
   }
   if (quoted) {
-    throw new Error(`CSV rivi ${lineNumber}: päättymätön lainausmerkki`);
+    throw new Error(`CSV line ${lineNumber}: unterminated quote`);
   }
   out.push(field);
   return out.map((f) => f.trim());
 };
 
-/**
- * Parse a broker's CSV export into labelled rows.
- *
- * A missing or empty header row makes the file genuinely unusable — there
- * is no column schema to hang any row's values on — so that still throws.
- * Everything past the header is best-effort: a structurally broken data
- * row (wrong column count, malformed quoting) is recorded in `problems`
- * with its 1-based line number, a message, and its raw text, and parsing
- * continues with the next line. One bad row must not discard every good
- * row already parsed — see the spec's import-review-screen behaviour.
- */
-/**
- * Only the two fields this function actually reads. Narrowed from
- * `BrokerCsvConfig` so a format with no securities columns -- a bank statement,
- * see import/bank-statement.ts -- can share the CSV mechanics without inventing
- * a broker config it has no fields for.
- */
 type CsvDialect = Pick<BrokerCsvConfig, "encoding" | "delimiter">;
 
 export const parseCsv = (bytes: ArrayBuffer, config: CsvDialect) => {
@@ -82,7 +46,7 @@ export const parseCsv = (bytes: ArrayBuffer, config: CsvDialect) => {
   const lines = text.split(/\r?\n/);
   const headerLine = lines[0];
   if (headerLine === undefined || headerLine.trim() === "") {
-    throw new Error("CSV-tiedostosta puuttuu otsikkorivi");
+    throw new Error("The CSV file has no header row");
   }
   const headers = splitLine(headerLine, config.delimiter, 1);
 
@@ -105,7 +69,7 @@ export const parseCsv = (bytes: ArrayBuffer, config: CsvDialect) => {
     if (cells.length !== headers.length) {
       problems.push({
         line: lineNumber,
-        message: `CSV rivi ${lineNumber}: ${cells.length} saraketta, odotettiin ${headers.length}`,
+        message: `CSV line ${lineNumber}: ${cells.length} columns, expected ${headers.length}`,
         raw: line,
       });
       continue;

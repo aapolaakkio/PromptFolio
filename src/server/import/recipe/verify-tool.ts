@@ -1,26 +1,17 @@
 import { z } from "zod";
 
-import { EUR, formatMoney, money } from "../../../core/money.ts";
 import type { ToolCall, ToolDefinition } from "../../chat/runner.ts";
 import type { BankRow } from "../bank-statement.ts";
 import { runRecipe, type RecipeRun } from "./run.ts";
 import { BankRecipeSchema, parseRecipe, type BankRecipe } from "./types.ts";
-import { looksLikeTransaction, unclaimedWorthReporting, verifyRun } from "./verify.ts";
+import { eur, looksLikeTransaction, unclaimedWorthReporting, verifyRun } from "./verify.ts";
 
 export const VERIFY_TOOL_NAME = "verify_recipe";
 
-/** Enough lines for the model to see the pattern, few enough to stay a prompt. */
 const MAX_LISTED = 10;
-/**
- * Rows handed back so the model can see a field landing in the wrong column --
- * an empty counterparty on every row, a message captured as a payee. They come
- * from page one, which is already in the model's sample, so nothing new leaves.
- */
 const MAX_SAMPLE_ROWS = 3;
 
-const UNREADABLE_RUN = "Kuvausta ei voitu ajaa tiedostolle";
-
-const eur = (minor: bigint): string => formatMoney(money(minor, EUR));
+const UNREADABLE_RUN = "The recipe could not be run on the file";
 
 type Line = { readonly line: number; readonly text: string };
 type SampleRow = {
@@ -31,11 +22,9 @@ type SampleRow = {
   readonly externalId: string | null;
 };
 
-export type VerifyResult = {
+type VerifyResult = {
   readonly ok: boolean;
-  /** Set when the candidate could not be run at all: bad schema, bad pattern, no balances. */
   readonly error?: string;
-  /** What verification complained about, in the words the owner would see. */
   readonly report?: string;
   readonly unclaimed: readonly Line[];
   readonly skippedLookingLikeTransactions: readonly Line[];
@@ -50,18 +39,12 @@ export type VerifyResult = {
   readonly sampleRows: readonly SampleRow[];
 };
 
-/** One candidate that ran, with the reading it produced. */
-export type Attempt = { readonly recipe: BankRecipe; readonly run: RecipeRun };
+type Attempt = { readonly recipe: BankRecipe; readonly run: RecipeRun };
 
 const VerifyArgs = z.object({ recipe: z.looseObject({}) });
 type VerifyInput = z.infer<typeof VerifyArgs>;
 
-/**
- * A tool as the chat runner defines one: a name, a description, the schema of
- * what it takes, and a handler that answers in JSON. Its own type because its
- * argument is a recipe rather than a ledger query.
- */
-export type RecipeTool = {
+type RecipeTool = {
   readonly name: string;
   readonly description: string;
   readonly schema: typeof VerifyArgs;
@@ -69,15 +52,11 @@ export type RecipeTool = {
 };
 
 const DESCRIPTION =
-  "Ajaa ehdottamasi kuvauksen koko tiliotteelle ja kertoo mikä meni pieleen: " +
-  "tunnistamattomat rivit, ohitetut tapahtumannäköiset rivit, saldotarkistus ja " +
-  "kolme ensimmäistä poimittua tapahtumaa. Kutsu tätä jokaisella ehdotuksellasi. " +
-  "Kun tulos on ok, työ on valmis.";
+  "Runs the recipe you propose over the whole bank statement and reports what went wrong: " +
+  "unrecognised lines, skipped lines that look like transactions, the balance check and " +
+  "the first three extracted transactions. Call this with every proposal. " +
+  "When the result is ok, the work is done.";
 
-/**
- * What the model is shown: the recipe schema itself, so the field names and the
- * allowed values come from the same definition that will judge the answer.
- */
 export const verifyToolDefinition: ToolDefinition = {
   name: VERIFY_TOOL_NAME,
   description: DESCRIPTION,
@@ -91,10 +70,6 @@ export const verifyToolDefinition: ToolDefinition = {
   },
 };
 
-/**
- * The message half of a row's note. `runRecipe` joins label, counterparty and
- * message into one note, so the message is what follows the counterparty in it.
- */
 const messageOf = (row: BankRow): string => {
   if (row.counterparty === "") return row.note;
   const at = row.note.indexOf(row.counterparty);
@@ -124,10 +99,6 @@ const failed = (error: string): VerifyResult => ({
   sampleRows: [],
 });
 
-/**
- * What the model reads after one attempt. The balances are included even when
- * the reading passes: seeing them add up is what makes the pass believable.
- */
 const describe = (run: RecipeRun, report: string | null): VerifyResult => {
   const { statement } = run;
   const movement = statement.rows.reduce((sum, row) => sum + row.amount, 0n);
@@ -148,7 +119,6 @@ const describe = (run: RecipeRun, report: string | null): VerifyResult => {
   return report === null ? base : { ...base, report };
 };
 
-/** More rows read wins; between equals, the reading with fewer problems. */
 const better = (candidate: Attempt, incumbent: Attempt | null): boolean => {
   if (incumbent === null) return true;
   const rows = candidate.run.statement.rows.length;
@@ -157,26 +127,14 @@ const better = (candidate: Attempt, incumbent: Attempt | null): boolean => {
   return candidate.run.statement.problems.length < incumbent.run.statement.problems.length;
 };
 
-export type VerifySession = {
+type VerifySession = {
   readonly tool: RecipeTool;
-  /** The last candidate that passed verification, or null. */
   readonly verified: () => Attempt | null;
-  /** The most complete reading seen, verified or not: the fallback draft. */
   readonly best: () => Attempt | null;
-  /** Why the last candidate could not be run at all, when none ever ran. */
   readonly lastError: () => string | null;
 };
 
-/**
- * The `verify_recipe` tool bound to one document, and the memory of what it
- * has seen. The handler is the source of truth: a recipe counts as verified
- * because it was run and checked here, never because the model said so.
- *
- * Nothing thrown escapes it. A schema-invalid recipe, a pattern the safety
- * check refuses, a statement whose balances the recipe cannot find -- each is
- * an ordinary result the model can read and fix, because a throw would end the
- * turn at the exact moment there is something to learn.
- */
+/** A recipe counts as verified only because it was run and checked here. Nothing thrown escapes. */
 export const createVerifySession = (text: string): VerifySession => {
   let verified: Attempt | null = null;
   let best: Attempt | null = null;
@@ -216,24 +174,19 @@ export const createVerifySession = (text: string): VerifySession => {
   };
 };
 
-/**
- * One tool call from the model, answered as the JSON string that goes back into
- * the conversation. A name the model invented and arguments that are not the
- * shape the tool takes are answered rather than thrown, for the same reason.
- */
 export const runVerifyCall = async (session: VerifySession, call: ToolCall): Promise<string> => {
   if (call.name !== VERIFY_TOOL_NAME) {
-    return JSON.stringify(failed(`Tuntematon työkalu: ${call.name}`));
+    return JSON.stringify(failed(`Unknown tool: ${call.name}`));
   }
   let raw: unknown;
   try {
     raw = JSON.parse(call.arguments.trim() === "" ? "{}" : call.arguments);
   } catch {
-    return JSON.stringify(failed("Työkalun argumentit eivät ole JSONia"));
+    return JSON.stringify(failed("The tool arguments are not JSON"));
   }
   const parsed = session.tool.schema.safeParse(raw);
   if (!parsed.success) {
-    return JSON.stringify(failed(`Anna kuvaus recipe-kentässä: ${parsed.error.message}`));
+    return JSON.stringify(failed(`Give the recipe in the recipe field: ${parsed.error.message}`));
   }
   return JSON.stringify(await session.tool.run(parsed.data));
 };

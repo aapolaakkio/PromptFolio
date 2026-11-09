@@ -24,7 +24,7 @@ const doc = [
   "Tiliote",
   "+1 500,00 Saldo 28.8.2025",
   "28.8.2025 −25,90 PKORTTIMAKSU 20250828A1B2C3D4E5F6",
-  "K-MARKET ESIMERKKI",
+  "K-MARKET EXAMPLE",
   "Viesti:",
   "Kahvia",
   "1 (2)",
@@ -52,7 +52,7 @@ describe("runRecipe", () => {
   test("takes the counterparty from the first unclaimed block line", () => {
     const { statement } = runRecipe(doc, recipe);
 
-    expect(statement.rows[0]?.counterparty).toBe("K-MARKET ESIMERKKI");
+    expect(statement.rows[0]?.counterparty).toBe("K-MARKET EXAMPLE");
     expect(statement.rows[1]?.counterparty).toBe("TYONANTAJA OY");
   });
 
@@ -87,7 +87,7 @@ describe("runRecipe", () => {
   });
 
   test("reports a block line no pattern claimed", () => {
-    const withNoise = doc.replace("K-MARKET ESIMERKKI", "K-MARKET ESIMERKKI\nOSTOPVM 28.08.2025");
+    const withNoise = doc.replace("K-MARKET EXAMPLE", "K-MARKET EXAMPLE\nOSTOPVM 28.08.2025");
     const { unclaimed } = runRecipe(withNoise, recipe);
 
     expect(unclaimed.map((entry) => entry.text)).toEqual(["OSTOPVM 28.08.2025"]);
@@ -103,7 +103,7 @@ describe("runRecipe", () => {
 
   test("refuses a document whose balances the recipe cannot find", () => {
     const noBalances = doc.replace(/.*Saldo.*\n?/g, "");
-    expect(() => runRecipe(noBalances, recipe)).toThrow(/saldo/i);
+    expect(() => runRecipe(noBalances, recipe)).toThrow(/balance/i);
   });
 });
 
@@ -113,10 +113,7 @@ describe("runRecipe -- round 2 regressions", () => {
       ...recipe,
       continuation: [...recipe.continuation, String.raw`^CP:(?<counterparty>.+)$`],
     };
-    const critical1Doc = doc.replace(
-      "K-MARKET ESIMERKKI\nViesti:\nKahvia",
-      "FIRSTLINE\nCP:FROMCONT",
-    );
+    const critical1Doc = doc.replace("K-MARKET EXAMPLE\nViesti:\nKahvia", "FIRSTLINE\nCP:FROMCONT");
 
     const { statement, unclaimed } = runRecipe(critical1Doc, critical1Recipe);
 
@@ -185,7 +182,7 @@ describe("runRecipe -- round 2 regressions", () => {
     const filler = Array.from({ length: 250 }, (_, index) => `ROSKAA ${index}`);
     const bigDoc = [openingLine, ...filler, closingLine].join("\n");
 
-    expect(() => runRecipe(bigDoc, recipe, -1)).toThrow(/kesti liian kauan/);
+    expect(() => runRecipe(bigDoc, recipe, -1)).toThrow(/took too long/);
   });
 
   test("claims the lines a multi-line header fallback match covers, so they don't leak into a record block", () => {
@@ -296,15 +293,6 @@ describe("runRecipe -- round 3 regressions", () => {
   });
 });
 
-/**
- * A statement printing a running balance in its last column, described by a
- * header pattern broad enough to match a transaction line as well. One row is
- * printed without a sign, so `recordStart` misses it -- and before the header
- * pass learned to ignore record lines, the opening balance was read off the
- * first transaction's running balance (`opening + row1`), which cancelled the
- * missing row exactly: rows short by one, problems none, unclaimed none,
- * verdict ok, and the recipe stored for every month after.
- */
 const runningBalanceRecipe: BankRecipe = {
   kind: "bank",
   skip: ["^Tiliote$"],
@@ -326,7 +314,6 @@ const runningBalanceDoc = [
   "Saldo 1.8.2026 1 000,00",
   "1.8.2026 -100,00 KAUPPA 900,00",
   "2.8.2026 -50,00 KIOSKI 850,00",
-  // Printed without a sign, so `recordStart` never opens a record for it.
   "3.8.2026 100,00 KAHVILA 750,00",
   "Saldo 31.8.2026 750,00",
 ].join("\n");
@@ -338,10 +325,7 @@ describe("runRecipe -- an over-broad header pattern", () => {
       .filter((line) => !line.includes("KAHVILA"))
       .join("\n");
 
-    // Every remaining line matching the broad pattern is a transaction, so
-    // there is no balance left to find -- refused, rather than read as the
-    // first row's running balance (900,00).
-    expect(() => runRecipe(withoutTheHiddenRow, runningBalanceRecipe)).toThrow(/saldo/i);
+    expect(() => runRecipe(withoutTheHiddenRow, runningBalanceRecipe)).toThrow(/balance/i);
   });
 
   test("cannot hide a transaction behind a compensating opening balance", () => {
@@ -359,7 +343,7 @@ describe("runRecipe -- what skip removed", () => {
     "Tiliote",
     "+1 000,00 Saldo 1.8.2026",
     "1.8.2026 −25,90 PKORTTIMAKSU",
-    "K-MARKET ESIMERKKI",
+    "K-MARKET EXAMPLE",
     "2.8.2026 −250,00 SIIRTO",
     "3.8.2026 +250,00 SIIRTO",
     "+974,10 Saldo 31.8.2026",
@@ -368,8 +352,6 @@ describe("runRecipe -- what skip removed", () => {
   test("reports the skipped lines, so a cancelling pair cannot pass unseen", () => {
     const run = runRecipe(cancellingDoc, cancellingRecipe);
 
-    // The old checks are both satisfied: one row of three, nothing unclaimed,
-    // and 1 000,00 − 25,90 is exactly the closing balance the statement prints.
     expect(run.statement.rows).toHaveLength(1);
     expect(run.unclaimed).toEqual([]);
     expect(run.skipped.map((entry) => entry.text)).toEqual([
@@ -389,11 +371,9 @@ describe("runRecipe -- what skip removed", () => {
 
 describe("runRecipe -- the time budget", () => {
   test("is checked while header patterns run, not only around them", () => {
-    // No balance lines at all: without a budget check in the header pass this
-    // reaches `buildStatementHeader` and complains about the missing balances.
     const noBalances = Array.from({ length: 150 }, (_, index) => `ROSKAA ${index}`).join("\n");
 
-    expect(() => runRecipe(noBalances, recipe, -1)).toThrow(/kesti liian kauan/);
+    expect(() => runRecipe(noBalances, recipe, -1)).toThrow(/took too long/);
   });
 });
 
@@ -458,7 +438,7 @@ describe("a header fact the recipe could not find", () => {
       },
     });
 
-    expect(() => runRecipe(doc, recipe)).toThrow(/jakson alku.*jakson loppu/i);
+    expect(() => runRecipe(doc, recipe)).toThrow(/period start.*period end/i);
   });
 
   test("names the balances when it is the balances that are missing", () => {
@@ -470,7 +450,7 @@ describe("a header fact the recipe could not find", () => {
       },
     });
 
-    expect(() => runRecipe(doc, recipe)).toThrow(/alkusaldo.*loppusaldo/i);
+    expect(() => runRecipe(doc, recipe)).toThrow(/opening balance.*closing balance/i);
   });
 });
 
@@ -557,9 +537,6 @@ describe("a statement that prints a running balance after every row", () => {
   });
 
   test("a row the recipe read wrongly no longer agrees with its printed balance", () => {
-    // The amount is misread as +10.00 where the statement's own running balance
-    // says the row moved something else; the totals still reach the closing
-    // balance, so only the per-row chain can see it.
     const run = runRecipe(doc("999.99"), recipe);
 
     expect(verifyRun(run).ok).toBe(false);

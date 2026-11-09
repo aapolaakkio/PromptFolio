@@ -6,17 +6,13 @@ import { testDb } from "../db/test-db.ts";
 import { commitBankStatement } from "./bank-commit.ts";
 import type { BankRow } from "./bank-statement.ts";
 
-// A year of card rows is well over a thousand, and D1 caps the parameters one
-// statement may bind. The duplicate lookup has to survive that, so this file
-// commits a statement far past the cap and then re-commits it.
-
 const seed = async () => {
   const { db } = await testDb();
   await db
     .insert(user)
     .values({
       id: "u1",
-      name: "Testi",
+      name: "Test",
       email: "t@example.com",
       emailVerified: true,
       createdAt: new Date(),
@@ -25,7 +21,7 @@ const seed = async () => {
     .run();
   const account = await db
     .insert(accounts)
-    .values({ userId: "u1", name: "Käyttötili", broker: "op", baseCurrency: EUR })
+    .values({ userId: "u1", name: "Current account", broker: "op", baseCurrency: EUR })
     .returning()
     .get();
   return { db, accountId: account.id };
@@ -45,7 +41,7 @@ const rows: readonly BankRow[] = Array.from({ length: ROWS }, (_, i) => ({
 
 test("commits and then de-duplicates a statement past D1's parameter cap", async () => {
   const { db, accountId } = await seed();
-  const args = { userId: "u1", accountId, filename: "tiliote.csv", sha256: "abc", rows };
+  const args = { userId: "u1", accountId, filename: "statement.csv", sha256: "abc", rows };
 
   const first = await commitBankStatement(db, args);
   expect(first.inserted).toBe(ROWS);
@@ -58,10 +54,6 @@ test("commits and then de-duplicates a statement past D1's parameter cap", async
   const stored = await db.select({ id: transactions.id }).from(transactions).all();
   expect(stored).toHaveLength(ROWS);
 });
-
-// A row's identity has to survive the two ways one file names two different
-// transactions the same. Both cost real money: the row is dropped as a
-// duplicate, and the account's balance then disagrees with the statement.
 
 const twice = (over: Partial<BankRow>): readonly BankRow[] => [
   {
@@ -88,10 +80,8 @@ const twice = (over: Partial<BankRow>): readonly BankRow[] => [
 
 test("keeps both rows when one file prints the same reference on two of them", async () => {
   const { db, accountId } = await seed();
-  // An LEI or a payer's identifier repeats across every payment to one company;
-  // a recipe that captures it as the archive id hands two rows the same id.
   const shared = twice({ externalId: "743700AAAAAAAAAAAA55" });
-  const args = { userId: "u1", accountId, filename: "tiliote.pdf", sha256: "abc", rows: shared };
+  const args = { userId: "u1", accountId, filename: "statement.pdf", sha256: "abc", rows: shared };
 
   const first = await commitBankStatement(db, args);
   expect(first.inserted).toBe(2);
@@ -107,7 +97,13 @@ test("keeps both rows when one file prints the same reference on two of them", a
 
 test("keeps both rows when one file prints the same payment twice with no reference", async () => {
   const { db, accountId } = await seed();
-  const args = { userId: "u1", accountId, filename: "tiliote.pdf", sha256: "abc", rows: twice({}) };
+  const args = {
+    userId: "u1",
+    accountId,
+    filename: "statement.pdf",
+    sha256: "abc",
+    rows: twice({}),
+  };
 
   const first = await commitBankStatement(db, args);
   expect(first.inserted).toBe(2);

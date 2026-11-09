@@ -3,10 +3,6 @@ import { describe, expect, test } from "vitest";
 import { HoldingsRecipeSchema, runHoldingsRecipe } from "./holdings-recipe.ts";
 import { OP_HOLDINGS_RECIPE, TABLE_HOLDINGS_RECIPE } from "./holdings-reference.ts";
 
-// The assertions the hand-written holdings parsers were held to, now held by
-// the recipes that replaced them. Layouts are the real ones; names and figures
-// are invented.
-
 const OP_HEADER = [
   "Laji",
   "Omistus kpl",
@@ -43,13 +39,13 @@ describe("OP's web holdings view", () => {
 
   test("reads a holding's quantity, cost and market value", () => {
     const run = runHoldingsRecipe(
-      ["Osakkeet", ...OP_HEADER, ...opRow("ESIMERKKI OYJ", "18", "124,77", "55,73")].join("\n"),
+      ["Osakkeet", ...OP_HEADER, ...opRow("EXAMPLE OYJ", "18", "124,77", "55,73")].join("\n"),
       OP_HOLDINGS_RECIPE,
     );
     expect(run.problems).toEqual([]);
     expect(run.holdings).toEqual([
       {
-        name: "ESIMERKKI OYJ",
+        name: "EXAMPLE OYJ",
         isin: null,
         quantity: "18",
         marketValueEur: "55.73",
@@ -63,19 +59,19 @@ describe("OP's web holdings view", () => {
     const text = [
       "Osakkeet",
       ...OP_HEADER,
-      ...opRow("ESIMERKKI OYJ", "18", "124,77", "55,73"),
+      ...opRow("EXAMPLE OYJ", "18", "124,77", "55,73"),
       "Rahasto-osuudet",
       ...OP_HEADER,
-      ...opRow("ESIMERKKI-AASIA INDEKSI A", "15,4552", "3 325,00", "4 517,25"),
-      ...opRow("ESIMERKKI-MAAILMA INDEKSI A", "56,2492", "9 880,00", "13 441,87"),
+      ...opRow("EXAMPLE-AASIA INDEKSI A", "15,4552", "3 325,00", "4 517,25"),
+      ...opRow("EXAMPLE-MAAILMA INDEKSI A", "56,2492", "9 880,00", "13 441,87"),
     ].join("\n");
 
     const run = runHoldingsRecipe(text, OP_HOLDINGS_RECIPE);
     expect(run.problems).toEqual([]);
     expect(run.holdings.map((h) => h.name)).toEqual([
-      "ESIMERKKI OYJ",
-      "ESIMERKKI-AASIA INDEKSI A",
-      "ESIMERKKI-MAAILMA INDEKSI A",
+      "EXAMPLE OYJ",
+      "EXAMPLE-AASIA INDEKSI A",
+      "EXAMPLE-MAAILMA INDEKSI A",
     ]);
     expect(run.holdings[2]?.quantity).toBe("56.2492");
     expect(run.holdings[2]?.marketValueEur).toBe("13441.87");
@@ -86,7 +82,7 @@ describe("OP's web holdings view", () => {
       [
         "Rahasto-osuudet",
         ...OP_HEADER,
-        "ESIMERKKI INDEKSI A",
+        "EXAMPLE INDEKSI A",
         "15,4552",
         "15,4552",
         "215,14",
@@ -106,20 +102,18 @@ describe("OP's web holdings view", () => {
     const text = [
       "Osakkeet",
       ...OP_HEADER,
-      "ESIMERKKI OYJ",
+      "EXAMPLE OYJ",
       "18",
       "18",
       "6,93",
-      // Four figures short of a row: counting positions would silently file the
-      // next holding's name as this one's market value.
       "Rahasto-osuudet",
       ...OP_HEADER,
-      ...opRow("ESIMERKKI INDEKSI A", "10", "100,00", "110,00"),
+      ...opRow("EXAMPLE INDEKSI A", "10", "100,00", "110,00"),
     ].join("\n");
 
     const run = runHoldingsRecipe(text, OP_HOLDINGS_RECIPE);
     expect(run.problems).toHaveLength(1);
-    expect(run.holdings.map((h) => h.name)).toEqual(["ESIMERKKI INDEKSI A"]);
+    expect(run.holdings.map((h) => h.name)).toEqual(["EXAMPLE INDEKSI A"]);
   });
 });
 
@@ -132,16 +126,15 @@ const tableRow = (name: string, currency: string, qty: string, value: string): s
 describe("a broker's pasted portfolio table", () => {
   test("reads name, quantity and market value, rounding the value to cents", () => {
     const run = runHoldingsRecipe(
-      [HEADER, tableRow("Esimerkki Indeksi", "EUR", "27,4431", "10072,715424")].join("\n"),
+      [HEADER, tableRow("Example Indeksi", "EUR", "27,4431", "10072,715424")].join("\n"),
       TABLE_HOLDINGS_RECIPE,
     );
     expect(run.problems).toEqual([]);
     expect(run.holdings).toEqual([
       {
-        name: "Esimerkki Indeksi",
+        name: "Example Indeksi",
         isin: null,
         quantity: "27.4431",
-        // A broker's table shows more decimals than money has.
         marketValueEur: "10072.72",
         costEur: "",
         currency: "EUR",
@@ -151,23 +144,22 @@ describe("a broker's pasted portfolio table", () => {
 
   test("keeps the holding's own currency, which need not be the account's", () => {
     const run = runHoldingsRecipe(
-      [HEADER, tableRow("Esimerkki Sverige", "SEK", "26,299", "2035,1633266")].join("\n"),
+      [HEADER, tableRow("Example Sverige", "SEK", "26,299", "2035,1633266")].join("\n"),
       TABLE_HOLDINGS_RECIPE,
     );
     expect(run.holdings[0]?.currency).toBe("SEK");
-    // The value column is already in euros, whatever the holding is quoted in.
     expect(run.holdings[0]?.marketValueEur).toBe("2035.16");
   });
 
   test("finds its columns by heading, whatever order they come in", () => {
     const run = runHoldingsRecipe(
-      ["Arvo EUR\tNimi\tMäärä", "527,24\tEsimerkki Defence\t28"].join("\n"),
+      ["Arvo EUR\tNimi\tMäärä", "527,24\tExample Defence\t28"].join("\n"),
       {
         ...TABLE_HOLDINGS_RECIPE,
         columns: TABLE_HOLDINGS_RECIPE.columns.filter((c) => c.field !== "currency"),
       },
     );
-    expect(run.holdings[0]?.name).toBe("Esimerkki Defence");
+    expect(run.holdings[0]?.name).toBe("Example Defence");
     expect(run.holdings[0]?.quantity).toBe("28");
     expect(run.holdings[0]?.marketValueEur).toBe("527.24");
   });
@@ -176,13 +168,13 @@ describe("a broker's pasted portfolio table", () => {
     const run = runHoldingsRecipe(
       [
         HEADER,
-        tableRow("Esimerkki A", "EUR", "28", "527,24"),
-        tableRow("Esimerkki B", "EUR", "ei-luku", "912,004"),
-        tableRow("Esimerkki C", "EUR", "7", "229,11"),
+        tableRow("Example A", "EUR", "28", "527,24"),
+        tableRow("Example B", "EUR", "not-a-number", "912,004"),
+        tableRow("Example C", "EUR", "7", "229,11"),
       ].join("\n"),
       TABLE_HOLDINGS_RECIPE,
     );
-    expect(run.holdings.map((h) => h.name)).toEqual(["Esimerkki A", "Esimerkki C"]);
+    expect(run.holdings.map((h) => h.name)).toEqual(["Example A", "Example C"]);
     expect(run.problems).toHaveLength(1);
     expect(run.problems[0]?.line).toBe(3);
   });
@@ -193,12 +185,12 @@ describe("a broker's pasted portfolio table", () => {
       TABLE_HOLDINGS_RECIPE,
     );
     expect(run.holdings).toEqual([]);
-    expect(run.problems[0]?.message).toContain("Nimi");
+    expect(run.problems[0]?.message).toContain("Name");
   });
 
   test("a header without a column the recipe names reads nothing, and says which", () => {
     const run = runHoldingsRecipe(
-      ["Nimi\tArvo EUR", "Esimerkki\t10,00"].join("\n"),
+      ["Nimi\tArvo EUR", "Example\t10,00"].join("\n"),
       TABLE_HOLDINGS_RECIPE,
     );
     expect(run.holdings).toEqual([]);

@@ -2,13 +2,7 @@ import { NORDNET, OP_WEB_PASTE } from "../fixtures/broker-mappings.ts";
 import type { BrokerRecord } from "./broker-record.ts";
 import type { BrokerTable } from "./broker-table.ts";
 
-/**
- * Nordnet's transaction export, described the way a model is asked to: the
- * hand-written reference the broker table engine is tested against, built from
- * the mapping the old Nordnet parser used so the two cannot drift apart.
- *
- * Five columns are named `Valuutta`; the two read are addressed by position.
- */
+/** Built from the old parser mapping so the two cannot drift. Five columns are named `Valuutta`; the two read are addressed by position. */
 export const NORDNET_TABLE_RECIPE: BrokerTable = {
   kind: "broker-table",
   delimiter: "\t",
@@ -44,20 +38,13 @@ export const NORDNET_TABLE_RECIPE: BrokerTable = {
 
 const OP_LINE = String.raw`[^\n]+`;
 
-/**
- * OP's web transaction view as it copies: one value per line, a header that
- * wraps over nine or ten lines, and a blank line between transactions. A fee
- * line is present or absent. `Yhteensä` is
- * unsigned and every figure carries a unit label, stripped as money.
- */
+/** The Finnish skip words are OP column headings. */
 export const OP_PASTE_RECIPE: BrokerRecord = {
   kind: "broker-record",
   skip: [
     String.raw`^(?:Laji|Tapahtuma|Tapahtuma-|päivämäärä|Määrä|Kurssi|Kulut / Korot /|Verot|Yhteensä|Toiminnot)$`,
   ],
   recordStart: null,
-  // A corporate action prints no money lines at all, so the price, the
-  // optional fee and the total come together or not at all.
   record:
     String.raw`(?<instrumentName>${OP_LINE})\n(?<type>${OP_LINE})\n(?<tradeDate>\d{2}\.\d{2}\.\d{4})\n` +
     String.raw`(?<quantity>${OP_LINE})(?:\n(?<unitPrice>${OP_LINE})(?:\n(?<fee>${OP_LINE}))?\n(?<amount>${OP_LINE}))?`,

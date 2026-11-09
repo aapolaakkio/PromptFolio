@@ -13,7 +13,6 @@ import type { TransactionType, Txn } from "../../core/types.ts";
 const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
 const opFixture = (name: string) => readText(`${import.meta.dirname}/fixtures/${name}`);
 
-/** An OP paste, read by its reference recipe into the draft `mapRows` builds. */
 const opDraft = (text: string, options: { knownNames?: Map<string, number> } = {}) =>
   runBrokerRecord(
     text,
@@ -22,7 +21,6 @@ const opDraft = (text: string, options: { knownNames?: Map<string, number> } = {
     0,
   ).draft;
 
-/** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {
   const withBom = `﻿${text}`;
   const bytes = new Uint8Array(withBom.length * 2);
@@ -67,7 +65,6 @@ const NORDNET_HEADER = [
   "Alkuperäinen korko",
 ].join("\t");
 
-/** Builds one 30-column Nordnet row, blank everywhere not given. */
 const nordnetRow = (o: {
   id: string;
   date: string;
@@ -79,11 +76,8 @@ const nordnetRow = (o: {
   fee?: string;
   currency?: string;
   amount: string;
-  /** `Tapahtumateksti`, the broker's own words for the row. */
   text?: string;
-  /** The `Valuutta` after `Summa` -- what the cash settled in. */
   settled?: string;
-  /** The `Valuutta` after `Tulos` -- what the trade was priced in. */
   priceCurrency?: string;
 }): string => {
   const c = Array.from({ length: 30 }, () => "");
@@ -107,7 +101,6 @@ const nordnetRow = (o: {
   return c.join("\t");
 };
 
-/** `NORDNET_HEADER`'s real 1-based column position (0-indexed here) for each field name used below. */
 const REAL_INDEX = {
   Id: 0,
   Kauppapäivä: 2,
@@ -117,21 +110,10 @@ const REAL_INDEX = {
   Määrä: 8,
   Kurssi: 9,
   Kokonaiskulut: 11,
-  // The `Valuutta` that follows `Summa`: the currency the cash settled in, and
-  // the one the config reads as the transaction's own. The blank one at index
-  // 12 qualifies `Kokonaiskulut`.
   Valuutta: 14,
   Summa: 13,
 } satisfies Record<string, number>;
 
-/**
- * Builds a hand-rolled `RawRow` for a test that only cares about a handful
- * of fields (type/amount/currency validation, unrelated to the duplicate-
- * `Valuutta` fix itself). `cells` is populated at each field's real column
- * index, so the row can be fed straight to the real `NORDNET` config --
- * these tests predate `columnPositions` but must still exercise the config
- * that actually ships, not a stand-in with `currency` addressed by name.
- */
 const rawRow = (line: number, values: Record<string, string>): RawRow => {
   const cells = Array.from({ length: 30 }, () => "");
   for (const [key, index] of Object.entries(REAL_INDEX)) {
@@ -143,8 +125,8 @@ const rawRow = (line: number, values: Record<string, string>): RawRow => {
 
 test("normalises both date formats to ISO", async () => {
   expect(normaliseDate("2025-01-10", "iso")).toBe("2025-01-10");
-  expect(normaliseDate("15.01.2025", "fi")).toBe("2025-01-15");
-  expect(() => normaliseDate("32.01.2025", "fi")).toThrow();
+  expect(normaliseDate("15.01.2025", "dmy")).toBe("2025-01-15");
+  expect(() => normaliseDate("32.01.2025", "dmy")).toThrow();
   expect(() => normaliseDate("", "iso")).toThrow();
 });
 
@@ -153,9 +135,6 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
   const known = new Map([["IE0002Y8CX98", 7]]);
   const draft = mapRows(rows, NORDNET, known);
 
-  // One of the fixture's 13 rows is reported rather than booked: the
-  // fractional adjustment's cash-only twin, whose quantity and cash the other
-  // leg already carries -- see fixtures/broker-mappings.ts's ignoredTypes.
   expect(draft.problems).toHaveLength(1);
   expect(draft.txns).toHaveLength(12);
 
@@ -163,8 +142,8 @@ test("maps the real-format Nordnet fixture into draft transactions", async () =>
   expect(buy.type).toBe("BUY");
   expect(buy.tradeDate).toBe("2025-01-10");
   expect(buy.instrumentId).toBe(7);
-  expect(buy.quantity).toBe(2_000_000); // 2 units, scaled 1e6
-  expect(buy.unitPrice).toBe(3400); // 34,00 EUR
+  expect(buy.quantity).toBe(2_000_000);
+  expect(buy.unitPrice).toBe(3400);
   expect(buy.amount).toBe(-6800);
   expect(buy.currency).toBe(EUR);
 });
@@ -177,7 +156,7 @@ test("a deposit has no instrument and no quantity", async () => {
   expect(deposit.quantity).toBe(0);
 });
 
-test("Reaaliaikainen talle and TALLETUS both map to DEPOSIT", async () => {
+test("the real-time deposit and plain deposit labels both map to DEPOSIT", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
   const deposits = draft.txns.filter((t) => t.type === "DEPOSIT");
@@ -189,28 +168,26 @@ test("the ETF service fee and its reversal (Nordnet's own typo) both map to FEE"
   const draft = mapRows(rows, NORDNET, new Map());
   const fees = draft.txns.filter((t) => t.type === "FEE");
   expect(fees).toHaveLength(2);
-  expect(fees.some((t) => t.amount < 0)).toBe(true); // the charge
-  expect(fees.some((t) => t.amount > 0)).toBe(true); // "PER ETF-KK SÄÄSTÖN PALVEMAKSU", the reversal
+  expect(fees.some((t) => t.amount < 0)).toBe(true);
+  expect(fees.some((t) => t.amount > 0)).toBe(true);
 });
 
-test("PÄÄOMIT YLIT.KORKO and LAINAKORKO both map to INTEREST", async () => {
+test("overdraft and loan interest labels both map to INTEREST", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
   expect(draft.txns.filter((t) => t.type === "INTEREST")).toHaveLength(2);
 });
 
-test("the VAIHTO pair is booked as a transfer pair, with the acquisition value carried across", async () => {
+test("the share-swap pair is booked as a transfer pair, with the acquisition value carried across", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
   expect(draft.txns.some((t) => t.type === "TRANSFER_OUT")).toBe(true);
   expect(draft.txns.some((t) => t.type === "TRANSFER_IN")).toBe(true);
-  // An acquisition's amount must never be positive -- costbasis.ts throws on
-  // one -- and a zero would price the merged-in holding at no cost at all.
   const transferIn = draft.txns.find((t) => t.type === "TRANSFER_IN")!;
   expect(transferIn.amount).toBeLessThan(0);
 });
 
-test("the DESIM pair books one disposal and reports its cash-only twin as skipped", async () => {
+test("the fractional-share pair books one disposal and reports its cash-only twin as skipped", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
   expect(draft.problems.some((p) => p.raw["Tapahtumatyyppi"] === "DESIM. ULOSKIRJ. KÄT")).toBe(
@@ -223,66 +200,51 @@ test("the DESIM pair books one disposal and reports its cash-only twin as skippe
 test("collects ISINs it has never seen instead of inventing instruments", async () => {
   const { rows } = parseCsv(await fixture("nordnet-sample.csv"), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map([["IE0002Y8CX98", 7]]));
-  // Every mapped row's ISIN reaches unknown-instrument tracking, including the
-  // swap and fractional-adjustment rows now that those are booked rather than
-  // refused at the typeMap lookup.
   const isins = draft.unknownIsins.map((u) => u.isin);
   expect(isins).toContain("SE0005993102");
   expect(draft.txns.find((t) => t.isin === "SE0005993102")!.instrumentId).toBeNull();
 });
 
-// --- OP web-paste, read by its reference recipe --
-
-test("maps the OP fixture's OSTO-with-fee row: fi dates, unit suffixes, and a name-only instrument", async () => {
+test("maps the OP fixture's buy-with-fee row: day-first dates, unit suffixes, and a name-only instrument", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   expect(draft.problems).toEqual([]);
   expect(draft.txns).toHaveLength(4);
 
   const buy = draft.txns[0]!;
   expect(buy.type).toBe("BUY");
-  expect(buy.tradeDate).toBe("2025-08-10"); // dd.mm.yyyy -> ISO
-  expect(buy.quantity).toBe(1_200_000); // "1,2000   kpl" -> 1.2, scaled 1e6
-  expect(buy.unitPrice).toBe(25000); // "250,00   EUR" -> 250.00
-  expect(buy.fee).toBe(2); // "0,02   EUR" -> 0.02
-  expect(buy.amount).toBe(-30002); // unsigned "300,02   EUR", signed negative by OSTO
-  expect(buy.isin).toBeNull(); // OP's web view has no ISIN column at all
+  expect(buy.tradeDate).toBe("2025-08-10");
+  expect(buy.quantity).toBe(1_200_000);
+  expect(buy.unitPrice).toBe(25000);
+  expect(buy.fee).toBe(2);
+  expect(buy.amount).toBe(-30002);
+  expect(buy.isin).toBeNull();
 });
 
-test("the OP fixture's OSTO-without-fee row (the fee line is absent, not blank) still parses", async () => {
+test("the OP fixture's buy-without-fee row (the fee line is absent, not blank) still parses", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const noFee = draft.txns[1]!;
   expect(noFee.fee).toBe(0);
   expect(noFee.amount).toBe(-30000);
 });
 
-test("the OP fixture's MYYNTI row: unsigned total re-signed positive, never cross-checked against quantity × Kurssi", async () => {
+test("the OP fixture's sale row: unsigned total re-signed positive, never cross-checked against quantity × price", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const sell = draft.txns[2]!;
   expect(sell.type).toBe("SELL");
-  expect(sell.quantity).toBe(15_000_000); // "15,00   kpl"
-  expect(sell.unitPrice).toBe(310); // "3,10   EUR" -- rounded for display, not authoritative
-  // 15 * 3.10 - 0.45 = 46.05, but the real (never-recomputed) total is 44.55.
+  expect(sell.quantity).toBe(15_000_000);
+  expect(sell.unitPrice).toBe(310);
   expect(sell.amount).toBe(4455);
 });
 
-test("the OP fixture's OSINKO row maps to DIVIDEND, positive amount, and quantity forced to 0", async () => {
+test("the OP fixture's dividend row maps to DIVIDEND, positive amount, and quantity forced to 0", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
   const dividend = draft.txns[3]!;
   expect(dividend.type).toBe("DIVIDEND");
-  expect(dividend.amount).toBe(160); // unsigned "1,60   EUR", signed positive by OSINKO
-  // "20,00   kpl" here is shares *held*, not units transacted -- must never
-  // flow through as though 20 units were bought or sold on this date.
+  expect(dividend.amount).toBe(160);
   expect(dividend.quantity).toBe(0);
-  expect(dividend.unitPrice).toBe(8); // "0,08   EUR" -- dividend per share, kept as informational
+  expect(dividend.unitPrice).toBe(8);
 });
 
-// --- C2 regression: a real, non-zero broker fee must flow end to end from a
-// parsed fixture row through to core/costbasis's reported cost basis and
-// disposal proceeds without ever being combined with the already
-// fee-inclusive `amount` mapRows produced (see `Txn.amount`'s doc in
-// core/types.ts). Every fixture row used elsewhere in this file happened to
-// carry a zero fee, which is exactly why the double-count bug survived --
-// this test is the one that would have caught it.
 test("a real OP fixture row's non-zero fee reaches cost basis and disposal proceeds unadjusted, end to end", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"));
 
@@ -297,9 +259,7 @@ test("a real OP fixture row's non-zero fee reaches cost basis and disposal proce
       id,
       accountId: merged.accountId,
       instrumentId,
-      // SAFETY: `merged.type` is either OP_WEB_PASTE.typeMap's own "BUY"/"SELL" output
-      // (real, validated ledger types -- see mapRows) or this test's own `overrides.type`
-      // literal ("BUY"), never arbitrary text, so it is always a real `TransactionType`.
+      // SAFETY: the body has the shape the route returns.
       type: merged.type as TransactionType,
       tradeDate: merged.tradeDate,
       quantity: { scaled: BigInt(merged.quantity) },
@@ -313,10 +273,6 @@ test("a real OP fixture row's non-zero fee reaches cost basis and disposal proce
     };
   };
 
-  // Row 0: "OP-MAAILMA INDEKSI A" OSTO, 1,2000 kpl x 250,00 EUR, Kulut 0,02
-  // EUR, Yhteensä 300,02 EUR -- real fixture bytes. mapRows already folded
-  // the fee into `amount` (-300.02); costBasisAt must report that figure
-  // as-is, not 300.02 + 0.02 fee again (the C2 bug).
   const buyRow = draft.txns[0]!;
   expect(buyRow.fee).toBe(2);
   expect(buyRow.amount).toBe(-30002);
@@ -324,12 +280,6 @@ test("a real OP fixture row's non-zero fee reaches cost basis and disposal proce
   expect(open).toHaveLength(1);
   expect(formatMoney(open[0]!.costEur)).toBe("300.02");
 
-  // Row 2: "ESIMERKKI OYJ" MYYNTI, 15,00 kpl @ 3,10 EUR, Kulut 0,45 EUR,
-  // Yhteensä 44,55 EUR -- the real, unmodified parsed fee-inclusive SELL.
-  // Paired with a synthetic prior BUY (this fixture's own ESIMERKKI row is a
-  // bare MYYNTI with no matching purchase on the page -- see op-paste.ts's
-  // doc on out-of-order paging) purely so buildLots has a lot to dispose
-  // of; only the BUY leg is synthetic, the SELL leg is the real fixture row.
   const sellRow = draft.txns[2]!;
   expect(sellRow.fee).toBe(45);
   expect(sellRow.amount).toBe(4455);
@@ -351,18 +301,10 @@ test("every OP fixture row with no ISIN is tracked as unknown by name, never giv
   expect(draft.unknownIsins.every((u) => u.isin === null)).toBe(true);
 });
 
-// --- options.knownNames (Task 20: makes a name-only row resolvable across re-imports) ---
-
 test("resolves a name-only row against options.knownNames, case-insensitively", async () => {
   const draft = opDraft(await opFixture("op-web-paste-sample.txt"), {
-    // Deliberately mixed-case, unlike the fixture's all-caps "OP-MAAILMA
-    // INDEKSI A" -- proves the match is case-insensitive, not merely an
-    // exact-string match that happens to line up.
     knownNames: new Map([["Op-Maailma Indeksi A", 42]]),
   });
-  // The fixture's first two rows are both "OP-MAAILMA INDEKSI A" (see
-  // op-paste.test.ts's own row ordering) -- both resolve, so only ESIMERKKI
-  // OYJ (not in knownNames) is left unknown.
   expect(draft.txns[0]!.instrumentId).toBe(42);
   expect(draft.txns[1]!.instrumentId).toBe(42);
   expect(draft.unknownIsins.map((u) => u.name)).toEqual(["ESIMERKKI OYJ"]);
@@ -392,7 +334,7 @@ test("still tracks a name-only row as unknown when knownNames has no match", () 
     "10,00   EUR",
   ].join("\n");
   const draft = opDraft(paste, {
-    knownNames: new Map([["eri rahasto", 1]]),
+    knownNames: new Map([["other fund", 1]]),
   });
   expect(draft.txns[0]!.instrumentId).toBeNull();
   expect(draft.unknownIsins).toEqual([{ isin: null, name: "JOKU RAHASTO", currency: EUR }]);
@@ -459,18 +401,10 @@ test("content hash is stable for identical rows and differs otherwise", () => {
   };
   expect(contentHash(base)).toBe(contentHash({ ...base, line: 99 }));
   expect(contentHash(base)).not.toBe(contentHash({ ...base, amount: -41801 }));
-  // The broker's own text is not part of a row's identity: the same
-  // transaction is the same transaction however the export words it. This is
-  // what lets a re-import fill in a text the ledger is missing instead of
-  // inserting the row a second time.
   expect(contentHash(base)).toBe(contentHash({ ...base, note: "Internal to 123" }));
 });
 
-// --- Fix round 1: mapRows options object, contentHash's wider parameter --
-
 test("content hash accepts a row with no line field at all", () => {
-  // Mirrors Task 13's opening-balance call, which builds a row with no CSV
-  // line to attach and calls contentHash before one exists.
   const { line: _line, ...withoutLine } = {
     accountId: 1,
     instrumentId: 7,
@@ -507,17 +441,6 @@ test("mapRows stamps options.accountId onto every draft transaction", () => {
   const draft = mapRows(rows, NORDNET, new Map([["FI0009000681", 7]]), { accountId: 42 });
   expect(draft.txns[0]!.accountId).toBe(42);
 });
-
-// --- Additions beyond the brief, for the Task 10 output-shape change -----
-//
-// Task 10's parseCsv now returns { rows, headers, problems }, where
-// `problems` (CsvProblem[]) carries structural failures (bad column count,
-// malformed quoting) that never became a RawRow at all. mapRows accepts
-// those as an optional 4th argument and folds them into Draft.problems
-// alongside its own row-mapping failures, sorted by line, so the review
-// screen has one single ordered list of everything wrong with the file.
-// See map.ts's DraftProblem for the shape that lets a consumer render
-// either kind without a `typeof` check (barred by anti-slop/no-runtime-typeof).
 
 test("merges CSV structural problems into Draft.problems, carrying the raw line text", () => {
   const goodRow = nordnetRow({
@@ -558,7 +481,7 @@ test("keeps structural CSV problems and row-mapping problems together, sorted by
       Summa: "0,00",
     }),
   ];
-  const csvProblems = [{ line: 3, message: "CSV rivi 3: 2 saraketta, odotettiin 30", raw: "2\t3" }];
+  const csvProblems = [{ line: 3, message: "CSV line 3: 2 columns, expected 30", raw: "2\t3" }];
   const draft = mapRows(rows, NORDNET, new Map(), { csvProblems });
 
   expect(draft.problems.map((p) => p.line)).toEqual([3, 5]);
@@ -573,12 +496,6 @@ test("csvProblems defaults to none when omitted", () => {
   expect(draft.problems).toEqual([]);
 });
 
-// --- Additional branch coverage not exercised by the fixtures above ------
-
-// Any real ISO 4217 code -- including one the real portfolio never held --
-// is accepted, not just EUR/USD (§10a A1: the real portfolio holds SEK,
-// never USD; GBP here stands in for "some third code" to prove the check
-// isn't secretly still a two- or three-member allowlist).
 test("any ISO 4217-shaped currency is accepted, not just EUR or USD", () => {
   const rows = [
     rawRow(2, {
@@ -634,22 +551,13 @@ test("an empty unit-price cell yields no unit price, distinct from a literal 0",
       Summa: "-5,00",
     }),
   ];
-  // NORDNET's real typeMap has no "palkkio" label (see fixtures/broker-mappings.ts -- only
-  // the 13 labels actually observed in the real export are mapped). This
-  // test only cares about the empty-vs-zero unit-price distinction, so it
-  // overrides typeMap locally rather than asserting on an invented label.
   const draft = mapRows(rows, { ...NORDNET, typeMap: { palkkio: "FEE" } }, new Map());
   expect(draft.txns[0]!.unitPrice).toBeNull();
   expect(draft.txns[0]!.quantity).toBe(0);
   expect(draft.txns[0]!.fee).toBe(500);
 });
 
-// --- Task 15: duplicate-column addressing and per-broker amount signing --
-
 test("cell() prefers columnPositions over columns when both could apply", () => {
-  // A config carrying both a name mapping (which, given the duplicate-name
-  // header below, would resolve to the *wrong* occurrence) and a
-  // positional one for the same field: the positional one must win.
   const header = ["Tapahtumatyyppi", "Kauppapäivä", "ISIN", "Valuutta", "Summa", "Valuutta"].join(
     "\t",
   );
@@ -658,15 +566,13 @@ test("cell() prefers columnPositions over columns when both could apply", () => 
   const config = {
     ...NORDNET,
     columns: { ...NORDNET.columns, currency: "Valuutta" },
-    columnPositions: { currency: 4 }, // 1-based: the first "Valuutta"
+    columnPositions: { currency: 4 },
   };
   const draft = mapRows(rows, config, new Map());
   expect(draft.txns[0]!.currency).toBe(EUR);
 });
 
 test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
-  // The OP fixture's own rows already exercise the suffix-stripping path;
-  // this confirms a cell with no suffix at all still parses.
   const rows = [
     {
       line: 2,
@@ -687,10 +593,6 @@ test("stripUnitSuffixes leaves a bare number (no suffix) unchanged", () => {
   expect(draft.txns[0]!.amount).toBe(-10000);
 });
 
-// A second, wider Nordnet export (2026-08-28) covering a second account carried
-// five transaction-type labels the first one never showed. These map the ones
-// that can be booked from a single row; the paired-leg events below stay
-// unmapped on purpose -- see fixtures/broker-mappings.ts's own typeMap comment.
 test("maps the labels a second Nordnet account introduced: dividend, equity-savings cash legs, withheld tax", () => {
   const csv = [
     NORDNET_HEADER,
@@ -698,7 +600,7 @@ test("maps the labels a second Nordnet account introduced: dividend, equity-savi
       id: "1",
       date: "2025-03-11",
       type: "OSINKO",
-      name: "Esimerkki Oyj",
+      name: "Example Oyj",
       isin: "FI0009007132",
       qty: "12",
       price: "2",
@@ -715,11 +617,8 @@ test("maps the labels a second Nordnet account introduced: dividend, equity-savi
   expect(draft.problems).toEqual([]);
   expect(draft.txns.map((t) => t.type)).toEqual(["DIVIDEND", "DEPOSIT", "WITHDRAWAL", "FEE"]);
 
-  // A dividend's "Määrä" is shares *held*, not units bought, so it must never
-  // move the position -- map.ts forces it to zero regardless of the cell.
   expect(draft.txns[0]!.quantity).toBe(0);
   expect(draft.txns[0]!.amount).toBe(2400);
-  // Withheld capital income tax is a cost, not money the investor received.
   expect(draft.txns[3]!.amount).toBe(-1500);
 });
 
@@ -737,7 +636,6 @@ test("maps a share swap to a transfer pair, carrying the acquisition value acros
       amount: "0",
     }),
     (() => {
-      // `Hankinta-arvo` is column 16 (1-based), which nordnetRow leaves blank.
       const cells = nordnetRow({
         id: "2",
         date: "2019-10-04",
@@ -763,9 +661,6 @@ test("maps a share swap to a transfer pair, carrying the acquisition value acros
   expect(draft.problems).toEqual([]);
   expect(draft.txns.map((t) => t.type)).toEqual(["TRANSFER_OUT", "TRANSFER_IN"]);
   expect(draft.txns[0]!.amount).toBe(0);
-  // Negative, matching the ledger's convention that an acquisition's amount is
-  // the cash that left -- buildLots reads the cost basis from `-amount`, so a
-  // zero here would report the whole holding as gain.
   expect(draft.txns[1]!.amount).toBe(-30000);
   expect(draft.txns[1]!.quantity).toBe(12_595_200);
 });
@@ -826,14 +721,10 @@ test("books the leg that carries both quantity and cash, and reports its cash-on
   expect(draft.txns.map((t) => t.type)).toEqual(["SELL", "SELL"]);
   expect(draft.txns[0]!.amount).toBe(364);
   expect(draft.txns[1]!.amount).toBe(3150);
-  // The twins are reported, not silently dropped -- and say why.
   expect(draft.problems).toHaveLength(2);
-  expect(draft.problems.every((p) => p.message.includes("käteispuoli"))).toBe(true);
+  expect(draft.problems.every((p) => p.message.includes("Cash side"))).toBe(true);
 });
 
-// A 2023 rights issue and a 2024 reverse split, as OP's web view renders
-// them. The whole sequence has to reconcile: 120 shares, 900 subscribed,
-// consolidated onto the ordinary line, reverse split to 18, then sold.
 test("maps OP's corporate actions so a reverse split lands on the right share count", () => {
   const block = (lines: string[]) => lines.join("\n");
   const text = [
@@ -878,20 +769,11 @@ test("maps OP's corporate actions so a reverse split lands on the right share co
   });
 
   expect(draft.txns.map((t) => t.type)).toEqual(["BUY", "TRANSFER_OUT", "TRANSFER_IN", "SPLIT"]);
-  // The subscription costs cash, so its amount must be negative.
   expect(draft.txns[0]!.amount).toBe(-2700);
-  // SPLIT's quantity is the resulting total, which is what the JÄTTÖ leg states.
   expect(draft.txns[3]!.quantity).toBe(18_000_000);
-  // Rights in, rights out, and the split's pre-split count are all reported.
   expect(draft.problems).toHaveLength(2);
 });
 
-// The transaction type alone cannot say what a cash movement was: a transfer to
-// another of the owner's own accounts, the cash leg of a subscription that
-// returns days later, and money genuinely leaving all arrive as the same label
-// and amount. Nordnet says which in `Tapahtumateksti`, and the importer used to
-// drop it -- which left the equity savings account's tax figures resting on
-// structural guesswork.
 test("keeps the broker's own text for a row", () => {
   const csv = [
     NORDNET_HEADER,
@@ -920,16 +802,9 @@ test("leaves the text null when the export carries none", () => {
   const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
 
-  // Null, not an empty string: "nobody wrote one" and "they wrote nothing" are
-  // the same fact here, and null is how the rest of the ledger says it.
   expect(draft.txns[0]!.note).toBeNull();
 });
 
-// A US share bought through a Finnish broker is priced in USD and paid for in
-// EUR. Reading one currency for both made the price EUR, and instrument
-// resolution -- which picks a listing by the holding's own currency -- then put
-// a US share on a European listing, priced it from the wrong exchange, and
-// carried no history from before that listing existed.
 test("a trade priced abroad keeps the instrument's own currency, not the cash's", () => {
   const csv = [
     NORDNET_HEADER,
@@ -951,12 +826,8 @@ test("a trade priced abroad keeps the instrument's own currency, not the cash's"
   const draft = mapRows(rows, NORDNET, new Map());
 
   expect(draft.problems).toEqual([]);
-  // The cash that moved is EUR -- that is what left the account.
   expect(draft.txns[0]!.currency).toBe(EUR);
   expect(draft.txns[0]!.amount).toBe(-9491);
-  // The price is 28,30 USD, and the unresolved instrument is offered for
-  // resolution as a USD one, so it gets a US listing rather than a European
-  // one that happens to quote the same ISIN.
   expect(draft.txns[0]!.unitPrice).toBe(2830);
   expect(draft.unknownIsins[0]!.currency).toBe(parseCurrency("USD"));
 });
@@ -968,7 +839,7 @@ test("a domestic trade still resolves in the currency it settled in", () => {
       id: "1",
       date: "2025-03-14",
       type: "OSTO",
-      name: "Kotimainen Oyj",
+      name: "Domestic Oyj",
       isin: "FI0000000000",
       qty: "10",
       price: "5,00",
@@ -980,6 +851,5 @@ test("a domestic trade still resolves in the currency it settled in", () => {
   const { rows } = parseCsv(nordnetBytes(csv), NORDNET);
   const draft = mapRows(rows, NORDNET, new Map());
 
-  // No separate price currency stated: the settlement currency stands.
   expect(draft.unknownIsins[0]!.currency).toBe(EUR);
 });

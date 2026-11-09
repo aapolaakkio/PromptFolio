@@ -4,11 +4,7 @@ import { db } from "../../db/index.ts";
 import { importRecipes } from "../../db/schema.ts";
 import { parseRecipe, type BankRecipe } from "./types.ts";
 
-/**
- * A stored recipe is re-validated on the way out. A row written by an older
- * shape of the schema is treated as a miss, so the model describes the layout
- * again -- one extra call, never a wrong import.
- */
+/** A row from an older schema is a miss (one extra model call), never a wrong import. */
 export const loadParsed = async <R>(
   userId: string,
   fingerprint: string,

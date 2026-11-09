@@ -5,7 +5,6 @@ import { NORDNET } from "./fixtures/broker-mappings.ts";
 
 const fixture = (name: string) => readBytes(`${import.meta.dirname}/fixtures/${name}`);
 
-/** UTF-16LE-with-BOM, tab-delimited bytes, matching NORDNET's real encoding. */
 const nordnetBytes = (text: string): ArrayBuffer => {
   const withBom = `﻿${text}`;
   const bytes = new Uint8Array(withBom.length * 2);
@@ -17,11 +16,6 @@ const nordnetBytes = (text: string): ArrayBuffer => {
   return bytes.buffer;
 };
 
-// Most of the edge-case tests below predate the real Nordnet format and
-// only care about parseCsv's generic quoting/column-count behaviour, not
-// about Nordnet specifically -- they use a plain UTF-8, ';'-delimited
-// config (still shaped like a BrokerCsvConfig, since parseCsv only reads
-// `encoding`/`delimiter` off it) so their inline UTF-8 fixtures keep working.
 const utf8Semicolon = { ...NORDNET, encoding: "utf-8" as const, delimiter: ";" };
 
 test("parses the real-format Nordnet fixture into labelled rows", async () => {
@@ -34,56 +28,33 @@ test("parses the real-format Nordnet fixture into labelled rows", async () => {
   expect(rows[0]!.line).toBe(2);
 });
 
-// --- Task 15's duplicate-column fix: five columns named "Valuutta" -------
-//
-// The real Nordnet export has "Valuutta" at positions 13, 15, 17, 19 and
-// 28. `values["Valuutta"]` (Object.fromEntries, last-wins) resolves to
-// position 28's value; `cells[12]` (0-indexed) is the only way to reach
-// position 13. This is exercised directly against parseCsv's RawRow shape,
-// with deliberately different values at every "Valuutta" position, rather
-// than against the fixture (whose real rows never actually disagree across
-// the five columns, since every one of them holds EUR or nothing).
-
 test("keeps every occurrence of a repeated header reachable positionally, not just the last", () => {
   const header = [
     "Id",
     "Tapahtumatyyppi",
     "ISIN",
     "Kokonaiskulut",
-    "Valuutta", // position 5 (index 4) -- transaction currency
+    "Valuutta",
     "Summa",
-    "Valuutta", // position 7 (index 6) -- Summa's own currency
+    "Valuutta",
     "Välityspalkkio",
-    "Valuutta", // position 9 (index 8) -- commission currency
+    "Valuutta",
   ].join("\t");
-  const row = [
-    "1",
-    "OSTO",
-    "IE0002Y8CX98",
-    "3,00",
-    "EUR", // transaction currency
-    "-68,00",
-    "EUR",
-    "0,50",
-    "USD", // commission currency -- deliberately different, to prove last-wins would be wrong
-  ].join("\t");
+  const row = ["1", "OSTO", "IE0002Y8CX98", "3,00", "EUR", "-68,00", "EUR", "0,50", "USD"].join(
+    "\t",
+  );
   const { rows } = parseCsv(nordnetBytes(`${header}\n${row}\n`), NORDNET);
 
-  // `values` is name-keyed and last-wins: it can only ever see the final
-  // "Valuutta" occurrence (the commission currency), which is exactly the
-  // bug -- reading it directly for "the" currency would silently return USD.
   expect(rows[0]!.values["Valuutta"]).toBe("USD");
-  // `cells` preserves every occurrence positionally, so the transaction
-  // currency at position 5 (index 4) is still reachable.
   expect(rows[0]!.cells[4]).toBe("EUR");
   expect(rows[0]!.cells[6]).toBe("EUR");
   expect(rows[0]!.cells[8]).toBe("USD");
 });
 
 test("handles quoted fields containing the delimiter", () => {
-  const csv = 'A;B\n"Yhtiö; Oyj";5\n';
+  const csv = 'A;B\n"Acme; Inc";5\n';
   const { rows } = parseCsv(new TextEncoder().encode(csv).buffer, utf8Semicolon);
-  expect(rows[0]!.values["A"]).toBe("Yhtiö; Oyj");
+  expect(rows[0]!.values["A"]).toBe("Acme; Inc");
   expect(rows[0]!.values["B"]).toBe("5");
 });
 
@@ -102,17 +73,15 @@ test("reports a column-count mismatch as a problem without discarding the good r
   expect(problems).toHaveLength(1);
   expect(problems[0]!.line).toBe(3);
   expect(problems[0]!.raw).toBe("4;5");
-  expect(problems[0]!.message).toMatch(/rivi 3/i);
+  expect(problems[0]!.message).toMatch(/line 3/i);
 });
 
 test("still throws when the file has no usable header row", async () => {
   expect(() => parseCsv(new TextEncoder().encode("\n1;2;3\n").buffer, utf8Semicolon)).toThrow(
-    /otsikkorivi/i,
+    /header row/i,
   );
-  expect(() => parseCsv(new ArrayBuffer(0), utf8Semicolon)).toThrow(/otsikkorivi/i);
+  expect(() => parseCsv(new ArrayBuffer(0), utf8Semicolon)).toThrow(/header row/i);
 });
-
-// --- Quoted-field edge cases (deliberate behaviour, see task report) ---
 
 test('treats a field of only "" as an empty string, not a missing value', () => {
   const csv = 'A;B\n"";5\n';
@@ -144,7 +113,7 @@ test("reports an unterminated quoted field as a problem without discarding the g
   expect(problems).toHaveLength(1);
   expect(problems[0]!.line).toBe(3);
   expect(problems[0]!.raw).toBe('"unterminated;5');
-  expect(problems[0]!.message).toMatch(/rivi 3/i);
+  expect(problems[0]!.message).toMatch(/line 3/i);
 });
 
 test("reports text after a closing quote (before the delimiter) as a problem", () => {
@@ -156,5 +125,5 @@ test("reports text after a closing quote (before the delimiter) as a problem", (
   expect(problems).toHaveLength(1);
   expect(problems[0]!.line).toBe(3);
   expect(problems[0]!.raw).toBe('"abc"def;5');
-  expect(problems[0]!.message).toMatch(/rivi 3/i);
+  expect(problems[0]!.message).toMatch(/line 3/i);
 });

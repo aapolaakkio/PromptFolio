@@ -3,12 +3,7 @@ import type { HoldingsRecipe } from "./holdings-recipe.ts";
 const FIGURE = String.raw`[+-]?[\d ]+(?:,\d+)?`;
 const ANY = String.raw`[^\n]+`;
 
-/**
- * OP's web holdings view as it copies: one value per line, one table per
- * instrument kind with a section title and a wrapped header above each, and
- * eight figures after every name. Quantity, cost and market value are the
- * first, fourth and sixth.
- */
+/** OP holdings view: eight figures after every name (quantity, cost, market value are the first, fourth, sixth). Finnish skip words are OP section titles and headings. */
 export const OP_HOLDINGS_RECIPE: HoldingsRecipe = {
   kind: "holdings",
   layout: "record",
@@ -28,11 +23,7 @@ export const OP_HOLDINGS_RECIPE: HoldingsRecipe = {
   money: { decimal: ",", thousands: " ", negative: "leading", twoColumn: false },
 };
 
-/**
- * A broker's portfolio table as it copies: a header row and one tab-separated
- * row per holding, the value column already in euros whatever the holding is
- * quoted in.
- */
+/** Headers are Finnish: Nimi name, Valuutta currency, Määrä quantity, Arvo EUR value. */
 export const TABLE_HOLDINGS_RECIPE: HoldingsRecipe = {
   kind: "holdings",
   layout: "table",

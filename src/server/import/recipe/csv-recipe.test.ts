@@ -9,7 +9,6 @@ const USER = "csv-recipe-user";
 
 const bytesOf = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer;
 
-/** A bank no built-in config knows: comma-delimited, day-first, decimal comma in quotes. */
 const STATEMENT = bytesOf(
   [
     "Päivä,Summa,Tapahtuma,Saaja/Maksaja,Viesti,Tunnus",
@@ -39,7 +38,6 @@ const RECIPE: BankCsvRecipe = {
 
 type Stub = ChatClient & { readonly asked: TurnParams[] };
 
-/** A model that answers with each scripted recipe in turn, as structured output. */
 const stub = (...replies: unknown[]): Stub => {
   const asked: TurnParams[] = [];
   return {
@@ -58,7 +56,7 @@ beforeEach(async () => {
     .insert(user)
     .values({
       id: USER,
-      name: "Testi",
+      name: "Test",
       email: `${USER}@example.test`,
       emailVerified: true,
       createdAt: new Date(),
@@ -100,7 +98,6 @@ describe("encodingOf", () => {
   test("tells UTF-8, a UTF-16 byte-order mark and a legacy Windows export apart", () => {
     expect(encodingOf(bytesOf("Päivä;Summa"))).toBe("utf-8");
     expect(encodingOf(new Uint8Array([0xff, 0xfe, 0x50, 0x00]).buffer)).toBe("utf-16le");
-    // "Päivä" in Windows-1252: 0xE4 alone is not valid UTF-8.
     expect(encodingOf(new Uint8Array([0x50, 0xe4, 0x69, 0x76, 0xe4]).buffer)).toBe("latin1");
   });
 });
@@ -131,7 +128,6 @@ describe("readBankCsvByRecipe", () => {
   });
 
   test("a recipe that never reads every row fills the preview but is not stored", async () => {
-    // Month-first reads 03.06 and 05.06 as real dates but 30.06 as month 30.
     const client = stub({ ...RECIPE, dateFormat: "m.d.yyyy" });
 
     const statement = await readBankCsvByRecipe(STATEMENT, USER, client);
@@ -143,8 +139,8 @@ describe("readBankCsvByRecipe", () => {
   });
 
   test("a file the model cannot describe at all is refused", async () => {
-    await expect(readBankCsvByRecipe(STATEMENT, USER, stub("ei kuvausta"))).rejects.toThrow(
-      "tiliotteeksi",
+    await expect(readBankCsvByRecipe(STATEMENT, USER, stub("no recipe"))).rejects.toThrow(
+      "bank statement",
     );
   });
 });

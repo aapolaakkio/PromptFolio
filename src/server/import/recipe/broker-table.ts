@@ -4,7 +4,7 @@ import type { ChatClient } from "../../chat/runner.ts";
 import { parseCsv } from "../csv.ts";
 import { type Draft, mapRows } from "../map.ts";
 import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "../types.ts";
-import { askForRecipe } from "./ask.ts";
+import { askForRecipe, FINNISH_CONTEXT } from "./ask.ts";
 import { encodingOf, linesOf } from "./csv-recipe.ts";
 import { readDate } from "./date-format.ts";
 import { fingerprint } from "./fingerprint.ts";
@@ -12,12 +12,10 @@ import { readDecimal } from "./money-format.ts";
 import { forgetRecipe, loadParsed, saveRecipe } from "./store.ts";
 import { MoneyFormatSchema } from "./types.ts";
 
-/** Data lines the model is shown, beside every column's distinct labels. */
 const SAMPLE_ROWS = 30;
-/** A column with more distinct values than this holds data, not labels. */
 const MAX_LABELS = 40;
 const QUOTED_FAILURES = 10;
-const NOT_READABLE = "Tiedostoa ei tunnistettu tapahtumaluetteloksi";
+const NOT_READABLE = "The file was not recognised as a transaction list";
 
 export const FIELDS = [
   "externalId",
@@ -36,7 +34,6 @@ export const FIELDS = [
   "portfolio",
 ] as const satisfies readonly CanonicalField[];
 
-/** Read through the recipe's money format into a plain decimal before mapping. */
 const NUMERIC: ReadonlySet<CanonicalField> = new Set([
   "quantity",
   "unitPrice",
@@ -45,7 +42,7 @@ const NUMERIC: ReadonlySet<CanonicalField> = new Set([
   "costBasis",
 ]);
 
-export const TYPES = [
+const TYPES = [
   "BUY",
   "SELL",
   "DIVIDEND",
@@ -58,16 +55,6 @@ export const TYPES = [
   "TRANSFER_OUT",
 ] as const;
 
-/**
- * A broker's transaction table, described by header. Labels are the part with
- * judgement in it: each one the file uses is mapped to a transaction type or
- * deliberately ignored with a reason, and an unmapped label fails the check
- * rather than being guessed at import time.
- */
-/**
- * Types whose amount is cash in or out, and so need a sign when the broker
- * prints amounts unsigned. A split or a transfer of units moves no cash.
- */
 export const MOVES_MONEY: ReadonlySet<string> = new Set([
   "BUY",
   "SELL",
@@ -82,7 +69,6 @@ export const TypeRuleSchema = z
   .object({
     label: z.string().min(1),
     type: z.enum([...TYPES, "IGNORE"]),
-    /** Why an IGNORE row is skipped, shown on the review screen. */
     reason: z.string().nullable(),
     sign: z.union([z.literal(1), z.literal(-1)]).nullable(),
   })
@@ -98,7 +84,6 @@ const BaseBrokerTable = z
           .object({
             field: z.enum(FIELDS),
             header: z.string().min(1),
-            /** 1-based column, only for a header the file repeats. */
             position: z.number().int().min(1).nullable(),
           })
           .strict(),
@@ -106,7 +91,6 @@ const BaseBrokerTable = z
       .max(FIELDS.length),
     dateFormat: z.enum(["d.m.yyyy", "dd.mm.yyyy", "m.d.yyyy", "yyyy-mm-dd"]),
     money: MoneyFormatSchema,
-    /** True when the amount is printed unsigned, so each type carries its sign. */
     unsignedAmount: z.boolean(),
     types: z.array(TypeRuleSchema).max(80),
   })
@@ -116,11 +100,11 @@ export const BrokerTableSchema = BaseBrokerTable.superRefine((recipe, ctx) => {
   const fields = recipe.columns.map((column) => column.field);
   for (const required of ["tradeDate", "type", "amount"] as const) {
     if (!fields.includes(required)) {
-      ctx.addIssue({ code: "custom", message: `Sarake puuttuu: ${required}` });
+      ctx.addIssue({ code: "custom", message: `Missing column: ${required}` });
     }
   }
   if (new Set(fields).size !== fields.length) {
-    ctx.addIssue({ code: "custom", message: "Sama kenttä on nimetty kahdesti" });
+    ctx.addIssue({ code: "custom", message: "The same field is named twice" });
   }
   if (
     recipe.unsignedAmount &&
@@ -128,7 +112,7 @@ export const BrokerTableSchema = BaseBrokerTable.superRefine((recipe, ctx) => {
   ) {
     ctx.addIssue({
       code: "custom",
-      message: "Etumerkittömällä summalla jokaisella rahaa liikuttavalla lajilla on oltava sign",
+      message: "With an unsigned amount, every type that moves money must have a sign",
     });
   }
 });
@@ -138,11 +122,6 @@ export type BrokerTable = z.infer<typeof BaseBrokerTable>;
 // eslint-disable-next-line anti-slop/no-unknown-parameters
 const parseBrokerTable = (raw: unknown): BrokerTable => BrokerTableSchema.parse(raw);
 
-/**
- * The recipe as `mapRows` takes it. Rows reach `mapRows` already normalised
- * and keyed by field name, so the mapping's columns are the field names
- * themselves and its dates are ISO.
- */
 export const mappingOf = (
   recipe: Pick<BrokerTable, "types" | "unsignedAmount">,
   fields: readonly CanonicalField[],
@@ -155,7 +134,7 @@ export const mappingOf = (
     ignoredTypes: Object.fromEntries(
       recipe.types
         .filter((t) => t.type === "IGNORE")
-        .map((t) => [t.label.toLowerCase(), t.reason ?? "Ohitettu"]),
+        .map((t) => [t.label.toLowerCase(), t.reason ?? "Ignored"]),
     ),
     amountSign: recipe.unsignedAmount
       ? Object.fromEntries(mapped.map((t) => [t.label.toLowerCase(), t.sign ?? 1]))
@@ -163,7 +142,6 @@ export const mappingOf = (
   };
 };
 
-/** One field's printed text as the plain value `mapRows` parses. */
 export const readField = (
   field: CanonicalField,
   text: string,
@@ -175,7 +153,6 @@ export const readField = (
   return NUMERIC.has(field) ? readDecimal(raw, format.money) : raw;
 };
 
-/** One row's cells, read by the recipe into the plain text `mapRows` parses. */
 const normalise = (row: RawRow, recipe: BrokerTable): RawRow => {
   const values: Record<string, string> = {};
   for (const column of recipe.columns) {
@@ -188,11 +165,6 @@ const normalise = (row: RawRow, recipe: BrokerTable): RawRow => {
   return { line: row.line, values, cells: [] };
 };
 
-/**
- * Normalised rows into a draft, and which of its problems are failures: every
- * problem except a row the recipe deliberately ignored, which is reported on
- * review but means the recipe did its job.
- */
 export const mapNormalised = (
   rows: readonly RawRow[],
   csvProblems: readonly CsvProblem[],
@@ -205,8 +177,7 @@ export const mapNormalised = (
     csvProblems: [...csvProblems],
     knownNames: known.knownNames,
   });
-  // A broker that prints no ISIN (OP's web view) still names an instrument the
-  // ledger knows; its row shows that instrument's ISIN rather than a blank.
+  // A broker that prints no ISIN (OP's web view) still names a known instrument: show its ISIN.
   const isinOf = new Map([...known.knownIsins].map(([isin, id]) => [id, isin] as const));
   const draft = {
     ...mapped,
@@ -228,10 +199,8 @@ export const mapNormalised = (
 
 export type TableRun = {
   readonly draft: Draft;
-  /** Rows as `mapRows` read them, for checks that look across rows. */
   readonly rows: readonly RawRow[];
   readonly missingHeaders: readonly string[];
-  /** Problems that are not a deliberately ignored type. */
   readonly failures: readonly { readonly line: number; readonly message: string }[];
 };
 
@@ -263,7 +232,7 @@ export const runBrokerTable = (
       } catch (cause) {
         csvProblems.push({
           line: row.line,
-          message: cause instanceof Error ? cause.message : "Rivin käsittely epäonnistui",
+          message: cause instanceof Error ? cause.message : "Failed to process the row",
           raw: row.cells.join(recipe.delimiter),
         });
       }
@@ -282,33 +251,27 @@ export const runBrokerTable = (
   return { draft, rows, missingHeaders, failures };
 };
 
-/**
- * How a label becomes a transaction type, shared by every broker recipe. The
- * hard cases are corporate actions: legs that move no cash, where ignoring
- * both halves of a pair silently strands units on a line that no longer
- * exists -- which is what a model told "ignore when unsure" did to a real
- * reverse split.
- */
+/** Ignoring both halves of a corporate-action pair strands units (a model did this to a real reverse split). OTTO takes units out, JÄTTÖ puts them in. */
 export const TYPE_RULES = [
-  "types: jokainen esiintyvä laji (label täsmälleen kuten kirjoitettu) ja sen tyyppi.",
-  "IGNORE vain kun samat kappaleet tai sama raha ovat jo toisella rivillä, ja kerro silloin reason. Älä koskaan ohita parin molempia puolia, jos kappaleita siirtyy tai määrä muuttuu.",
-  "Kun osakkeet siirtyvät arvopaperilajista toiseen (esim. YHDISTELY - OTTO ja YHDISTELY - JÄTTÖ): OTTO on TRANSFER_OUT ja JÄTTÖ on TRANSFER_IN.",
-  "Vaihtopari (esim. VAIHTO AP-OTTO ja VAIHTO AP-JÄTTÖ, tai VAIHTO - OTTO ja VAIHTO - JÄTTÖ) voi vaihtaa arvopaperin toiseen (nimen tai ISINin muutos, sulautuminen) eikä vain muuttaa kappalemäärää. Jos tiedostossa on siirtyvän hankinta-arvon sarake (costBasis), OTTO on TRANSFER_OUT ja JÄTTÖ on TRANSFER_IN.",
-  "Jos hankinta-arvon saraketta ei ole: JÄTTÖ on SPLIT ja sen quantity on uusi kokonaismäärä, ja OTTO on IGNORE.",
-  "Merkintä rahalla (esim. MERKINTÄ) on BUY. Merkintäoikeudet jotka eivät jää salkkuun (esim. IRROTUS - JÄTTÖ ja MERKINTÄOIK. OTTO): molemmat IGNORE.",
-  "Jos laji on aidosti tuntematon, käytä IGNORE ja kerro reason-kentässä miksi.",
+  "types: every type label that occurs (label exactly as written) and its type.",
+  "IGNORE only when the same units or the same money are already on another row, and then give a reason. Never ignore both halves of a pair if units move or the quantity changes.",
+  "When shares move from one security type to another (e.g. YHDISTELY - OTTO and YHDISTELY - JÄTTÖ, a consolidation): OTTO is TRANSFER_OUT and JÄTTÖ is TRANSFER_IN.",
+  "An exchange pair (e.g. VAIHTO AP-OTTO and VAIHTO AP-JÄTTÖ, or VAIHTO - OTTO and VAIHTO - JÄTTÖ) can swap one security for another (a name or ISIN change, a merger) and not only change the quantity. If the file has a column for the transferred cost basis (costBasis), OTTO is TRANSFER_OUT and JÄTTÖ is TRANSFER_IN.",
+  "If there is no cost basis column: JÄTTÖ is SPLIT and its quantity is the new total quantity, and OTTO is IGNORE.",
+  "A subscription paid in cash (e.g. MERKINTÄ) is BUY. Subscription rights that do not stay in the portfolio (e.g. IRROTUS - JÄTTÖ and MERKINTÄOIK. OTTO): both IGNORE.",
+  "If a type is genuinely unknown, use IGNORE and say why in the reason field.",
 ].join("\n");
 
 const INSTRUCTIONS = [
-  "Saat välittäjän tapahtumaluettelon alun (CSV tai verkkopalvelusta kopioitu taulukko) ja jokaisen sarakkeen kaikki erilaiset arvot, kun niitä on vähän. Kuvaa sen muoto JSON-oliona, jolla ohjelma lukee jokaisen rivin.",
-  "delimiter: sarake-erotin. columns: mikä otsikkorivin sarake (täsmälleen kuten kirjoitettu) on mikin kenttä. Pakolliset: tradeDate, type, amount. position vain jos sama otsikko toistuu, muuten null.",
-  "Kentät: tradeDate kauppapäivä, type tapahtuman laji, instrumentName arvopaperin nimi, isin, quantity kappalemäärä, unitPrice kurssi, fee kulut, currency summan valuutta, amount rahavirta, costBasis siirtyvä hankinta-arvo (vaihdoissa), note välittäjän selite, priceCurrency kurssin valuutta, portfolio välittäjän tilinumero, externalId tapahtuman tunniste.",
+  FINNISH_CONTEXT,
+  "You receive the start of a broker's transaction list (a CSV or a table copied from a web service) and, for each column, all of its distinct values when there are few. Describe its format as a JSON object that the program uses to read every row.",
+  "delimiter: the column delimiter. columns: which header-row column (exactly as written) is which field. Required: tradeDate, type, amount. position only if the same header repeats, otherwise null.",
+  "Fields: tradeDate trade date, type transaction type, instrumentName name of the instrument, isin, quantity number of units, unitPrice price per unit, fee fees, currency currency of the amount, amount cash flow, costBasis transferred cost basis (in exchanges), note the broker's description, priceCurrency currency of the price, portfolio the broker's account number, externalId transaction identifier.",
   TYPE_RULES,
-  "unsignedAmount: true jos osto ja myynti tulostuvat samanmerkkisinä; silloin sign kertoo rahan suunnan (osto -1, myynti 1).",
-  "money kertoo desimaali- ja tuhaterottimen, negatiivisen merkinnän ja strip-listassa yksiköt jotka poistetaan (esim. kpl, EUR).",
+  "unsignedAmount: true if buys and sells print with the same sign; then sign gives the direction of the money (buy -1, sell 1).",
+  "money gives the decimal and thousands separators, the negative notation, and in the strip list the units to remove (e.g. kpl, EUR).",
 ].join("\n");
 
-/** Every column's distinct values, for the columns with few of them: the labels. */
 const labelsOf = (bytes: ArrayBuffer): string => {
   const lines = linesOf(bytes);
   const header = lines[0] ?? "";
@@ -334,23 +297,18 @@ export const passes = (run: TableRun): boolean =>
 
 export const feedbackOf = (run: TableRun): string => {
   if (run.missingHeaders.length > 0) {
-    return `Näitä sarakkeita ei ole otsikkorivillä: ${run.missingHeaders.join(", ")}`;
+    return `These columns are not in the header row: ${run.missingHeaders.join(", ")}`;
   }
-  if (run.failures.length === 0) return "Yhtään tapahtumaa ei luettu.";
+  if (run.failures.length === 0) return "No transactions were read.";
   return run.failures
     .slice(0, QUOTED_FAILURES)
-    .map((failure) => `rivi ${failure.line}: ${failure.message}`)
+    .map((failure) => `line ${failure.line}: ${failure.message}`)
     .join("\n");
 };
 
-export const brokerTableKey = (bytes: ArrayBuffer): string =>
+const brokerTableKey = (bytes: ArrayBuffer): string =>
   fingerprint("broker-table", linesOf(bytes).slice(0, 1));
 
-/**
- * A broker's transaction table -- an uploaded CSV or a pasted one. A stored
- * recipe for this header is tried first; one that no longer reads every row is
- * forgotten and described again. Only a recipe that read every row is stored.
- */
 export const readBrokerTableByRecipe = async (
   bytes: ArrayBuffer,
   userId: string,
@@ -371,7 +329,7 @@ export const readBrokerTableByRecipe = async (
     instructions: INSTRUCTIONS,
     sample: `${linesOf(bytes)
       .slice(0, SAMPLE_ROWS + 1)
-      .join("\n")}\n\nSarakkeiden arvot:\n${labelsOf(bytes)}`,
+      .join("\n")}\n\nColumn values:\n${labelsOf(bytes)}`,
     schema: BrokerTableSchema,
     run,
     judge: (result) => ({

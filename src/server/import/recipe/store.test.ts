@@ -13,7 +13,7 @@ beforeEach(async () => {
     .insert(user)
     .values({
       id: USER,
-      name: "Testi",
+      name: "Test",
       email: `${USER}@example.test`,
       emailVerified: true,
       createdAt: new Date(),

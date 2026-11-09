@@ -46,7 +46,7 @@ const statement: PdfStatement = {
       externalId: null,
     },
   ],
-  problems: [{ line: 9, message: "epäselvä rivi" }],
+  problems: [{ line: 9, message: "unclear row" }],
 };
 
 const draftOf = (overrides: Partial<PdfStatement> = {}) =>
@@ -65,14 +65,14 @@ describe("bankDraftFromStatement", () => {
     expect(draft.rows.map((row) => row.type)).toEqual(["WITHDRAWAL", "DEPOSIT", "INTEREST"]);
     expect(draft.rows[0]).toMatchObject({ line: 1, amountEur: "-25.90", externalId: "A1" });
     expect(draft.rows[1]).toMatchObject({ counterparty: "TYÖNANTAJA", message: "PALKKA" });
-    expect(draft.problems).toEqual([{ line: 9, text: "epäselvä rivi" }]);
+    expect(draft.problems).toEqual([{ line: 9, text: "unclear row" }]);
   });
 
   test("a line nobody could account for becomes a problem the owner sees", () => {
-    const draft = bankDraftFromStatement(statement, [{ line: 2, text: "ESIMERKKI ASIAKAS" }]);
+    const draft = bankDraftFromStatement(statement, [{ line: 2, text: "EXAMPLE ASIAKAS" }]);
     expect(draft.problems).toEqual([
-      { line: 2, text: "Tunnistamaton rivi: ESIMERKKI ASIAKAS" },
-      { line: 9, text: "epäselvä rivi" },
+      { line: 2, text: "Unrecognised line: EXAMPLE ASIAKAS" },
+      { line: 9, text: "unclear row" },
     ]);
   });
 });
@@ -120,12 +120,10 @@ describe("bankRowsFromDraft", () => {
       ],
       problems: [],
     });
-    expect(() => bankRowsFromDraft(draft)).toThrow(/Rivi 4/);
+    expect(() => bankRowsFromDraft(draft)).toThrow(/Row 4/);
   });
 });
 
-// `bank-statement.ts`'s own note format, reproduced here so a test failure
-// points at the round trip rather than a copy of its private `noteOf`.
 const csvNote = (label: string, counterparty: string, message: string): string =>
   [label, counterparty, message]
     .map((part) => part.trim())
@@ -144,9 +142,9 @@ const bankRow = (note: string, counterparty: string): BankRow => ({
 
 describe("bankDraftFromRows then bankRowsFromDraft", () => {
   test.each([
-    ["label, counterparty and message all present", "PKORTTIMAKSU", "K-MARKET ESIMERKKI", "OSTOS"],
-    ["an empty message", "PKORTTIMAKSU", "K-MARKET ESIMERKKI", ""],
-    ["an empty label, the PDF shape", "", "K-MARKET ESIMERKKI", "OSTOS"],
+    ["label, counterparty and message all present", "PKORTTIMAKSU", "K-MARKET EXAMPLE", "OSTOS"],
+    ["an empty message", "PKORTTIMAKSU", "K-MARKET EXAMPLE", ""],
+    ["an empty label, the PDF shape", "", "K-MARKET EXAMPLE", "OSTOS"],
   ])("round-trips a note with %s", (_case, label, counterparty, message) => {
     const note = csvNote(label, counterparty, message);
     const draft = bankDraftFromRows([bankRow(note, counterparty)], []);

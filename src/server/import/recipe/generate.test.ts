@@ -12,13 +12,11 @@ const fixture = (): Promise<string> =>
 
 const pagesOf = (text: string) => [{ number: 1, text }];
 
-/** One model reply: a verify_recipe call carrying this candidate. */
 const call = (recipe: Partial<BankRecipe>, text = ""): ModelReply => ({
   text,
   toolCalls: [{ id: "call_0", name: VERIFY_TOOL_NAME, arguments: JSON.stringify({ recipe }) }],
 });
 
-/** Replies in order, repeating the last; records every request. */
 const stub = (...replies: ModelReply[]): ChatClient & { asked: TurnParams[] } => {
   const asked: TurnParams[] = [];
   let at = 0;
@@ -34,14 +32,11 @@ const stub = (...replies: ModelReply[]): ChatClient & { asked: TurnParams[] } =>
 };
 
 const good = OP_STATEMENT_RECIPE;
-// "suffix" with no matching debit word drops the sign entirely, so the
-// negative rows vanish from the balance sum -- a real, detectable failure.
 const wrongSign: BankRecipe = {
   ...OP_STATEMENT_RECIPE,
   money: { ...OP_STATEMENT_RECIPE.money, negative: "suffix" },
 };
 
-/** Balance patterns that match nothing: `runRecipe` throws instead of failing. */
 const noBalances: BankRecipe = {
   ...OP_STATEMENT_RECIPE,
   header: {
@@ -51,32 +46,31 @@ const noBalances: BankRecipe = {
   },
 };
 
-/** What the tool results in a request say, in order. */
 const toolResults = (params: TurnParams | undefined): string[] =>
   (params?.messages ?? []).filter((m) => m.role === "tool").map((m) => m.content);
 
 describe("sampleFor", () => {
   test("sends the first page whole and the end of the last", () => {
     const sample = sampleFor([
-      { number: 1, text: "eka sivu" },
-      { number: 2, text: "keski" },
-      { number: 3, text: "vika sivu\nLOPPUSALDO 1,00" },
+      { number: 1, text: "first page" },
+      { number: 2, text: "middle" },
+      { number: 3, text: "last page\nLOPPUSALDO 1,00" },
     ]);
 
-    expect(sample).toContain("eka sivu");
+    expect(sample).toContain("first page");
     expect(sample).toContain("LOPPUSALDO 1,00");
-    expect(sample).not.toContain("keski");
+    expect(sample).not.toContain("middle");
   });
 
   test("sends the last page's end, not its beginning", () => {
-    const last = ["OTSIKKO", ...Array.from({ length: 40 }, (_, at) => `keskellä ${at}`), "SALDO"];
+    const last = ["OTSIKKO", ...Array.from({ length: 40 }, (_, at) => `middle ${at}`), "SALDO"];
     const sample = sampleFor([
-      { number: 1, text: "eka sivu" },
+      { number: 1, text: "first page" },
       { number: 2, text: last.join("\n") },
     ]);
 
     expect(sample).toContain("SALDO");
-    expect(sample).not.toContain("keskellä 5");
+    expect(sample).not.toContain("middle 5");
   });
 
   test("does not repeat a single page", () => {
@@ -106,12 +100,11 @@ describe("generateRecipe", () => {
     expect(result.verified).toBe(true);
     expect(result.recipe).toEqual(good);
     expect(client.asked).toHaveLength(2);
-    expect(toolResults(client.asked[1])[0]).toMatch(/Saldotarkistus/);
+    expect(toolResults(client.asked[1])[0]).toMatch(/Balance check/);
   });
 
   test("returns the recipe that verified, not the last one the model mentioned", async () => {
     const text = await fixture();
-    // The candidate is good; the model's own prose names a different one.
     const client = stub(call(good, JSON.stringify(wrongSign)));
 
     const result = await generateRecipe(text, pagesOf(text), client);
@@ -137,7 +130,7 @@ describe("generateRecipe", () => {
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(true);
-    expect(toolResults(client.asked[1])[0]).toContain("kelpaa");
+    expect(toolResults(client.asked[1])[0]).toContain("not valid");
   });
 
   test("hands a recipe that cannot find the balances back as a tool result", async () => {
@@ -147,7 +140,7 @@ describe("generateRecipe", () => {
     const result = await generateRecipe(text, pagesOf(text), client);
 
     expect(result.verified).toBe(true);
-    expect(toolResults(client.asked[1])[0]).toMatch(/saldo/i);
+    expect(toolResults(client.asked[1])[0]).toMatch(/balance/i);
   });
 
   test("refuses when the model never calls the tool", async () => {
@@ -173,7 +166,6 @@ describe("what each round resends", () => {
     const client = stub(call(wrongSign));
     await generateRecipe(await fixture(), pagesOf(await fixture()), client);
 
-    // Ten rounds happened, so an untrimmed history would have grown with each.
     expect(client.asked).toHaveLength(10);
     const sizes = client.asked.map((params) => params.messages.length);
     expect(Math.max(...sizes)).toBeLessThanOrEqual(6);
@@ -184,7 +176,7 @@ describe("what each round resends", () => {
     await generateRecipe(await fixture(), pagesOf(await fixture()), client);
 
     expect(toolResults(client.asked.at(-1))).not.toHaveLength(0);
-    expect(toolResults(client.asked.at(-1)).at(-1)).toMatch(/Saldotarkistus/);
+    expect(toolResults(client.asked.at(-1)).at(-1)).toMatch(/Balance check/);
   });
 
   test("never drops the tool result belonging to an assistant's call", async () => {
