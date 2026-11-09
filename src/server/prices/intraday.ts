@@ -84,7 +84,8 @@ export const refreshIntraday = async (
   for (const row of open) {
     const quote = quotes.get(row.sourceKey);
     if (quote === undefined) continue;
-    written += (await writePrices(db, row.id, "yahoo", [quote])).written;
+    // Confirming a jump is the evening run's job; see `plausibleOnly`.
+    written += (await writePrices(db, row.id, "yahoo", [quote], { plausibleOnly: true })).written;
   }
   return { asked: symbols.length, written, paused };
 };

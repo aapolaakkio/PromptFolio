@@ -165,6 +165,7 @@ const resolvePoint = async (
   instrumentId: number,
   source: string,
   point: FetchedPrice,
+  plausibleOnly: boolean,
 ): Promise<"written" | "rejected" | "reBaselined"> => {
   const baseline = await mostRecentPriceBefore(tx, instrumentId, point.date);
   const plausibleVsBaseline =
@@ -178,6 +179,7 @@ const resolvePoint = async (
     await clearPendingRejection(tx, instrumentId);
     return "written";
   }
+  if (plausibleOnly) return "rejected";
 
   const pending = await pendingRejectionFor(tx, instrumentId);
   const continuesPendingStreak =
@@ -219,7 +221,16 @@ export const writePrices = async (
   instrumentId: number,
   source: string,
   points: readonly FetchedPrice[],
-  opts: { readonly skipPlausibilityCheck?: boolean } = {},
+  opts: {
+    readonly skipPlausibilityCheck?: boolean;
+    /**
+     * Refuse an implausible point without counting it toward a re-baseline,
+     * and leave any pending streak as it was. For the intraday run:
+     * `RE_BASELINE_CONFIRMATIONS` counts once-a-weekday readings, and a run
+     * every 15 minutes would confirm a bad quote served for 45 minutes.
+     */
+    readonly plausibleOnly?: boolean;
+  } = {},
 ): Promise<WriteOutcome> => {
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -235,7 +246,7 @@ export const writePrices = async (
   for (const point of sorted) {
     const outcome = opts.skipPlausibilityCheck
       ? await acceptUnconditionally(db, instrumentId, source, point)
-      : await resolvePoint(db, instrumentId, source, point);
+      : await resolvePoint(db, instrumentId, source, point, opts.plausibleOnly ?? false);
     if (outcome === "written") written++;
     else if (outcome === "reBaselined") {
       written++;

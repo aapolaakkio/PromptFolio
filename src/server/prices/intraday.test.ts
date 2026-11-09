@@ -2,8 +2,17 @@ import { expect, test } from "vitest";
 
 import { EUR } from "../../core/money.ts";
 import { testDb } from "../db/test-db.ts";
-import { accounts, instruments, prices, transactions, user, yahooGate } from "../db/schema.ts";
+import {
+  accounts,
+  instruments,
+  pendingPriceRejections,
+  prices,
+  transactions,
+  user,
+  yahooGate,
+} from "../db/schema.ts";
 import { heldInstrumentIds, refreshIntraday } from "./intraday.ts";
+import { refreshPrices } from "./refresh.ts";
 import { urlOf, type FetchImpl } from "./types.ts";
 
 type TestDb = Awaited<ReturnType<typeof testDb>>["db"];
@@ -191,4 +200,40 @@ test("a 429 mid-run keeps the prices already fetched and reports paused", async 
   expect(calls.count).toBe(2);
   const stored = await db.select().from(prices).all();
   expect(stored.map((row) => row.instrumentId)).toEqual([nokia]);
+});
+
+test("intraday runs never confirm a 10x jump; only the evening run advances the streak", async () => {
+  const { db } = await testDb();
+  const nokia = await seedHeld(db, "NOKIA.HE");
+  // 0.43 EUR stored; the stub serves 4.31 EUR, just over 10x.
+  await db
+    .insert(prices)
+    .values({
+      instrumentId: nokia,
+      date: "2026-06-30",
+      close: 43,
+      currency: EUR,
+      source: "yahoo",
+      fetchedAt: new Date(),
+    })
+    .run();
+  const { fetchImpl } = chartStub();
+
+  for (const minutes of [0, 15, 30]) {
+    const at = new Date(MIDDAY.getTime() + minutes * 60_000);
+    expect(await refreshIntraday(db, at, fetchImpl, 0)).toEqual({
+      asked: 1,
+      written: 0,
+      paused: false,
+    });
+  }
+  const closes = async () =>
+    (await db.select().from(prices).all()).map((row) => [row.date, row.close]);
+  expect(await closes()).toEqual([["2026-06-30", 43]]);
+  expect(await db.select().from(pendingPriceRejections).all()).toEqual([]);
+
+  await refreshPrices(db, { fetchImpl, yahooSpacingMs: 0, today: "2026-07-01" });
+  expect(await closes()).toEqual([["2026-06-30", 43]]);
+  const pending = await db.select().from(pendingPriceRejections).all();
+  expect(pending.map((row) => row.streak)).toEqual([1]);
 });
