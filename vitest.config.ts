@@ -13,6 +13,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Stops workerd processes orphaned by an earlier, interrupted run.
+    globalSetup: ["./src/server/test-reap-workerd.ts"],
     // Pins the shared getDb() handle to a
     // migrated in-memory database before any test file's own code runs, and
     // replace the global fetch with one that throws. Both are process-wide, so
