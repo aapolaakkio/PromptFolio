@@ -76,7 +76,7 @@ describe("resolvePending", () => {
   test("a pending instrument gets its source once Yahoo answers", async () => {
     const isin = freshIsin();
     const created = await addPending(isin);
-    await remember(isin, lookup(isin, {}));
+    await remember(isin, lookup(isin, { listingCurrency: EUR }));
 
     const result = await resolvePending(db, noNetwork);
 
@@ -84,11 +84,35 @@ describe("resolvePending", () => {
     expect(await row(created.id)).toMatchObject({
       priceSource: "yahoo",
       sourceKey: "ABC.HE",
-      currency: USD,
+      currency: EUR,
       kind: "etf",
       name: "Broker Name",
       lookupStatus: "ok",
     });
+  });
+
+  test("a found listing in another currency is marked for attention, nothing changed", async () => {
+    const isin = freshIsin();
+    const created = await addPending(isin);
+    await remember(isin, lookup(isin, { listingCurrency: USD }));
+
+    const result = await resolvePending(db, noNetwork);
+
+    expect(result.attention).toBeGreaterThanOrEqual(1);
+    expect(await row(created.id)).toMatchObject({
+      lookupStatus: "attention",
+      priceSource: "manual",
+      currency: EUR,
+    });
+  });
+
+  test("a pending instrument stays pending while Yahoo is paused", async () => {
+    const isin = freshIsin();
+    const created = await addPending(isin);
+    await db.insert(yahooGate).values({ id: 1, pausedUntil: Date.now() + 3_600_000 });
+
+    expect(await resolvePending(db, noNetwork)).toEqual({ resolved: 0, attention: 0 });
+    expect((await row(created.id))?.lookupStatus).toBe("pending");
   });
 
   test("a pending one that lands in a form case is marked for attention", async () => {
@@ -123,7 +147,7 @@ describe("resolvePending", () => {
       priceSource: "yahoo",
       sourceKey: "MINE.HE",
     });
-    await remember(isin, lookup(isin, {}));
+    await remember(isin, lookup(isin, { listingCurrency: EUR }));
 
     await resolvePending(db, noNetwork);
 
