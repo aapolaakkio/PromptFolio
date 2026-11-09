@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { isCheckedSummary } from "./check.ts";
+import { isCheckedSummary, summaryProblem } from "./check.ts";
 
 const FACTS = JSON.stringify(
   { changeEur: "1234.56", changePct: "12.3", importsMade: 2, name: "Nordnet Global 50" },
@@ -120,5 +120,48 @@ describe("normalising and word lists", () => {
   });
   test("plain increased and reduced stay usable", () => {
     expect(isCheckedSummary("Value increased and costs reduced.", FACTS)).toBe(true);
+  });
+});
+
+describe("natural English is not refused", () => {
+  const facts = JSON.stringify(
+    {
+      changeExcludingDepositsEur: "100.00",
+      changeDirection: "up",
+      movers: [{ name: "Beta", changeEur: "-27.76", changeDirection: "down" }],
+      attention: 1,
+    },
+    null,
+    2,
+  );
+  test("the word one is plain English, not a hidden number", () => {
+    expect(
+      isCheckedSummary("Your portfolio is up 100.00 euros; one of your funds lags.", facts),
+    ).toBe(true);
+  });
+  test("a sentence may say one figure rose and another fell", () => {
+    expect(
+      isCheckedSummary("Your portfolio is up 100.00 euros, while Beta is down 27.76 euros.", facts),
+    ).toBe(true);
+  });
+  test("each figure is still held to its own direction", () => {
+    expect(
+      isCheckedSummary("Your portfolio is down 100.00 euros, while Beta is up 27.76 euros.", facts),
+    ).toBe(false);
+  });
+});
+
+describe("summaryProblem says what to fix", () => {
+  test.each([
+    ["Up 12.4%.", /12\.4/],
+    ["You made two imports.", /two/],
+    ["You could buy more.", /buy/],
+    ["On 2026-11-03 it moved.", /date/i],
+    [Array.from({ length: 121 }, () => "word").join(" "), /120/],
+  ])("%s", (text, expected) => {
+    expect(summaryProblem(text, FACTS)).toMatch(expected);
+  });
+  test("a good text has no problem", () => {
+    expect(summaryProblem("Up 1234.56 euros (12.3 %).", FACTS)).toBeNull();
   });
 });
