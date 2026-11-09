@@ -110,7 +110,7 @@ test("a list page with two matching NAVs is refused", async () => {
   const judged = judgePageRead(read, expectEur());
   expect(judged.passed).toBe(false);
   expect(judged.score).toBe(0);
-  expect(judged.feedback).toContain("useampi");
+  expect(judged.feedback).toContain("several matches");
 });
 
 test("a match far from the ISIN is refused", async () => {
@@ -126,10 +126,12 @@ test("a match far from the ISIN is refused", async () => {
 test("wrong currency, a stale date, and a price 11x the reference are each refused", async () => {
   const html = await fixture("nordnet-fund-suomi.html");
   const read = runPageRecipe(html, NORDNET, SUOMI_ISIN, TODAY);
-  expect(judgePageRead(read, expectEur({ currency: SEK })).feedback).toContain("valuutta");
-  expect(judgePageRead(read, expectEur({ today: "2026-09-10" })).feedback).toContain("vanha");
-  expect(judgePageRead(read, expectEur({ today: "2026-08-24" })).feedback).toContain("tulevaisuu");
-  expect(judgePageRead(read, expectEur({ referenceMinor: 3320 })).feedback).toContain("kohtuuton");
+  expect(judgePageRead(read, expectEur({ currency: SEK })).feedback).toContain("currency");
+  expect(judgePageRead(read, expectEur({ today: "2026-09-10" })).feedback).toContain("too old");
+  expect(judgePageRead(read, expectEur({ today: "2026-08-24" })).feedback).toContain("future");
+  expect(judgePageRead(read, expectEur({ referenceMinor: 3320 })).feedback).toContain(
+    "unreasonable",
+  );
   expect(judgePageRead(read, expectEur({ referenceMinor: 36000 })).passed).toBe(true);
 });
 

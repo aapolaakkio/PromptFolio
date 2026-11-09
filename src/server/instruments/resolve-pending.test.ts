@@ -140,7 +140,7 @@ describe("resolvePending", () => {
     });
   });
 
-  test("an instrument edited in Muokkaa while pending is left alone", async () => {
+  test("an instrument edited in Edit while pending is left alone", async () => {
     const isin = freshIsin();
     const created = await addPending(isin);
     await updateInstrument(db, created.id, {

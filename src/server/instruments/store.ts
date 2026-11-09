@@ -10,8 +10,7 @@ import type { PageRecipe } from "../prices/page-recipe.ts";
 import { recordPoints } from "../prices/record.ts";
 import type { FetchedPrice, FetchImpl } from "../prices/types.ts";
 
-/** What a caller may set on a new instrument, already validated. */
-export type NewInstrument = {
+type NewInstrument = {
   readonly isin?: string | undefined;
   readonly ticker: string | null;
   readonly name: string;
@@ -19,38 +18,25 @@ export type NewInstrument = {
   readonly currency: Currency;
   readonly priceSource: "yahoo" | "page" | "manual";
   readonly sourceKey?: string | undefined;
-  /** "pending" for one added while its lookup is still owed; "ok" otherwise. */
   readonly lookupStatus?: "ok" | "pending" | "attention" | undefined;
 };
 
-/**
- * Instruments are shared reference data across the family instance -- every
- * household member's transactions can reference the same Nokia share -- so they
- * are readable and creatable by any signed-in user. Only ledger rows are scoped
- * to their owner.
- */
+// Instruments are shared reference data across the household: any signed-in user may read and create them; only ledger rows are owner-scoped.
 export const listInstruments = async (db: Db) => await db.select().from(instruments).all();
 
-/**
- * Registers an instrument, refusing one that is already there.
- *
- * Matched on ISIN when there is one and on name when there is not, because a
- * manual holding (a delisted share, a temporary line from a corporate action)
- * has no ISIN any registry will give up -- and inventing one would corrupt the
- * identifier every broker's rows join on.
- */
+/** Registers an instrument, refusing a duplicate: matched on ISIN, else name, since a manual holding has no ISIN and inventing one would corrupt the key brokers join on. */
 const refuseDuplicate = async (db: Db, body: NewInstrument): Promise<void> => {
   const isin = body.isin ?? null;
   if (isin !== null) {
     const existing = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
-    if (existing) throw new HttpError(409, `ISIN ${isin} on jo lisätty`);
+    if (existing) throw new HttpError(409, `ISIN ${isin} has already been added`);
   } else {
     const existing = await db
       .select()
       .from(instruments)
       .where(eq(instruments.name, body.name))
       .get();
-    if (existing) throw new HttpError(409, `Arvopaperi ${body.name} on jo lisätty`);
+    if (existing) throw new HttpError(409, `Instrument ${body.name} has already been added`);
   }
 };
 
@@ -65,29 +51,22 @@ export const addInstrument = async (db: Db, body: NewInstrument) => {
     .get();
 };
 
-/** What may be corrected on an instrument after it was added. */
-export type InstrumentFix = {
+type InstrumentFix = {
   readonly currency: Currency;
   readonly priceSource: NewInstrument["priceSource"];
   readonly sourceKey: string;
 };
 
-/**
- * Corrects how an instrument is priced: its quotation currency, its price
- * source and that source's code. Shared reference data, so any signed-in
- * member may correct it, as any may add one.
- *
- * A changed currency drops the instrument's stored prices: they were fetched
- * and checked against the old currency, and the next refresh fetches them in
- * the right one. Transactions are untouched -- their unit prices are read in
- * the instrument's currency, which is exactly what the correction fixes.
- */
+/** Corrects quotation currency, price source and code (shared data, so any member may). A changed currency drops stored prices, which were checked against the old one; transactions are untouched. */
 export const updateInstrument = async (db: Db, id: number, fix: InstrumentFix) => {
   const existing = await db.select().from(instruments).where(eq(instruments.id, id)).get();
-  if (existing === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  if (existing === undefined) throw new HttpError(404, "Instrument not found");
   const sourceKey = fix.sourceKey.trim();
   if (fix.priceSource !== "manual" && sourceKey === "") {
-    throw new HttpError(400, "Lähdetunnus vaaditaan, kun hintalähde hakee hinnat automaattisesti");
+    throw new HttpError(
+      400,
+      "A source code is required when the price source fetches prices automatically",
+    );
   }
   if (existing.currency !== fix.currency) {
     await db.delete(prices).where(eq(prices.instrumentId, id)).run();
@@ -103,18 +82,17 @@ export const updateInstrument = async (db: Db, id: number, fix: InstrumentFix) =
     .where(eq(instruments.id, id))
     .returning()
     .get();
-  if (updated === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  if (updated === undefined) throw new HttpError(404, "Instrument not found");
   return updated;
 };
 
-/** What checking a typed page needs; injected so tests reach neither network nor model. */
 export type PageDeps = {
   readonly fetchImpl: FetchImpl;
   readonly client: ChatClient;
   readonly today: string;
 };
 
-export type SavedPage = {
+type SavedPage = {
   readonly instrument: typeof instruments.$inferSelect;
   readonly price: FetchedPrice;
 };
@@ -137,7 +115,6 @@ const saveRecipeAndPrice = async (
   await recordPoints(db, instrument, [price]);
 };
 
-/** Registers a page instrument, but only once the page has been read and verified. */
 export const addPageInstrument = async (
   db: Db,
   body: NewInstrument,
@@ -161,7 +138,6 @@ export const addPageInstrument = async (
   return { instrument, price: checked.price };
 };
 
-/** Points an instrument at a page: verified first, then saved with its new recipe. */
 export const updatePageInstrument = async (
   db: Db,
   id: number,
@@ -169,7 +145,7 @@ export const updatePageInstrument = async (
   deps: PageDeps,
 ): Promise<SavedPage> => {
   const existing = await db.select().from(instruments).where(eq(instruments.id, id)).get();
-  if (existing === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  if (existing === undefined) throw new HttpError(404, "Instrument not found");
   // A changed currency drops the stored prices, so none is a reference then.
   const latest =
     existing.currency === fix.currency

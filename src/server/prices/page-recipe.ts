@@ -10,8 +10,7 @@ import type { FetchedPrice } from "./types.ts";
 import { isPlausibleMove } from "./write.ts";
 
 export const IDENTITY_WINDOW_CHARS = 5_000;
-export const PAGE_MAX_AGE_DAYS = 10;
-/** Real Nordnet fund pages are about 1.8 MB; past this a page is not read at all. */
+const PAGE_MAX_AGE_DAYS = 10;
 export const MAX_PAGE_CHARS = 3_000_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -35,15 +34,15 @@ export const PageRecipeSchema = z
       .string()
       .min(1)
       .max(MAX_PATTERN_LENGTH)
-      .refine(compiles, { message: "Säännöllistä lauseketta ei voitu kääntää" })
+      .refine(compiles, { message: "The regular expression could not be compiled" })
       .refine((source) => !mayBacktrackForever(source), {
-        message: "Säännöllinen lauseke voi jäädä jumiin (sisäkkäinen toisto)",
+        message: "The regular expression can hang (nested repetition)",
       })
       .refine((source) => !hasManyWildcards(source), {
-        message: "Lauseke sisältää liian monta rajoittamatonta .*-toistoa",
+        message: "The expression contains too many unbounded .* repetitions",
       })
       .refine((source) => groupNames(source).has("price") && groupNames(source).has("date"), {
-        message: "Lausekkeen on nimettävä ryhmät price ja date",
+        message: "The expression must name the groups price and date",
       }),
     dateFormat: z.enum(["d.m.yyyy", "dd.mm.yyyy", "yyyy-mm-dd", "d.m.", "dd.mm."]),
     money: MoneyFormatSchema,
@@ -56,7 +55,7 @@ export const PageRecipeSchema = z
 
 export type PageRecipe = z.infer<typeof PageRecipeSchema>;
 
-export type PageRead = {
+type PageRead = {
   readonly matches: number;
   readonly price: FetchedPrice | null;
   readonly identityNear: boolean;
@@ -69,7 +68,6 @@ export type PageExpect = {
   readonly today: string;
 };
 
-/** The latest year that keeps day.month on or before `today`. */
 const yearFor = (dayMonth: string, today: string): string => {
   const thisYear = Number(today.slice(0, 4));
   const [day = "", month = ""] = dayMonth.split(".");
@@ -84,7 +82,6 @@ const dateOf = (text: string, recipe: PageRecipe, today: string): string => {
   return readDate(text, recipe.dateFormat === "yyyy-mm-dd" ? "yyyy-mm-dd" : "d.m.yyyy");
 };
 
-/** Null when any group is missing or unreadable: the recipe did not read a price. */
 const priceOf = (
   groups: Record<string, string | undefined>,
   recipe: PageRecipe,
@@ -116,7 +113,6 @@ export const runPageRecipe = (
   const regex = new RegExp(recipe.pattern, "gu");
   const first = regex.exec(html);
   if (first === null) return none;
-  // Two matches already refuse the page, so never scan further.
   let matches = 1;
   const second = regex.exec(html);
   if (second !== null) matches = 2;
@@ -136,28 +132,27 @@ export const runPageRecipe = (
 const daysBetween = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 
-/** The first acceptance rule the read breaks, in Finnish, or null. */
 const firstFailure = (read: PageRead, expect: PageExpect): string | null => {
   const { price } = read;
-  if (read.matches === 0) return "Lauseke ei löytänyt sivulta mitään.";
+  if (read.matches === 0) return "The expression matched nothing on the page.";
   if (read.matches > 1) {
-    return `Lauseke osui ${read.matches} kohtaan: kohdan on löydyttävä sivulta vain kerran (useampi osuma).`;
+    return `The expression matched ${read.matches} places: it must match exactly one place on the page (several matches).`;
   }
-  if (price === null) return "Osuman hintaa tai päivää ei voitu lukea.";
+  if (price === null) return "The price or date of the match could not be read.";
   if (!read.identityNear) {
-    return `Osuman lähellä (${IDENTITY_WINDOW_CHARS} merkin sisällä) ei ole tunnistetta ${expect.identity}.`;
+    return `The identifier ${expect.identity} is not near the match (within ${IDENTITY_WINDOW_CHARS} characters).`;
   }
   if (price.currency !== expect.currency) {
-    return `Luettu valuutta ${price.currency} ei vastaa rahaston valuuttaa ${expect.currency}.`;
+    return `The currency read, ${price.currency}, does not match the fund's currency ${expect.currency}.`;
   }
   const age = daysBetween(price.date, expect.today);
-  if (age < 0) return `Päivä ${price.date} on tulevaisuudessa.`;
+  if (age < 0) return `The date ${price.date} is in the future.`;
   if (age > PAGE_MAX_AGE_DAYS) {
-    return `Päivä ${price.date} on liian vanha (yli ${PAGE_MAX_AGE_DAYS} päivää).`;
+    return `The date ${price.date} is too old (over ${PAGE_MAX_AGE_DAYS} days).`;
   }
   // ponytail: skipped when no reference exists, e.g. on the first read of a new fund.
   if (expect.referenceMinor !== null && !isPlausibleMove(expect.referenceMinor, price.closeMinor)) {
-    return `Hinta ${price.closeMinor} on kohtuuton viitehintaan ${expect.referenceMinor} nähden.`;
+    return `The price ${price.closeMinor} is unreasonable against the reference price ${expect.referenceMinor}.`;
   }
   return null;
 };

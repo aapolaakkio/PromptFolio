@@ -26,13 +26,7 @@ export const logAttempt = async (
 
 export type Priced = Pick<typeof instruments.$inferSelect, "id" | "priceSource" | "sourceKey">;
 
-/**
- * Writes one instrument's fetched points and logs how it went. Returns whether
- * it counts as ok.
- *
- * A point the plausibility check refuses is reported as a failure, not folded
- * into a clean "ok" -- the fetch worked, the data was not trusted.
- */
+/** Writes one instrument's fetched points and logs it; true when ok. An implausible point counts as a failure: the fetch worked, the data was not trusted. */
 export const recordPoints = async (
   db: Db,
   instrument: Priced,
@@ -47,13 +41,12 @@ export const recordPoints = async (
   );
 
   if (reBaselined > 0) {
-    // Loud on purpose: an implausible price was just confirmed as a real
-    // permanent change, which is worth a human's attention.
+    // Loud on purpose: an implausible price was just confirmed as a permanent change.
     const message =
-      `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
-      `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
-      (rejectedImplausible > 0 ? ` (${rejectedImplausible} yhä hylätty)` : "");
-    console.warn(`Hintasarja uudelleenperustettu: ${sourceId} instrumentille ${instrument.id}`);
+      `${written} price points saved, ${reBaselined} of them ` +
+      `REBASED after a confirmed permanent change` +
+      (rejectedImplausible > 0 ? ` (${rejectedImplausible} still rejected)` : "");
+    console.warn(`Price series rebased: ${sourceId} for instrument ${instrument.id}`);
     await logAttempt(db, { source: sourceId, instrumentId: instrument.id, ok: true, message });
     return true;
   }
@@ -63,8 +56,8 @@ export const recordPoints = async (
       instrumentId: instrument.id,
       ok: false,
       message:
-        `${written} hintapistettä tallennettu, ${rejectedImplausible} hylätty ` +
-        `epäuskottavana hintahyppynä (yli ${MAX_PLAUSIBLE_RATIO}x)`,
+        `${written} price points saved, ${rejectedImplausible} rejected ` +
+        `as an implausible price jump (over ${MAX_PLAUSIBLE_RATIO}x)`,
     });
     return false;
   }
@@ -72,7 +65,7 @@ export const recordPoints = async (
     source: sourceId,
     instrumentId: instrument.id,
     ok: true,
-    message: `${written} hintapistettä`,
+    message: `${written} price points`,
   });
   return true;
 };

@@ -1,11 +1,6 @@
-/**
- * When a listing's exchange is trading, from its Yahoo symbol's suffix. Local
- * opening hours with the exchange's own time zone, so daylight saving follows
- * the zone rather than a fixed UTC offset. Weekdays only.
- */
+// Trading hours from the Yahoo symbol's suffix, in the exchange's own zone so DST follows it. Weekdays only.
 type Session = {
   readonly zone: string;
-  /** Minutes after local midnight, both ends inclusive. */
   readonly open: number;
   readonly close: number;
 };

@@ -5,25 +5,16 @@ import type { Db } from "../db/index.ts";
 import { pendingPriceRejections, prices } from "../db/schema.ts";
 import type { FetchedPrice } from "./types.ts";
 
-// The helpers below only ever read and write; naming that keeps them callable
-// with anything database-shaped.
+// Read/write only, so callable with anything database-shaped.
 type TxDb = Pick<Db, "select" | "insert" | "delete">;
 
-export type WriteOutcome = {
+type WriteOutcome = {
   readonly written: number;
   readonly rejectedImplausible: number;
-  /** Of `written`, how many came through the re-baseline path. Log these loudly. */
   readonly reBaselined: number;
 };
 
-/**
- * A single fetch has no history to check itself against; this layer does.
- *
- * Every scraper bug this project has actually hit is structural -- a decimal
- * read one place over, cents against whole units, the wrong column -- and those
- * are off by an order of magnitude, not a few percent. A tighter threshold
- * would be a guess about this portfolio's volatility; 10x is not.
- */
+/** Structural scraper bugs are off by an order of magnitude, so 10x is the guard rather than a guess at volatility. */
 export const MAX_PLAUSIBLE_RATIO = 10;
 
 export const isPlausibleMove = (previousMinor: number, nextMinor: number): boolean =>
@@ -31,21 +22,10 @@ export const isPlausibleMove = (previousMinor: number, nextMinor: number): boole
   nextMinor * MAX_PLAUSIBLE_RATIO >= previousMinor;
 
 /**
- * How many consistent readings at a new scale it takes to accept it as real.
- *
- * Comparing only against the last stored price freezes an instrument forever
- * after a genuine permanent change -- a steep split, a fund re-denominating --
- * and there is no UI anywhere to unstick a price by hand. Persistence tells the
- * two apart, not magnitude: a transient glitch does not recur at the same new
- * scale across separate scheduled fetches, a real split reports it every day.
- *
- * Three, because the job runs once a weekday: two would not rule out one cached
- * bad response served twice, and more would leave the chart stale for weeks.
- *
- * A persistent scraper bug looks identical to a split by this signal. That is
- * an accepted limit -- only a human reading the re-baseline log can tell them
- * apart. Consulting the ledger for a SPLIT row would couple this layer to it
- * and would not help a re-denomination, which has no such row.
+ * Consistent readings at a new scale needed to accept it, so a real split or re-denomination
+ * cannot freeze an instrument forever (no UI can unstick a price). Three, as the job runs once a
+ * weekday: two would not rule out one cached bad response served twice.
+ * A persistent scraper bug looks like a split here; only the re-baseline log tells them apart.
  */
 export const RE_BASELINE_CONFIRMATIONS = 3;
 
@@ -76,7 +56,6 @@ const clearPendingRejection = async (tx: TxDb, instrumentId: number): Promise<vo
     .run();
 };
 
-/** Records `point` as the (possibly new) pending candidate, at `streak` confirmations so far. */
 const recordPendingRejection = async (
   tx: TxDb,
   instrumentId: number,
@@ -101,7 +80,6 @@ const recordPendingRejection = async (
 
 type StoredPrice = { readonly close: number; readonly currency: Currency; readonly date: string };
 
-/** Most recent stored price strictly before `date`, or undefined if this instrument has none yet. */
 const mostRecentPriceBefore = (
   tx: TxDb,
   instrumentId: number,
@@ -138,16 +116,7 @@ const upsertPrice = async (
     .run();
 };
 
-/**
- * Writes a point without the guard, for a price a person typed in.
- *
- * The guard exists for a scraper returning a structurally wrong number, which
- * is not what a human correcting a price on screen is doing -- and waiting for
- * three confirmations means asking them to submit the same fix on three
- * separate days. A feature whose job is fixing a wrong price cannot refuse the
- * fix. Every automated caller omits the option, so scraped output is still
- * fully checked, and `requirePositiveMinor` still runs either way.
- */
+/** Writes a point without the guard, for a price a person typed in (a fix must not wait three days). `requirePositiveMinor` still runs. */
 const acceptUnconditionally = async (
   tx: TxDb,
   instrumentId: number,
@@ -159,7 +128,6 @@ const acceptUnconditionally = async (
   return "written";
 };
 
-/** Decides one point against the stored baseline and any pending streak. */
 const resolvePoint = async (
   tx: TxDb,
   instrumentId: number,
@@ -174,7 +142,6 @@ const resolvePoint = async (
     isPlausibleMove(baseline.close, point.closeMinor);
 
   if (plausibleVsBaseline) {
-    // Accepting normally unsticks the instrument, so a pending streak is moot.
     await upsertPrice(tx, instrumentId, source, point);
     await clearPendingRejection(tx, instrumentId);
     return "written";
@@ -188,7 +155,6 @@ const resolvePoint = async (
     isPlausibleMove(pending.close, point.closeMinor);
 
   if (!continuesPendingStreak) {
-    // A fresh anomaly, unrelated to whatever was pending: count from 1 again.
     await recordPendingRejection(tx, instrumentId, point, 1);
     return "rejected";
   }
@@ -199,23 +165,12 @@ const resolvePoint = async (
     return "rejected";
   }
 
-  // Enough consistent readings at this scale: it is the real new baseline.
   await upsertPrice(tx, instrumentId, source, point);
   await clearPendingRejection(tx, instrumentId);
   return "reBaselined";
 };
 
-/**
- * Writes one instrument's points, upserting by `(instrumentId, date)`.
- *
- * Each point's baseline and streak are read fresh from the database rather than
- * carried in memory, so an earlier point in the same batch is already visible to
- * the next -- which matters for a backfill spanning years of daily closes.
- *
- * An implausible point is not written and is reported back, never silently
- * dropped. The first price ever stored has no baseline and is always accepted,
- * as is a point in a different currency than the baseline.
- */
+/** Upserts one instrument's points by `(instrumentId, date)`. Each baseline is read fresh so earlier points in the batch count. Implausible points are reported back; the first price and a currency change are always accepted. */
 export const writePrices = async (
   db: Db,
   instrumentId: number,
@@ -223,12 +178,7 @@ export const writePrices = async (
   points: readonly FetchedPrice[],
   opts: {
     readonly skipPlausibilityCheck?: boolean;
-    /**
-     * Refuse an implausible point without counting it toward a re-baseline,
-     * and leave any pending streak as it was. For the intraday run:
-     * `RE_BASELINE_CONFIRMATIONS` counts once-a-weekday readings, and an
-     * hourly run would confirm a bad quote served for 3 hours.
-     */
+    /** Refuse implausible points without counting toward a re-baseline: hourly runs must not confirm a bad quote. */
     readonly plausibleOnly?: boolean;
   } = {},
 ): Promise<WriteOutcome> => {
@@ -237,12 +187,7 @@ export const writePrices = async (
   let written = 0;
   let rejectedImplausible = 0;
   let reBaselined = 0;
-  // ponytail: no transaction -- D1 rejects BEGIN, and each point has to see
-  // what the point before it wrote, which `db.batch()` cannot express. So each
-  // statement auto-commits: a failure part-way leaves the earlier points
-  // written. Prices are idempotent upserts, so re-running the fetch repairs it.
-  // Upgrade path if that is not good enough: decide the whole run in memory
-  // against one read of the history, then write it as a single batch.
+  // ponytail: no transaction (D1 rejects BEGIN; each point must see the one before). A partial failure is repaired by re-running, as upserts are idempotent.
   for (const point of sorted) {
     const outcome = opts.skipPlausibilityCheck
       ? await acceptUnconditionally(db, instrumentId, source, point)

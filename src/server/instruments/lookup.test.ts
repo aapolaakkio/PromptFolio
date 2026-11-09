@@ -16,7 +16,6 @@ import { candidateSymbols } from "./venues.ts";
 
 const EUR = parseCurrency("EUR");
 
-// No pause between quote requests: the tests would otherwise sit out 2 s each.
 const lookupInstrument = (
   isin: Parameters<typeof lookupWithSpacing>[0],
   name: string,
@@ -29,19 +28,10 @@ const USD = parseCurrency("USD");
 const fixture = (name: string): Promise<string> =>
   readText(new URL(`./fixtures/${name}`, import.meta.url));
 
-/**
- * A fetch stub keyed by substring of the requested URL, longest key first so
- * a per-symbol chart route wins over a generic one. Anything unmatched throws,
- * so a test that reaches an unexpected endpoint fails loudly instead of
- * silently resolving; no test here touches the network (test-network-guard.ts
- * enforces that globally).
- */
+/** A fetch stub keyed by URL substring, longest first; an unmatched URL throws so an unexpected endpoint fails loudly. */
 const stubFetch = (routes: Record<string, { body: string; status?: number }>): typeof fetch => {
   const ordered = Object.entries(routes).sort(([a], [b]) => b.length - a.length);
-  // SAFETY: every call site below passes only a URL and reads only the
-  // Response, so this single-argument function covers the whole of fetch as
-  // this codebase uses it; the assertion exists because fetch's own type
-  // cannot be satisfied structurally without restating its overloads.
+  // SAFETY: call sites pass only a URL and read only the Response; fetch's own type cannot be satisfied structurally.
   return (async (input: RequestInfo | URL) => {
     const url = String(input instanceof Request ? input.url : input);
     for (const [needle, response] of ordered) {
@@ -49,7 +39,7 @@ const stubFetch = (routes: Record<string, { body: string; status?: number }>): t
         return new Response(response.body, { status: response.status ?? 200 });
       }
     }
-    throw new Error(`odottamaton pyyntö: ${url}`);
+    throw new Error(`unexpected request: ${url}`);
   }) as typeof fetch;
 };
 
@@ -266,7 +256,7 @@ describe("lookupInstrument", () => {
   test("resolves nothing rather than guessing when every source comes up empty", async () => {
     const result = await lookupInstrument(
       "FI0000000003",
-      "Tuntematon",
+      "Unknown",
       EUR,
       stubFetch({
         openfigi: { body: await fixture("figi-unknown.json") },
@@ -324,8 +314,6 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
     expect(result.priceSource).toBe("yahoo");
     expect(result.sourceKey).toBe("NOKIA.HE");
     expect(result.kind).toBe("stock");
-    // No free source checked maps a name or ticker back to an ISIN, so this
-    // stays null rather than being invented.
     expect(result.isin).toBeNull();
     expect(result.outcome).toBe("form");
     expect(result.formReason).toBe("name");
@@ -350,12 +338,12 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
   test("ignores the company-form suffix a broker prints", async () => {
     const result = await lookupInstrument(
       null,
-      "ESIMERKKI OYJ",
+      "EXAMPLE OYJ",
       EUR,
       stubFetch({
         "op.fi": { body: "", status: 404 },
         "finance/search": nameSearch([
-          { symbol: "K34.F", quoteType: "EQUITY", longname: "Esimerkki Plc" },
+          { symbol: "K34.F", quoteType: "EQUITY", longname: "Example Plc" },
         ]),
         "chart/K34.F": chart("EUR"),
       }),
@@ -385,26 +373,24 @@ describe("lookupInstrument by name, for an import that carries no ISIN", () => {
 describe("name search, company-form suffix", () => {
   test("tries the bare name first, which is what surfaces the home listing", async () => {
     const asked: string[] = [];
-    // SAFETY: as in stubFetch above -- only a URL is ever passed and only the
-    // Response is read, which `typeof fetch` cannot express structurally.
+    // SAFETY: as in stubFetch.
     const stub = (async (input: RequestInfo | URL) => {
       const url = urlOf(input);
       if (url.includes("op.fi")) return new Response("", { status: 404 });
       if (url.includes("finance/search")) {
         const term = new URL(url).searchParams.get("q") ?? "";
         asked.push(term);
-        // Yahoo's own behaviour, recorded 2026-08-28: the bare name returns the
-        // Helsinki listing first; with "OYJ" appended it is absent entirely.
+        // Recorded 2026-08-28: the bare name returns the Helsinki listing first; with "OYJ" appended it is absent.
         const quotes =
-          term === "ESIMERKKI"
-            ? [{ symbol: "KCR.HE", quoteType: "EQUITY", longname: "Esimerkki Plc" }]
-            : [{ symbol: "K34.F", quoteType: "EQUITY", longname: "Esimerkki Plc" }];
+          term === "EXAMPLE"
+            ? [{ symbol: "KCR.HE", quoteType: "EQUITY", longname: "Example Plc" }]
+            : [{ symbol: "K34.F", quoteType: "EQUITY", longname: "Example Plc" }];
         return new Response(JSON.stringify({ quotes }));
       }
       return new Response(chart("EUR").body);
     }) as typeof fetch;
-    const byName = await lookupInstrument(null, "ESIMERKKI OYJ", EUR, stub);
-    expect(asked[0]).toBe("ESIMERKKI");
+    const byName = await lookupInstrument(null, "EXAMPLE OYJ", EUR, stub);
+    expect(asked[0]).toBe("EXAMPLE");
     expect(byName.sourceKey).toBe("KCR.HE");
   });
 });
@@ -428,7 +414,7 @@ describe("lookupInstrument, paused Yahoo and request cost", () => {
   const countQuotes = (routes: Record<string, { body: string; status?: number }>) => {
     const state = { quoteRequests: 0 };
     const inner = stubFetch(routes);
-    // SAFETY: only a URL is passed and only the Response is read, as in stubFetch.
+    // SAFETY: as in stubFetch.
     const stub = (async (input: RequestInfo | URL) => {
       if (urlOf(input).includes("v8/finance/chart")) state.quoteRequests += 1;
       return await inner(input);
@@ -504,11 +490,10 @@ describe("lookupInstrument, a page found by web search", () => {
     return { asked, find };
   };
 
-  /** Every URL the lookup asked for, so a request that should not happen is seen. */
   const recording = (routes: Record<string, { body: string; status?: number }>) => {
     const urls: string[] = [];
     const inner = stubFetch(routes);
-    // SAFETY: only a URL is passed and only the Response is read, as in stubFetch.
+    // SAFETY: as in stubFetch.
     const stub = (async (input: RequestInfo | URL) => {
       urls.push(urlOf(input));
       return await inner(input);
@@ -786,7 +771,7 @@ describe("lookupInstrument, a page found by web search", () => {
   });
 
   test("a refusal from the finder or the model is nothing found, the form", async () => {
-    const refused = new Error("Malli kieltäytyi vastaamasta tähän pyyntöön");
+    const refused = new Error("The model refused to answer this request");
     const finderRefused = await lookupWithSpacing(
       FUND_ISIN,
       FUND_NAME,

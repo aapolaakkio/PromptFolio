@@ -7,7 +7,7 @@ import { YAHOO } from "./yahoo.ts";
 const PAGE: PriceSource = {
   id: "page",
   async fetch(): Promise<never> {
-    throw new Error("käytä refreshPage");
+    throw new Error("use refreshPage");
   },
 };
 

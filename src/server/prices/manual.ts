@@ -7,13 +7,7 @@ import { HttpError } from "../errors.ts";
 import { requirePositiveMinor, type FetchedPrice, type PriceSource } from "./types.ts";
 import { writePrices } from "./write.ts";
 
-/**
- * Records a price a person typed, for a holding nothing can fetch.
- *
- * The price is parsed in the *instrument's* currency, not the ledger's: a
- * US-listed share is quoted in dollars, and reading its price as euros would
- * value the whole holding wrong without anything looking odd.
- */
+/** Records a person-typed price. Parsed in the instrument's currency, not the ledger's: reading a dollar quote as euros would misvalue the holding unnoticed. */
 export const recordManualPrice = async (
   db: Db,
   input: { readonly instrumentId: number; readonly date: string; readonly price: string },
@@ -23,27 +17,24 @@ export const recordManualPrice = async (
     .from(instruments)
     .where(eq(instruments.id, input.instrumentId))
     .get();
-  if (!instrument) throw new HttpError(404, "Arvopaperia ei löydy");
+  if (!instrument) throw new HttpError(404, "Instrument not found");
 
   const currency = parseCurrency(instrument.currency);
   let minor: bigint;
   try {
     minor = parseMoney(input.price, currency).minor;
   } catch {
-    throw new HttpError(400, "Hinta ei ole kelvollinen desimaaliluku");
+    throw new HttpError(400, "The price is not a valid decimal number");
   }
 
   let closeMinor: number;
   try {
-    closeMinor = requirePositiveMinor(Number(minor), "käsin syötetty hinta");
+    closeMinor = requirePositiveMinor(Number(minor), "manually entered price");
   } catch (cause) {
-    throw new HttpError(400, cause instanceof Error ? cause.message : "Hinta on virheellinen");
+    throw new HttpError(400, cause instanceof Error ? cause.message : "The price is invalid");
   }
 
-  // skipPlausibilityCheck: true -- see write.ts's `acceptUnconditionally` doc
-  // for why a human-entered correction must bypass the scraper-plumbing
-  // plausibility guard and its multi-day re-baseline streak, rather than risk a
-  // legitimate fix being silently (or repeatedly) rejected.
+  // Skips the plausibility guard: a human fix must not be rejected, or need a multi-day re-baseline streak.
   const outcome = await writePrices(
     db,
     instrument.id,

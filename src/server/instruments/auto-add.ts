@@ -16,7 +16,6 @@ import { addInstrument } from "./store.ts";
 
 type Unknown = Draft["unknownIsins"][number];
 
-/** A lookup that throws is one the owner sees in the form, not a failed preview. */
 const lookUp = async (
   db: Db,
   entry: Unknown,
@@ -36,12 +35,11 @@ const lookUp = async (
       page === null ? undefined : { ...page.deps, referenceMinor: page.referenceMinor },
     );
   } catch (cause) {
-    console.error(`Arvopaperin ${entry.isin ?? entry.name} haku epäonnistui`, cause);
+    console.error(`Lookup of instrument ${entry.isin ?? entry.name} failed`, cause);
     return null;
   }
 };
 
-/** What the review shows for a lookup the import can add by itself, or null. */
 const addable = (entry: Unknown, result: InstrumentLookup | null): AddedInstrument | null => {
   const isin = entry.isin ?? result?.isin ?? null;
   if (result === null || isin === null) return null;
@@ -58,10 +56,7 @@ const addable = (entry: Unknown, result: InstrumentLookup | null): AddedInstrume
   };
 };
 
-/**
- * The first buy's unit price for this instrument: what a found page's price
- * must be plausible against, so a hostile page cannot name any number.
- */
+/** The first buy's unit price: a found page's price must be plausible against it, so a hostile page cannot name any number. */
 const firstBuyPrice = (txns: readonly DraftTxn[], entry: Unknown): number | null => {
   const key = lookupKey(entry.isin, entry.name);
   const buy = txns.find(
@@ -75,7 +70,6 @@ const firstBuyPrice = (txns: readonly DraftTxn[], entry: Unknown): number | null
   return buy?.unitPrice ?? null;
 };
 
-/** A row without an ISIN whose instrument's lookup discovered one. */
 const withDiscoveredIsin = (txn: DraftTxn, discovered: ReadonlyMap<string, string>): DraftTxn => {
   if (txn.isin !== null || txn.instrumentId !== null || txn.instrumentName === undefined) {
     return txn;
@@ -84,13 +78,7 @@ const withDiscoveredIsin = (txn: DraftTxn, discovered: ReadonlyMap<string, strin
   return isin === undefined ? txn : { ...txn, isin };
 };
 
-/**
- * Looks up each instrument the draft could not resolve, once per instrument.
- * One that was found, or that is waiting on a paused Yahoo, moves to `added`;
- * one the owner must decide on stays in `unknownIsins` for the form. Writes
- * nothing but the lookup cache: instruments are created at commit. A lookup
- * that discovered its ISIN from a name is remembered under that ISIN too.
- */
+/** Looks up each unresolved instrument once. Found or Yahoo-paused ones move to `added`; ones the owner must decide stay in `unknownIsins`. Writes only the lookup cache (instruments are created at commit), also under the ISIN a name lookup discovered. */
 export const resolveUnknown = async (
   db: Db,
   draft: Draft,
@@ -122,8 +110,7 @@ export const resolveUnknown = async (
     }
     if (entry.isin === null) {
       discovered.set(lookupKey(null, entry.name), result.isin);
-      // Also under the ISIN, so the commit finds it from the row alone: the
-      // browser need not send the broker's name back.
+      // Also under the ISIN, so the commit finds it without the browser sending the name back.
       await storeLookupUnlessFound(db, result.isin, lookup, new Date());
     }
     if (!added.some((a) => a.isin === result.isin)) added.push(result);
@@ -137,11 +124,7 @@ export const resolveUnknown = async (
   };
 };
 
-/**
- * The lookup the preview remembered for this ISIN: under the ISIN itself, or
- * under the broker's name when the row had no ISIN and the lookup found it.
- * Only one whose ISIN is this one counts, so a row cannot borrow another's.
- */
+/** The lookup remembered for this ISIN, under it or under the broker's name; only one whose ISIN matches counts, so a row cannot borrow another's. */
 const rememberedFor = async (
   db: Db,
   isin: string,
@@ -162,7 +145,6 @@ const rememberedFor = async (
   return null;
 };
 
-/** Creates the instrument a remembered lookup describes, and returns its id. A page's recipe is stored with it. */
 const createFrom = async (
   db: Db,
   isin: string,
@@ -198,7 +180,6 @@ const createFrom = async (
   return created.id;
 };
 
-/** The id for one ISIN: an existing instrument's, a new one's, or null. */
 const instrumentFor = async (
   db: Db,
   isin: string,
@@ -217,11 +198,7 @@ const instrumentFor = async (
   return lookup === null ? null : await createFrom(db, isin, lookup, rows[0]);
 };
 
-/**
- * What the commit must still refuse: the draft's own unresolved entries, less
- * those now linked, plus any ISIN a row carries that nothing resolved -- so a
- * draft sent back without its list is refused all the same.
- */
+/** What the commit must still refuse: unresolved draft entries not now linked, plus any row ISIN nothing resolved (so a draft sent back without its list is refused too). */
 const stillUnknown = (
   draft: Draft,
   txns: readonly DraftTxn[],
@@ -242,13 +219,9 @@ const stillUnknown = (
 };
 
 /**
- * At commit, creates the instruments the preview found and links their rows.
- *
- * What to create comes from the rows and the server's own remembered lookups,
- * never from the draft's `added`: the draft comes back from the browser, and a
- * price source or code in it is whatever the browser chose to send. An ISIN
- * already registered is reused. An ISIN with nothing usable remembered stays
- * unresolved, and the commit refuses it as before.
+ * At commit, creates the instruments the preview found and links their rows. What to create comes
+ * from the rows and the server's remembered lookups, never from the browser-supplied draft `added`.
+ * A registered ISIN is reused; one with nothing usable stays unresolved and is refused.
  */
 export const createAdded = async (db: Db, draft: Draft): Promise<Draft> => {
   const byIsin = new Map<string, [DraftTxn, ...DraftTxn[]]>();

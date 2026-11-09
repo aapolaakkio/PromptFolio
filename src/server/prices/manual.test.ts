@@ -3,29 +3,15 @@ import { recordManualPrice } from "./manual.ts";
 import { PriceInput } from "../../web/server/prices.ts";
 import { EUR, type Currency } from "../../core/money.ts";
 
-/** The three sources a price can come from, as the instrument store defines them. */
 type PriceSource = "yahoo" | "manual";
 import { addInstrument } from "../instruments/store.ts";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.ts";
 import { prices } from "../db/schema.ts";
 
-// the shared database is safe to use statically here (unlike auth.ts/accounts.ts/
-// instruments.ts, imported dynamically below): it does not throw at import
-// time and does not decide the shared handle's identity on its own --
-// ../test-setup.ts (a vitest.config.ts setupFiles entry) has already pinned that
-// handle to a migrated in-memory database before this file's own top-level
-// code runs, so this just retrieves the same handle every other route
-// module in this process shares.
+// The shared database is safe to import statically: ../test-setup.ts has already pinned it to a migrated in-memory database.
 
-// Mirrors instruments.test.ts's own setup comment: this file exercises
-// priceRoutes against the real, migrated, process-shared database, via
-// dynamic imports from beforeAll (auth.ts is a process-wide ES module
-// singleton pinned to that database by ../test-setup.ts before this file's
-// own top-level code runs). Must NOT call resetDbHandleForTests(), set
-// DATABASE_PATH, or call the shared database itself -- see test-setup.ts's
-// comment and accounts.test.ts's comment for the real bug that duplicating
-// that setup caused.
+// Exercises priceRoutes against the shared database via dynamic imports from beforeAll. Must NOT call resetDbHandleForTests() or set DATABASE_PATH (see test-setup.ts).
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
@@ -54,15 +40,7 @@ const signUp = async (email: string): Promise<{ cookie: string }> => {
   return { cookie: sessionCookieFrom(response) };
 };
 
-/**
- * A syntactically valid but never-real ISIN, derived from a fresh
- * `crypto.randomUUID()` -- mirrors instruments.test.ts's `randomIsin`,
- * kept as a private copy here rather than imported: instruments.ts exports
- * no such helper, and this file's own instruments must not collide with
- * any other test file's fixture ISIN on this project's one shared,
- * process-wide `instruments` table (see instruments.test.ts's own comment
- * on `randomIsin` for why that matters).
- */
+/** A valid but never-real ISIN from a fresh UUID, so fixtures never collide on the shared `instruments` table. */
 const randomIsin = (country = "SE"): string =>
   `${country}${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
@@ -73,7 +51,7 @@ const createInstrument = async (
   const created = await addInstrument(db, {
     isin: randomIsin(),
     ticker: null,
-    name: "Testirahasto",
+    name: "Test fund",
     kind: "fund",
     currency: overrides.currency ?? EUR,
     priceSource: overrides.priceSource ?? "manual",
@@ -86,9 +64,6 @@ const recordPrice = async (body: { instrumentId: number; date: string; price: st
   recordManualPrice(db, PriceInput.parse(body));
 
 describe("recordManualPrice", () => {
-  // "rejects a request with no session" is the authed middleware's job now,
-  // and it is not reachable from a direct call to the service.
-
   test("records a manually entered price for a manual-source instrument", async () => {
     const { cookie } = await signUp(`price-manual-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
@@ -127,7 +102,7 @@ describe("recordManualPrice", () => {
         date: "2026-08-27",
         price: "10",
       }),
-    ).rejects.toThrow(/löydy/);
+    ).rejects.toThrow(/not found/);
   });
 
   test("rejects a malformed date with 400 field detail", async () => {
@@ -140,8 +115,6 @@ describe("recordManualPrice", () => {
         price: "10",
       }),
     ).rejects.toThrow();
-    // The field is named by the schema now, not by an error envelope: parsing
-    // it directly is what the server function's validator does.
     expect(PriceInput.safeParse({ instrumentId: 1, date: "2024-02-31", price: "10" }).success).toBe(
       false,
     );
@@ -183,10 +156,7 @@ describe("recordManualPrice", () => {
     ).rejects.toThrow();
   });
 
-  // The plausibility guard (write.ts) is deliberately bypassed for a
-  // manual entry -- see manual.ts's and write.ts's own doc comments for
-  // the full reasoning. Proven end-to-end here: a >10x jump from a prior
-  // stored price, entered by hand, is written, not rejected.
+  // The plausibility guard is bypassed for manual entry: a >10x jump entered by hand is written.
   test("accepts a >10x jump from the prior stored price -- the plausibility guard does not apply here", async () => {
     const { cookie } = await signUp(`price-implausible-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
@@ -216,8 +186,6 @@ describe("recordManualPrice", () => {
         price: "10",
       }),
     ).rejects.toThrow();
-    // The field is named by the schema now, not by an error envelope: parsing
-    // it directly is what the server function's validator does.
     expect(PriceInput.safeParse({ instrumentId: 1, date: "2024-02-31", price: "10" }).success).toBe(
       false,
     );
@@ -257,20 +225,14 @@ describe("recordManualPrice", () => {
     ).rejects.toThrow();
   });
 
-  // requirePositiveMinor (prices/types.ts) has no upper bound of its own, and a manual
-  // entry deliberately bypasses write.ts's >10x plausibility guard (see the test above)
-  // -- so Number.isSafeInteger is the only ceiling standing between a mistyped,
-  // absurdly long price and a value silently corrupted by float imprecision once it
-  // round-trips through the INTEGER `prices.close` column.
+  // Number.isSafeInteger is the only ceiling for an absurdly long manual price, which would otherwise corrupt in the INTEGER `prices.close` column.
   test("rejects a price so large it cannot be stored as an exact integer, with 400", async () => {
     const { cookie } = await signUp(`price-too-large-${crypto.randomUUID()}@example.com`);
     const instrument = await createInstrument(cookie);
     await expect(
       recordPrice({
         instrumentId: instrument.id,
-        // 28 digits before the decimal point -- well past Number.MAX_SAFE_INTEGER (2^53 -
-        // 1, 16 digits) once scaled to minor units, but still within the 30-char cap
-        // `RecordPrice`'s own schema already enforces on the raw string.
+        // 28 digits: past MAX_SAFE_INTEGER once scaled, within `RecordPrice`'s 30-char cap.
         date: "2026-08-27",
         price: "1".repeat(28),
       }),
@@ -280,7 +242,6 @@ describe("recordManualPrice", () => {
       .from(prices)
       .where(eq(prices.instrumentId, instrument.id))
       .get();
-    // Never written at all -- not stored as a corrupted, wrapped-around integer.
     expect(row).toBeUndefined();
   });
 

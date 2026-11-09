@@ -95,11 +95,7 @@ test("rejects an unparseable currency code loudly instead of guessing", async ()
   ).rejects.toThrow();
 });
 
-// Reproduced live during review: `close: [0]` returned `closeMinor: 0`,
-// `close: [-5]` returned `closeMinor: -500`, both as if they were valid
-// closes, before `requirePositiveMinor` existed. A zero/negative close is
-// never real for a listed security and must fail loudly instead of
-// flowing into the portfolio total.
+// `close: [0]` and `[-5]` once passed as valid closes; they must fail loudly.
 
 test("rejects a zero close instead of returning it as a valid price", async () => {
   const zero = async (): Promise<Response> =>
@@ -117,7 +113,7 @@ test("rejects a zero close instead of returning it as a valid price", async () =
     });
   await expect(
     YAHOO.fetch({ sourceKey: "X", from: "2025-01-01", to: "2025-01-02", fetchImpl: zero }),
-  ).rejects.toThrow(/epäkelpo hinta/);
+  ).rejects.toThrow(/invalid price/);
 });
 
 test("rejects a negative close instead of returning it as a valid price", async () => {
@@ -136,7 +132,7 @@ test("rejects a negative close instead of returning it as a valid price", async 
     });
   await expect(
     YAHOO.fetch({ sourceKey: "X", from: "2025-01-01", to: "2025-01-02", fetchImpl: negative }),
-  ).rejects.toThrow(/epäkelpo hinta/);
+  ).rejects.toThrow(/invalid price/);
 });
 
 test("rejects a payload that does not match the expected schema", async () => {
@@ -154,11 +150,7 @@ test("surfaces a non-200 response as an error", async () => {
 });
 
 test("a window with no trading in it yields no prices, not a failure", async () => {
-  // Yahoo answers a Saturday, a holiday, or a fund that has not published yet
-  // with meta alone. Requiring timestamp and close turned every weekend
-  // refresh into two dozen logged failures, with any real one lost among them.
-  // Yahoo's real shape for an empty window: `quote` present but with no
-  // `close` inside it, which is not the same as `indicators` being absent.
+  // A Saturday, holiday or unpublished fund returns meta alone; `quote` present but without `close` is not the same as `indicators` absent.
   const empty = {
     chart: {
       result: [{ meta: { currency: "EUR" }, indicators: { quote: [{}], adjclose: [{}] } }],

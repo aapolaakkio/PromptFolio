@@ -15,7 +15,6 @@ import { lookupKey } from "./lookup-cache.ts";
 
 const EUR = parseCurrency("EUR");
 
-/** A fresh, ISIN-shaped code per call: the suite shares one database. */
 const freshIsin = (): string =>
   `XS${String(Math.floor(Math.random() * 1e9)).padStart(9, "0")}${Math.floor(Math.random() * 10)}`;
 
@@ -134,7 +133,6 @@ describe("resolveUnknown", () => {
   test("one ISIN on many rows is looked up once", async () => {
     const isin = track(freshIsin());
     await remember(isin, found(isin));
-    // Two files merged into one review: the same ISIN listed twice.
     const draft = draftOf(
       [txn({ isin, line: 2 }), txn({ isin, line: 3 }), txn({ isin, line: 4 })],
       [
@@ -189,7 +187,6 @@ describe("resolveUnknown", () => {
       noNetwork,
     );
 
-    // The browser sends the row back without its name: the ISIN alone links it.
     const withoutName = resolved.txns.map(({ instrumentName: _name, ...rest }) => rest);
     const created = await createAdded(db, draftOf(withoutName, resolved.unknownIsins));
 
@@ -283,7 +280,6 @@ describe("resolveUnknown with a page finder", () => {
   const recipeClient: ChatClient = {
     run: async () => ({ text: JSON.stringify(GOOD), toolCalls: [] }),
   };
-  /** OpenFIGI, Yahoo and OP know nothing; only the found page answers. */
   const onlyThePage = async (): Promise<FetchImpl> => {
     const html = await readText(
       new URL("../prices/fixtures/nordnet-fund-suomi.html", import.meta.url),
@@ -446,7 +442,7 @@ describe("createAdded", () => {
 
   test("a created page instrument has its recipe stored", async () => {
     const isin = track(freshIsin());
-    const url = "https://example.fi/rahasto";
+    const url = "https://example.fi/fund";
     await remember(
       isin,
       found(isin, { kind: "fund", priceSource: "page", sourceKey: url, pageRecipe: GOOD }),

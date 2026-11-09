@@ -13,11 +13,9 @@ type Pending = typeof instruments.$inferSelect;
 const stillPending = (id: number) =>
   and(eq(instruments.id, id), eq(instruments.lookupStatus, "pending"));
 
-/** A listing in another currency than the holding's is for the owner to decide. */
 const sameCurrency = (row: Pending, found: InstrumentLookup): boolean =>
   found.listingCurrency === null || found.listingCurrency === row.currency;
 
-/** True when the late answer was written: the row was still pending. */
 const applyFound = async (db: Db, row: Pending, found: InstrumentLookup): Promise<boolean> => {
   if (found.priceSource === null || found.sourceKey === null) return false;
   const written = await db
@@ -49,7 +47,6 @@ const applyFound = async (db: Db, row: Pending, found: InstrumentLookup): Promis
   return true;
 };
 
-/** The first buy's unit price: what a found page's price must be plausible against. */
 const firstBuyPrice = async (db: Db, instrumentId: number): Promise<number | null> =>
   (
     await db
@@ -77,11 +74,7 @@ const markAttention = async (db: Db, id: number): Promise<boolean> => {
   return written.length > 0;
 };
 
-/**
- * Finishes the lookups that were paused when an import added an instrument.
- * While Yahoo is paused nothing is asked and rows stay pending. A found listing in another currency than the holding's goes to attention. Only rows still
- * pending are written, so a correction made in Muokkaa meanwhile wins.
- */
+/** Finishes lookups paused at import. Nothing is asked while Yahoo is paused; a listing in another currency goes to attention. Only still-pending rows are written, so a correction made in Edit meanwhile wins. */
 export const resolvePending = async (
   db: Db,
   fetchImpl: FetchImpl = fetch,
@@ -116,7 +109,7 @@ export const resolvePending = async (
         attention += 1;
       }
     } catch (cause) {
-      console.error(`Arvopaperin ${row.isin ?? row.name} haku epäonnistui`, cause);
+      console.error(`Lookup of instrument ${row.isin ?? row.name} failed`, cause);
     }
   }
   return { resolved, attention };

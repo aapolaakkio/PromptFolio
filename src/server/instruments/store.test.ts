@@ -17,10 +17,7 @@ import { testDb } from "../db/test-db.ts";
 import { instruments, pageRecipes } from "../db/schema.ts";
 import type { PageRecipe } from "../prices/page-recipe.ts";
 
-// What api/instruments.test.ts checked through HTTP, checked here against the
-// function itself. Gone with the route: three "rejects a request with no
-// session" cases, now the authed middleware's job, and two asserting a 400's
-// field detail, now zod's before a handler runs.
+// Replaces api/instruments.test.ts's HTTP checks; the session and 400-detail cases moved to middleware and zod.
 
 const EUR = parseCurrency("EUR");
 const SEK = parseCurrency("SEK");
@@ -59,14 +56,12 @@ describe("addInstrument", () => {
     };
     await addInstrument(db, row);
 
-    // The ISIN is in the message because it is what the person is looking at
-    // when they hit this: a broker row they were trying to resolve.
+    // The ISIN is in the message because it is what the person is resolving.
     await expect(addInstrument(db, row)).rejects.toThrow(isin);
   });
 
   test("refuses a duplicate name when there is no ISIN to match on", async () => {
-    // A delisted share or a corporate-action line has no ISIN any registry
-    // will give up, so the name is the only thing left to match.
+    // A manual holding has no ISIN any registry gives up, so the name is all there is to match.
     const name = `Manuaalinen ${crypto.randomUUID()}`;
     const row = {
       ticker: null,
@@ -101,12 +96,12 @@ describe("addInstrument", () => {
     const byIsin = await addInstrument(db, {
       isin,
       ticker: null,
-      name: `Ilman avainta ${isin}`,
+      name: `Without a key ${isin}`,
       kind: "fund",
       currency: EUR,
       priceSource: "manual",
     });
-    const name = `Nimellä ${crypto.randomUUID()}`;
+    const name = `Named ${crypto.randomUUID()}`;
     const byName = await addInstrument(db, {
       ticker: null,
       name,
@@ -122,9 +117,7 @@ describe("addInstrument", () => {
 
 describe("listInstruments", () => {
   test("returns what any signed-in member can see, which is all of them", async () => {
-    // Instruments are shared reference data: two household members'
-    // transactions reference the same Nokia share, so there is nothing to
-    // scope per user and nothing to leak between them.
+    // Shared reference data: nothing to scope per user.
     const isin = randomIsin();
     await addInstrument(db, {
       isin,
@@ -207,16 +200,16 @@ describe("updateInstrument", () => {
     const fund = await add();
     await expect(
       updateInstrument(db, fund.id, { currency: EUR, priceSource: "page", sourceKey: " " }),
-    ).rejects.toThrow("Lähdetunnus");
+    ).rejects.toThrow("source code");
     await expect(
       updateInstrument(db, 999_999, { currency: EUR, priceSource: "manual", sourceKey: "" }),
-    ).rejects.toThrow("ei löytynyt");
+    ).rejects.toThrow("not found");
   });
 });
 
 describe("page instruments", () => {
   const PAGE_ISIN = "FI0000000001";
-  const URL_A = "https://example.test/rahasto";
+  const URL_A = "https://example.test/fund";
   const RECIPE: PageRecipe = {
     kind: "page",
     pattern: String.raw`NAV (?<price>[\d,]+) (?<currency>[A-Z]{3}) (?<date>\d{2}\.\d{2}\.\d{4})`,
@@ -224,7 +217,7 @@ describe("page instruments", () => {
     money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
     currency: null,
   };
-  const html = (nav: string) => `<h1>Rahasto ${PAGE_ISIN}</h1><p>NAV ${nav} EUR 26.08.2026</p>`;
+  const html = (nav: string) => `<h1>Fund ${PAGE_ISIN}</h1><p>NAV ${nav} EUR 26.08.2026</p>`;
   const serve = (body: string) => async (): Promise<Response> => new Response(body);
   const model = (recipe: PageRecipe): ChatClient & { calls: number } => {
     const client = {
@@ -244,7 +237,7 @@ describe("page instruments", () => {
   const NEW = {
     isin: PAGE_ISIN,
     ticker: null,
-    name: "Testirahasto",
+    name: "Test fund",
     kind: "fund" as const,
     currency: EUR,
     priceSource: "page" as const,
@@ -284,7 +277,7 @@ describe("page instruments", () => {
     await expect(
       addPageInstrument(
         tdb,
-        { ...NEW, sourceKey: "http://example.test/rahasto" },
+        { ...NEW, sourceKey: "http://example.test/fund" },
         deps(html("12,34"), client),
       ),
     ).rejects.toMatchObject({ status: 400 });
@@ -293,7 +286,7 @@ describe("page instruments", () => {
     expect(await tdb.select().from(instruments).all()).toEqual([]);
   });
 
-  test("Muokkaa to a new URL replaces the recipe", async () => {
+  test("Edit to a new URL replaces the recipe", async () => {
     const { db: tdb } = await testDb();
     const first = await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
     const next: PageRecipe = {
@@ -315,7 +308,7 @@ describe("page instruments", () => {
     expect(JSON.parse(row?.recipe ?? "null")).toEqual(next);
   });
 
-  test("a failed Muokkaa check changes nothing", async () => {
+  test("a failed Edit check changes nothing", async () => {
     const { db: tdb } = await testDb();
     const first = await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
     const before = {

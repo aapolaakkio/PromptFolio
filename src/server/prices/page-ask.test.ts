@@ -64,21 +64,21 @@ describe("writePageRecipe", () => {
     const last = client.asked[1]?.messages.at(-1);
     expect(last?.role).toBe("user");
     expect(last && "content" in last ? last.content : "").toContain(
-      "Lauseke ei löytänyt sivulta mitään.",
+      "The expression matched nothing on the page.",
     );
   });
 
   test("no passing answer returns the reason", async () => {
     const result = await writePageRecipe(await fixture(), expectation, stub(reply(BAD)));
 
-    expect(result).toEqual({ error: "Lauseke ei löytänyt sivulta mitään." });
+    expect(result).toEqual({ error: "The expression matched nothing on the page." });
   });
 
   test("a reply that is not a recipe returns the reason", async () => {
     const result = await writePageRecipe(
       await fixture(),
       expectation,
-      stub({ text: "en osaa", toolCalls: [] }),
+      stub({ text: "I cannot tell", toolCalls: [] }),
     );
 
     expect("error" in result && result.error.length > 0).toBe(true);

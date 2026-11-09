@@ -17,7 +17,6 @@ import { urlOf, type FetchImpl } from "./types.ts";
 
 type TestDb = Awaited<ReturnType<typeof testDb>>["db"];
 
-// A Wednesday: Helsinki 15:00, Xetra 14:00, New York 08:00 (closed).
 const MIDDAY = new Date("2026-07-01T12:00Z");
 const SATURDAY = new Date("2026-07-04T12:00Z");
 
@@ -27,7 +26,7 @@ const seedAccount = async (db: TestDb): Promise<number> => {
     .insert(user)
     .values({
       id: userId,
-      name: "Testi",
+      name: "Test",
       email: `${userId}@example.com`,
       emailVerified: true,
       createdAt: new Date(),

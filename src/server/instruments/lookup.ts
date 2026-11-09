@@ -12,11 +12,7 @@ import type { PageFinder } from "./find-page.ts";
 import { figiLookup, type InstrumentKind } from "./openfigi.ts";
 import { candidateSymbols } from "./venues.ts";
 
-/**
- * Yahoo's search. Finnish non-listed funds resolve too, under synthetic `0P...`
- * symbols whose chart endpoint serves daily NAV about a day behind the
- * provider's own page. An unknown ISIN returns an empty array.
- */
+// Finnish non-listed funds resolve under synthetic `0P...` symbols (daily NAV, about a day behind the provider's page).
 const SearchResponse = z.object({
   quotes: z.array(
     z.object({
@@ -28,15 +24,9 @@ const SearchResponse = z.object({
   ),
 });
 
-/**
- * A placeholder quote for a venue Yahoo has no real ticker on: the symbol is the
- * ISIN plus an exchange suffix. It carries nothing, and counting it as a
- * candidate made every ETF that has one look ambiguous. Matched by shape, since
- * nothing says one venue is the only one this happens for.
- */
+// Placeholder quote for a venue with no real ticker (ISIN plus exchange suffix); counting it made ETFs look ambiguous.
 const isIsinPlaceholder = (symbol: string, isin: string): boolean => symbol.startsWith(isin);
 
-/** Yahoo's own quoteType, used for kind only when OpenFIGI had no answer. */
 const kindFromQuoteType = (quoteType: string | undefined): InstrumentKind | null => {
   if (quoteType === "ETF") return "etf";
   if (quoteType === "EQUITY") return "stock";
@@ -45,39 +35,20 @@ const kindFromQuoteType = (quoteType: string | undefined): InstrumentKind | null
 };
 
 export type InstrumentLookup = {
-  /** Null when no registry recognised the ISIN at all. */
   readonly kind: InstrumentKind | null;
-  /** The registry's own name, for the user to sanity-check against the broker's. */
   readonly name: string | null;
   readonly priceSource: "yahoo" | "page" | null;
-  /** The page's URL when `priceSource` is "page". */
   readonly sourceKey: string | null;
-  /**
-   * The ISIN, which for an OP paste import is discovered here rather than
-   * typed: OP's transaction view carries no ISIN column at all.
-   */
+  /** Discovered here for OP paste imports, which carry no ISIN column. */
   readonly isin: string | null;
-  /**
-   * The currency of the listing that was chosen. Equal to the holding's own
-   * currency whenever a listing in that currency could be found; when it is
-   * not, it is the currency of the only listing there was, and the review
-   * screen says so rather than letting a USD listing price a EUR holding
-   * silently.
-   */
+  /** Equals the holding's currency when such a listing exists; otherwise the only listing's, and the review screen flags it. */
   readonly listingCurrency: Currency | null;
-  /**
-   * "found": use it as is. "form": the user has to look (see `formReason`).
-   * "pending": Yahoo is paused, so nothing is known yet and nothing was
-   * wrongly reported as missing.
-   */
+  /** "pending": Yahoo is paused or a transient failure hit, so nothing is known yet. */
   readonly outcome: "found" | "form" | "pending";
-  /** Why the form is needed; null unless `outcome` is "form". */
   readonly formReason: "nothing" | "currency" | "name" | null;
-  /** The recipe that read the page's price, when `priceSource` is "page". */
   readonly pageRecipe: PageRecipe | null;
 };
 
-/** The web search and the model that verifies what it finds; see `lookupInstrument`. */
 export type PageLookup = {
   readonly find: PageFinder;
   readonly client: ChatClient;
@@ -85,10 +56,9 @@ export type PageLookup = {
   readonly referenceMinor: number | null;
 };
 
-/** What the finder answered, once: the page itself is kept so it is fetched once too. */
 type Hit = { readonly url: string; readonly isin: string | null; readonly html: string | null };
 
-/** The finder or the model failed transiently: nothing is known yet, which is not "nothing found". */
+/** A transient finder/model failure: nothing known yet, which is not "nothing found". */
 class PagePendingError extends Error {}
 
 type Resolved = Omit<InstrumentLookup, "outcome" | "formReason">;
@@ -104,16 +74,10 @@ const NOTHING: Resolved = {
 };
 
 /**
- * Fills in what the unknown-instrument form would otherwise make the user type.
- *
- * Two halves, because no free source covers both: OpenFIGI says what the security
- * is and where it lists, Yahoo says what it costs under a symbol per venue.
- *
- * `currency` decides rather than hints. One ISIN trades on several venues in
- * different currencies, so the listing matching the holding is the only right one.
- *
- * Every leg fails soft: an unresolved instrument is an inconvenience, a wrongly
- * resolved one silently prices the wrong security.
+ * Fills in what the unknown-instrument form would make the user type: OpenFIGI says what the
+ * security is and where it lists, Yahoo prices it per venue. `currency` decides the listing,
+ * since one ISIN trades in several currencies. Every leg fails soft: an unresolved instrument
+ * is an inconvenience, a wrongly resolved one silently prices the wrong security.
  */
 export const lookupInstrument = (
   isin: string | null,
@@ -133,19 +97,13 @@ type Ask = {
   readonly page: PageLookup | null;
 };
 
-/**
- * `hit` is undefined until the finder has been asked, and then whatever it
- * answered, null included: one web search per instrument, however the
- * lookup recurses.
- */
+// `hit` is undefined until the finder was asked, then its answer (null included): one web search per instrument.
 const lookupWith = async (
   ask: Ask,
   isin: string | null,
   hit: Hit | null | undefined,
 ): Promise<InstrumentLookup> => {
   try {
-    // OP's paste import carries no ISIN column, so the finder is the only way
-    // to learn it.
     if (isin === null) {
       if (ask.page !== null && ask.currency !== null && hit === undefined) {
         const found = await findPage(ask, ask.page, null);
@@ -165,12 +123,7 @@ const lookupWith = async (
   }
 };
 
-/**
- * An ISIN a found page shows is still only the page's word: a page about a
- * sister fund shows that fund's ISIN, and Yahoo would then price the wrong
- * security without complaint. It is used only when OpenFIGI's name for it
- * agrees with the row's; otherwise the owner looks.
- */
+// A page about a sister fund shows that fund's ISIN, so it is used only when OpenFIGI's name for it agrees with the row's.
 const claimedIsin = async (ask: Ask, isin: string, hit: Hit): Promise<InstrumentLookup> => {
   // ponytail: OpenFIGI is asked again inside `resolve`; one extra request per claimed ISIN.
   const figi = await settle(figiLookup(isin, ask.fetchImpl));
@@ -193,19 +146,17 @@ const resolveThenPage = async (
   return classify(resolved, ask.currency);
 };
 
-/** A share Yahoo cannot price has no NAV page to find; a fund or an unknown might. */
 const mayHavePage = (resolved: Resolved): boolean =>
   resolved.kind === null || resolved.kind === "fund";
 
-/** Asks the finder and fetches what it names. A page that will not load has no html. */
 const findPage = async (ask: Ask, page: PageLookup, isin: string | null): Promise<Hit | null> => {
   let found: Awaited<ReturnType<PageFinder>>;
   try {
     found = await page.find({ isin, name: ask.name, currency: ask.currency });
   } catch (cause) {
-    console.error(`Sivun haku arvopaperille ${isin ?? ask.name} epäonnistui`, cause);
+    console.error(`Page lookup for instrument ${isin ?? ask.name} failed`, cause);
     if (!isTransientFailure(cause)) return null;
-    throw new PagePendingError("Sivun haku epäonnistui", { cause });
+    throw new PagePendingError("Page lookup failed", { cause });
   }
   if (found === null) return null;
   return { ...found, html: await settle(fetchPage(found.url, ask.fetchImpl)) };
@@ -213,11 +164,7 @@ const findPage = async (ask: Ask, page: PageLookup, isin: string | null): Promis
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/**
- * OpenFIGI and Yahoo found nothing to price. A page the web search finds is
- * used only once a recipe the app runs has read a plausible, current price
- * for this ISIN (or name) and currency off it.
- */
+// A found page is used only once a recipe has read a plausible, current price for this ISIN and currency off it.
 const viaFoundPage = async (
   ask: Ask,
   page: PageLookup,
@@ -245,9 +192,9 @@ const viaFoundPage = async (
       page.client,
     );
   } catch (cause) {
-    console.error(`Sivun ${hit.url} kuvauksen kysyminen epäonnistui`, cause);
+    console.error(`Asking for a recipe for page ${hit.url} failed`, cause);
     if (!isTransientFailure(cause)) return classify(resolved, ask.currency);
-    throw new PagePendingError("Mallia ei tavoitettu", { cause });
+    throw new PagePendingError("The model could not be reached", { cause });
   }
   if ("error" in written) return classify(resolved, ask.currency);
   return classify(
@@ -264,10 +211,7 @@ const viaFoundPage = async (
   );
 };
 
-/**
- * Sends to the form: nothing found; the only listing is in another currency
- * than the holding; or a row with no ISIN that a name search resolved.
- */
+/** Form when nothing was found, the only listing is in another currency, or the ISIN is missing. */
 const classify = (resolved: Resolved, currency: Currency | null): InstrumentLookup => {
   if (resolved.priceSource === null) return { ...resolved, outcome: "form", formReason: "nothing" };
   if (resolved.isin === null) return { ...resolved, outcome: "form", formReason: "name" };
@@ -289,9 +233,7 @@ const resolve = async (
   quoteSpacingMs: number | undefined,
 ): Promise<Resolved> => {
   if (isin === null) {
-    // A share has no such page. Yahoo can still be searched by name, which
-    // fills in everything except the ISIN -- no free source checked maps a
-    // ticker or a name back to one, so that field stays typed by hand.
+    // No free source maps a name back to an ISIN, so that field stays typed by hand.
     return await byName(name, currency, fetchImpl, quoteSpacingMs);
   }
 
@@ -320,17 +262,12 @@ const resolve = async (
     };
   }
 
-  // Nothing Yahoo can price. A fund may still have its own provider page.
   return { ...NOTHING, kind, name: figi?.name ?? null, isin };
 };
 
 type Listing = { readonly symbol: string; readonly currency: Currency };
 
-/**
- * The first candidate quoted in the holding's currency, or the first that exists
- * at all, so the form can offer something and flag the mismatch. All candidates
- * are probed in order and probing stops at the first match, so the home listing costs one request.
- */
+/** First candidate in the holding's currency, else the first that exists (the form flags the mismatch). Probing stops at the first match. */
 const pickListing = async (
   candidates: readonly string[],
   currency: Currency | null,
@@ -353,15 +290,7 @@ const pickListing = async (
   return fallback;
 };
 
-/**
- * Resolves a holding that has no ISIN at all -- OP's paste never carries one --
- * from its name alone. Deliberately strict about what counts as a match: a
- * name search will happily return a different company, and registering the
- * wrong security silently prices a holding from something the user does not
- * own. The registry name has to actually look like the name that was asked
- * for, and the listing still has to be the one quoted in the holding's own
- * currency.
- */
+// Strict on purpose: a name search happily returns a different company, which would price the holding from something the user does not own.
 const byName = async (
   name: string,
   currency: Currency | null,
@@ -400,23 +329,14 @@ const byName = async (
   };
 };
 
-/**
- * The queries to try, in order. A broker prints the legal company form and
- * Yahoo's relevance ranking is thrown by it: searching a name with "OYJ" appended returns
- * seven German and American listings and not the Helsinki one at all, while
- * the bare name puts the Helsinki listing first. Verified against several Helsinki-listed shares, including
- * a Helsinki-listed share; the bare name is tried first for that reason, with the broker's
- * own spelling kept as a fallback for a name the stripping mangles.
- */
+// The broker's legal company form throws Yahoo's ranking (with "OYJ" the Helsinki listing can vanish), so the bare name goes first.
 const searchTerms = (name: string): string[] => {
   const bare = name.replace(COMPANY_FORM, " ").replace(/\s+/g, " ").trim();
   return bare !== "" && bare.toLowerCase() !== name.toLowerCase() ? [bare, name] : [name];
 };
 
-/** The legal-form words a broker appends, which are noise to a name search. */
 const COMPANY_FORM = /\b(oyj|oy|abp|plc|ab|asa|as|inc|corp|corporation|group|nv|sa)\b/gi;
 
-/** Lowercased, punctuation-stripped, and without the company-form suffixes a broker prints. */
 const normaliseName = (value: string): string =>
   value
     .toLowerCase()
@@ -425,11 +345,7 @@ const normaliseName = (value: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-/**
- * True when one name is the other's opening words. "NOKIA OYJ" matches "Nokia
- * Oyj"; it does not match "Nokian Renkaat", whose first word differs once the
- * company-form suffixes are gone.
- */
+/** One name is the other's opening words: "NOKIA OYJ" matches "Nokia Oyj", not "Nokian Renkaat". */
 const namesAgree = (asked: string, found: string | null): boolean => {
   if (found === null) return false;
   const a = normaliseName(asked);
@@ -460,7 +376,6 @@ const yahooSearchByName = async (name: string, fetchImpl: typeof fetch): Promise
   }));
 };
 
-/** A failed leg is an absent answer, never a failed lookup. */
 const settle = async <T>(work: Promise<T>): Promise<T | null> => {
   try {
     return await work;
@@ -472,7 +387,6 @@ const settle = async <T>(work: Promise<T>): Promise<T | null> => {
 
 type YahooHit = { readonly symbol: string; readonly quoteType: string | undefined };
 
-/** Yahoo's own matches for an ISIN, placeholders removed. */
 const yahooSearch = async (isin: string, fetchImpl: typeof fetch): Promise<YahooHit[]> => {
   const response = await fetchImpl(
     `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(

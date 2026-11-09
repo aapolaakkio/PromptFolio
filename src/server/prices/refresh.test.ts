@@ -37,13 +37,7 @@ const seedInstrument = async (db: TestDb, over: Partial<typeof instruments.$infe
     .returning()
     .get();
 
-/**
- * Seeds a user + account + one BUY transaction on `instrumentId`, dated `tradeDate`, and
- * returns the ids it created. `quantity`/`amount` default to 0 (this file's original
- * behaviour, still what most callers here want -- they only care about the transaction's
- * *date*, to give backfill an earliest transaction to backfill against); pass a real
- * `quantity` when a test also needs `positionsAt`/`valueSeries` to see a non-zero holding.
- */
+/** Seeds a user, account and one BUY on `instrumentId` at `tradeDate` (quantity/amount default 0: callers mostly need only the date); returns the ids. */
 const seedTransaction = async (
   db: TestDb,
   args: { instrumentId: number; tradeDate: string; quantity?: number; amount?: number },
@@ -53,7 +47,7 @@ const seedTransaction = async (
     .insert(user)
     .values({
       id: userId,
-      name: "Testikäyttäjä",
+      name: "Test user",
       email: `${userId}@example.com`,
       emailVerified: true,
       createdAt: new Date(),
@@ -100,7 +94,6 @@ const mustNotBeCalled = async (): Promise<Response> => {
   throw new Error("must not be called");
 };
 
-/** An instrument someone holds: refreshPrices skips one nobody does. */
 const seedHeld = async (db: TestDb, over: Partial<typeof instruments.$inferInsert> = {}) => {
   const instrument = await seedInstrument(db, over);
   await seedTransaction(db, {
@@ -117,8 +110,6 @@ const pauseYahoo = async (db: TestDb): Promise<void> => {
     .values({ id: 1, pausedUntil: Date.now() + 60 * 60_000, backoffMs: 15 * 60_000 })
     .run();
 };
-
-// --- refreshPrices -----------------------------------------------------------
 
 test("writes one price row per instrument and logs success", async () => {
   const { db } = await testDb();
@@ -224,8 +215,6 @@ test("a 429 mid-run keeps the quotes already fetched and asks no more", async ()
   expect(await db.select().from(prices).all()).toHaveLength(1);
 });
 
-// --- backfillInstrument --------------------------------------------------------
-
 test("backfills nothing and touches no network for an instrument with no transactions", async () => {
   const { db } = await testDb();
   const instrument = await seedInstrument(db);
@@ -251,8 +240,7 @@ test("a source that covers the whole requested range backfills completely", asyn
         result: [
           {
             meta: { currency: "EUR" },
-            // 2026-08-20, 21, 24, 27 (skipping the 22-23 weekend) -- covers
-            // the whole requested range with no gap wider than a weekend.
+            // Covers the whole range with no gap wider than a weekend.
             timestamp: [1787184000, 1787270400, 1787529600, 1787788800],
             indicators: { quote: [{ close: [4.1, 4.15, 4.2, 4.31] }] },
           },
@@ -274,13 +262,13 @@ test("a source that throws during backfill is reported as incomplete, not partia
   await seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
   const throwingFetch = async (): Promise<Response> => {
-    throw new Error("verkkovirhe");
+    throw new Error("network error");
   };
   const result = await backfillInstrument(db, instrument.id, { fetchImpl: throwingFetch });
   expect(result).toEqual({ inserted: 0, incomplete: true });
   const log = await db.select().from(priceFetchLog).all();
   expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("verkkovirhe");
+  expect(log[0]!.message).toContain("network error");
 });
 
 test("a backfill batch that fully covers the range but contains one implausible point reports both", async () => {
@@ -293,7 +281,6 @@ test("a backfill batch that fully covers the range but contains one implausible 
         result: [
           {
             meta: { currency: "EUR" },
-            // 20th, 21st, 24th (implausible vs. 21st), 27th.
             timestamp: [1787184000, 1787270400, 1787529600, 1787788800],
             indicators: { quote: [{ close: [4.1, 4.15, 4.15 * 1000, 4.3] }] },
           },
@@ -308,8 +295,8 @@ test("a backfill batch that fully covers the range but contains one implausible 
   const log = await db.select().from(priceFetchLog).all();
   expect(log).toHaveLength(1);
   expect(log[0]!.ok).toBe(false);
-  expect(log[0]!.message).toContain("hylätty epäuskottavana hintahyppynä");
-  expect(log[0]!.message).not.toContain("jäi vajaaksi");
+  expect(log[0]!.message).toContain("rejected as an implausible price jump");
+  expect(log[0]!.message).not.toContain("fell short");
 });
 
 test("a re-baseline confirmed within one backfill batch is logged loudly and counted ok despite the leftover rejections", async () => {
@@ -322,9 +309,6 @@ test("a re-baseline confirmed within one backfill batch is logged loudly and cou
         result: [
           {
             meta: { currency: "EUR" },
-            // 08-01 (normal), 08-02/03 (implausible vs. 08-01, pending),
-            // 08-04 (3rd consistent reading -> confirmed re-baseline),
-            // 08-05 (an ordinary move vs. the NEW baseline).
             timestamp: [1785542400, 1785628800, 1785715200, 1785801600, 1785888000],
             indicators: { quote: [{ close: [4, 44, 44.5, 45, 45.5] }] },
           },
@@ -335,16 +319,15 @@ test("a re-baseline confirmed within one backfill batch is logged loudly and cou
     fetchImpl: reverseSplitMidHistory,
     today: "2026-08-05",
   });
-  // 08-01, 08-04 (the confirmed re-baseline) and 08-05 are written; 08-02
-  // and 08-03 are the two consumed-as-confirmation rejections.
+  // 08-02 and 08-03 are consumed as confirmation rejections.
   expect(result).toEqual({ inserted: 3, incomplete: false });
 
   const log = await db.select().from(priceFetchLog).all();
   expect(log).toHaveLength(1);
   expect(log[0]!.ok).toBe(true);
-  expect(log[0]!.message).toContain("UUDELLEENPERUSTETTU");
-  expect(log[0]!.message).toContain("hylätty epäuskottavana hintahyppynä");
-  expect(log[0]!.message).not.toContain("jäi vajaaksi");
+  expect(log[0]!.message).toContain("REBASED");
+  expect(log[0]!.message).toContain("rejected as an implausible price jump");
+  expect(log[0]!.message).not.toContain("fell short");
 
   const rows = (await db.select().from(prices).all()).map((r) => ({
     date: r.date,
@@ -356,9 +339,6 @@ test("a re-baseline confirmed within one backfill batch is logged loudly and cou
   expect(rows).toHaveLength(3);
 });
 
-// --- backfillMany / needsBackfill (the nightly catch-up sweep's selection) ----
-
-/** A fetchImpl covering the whole 2026-08-20..27 range with no gap wider than a weekend. */
 const fullHistoryAug20to27 = async (): Promise<Response> =>
   Response.json({
     chart: {
@@ -490,8 +470,6 @@ test("backfillMany stops asking Yahoo after a 429 but still backfills other sour
   expect(calls.count).toBe(1);
 });
 
-// --- end-to-end: backfill closes the empty-history gap -------------------------
-
 test("an instrument with a years-old transaction ends up with price rows spanning that range, and its value series is no longer all zeros", async () => {
   const { db } = await testDb();
   const instrument = await seedInstrument(db, {
@@ -501,9 +479,7 @@ test("an instrument with a years-old transaction ends up with price rows spannin
     kind: "etf",
     sourceKey: "IWDA.AS",
   });
-  // 10 units bought 2020-06-15 -- a real multi-year-old holding, exactly the
-  // gap the README used to blame on Nordnet alone (task brief: it applies to
-  // yahoo-priced instruments too).
+  // A multi-year-old holding: the empty-history gap applies to Yahoo instruments too.
   const { userId } = await seedTransaction(db, {
     instrumentId: instrument.id,
     tradeDate: "2020-06-15",
@@ -517,7 +493,6 @@ test("an instrument with a years-old transaction ends up with price rows spannin
         result: [
           {
             meta: { currency: "EUR" },
-            // 2020-06-15 (the purchase date itself), 2023-06-15, 2026-08-20, 2026-08-27 (today).
             timestamp: [1592179200, 1686787200, 1787184000, 1787788800],
             indicators: { quote: [{ close: [3.0, 4.5, 5.2, 5.3] }] },
           },
@@ -544,12 +519,7 @@ test("an instrument with a years-old transaction ends up with price rows spannin
     { date: "2026-08-27", close: 530 },
   ]);
 
-  // Before backfill, `valueSeries` over this range would have been all zeros (no
-  // price existed before this ran): every day fell back to "no price known",
-  // excluding the instrument entirely (core/returns.ts's `excludedInstrumentIds`).
-  // Loading through valuation.ts's `loadPortfolio` -- the same path
-  // /api/value-series uses -- proves this is no longer true, end to end, through
-  // a real `PriceLookup`, not a hand-built stub of one.
+  // Loaded through valuation.ts's `loadPortfolio` (the /api/value-series path) with a real `PriceLookup`: without backfill every day had no price.
   const { loadPortfolio } = await import("../valuation.ts");
   const { valueSeries } = await import("../../core/returns.ts");
   const {
@@ -559,38 +529,25 @@ test("an instrument with a years-old transaction ends up with price rows spannin
   } = await loadPortfolio(db, userId);
   const series = valueSeries(txns, portfolioInstruments, priceLookup, "2020-06-14", "2026-08-27");
 
-  // The day before the purchase: no position yet, correctly zero.
   expect(series.find((p) => p.date === "2020-06-14")?.valueEur.minor).toBe(0n);
-  // The purchase date itself: 10 units at the backfilled 3.00 EUR close = 30.00 EUR.
   const onPurchase = series.find((p) => p.date === "2020-06-15");
   expect(onPurchase?.valueEur).toEqual({ minor: 3_000n, currency: EUR });
   expect(onPurchase?.stale).toBe(false);
   expect(onPurchase?.excludedInstrumentIds).toEqual([]);
-  // Mid-history, on a date backfill actually supplied a price for: 10 units at
-  // the backfilled 4.50 EUR close = 45.00 EUR -- real historical data, not a
-  // carried-forward placeholder and not an implied 0,00 €.
+  // Mid-history: a backfilled price, not a carried-forward placeholder.
   const midHistory = series.find((p) => p.date === "2023-06-15");
   expect(midHistory?.valueEur).toEqual({ minor: 4_500n, currency: EUR });
   expect(midHistory?.stale).toBe(false);
-  // Today: 10 units at 5.30 EUR = 53.00 EUR.
   const today = series.find((p) => p.date === "2026-08-27");
   expect(today?.valueEur).toEqual({ minor: 5_300n, currency: EUR });
 
-  // The headline claim: this range is not all zeros any more.
   const nonZeroDays = series.filter((p) => p.valueEur.minor > 0n);
   expect(nonZeroDays.length).toBeGreaterThan(0);
 });
 
-// --- runScheduledRefresh ---
-
 test("runScheduledRefresh never rejects, even when the FX fetch fails", async () => {
   const { db } = await testDb();
-  // A held non-EUR currency forces refreshFxRates to actually attempt a
-  // fetch; no fetchImpl is passed to runScheduledRefresh (matching how
-  // the scheduler itself would call it), so this hits the real global fetch --
-  // which src/server/test-network-guard.ts replaces with one that always
-  // throws. This exercises exactly the failure this function exists to
-  // survive: an outer try/catch that must never let a rejection through.
+  // A held non-EUR currency forces an FX fetch; the real global fetch throws (test-network-guard.ts), so the outer try/catch must never reject.
   await seedCurrencyOnlyTransaction(db, SEK);
   await expect(runScheduledRefresh(db)).resolves.toBeUndefined();
 });
@@ -605,11 +562,7 @@ test("runScheduledRefresh's nightly catch-up sweep attempts backfill for an inst
   const instrument = await seedInstrument(db);
   await seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
 
-  // No fetchImpl passed to runScheduledRefresh (matching the scheduler's real call, and the
-  // existing "never rejects" test above) -- this reaches the real global fetch, which
-  // test-network-guard.ts replaces with one that always throws. Proves two things at
-  // once: the catch-up sweep really did attempt a network call for this instrument
-  // (not silently skip it), and a failing one still can't take the scheduled job down.
+  // The real global fetch throws (test-network-guard.ts): proves the sweep attempted a call and a failure cannot take the job down.
   await expect(runScheduledRefresh(db)).resolves.toBeUndefined();
 
   const log = await db
@@ -617,19 +570,18 @@ test("runScheduledRefresh's nightly catch-up sweep attempts backfill for an inst
     .from(priceFetchLog)
     .where(eq(priceFetchLog.instrumentId, instrument.id))
     .all();
-  const backfillAttempt = log.find((row) => row.message?.includes("Taustatäyttö epäonnistui"));
+  const backfillAttempt = log.find((row) => row.message?.includes("Backfill failed"));
   expect(backfillAttempt).toBeDefined();
   expect(backfillAttempt?.ok).toBe(false);
 });
 
-/** Seeds one ledger transaction in `currency`, with the user/account it needs to satisfy FKs, and no instrument. */
 async function seedCurrencyOnlyTransaction(db: TestDb, currency: typeof SEK): Promise<void> {
   const userId = crypto.randomUUID();
   await db
     .insert(user)
     .values({
       id: userId,
-      name: "Testikäyttäjä",
+      name: "Test user",
       email: `${userId}@example.com`,
       emailVerified: true,
       createdAt: new Date(),
@@ -661,7 +613,7 @@ test("refreshPrices spaces page fetches and still runs Yahoo", async () => {
   for (const slug of ["a", "b"]) {
     await seedHeld(db, {
       isin: crypto.randomUUID(),
-      name: `Sivurahasto ${slug}`,
+      name: `Side fund ${slug}`,
       kind: "fund",
       priceSource: "page",
       sourceKey: `https://example.test/${slug}`,
@@ -672,7 +624,7 @@ test("refreshPrices spaces page fetches and still runs Yahoo", async () => {
   const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
     if (urlOf(url).includes("example.test")) {
       pageAt.push(Date.now());
-      return new Response("<p>ei mitään</p>");
+      return new Response("<p>nothing</p>");
     }
     return yahooStub(4.31)();
   };
@@ -694,7 +646,7 @@ test("refreshPrices writes the Yahoo prices before it reads any page", async () 
   const listed = await seedHeld(db);
   await seedHeld(db, {
     isin: crypto.randomUUID(),
-    name: "Sivurahasto",
+    name: "Page fund",
     kind: "fund",
     priceSource: "page",
     sourceKey: "https://example.test/a",
@@ -706,7 +658,7 @@ test("refreshPrices writes the Yahoo prices before it reads any page", async () 
       yahooRowsWhenPageRead = (
         await db.select().from(prices).where(eq(prices.instrumentId, listed.id)).all()
       ).length;
-      return new Response("<p>ei mitään</p>");
+      return new Response("<p>nothing</p>");
     }
     return yahooStub(4.31)();
   };

@@ -3,17 +3,9 @@ import { YahooPausedError } from "./yahoo-gate.ts";
 import type { FetchImpl, FetchedPrice } from "./types.ts";
 
 /**
- * Latest close and currency for many symbols.
- *
- * Checked 2026-11-08 with one plain request to
- * `https://query1.finance.yahoo.com/v8/finance/spark?symbols=NOKIA.HE,KCR.HE&range=1d&interval=1d`:
- * Yahoo answered 429 "Edge: Too Many Requests". No workaround was tried, so the
- * batch endpoint is unconfirmed and this uses the per-symbol chart call instead,
- * one at a time with a pause between.
- *
- * `fetchImpl` is expected to be gated already; a `YahooPausedError` from it
- * propagates. `stopWhen` ends the probing early, so the common case costs one
- * request. Any other failure for a symbol leaves that symbol out.
+ * Latest close and currency for many symbols, one chart call at a time with a pause: the spark
+ * batch endpoint answered 429 when tried (2026-11-08) and is unconfirmed. `fetchImpl` is expected
+ * to be gated (`YahooPausedError` propagates). `stopWhen` ends probing early; other failures drop the symbol.
  */
 const SPACING_MS = 2000;
 const WINDOW_DAYS = 10;

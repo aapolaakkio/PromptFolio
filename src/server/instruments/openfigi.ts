@@ -3,28 +3,12 @@ import { z } from "zod";
 export type InstrumentKind = "stock" | "etf" | "fund";
 
 /**
- * OpenFIGI's ISIN mapping, verified 2026-08-28 against the live
- * `POST https://api.openfigi.com/v3/mapping` (no API key, no auth -- the
- * unauthenticated tier is rate-limited, which is why lookups happen once per
- * instrument at registration and never in a loop). Recorded responses are in
- * `fixtures/figi-*.json`. What the live calls established:
- *
- *  - Its coverage includes Finnish non-listed funds: `FI4000261128` resolves
- *    to `OP-WORLD INDEX FUND-A EUR`, `securityType: "Open-End Fund"`.
- *  - A listed security returns one row per venue -- Nokia 3+, Ericsson 179,
- *    IWDA 180 -- all sharing a `securityType`. Only the type and the name are
- *    read here; picking a venue's ticker is deliberately left to Yahoo, whose
- *    symbols are what the price fetcher actually needs.
- *  - Two distinct failure shapes, both `200 OK` with an object in place of
- *    `data`: `{"error":"Invalid idValue format."}` for a malformed ISIN or a
- *    bad check digit, and `{"warning":"No identifier found."}` for a
- *    well-formed ISIN that is not in the registry. Neither is an exception
- *    here -- both mean "no answer", and the caller falls back to the form.
- *
- * This exists alongside Yahoo's search rather than instead of it because the
- * two answer different questions: Yahoo's search result carries the ticker
- * but no security type, and OpenFIGI carries the type but no venue the price
- * fetcher can use.
+ * OpenFIGI's ISIN mapping (`POST https://api.openfigi.com/v3/mapping`, no key; the unauthenticated
+ * tier is rate-limited, so once per instrument). Fixtures: `fixtures/figi-*.json`. It covers Finnish
+ * non-listed funds (`FI4000261128` is `OP-WORLD INDEX FUND-A EUR`, "Open-End Fund"). A listed security
+ * returns one row per venue with a shared `securityType`; only type and name are read, the ticker is
+ * left to Yahoo. Failures are `200 OK` with an object instead of `data`: `{"error":...}` (malformed
+ * ISIN) or `{"warning":"No identifier found."}`; both mean "no answer".
  */
 const MappingResponse = z
   .array(
@@ -48,12 +32,7 @@ const MappingResponse = z
   )
   .min(1);
 
-/**
- * `securityType` values seen live, mapped to instruments.kind. `securityType`
- * is used rather than `securityType2` because the latter reports IWDA -- an
- * ETF -- as `"Mutual Fund"`, which would register a tradeable ETF as a
- * non-listed fund and send it to the wrong price source.
- */
+// `securityType`, not `securityType2`: the latter reports the IWDA ETF as "Mutual Fund", sending a tradeable ETF to the wrong price source.
 const KIND_BY_SECURITY_TYPE = new Map<string, InstrumentKind>([
   ["Common Stock", "stock"],
   ["Preference Stock", "stock"],
@@ -66,23 +45,14 @@ const KIND_BY_SECURITY_TYPE = new Map<string, InstrumentKind>([
   ["Mutual Fund", "fund"],
 ]);
 
-export type FigiResult = {
+type FigiResult = {
   readonly name: string | null;
   readonly kind: InstrumentKind;
-  /**
-   * One entry per venue the registry lists the security on, deduplicated by
-   * exchange. A security can have 100+ of these (IWDA returns 180 rows); they
-   * are what lets a caller find the listing in the currency the holding is
-   * actually denominated in.
-   */
+  /** One entry per venue, deduplicated by exchange (IWDA has 180 rows): lets a caller find the listing in the holding's currency. */
   readonly venues: readonly { readonly ticker: string; readonly exchCode: string }[];
 };
 
-/**
- * Resolves an ISIN to its registry name and kind, or `null` when the registry
- * has no usable answer. Never throws for an unknown or malformed ISIN: those
- * are ordinary outcomes that hand control back to the manual form.
- */
+/** Resolves an ISIN to registry name and kind, or `null`; unknown or malformed ISINs are ordinary outcomes, never thrown. */
 export const figiLookup = async (
   isin: string,
   fetchImpl: typeof fetch = fetch,

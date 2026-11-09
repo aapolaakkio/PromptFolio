@@ -29,7 +29,7 @@ const RECIPE: PageRecipe = {
   money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
   currency: null,
 };
-const page = (nav: string, date: string) => `<h1>Rahasto ${ISIN}</h1><p>NAV ${nav} EUR ${date}</p>`;
+const page = (nav: string, date: string) => `<h1>Fund ${ISIN}</h1><p>NAV ${nav} EUR ${date}</p>`;
 const respond = (html: string) => async (): Promise<Response> => new Response(html);
 
 const noModel: ChatClient = {
@@ -55,7 +55,7 @@ const seedPage = async (db: TestDb, recipe: PageRecipe | null, askedAt: number |
     .values({
       isin: ISIN,
       ticker: null,
-      name: "Testirahasto",
+      name: "Test fund",
       kind: "fund",
       currency: EUR,
       priceSource: "page",
@@ -139,7 +139,7 @@ test("no stored recipe asks the model", async () => {
 test("a stale read counts as reading nothing", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, RECIPE);
-  const client = scripted("ei kelpaa");
+  const client = scripted("not valid");
   const result = await run(db, instrument, page("12,34", "01.01.2026"), client);
   expect(result).toBe("attention");
   expect(client.calls).toBeGreaterThan(0);
@@ -149,7 +149,7 @@ test("a stale read counts as reading nothing", async () => {
 test("a failed ask marks attention and writes nothing", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, null);
-  const client = scripted("ei kelpaa");
+  const client = scripted("not valid");
 
   const result = await run(db, instrument, page("12,34", "26.08.2026"), client);
 
@@ -164,7 +164,7 @@ test("the next night within 7 days makes no model call", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, null, NOW - DAY);
 
-  const result = await run(db, instrument, "<p>sivu muuttui</p>", noModel);
+  const result = await run(db, instrument, "<p>page changed</p>", noModel);
 
   expect(result).toBe("attention");
 });
@@ -293,14 +293,14 @@ test("a 503 stays failed and leaves the status", async () => {
 test("a recipe that breaks within 7 days of an ask marks attention with no model call", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, RECIPE, NOW - DAY);
-  expect(await run(db, instrument, "<p>sivu muuttui</p>", noModel)).toBe("attention");
+  expect(await run(db, instrument, "<p>page changed</p>", noModel)).toBe("attention");
   expect(await statusOf(db, instrument.id)).toBe("attention");
 });
 
 test("no client: a broken recipe marks attention", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, RECIPE);
-  expect(await run(db, instrument, "<p>sivu muuttui</p>", null)).toBe("attention");
+  expect(await run(db, instrument, "<p>page changed</p>", null)).toBe("attention");
   expect(await statusOf(db, instrument.id)).toBe("attention");
 });
 
@@ -467,7 +467,7 @@ describe("fetchPage limits", () => {
       },
     });
     await expect(fetchPage(URL_, async () => new Response(body))).rejects.toThrow(
-      "Sivu on liian suuri luettavaksi",
+      "The page is too large to read",
     );
     expect(pulled).toBeLessThan(10);
   });

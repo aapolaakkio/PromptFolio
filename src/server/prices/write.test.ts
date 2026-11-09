@@ -12,9 +12,7 @@ const seedInstrument = async (db: Db) =>
   await db
     .insert(instruments)
     .values({
-      // A fresh id per call: `instruments.isin` is unique, and this file's
-      // tests all share one testDb() instance's own isolated database, but
-      // each test still gets its own instrument to keep prices unambiguous.
+      // A fresh id per call: `instruments.isin` is unique.
       isin: crypto.randomUUID(),
       ticker: "NOKIA.HE",
       name: "Nokia",
@@ -138,17 +136,7 @@ test("writes zero points for an empty fetch without error", async () => {
   });
 });
 
-// --- Self-healing re-baseline (Task 15 review fix) --------------------------
-//
-// Reviewer finding: comparing every new point only against the last
-// *stored* price means a genuine permanent change (a steep split, a
-// re-denomination) is rejected forever -- every later real price also
-// fails against the same frozen stale baseline, and there is no
-// price-correction UI anywhere in this app to unstick it by hand. The
-// fix: a value repeated at a consistent new scale across
-// RE_BASELINE_CONFIRMATIONS separate writePrices calls is trusted and
-// becomes the new baseline. See write.ts's RE_BASELINE_CONFIRMATIONS doc
-// comment for the full reasoning and why 3.
+// --- Self-healing re-baseline: a value repeated at a new scale across RE_BASELINE_CONFIRMATIONS writes becomes the baseline ---
 
 test("a one-off implausible value stays rejected -- it does not confirm on its own", async () => {
   const { db } = await testDb();
@@ -173,9 +161,7 @@ test(`the same new scale confirmed ${RE_BASELINE_CONFIRMATIONS} times in a row i
     { date: "2026-08-01", closeMinor: 400, currency: EUR },
   ]);
 
-  // Simulates a steep reverse split: every day from here on reports
-  // ~4400-4500, a >10x jump from the old 400 baseline, but each new
-  // reading is itself an ordinary day-to-day move relative to the last.
+  // A steep reverse split: each reading is an ordinary move from the last but >10x from the old 400 baseline.
   const first = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-02", closeMinor: 4_400, currency: EUR },
   ]);
@@ -193,13 +179,11 @@ test(`the same new scale confirmed ${RE_BASELINE_CONFIRMATIONS} times in a row i
   const third = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-04", closeMinor: 4_500, currency: EUR },
   ]);
-  // The 3rd (RE_BASELINE_CONFIRMATIONS-th) consistent reading: accepted and re-baselined.
   expect(third).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 1 });
 
   const rows = await db.select().from(prices).all();
   expect(rows).toHaveLength(2); // the original 2026-08-01 row, plus the re-baselined 2026-08-04 row.
   expect(rows.find((r) => r.date === "2026-08-04")).toMatchObject({ close: 4_500 });
-  // The pending streak is fully resolved -- nothing left tracking it.
   expect(await db.select().from(pendingPriceRejections).all()).toEqual([]);
 });
 
@@ -220,9 +204,7 @@ test("a normal price after a re-baseline is compared against the new baseline, n
   ]);
   expect(reBaseline.reBaselined).toBe(1);
 
-  // An ordinary ~1% move relative to the new 4_500 baseline -- would have
-  // been rejected outright as a >10x jump against the *original* 400
-  // baseline, proving the comparison point actually moved.
+  // Ordinary against the new baseline, but >10x against the original: the comparison point moved.
   const after = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-05", closeMinor: 4_550, currency: EUR },
   ]);
@@ -240,7 +222,6 @@ test("an unrelated second anomaly resets the confirmation streak instead of comp
   await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-01", closeMinor: 400, currency: EUR },
   ]);
-  // First anomaly: a spurious ~11x spike.
   await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-02", closeMinor: 4_400, currency: EUR },
   ]);
@@ -249,12 +230,7 @@ test("an unrelated second anomaly resets the confirmation streak instead of comp
     streak: 1,
   });
 
-  // Second anomaly: a completely different, unrelated implausible value
-  // (not a continuation of the first spike) -- must restart the streak
-  // at 1 with the new candidate, not become "streak 2" of the old one.
-  // 30 is implausible vs. both: 400/30 > 10 (fails vs. the real baseline)
-  // and 30 is nowhere near 4_400 either (fails vs. the pending candidate),
-  // so this must start a brand new streak, not extend the old one.
+  // An unrelated implausible value (30 fails against both the baseline and the pending candidate) restarts the streak at 1.
   const unrelated = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-03", closeMinor: 30, currency: EUR },
   ]);
@@ -264,7 +240,6 @@ test("an unrelated second anomaly resets the confirmation streak instead of comp
     streak: 1,
   });
 
-  // Confirming the *second* anomaly twice more re-baselines to ITS scale, not the first's.
   await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-04", closeMinor: 32, currency: EUR },
   ]);
@@ -290,16 +265,14 @@ test("a value that reverts to the original baseline's scale is accepted normally
   ]);
   expect(await db.select().from(pendingPriceRejections).all()).toHaveLength(1);
 
-  // The anomaly was transient: the very next reading is back to normal
-  // relative to the ORIGINAL stored baseline (400), not the spike.
+  // The anomaly was transient: back to normal against the original baseline.
   const recovered = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-03", closeMinor: 410, currency: EUR },
   ]);
   expect(recovered).toEqual({ written: 1, rejectedImplausible: 0, reBaselined: 0 });
   expect(await db.select().from(pendingPriceRejections).all()).toEqual([]);
 
-  // A later value that repeats the original spike's exact scale starts a
-  // brand new streak at 1, not a continuation of the abandoned one.
+  // The original spike's scale again starts a new streak at 1.
   const newAnomaly = await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-04", closeMinor: 4_400, currency: EUR },
   ]);
@@ -310,13 +283,7 @@ test("a value that reverts to the original baseline's scale is accepted normally
   });
 });
 
-// --- skipPlausibilityCheck (manual price entry) -----------------------------
-//
-// A human correcting a price by hand (src/server/prices/manual.ts) is not the
-// scraper-plumbing failure mode this guard exists to catch, and the
-// re-baseline streak's "come back and confirm this a few more times" does
-// not fit a one-off form submission -- see write.ts's own doc comment on
-// `acceptUnconditionally` for the full reasoning.
+// --- skipPlausibilityCheck (manual entry): a human fix must not wait for a confirmation streak ---
 
 test("skipPlausibilityCheck writes an implausible jump unconditionally instead of rejecting it", async () => {
   const { db } = await testDb();
@@ -346,14 +313,12 @@ test("skipPlausibilityCheck clears an in-flight pending-rejection streak for tha
   await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-01", closeMinor: 400, currency: EUR },
   ]);
-  // Starts a pending streak via the normal (non-skipping) path.
   await writePrices(db, instrument.id, "yahoo", [
     { date: "2026-08-02", closeMinor: 4_400, currency: EUR },
   ]);
   expect(await db.select().from(pendingPriceRejections).all()).toHaveLength(1);
 
-  // A human's explicit manual correction supersedes whatever the automated
-  // source was in the middle of disputing.
+  // A manual correction supersedes whatever the automated source was disputing.
   const manual = await writePrices(
     db,
     instrument.id,

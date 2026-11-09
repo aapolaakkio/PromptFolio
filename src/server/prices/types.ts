@@ -1,29 +1,17 @@
 import type { Currency } from "../../core/money.ts";
 import type { PriceSourceId } from "../../core/types.ts";
 
-/**
- * One dated close as a source reported it. The currency is whatever the source
- * observed, never assumed to be EUR -- a real fund quotes its NAV in SEK.
- * Converting is a later layer's job.
- */
+/** One dated close. The currency is what the source observed, never assumed EUR (a fund may quote SEK). */
 export type FetchedPrice = {
   readonly date: string;
   readonly closeMinor: number;
   readonly currency: Currency;
 };
 
-/**
- * The callable shape of `fetch`, not `typeof fetch`: that carries static members
- * no stub has, so a test's plain async function could never satisfy it.
- */
+/** The callable shape of `fetch`, since `typeof fetch` has static members no stub has. */
 export type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/**
- * The URL a `FetchImpl` was called with, whichever of the three forms it took.
- *
- * `String(request)` is "[object Request]", not its URL, so a stub that matches
- * on the address silently stops matching the moment a caller passes a Request.
- */
+/** The URL a `FetchImpl` was called with; `String(request)` is "[object Request]", so a URL-matching stub would silently stop matching. */
 export const urlOf = (input: string | URL | Request): string =>
   input instanceof Request ? input.url : String(input);
 
@@ -39,44 +27,27 @@ export type PriceSource = {
   fetch(args: FetchArgs): Promise<FetchedPrice[]>;
 };
 
-/**
- * A JSON API's float into integer minor units, safe only to ordinary float
- * precision. A source handing back text should go through `parseMoney` instead,
- * which is exact and has no float step.
- */
+/** A JSON API's float to minor units, safe only to ordinary float precision; text sources should use `parseMoney`. */
 export const toMinor = (value: number): number => Math.round(value * 100);
 
 export const requireOk = async (response: Response, label: string): Promise<Response> => {
   if (!response.ok) {
-    throw new Error(`${label} vastasi ${response.status} ${response.statusText}`);
+    throw new Error(`${label} answered ${response.status} ${response.statusText}`);
   }
   return response;
 };
 
-/** `date` is within `[from, to]`, both inclusive, as plain ISO-date string compares. */
-export const inRange = (date: string, from: string, to: string): boolean =>
-  date >= from && date <= to;
-
 /**
- * Refuses a close that is never a real price. Every source passed a zero straight
- * through before this existed, which would value a holding at nothing and drag
- * the whole total down.
- *
- * Not a "suspiciously large jump" check: no threshold there is a fact rather than
- * a guess, and this sees one fetch with no prior price to compare against.
- *
- * A value past `Number.MAX_SAFE_INTEGER` is refused too, which is a fact about
- * floating point rather than about markets: manual entry bypasses the downstream
- * jump guard, so this is the only ceiling a mistyped price ever meets.
+ * Refuses a close that is never a real price: zero would value a holding at nothing. No jump
+ * threshold, as one fetch has no prior price. Past MAX_SAFE_INTEGER is refused too, being the
+ * only ceiling a mistyped manual price meets (it bypasses the jump guard).
  */
 export const requirePositiveMinor = (closeMinor: number, label: string): number => {
   if (!(closeMinor > 0)) {
-    throw new Error(`${label}: epäkelpo hinta ${closeMinor} (nolla tai negatiivinen)`);
+    throw new Error(`${label}: invalid price ${closeMinor} (zero or negative)`);
   }
   if (!Number.isSafeInteger(closeMinor)) {
-    throw new Error(
-      `${label}: epäkelpo hinta ${closeMinor} (liian suuri tallennettavaksi tarkasti)`,
-    );
+    throw new Error(`${label}: invalid price ${closeMinor} (too large to store exactly)`);
   }
   return closeMinor;
 };

@@ -9,10 +9,8 @@ import { writePrices } from "./write.ts";
 import { fetchLatestQuotes } from "./yahoo-batch.ts";
 import { YahooPausedError, gatedFetch, yahooPausedUntil } from "./yahoo-gate.ts";
 
-/** Later than any trade date, so every transaction counts. */
 const END_OF_TIME = "9999-12-31";
 
-/** Instruments with a non-zero position in any account. */
 export const heldInstrumentIds = async (db: Db): Promise<Set<number>> => {
   const rows = await db
     .select({
@@ -39,25 +37,17 @@ export const heldInstrumentIds = async (db: Db): Promise<Set<number>> => {
   );
 };
 
-/**
- * Yahoo symbols asked in one intraday run. With the spaced per-symbol fallback
- * in yahoo-batch.ts, 25 keeps a run near a minute.
- */
+// Yahoo symbols per intraday run; with yahoo-batch.ts's spaced fallback, 25 keeps a run near a minute.
 // ponytail: ceiling of 25 symbols per run; holdings past it get only the evening close
 const MAX_SYMBOLS_PER_RUN = 25;
 
-export type IntradayResult = {
+type IntradayResult = {
   readonly asked: number;
   readonly written: number;
   readonly paused: boolean;
 };
 
-/**
- * Latest quote for every held Yahoo listing whose exchange is open at `at`,
- * stored under the quote's own date so later runs the same day overwrite it.
- * Funds are left to the evening run. No open exchange, or a paused gate, means
- * no request at all.
- */
+/** Latest quote for every held Yahoo listing whose exchange is open at `at`, stored under the quote's own date so later runs overwrite it. Funds wait for the evening run. */
 export const refreshIntraday = async (
   db: Db,
   at: Date,
@@ -84,16 +74,12 @@ export const refreshIntraday = async (
   for (const row of open) {
     const quote = quotes.get(row.sourceKey);
     if (quote === undefined) continue;
-    // Confirming a jump is the evening run's job; see `plausibleOnly`.
     written += (await writePrices(db, row.id, "yahoo", [quote], { plausibleOnly: true })).written;
   }
   return { asked: symbols.length, written, paused };
 };
 
-/**
- * `fetchLatestQuotes`, keeping the quotes it found before a 429 paused it.
- * `stopWhen` sees every found quote, which is how they survive the throw.
- */
+/** `fetchLatestQuotes`, keeping quotes found before a 429 pause (`stopWhen` sees each, so they survive the throw). */
 export const latestQuotesUntilPaused = async (
   symbols: readonly string[],
   fetchImpl: FetchImpl,
@@ -108,7 +94,7 @@ export const latestQuotesUntilPaused = async (
     return { quotes: found, paused: false };
   } catch (err) {
     if (!(err instanceof YahooPausedError)) throw err;
-    console.warn(`Yahoo tauolla, loput hinnat jäävät myöhemmäksi: ${err.message}`);
+    console.warn(`Yahoo paused, the remaining prices wait until later: ${err.message}`);
     return { quotes: found, paused: true };
   }
 };

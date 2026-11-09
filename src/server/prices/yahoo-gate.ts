@@ -8,12 +8,11 @@ const GATE_ID = 1;
 const FIRST_BACKOFF_MS = 15 * 60_000;
 const MAX_BACKOFF_MS = 6 * 60 * 60_000;
 
-/** Thrown instead of a request while Yahoo has told us to wait. */
 export class YahooPausedError extends Error {
   readonly until: number;
 
   constructor(until: number) {
-    super(`Yahoo on tauolla ${new Date(until).toISOString()} asti`);
+    super(`Yahoo is paused until ${new Date(until).toISOString()}`);
     this.name = "YahooPausedError";
     this.until = until;
   }
@@ -33,7 +32,6 @@ const writeGate = async (
     .run();
 };
 
-/** When the pause ends, or null when Yahoo may be asked now. */
 export const yahooPausedUntil = async (
   db: Db,
   now: () => number = Date.now,
@@ -42,7 +40,6 @@ export const yahooPausedUntil = async (
   return until !== null && until > now() ? until : null;
 };
 
-/** Retry-After in either of its forms: delay-seconds or an HTTP date. */
 const retryAfterMs = (res: Response, now: () => number): number | null => {
   const value = res.headers.get("Retry-After");
   if (value === null) return null;
@@ -61,10 +58,7 @@ const isYahoo = (input: string | URL | Request): boolean => {
   }
 };
 
-/**
- * Every Yahoo request goes through this. A 429 means wait: it is never retried,
- * and nothing is sent while the pause lasts.
- */
+/** Every Yahoo request goes through this. A 429 means wait: never retried, nothing sent while paused. */
 export const gatedFetch =
   (db: Db, fetchImpl: FetchImpl, now: () => number = Date.now): FetchImpl =>
   async (input, init) => {

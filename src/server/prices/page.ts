@@ -15,7 +15,7 @@ import { writePageRecipe } from "./page-ask.ts";
 import { logAttempt, recordPoints } from "./record.ts";
 import { requireOk, type FetchImpl, type FetchedPrice } from "./types.ts";
 
-export const PAGE_REASK_DAYS = 7;
+const PAGE_REASK_DAYS = 7;
 export const PAGE_SPACING_MS = 2_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -85,19 +85,13 @@ export class PageGoneError extends Error {}
 
 const PRIVATE_SUFFIXES = [".local", ".internal", ".localhost"];
 
-/**
- * True for an address the app may fetch for a model or a stored recipe: an
- * https page on a public-looking host name, on the default port. IP literals,
- * `localhost`, single-label names and the private suffixes are refused, so a
- * page URL from the web cannot point the Worker at something internal.
- */
+/** An https page on a public-looking host, default port: IP literals, `localhost`, single-label and private names are refused so a web URL cannot point the Worker inward. */
 export const isPublicPageUrl = (url: string): boolean => {
   if (!URL.canParse(url)) return false;
   const parsed = new URL(url);
   if (parsed.protocol !== "https:" || parsed.port !== "") return false;
   if (parsed.username !== "" || parsed.password !== "") return false;
   const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
-  // URL normalises every IPv4 spelling (0x7f.1, 2130706433) to dotted decimal.
   if (host.startsWith("[") || /^[\d.]+$/.test(host)) return false;
   if (host === "localhost" || !host.includes(".")) return false;
   return !PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));
@@ -107,17 +101,13 @@ export const PAGE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-/**
- * One plain GET of a price page; a 404 or 410 is a page gone, not a hiccup.
- * Redirects are followed by hand, at most MAX_REDIRECTS, and only to an
- * address `isPublicPageUrl` accepts. Anything else fails as a transient error.
- */
+/** One plain GET; 404/410 is a page gone. Redirects are followed by hand, at most MAX_REDIRECTS, only to addresses `isPublicPageUrl` accepts. Anything else fails transiently. */
 export const fetchPage = async (
   url: string,
   fetchImpl: FetchImpl,
   redirectsLeft: number = MAX_REDIRECTS,
 ): Promise<string> => {
-  if (!isPublicPageUrl(url)) throw new Error("Sivun osoite ei ole julkinen https-osoite");
+  if (!isPublicPageUrl(url)) throw new Error("The page address is not a public https address");
   const response = await fetchImpl(url, {
     redirect: "manual",
     signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
@@ -125,21 +115,20 @@ export const fetchPage = async (
   if (REDIRECT_STATUSES.has(response.status)) {
     const location = response.headers.get("location");
     if (location === null || redirectsLeft === 0 || !URL.canParse(location, url)) {
-      throw new Error("Sivu ohjasi eteenpäin liian monta kertaa tai ilman osoitetta");
+      throw new Error("The page redirected too many times or without a location");
     }
     return await fetchPage(new URL(location, url).toString(), fetchImpl, redirectsLeft - 1);
   }
   if (GONE_STATUSES.has(response.status)) {
-    throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
+    throw new PageGoneError(`The page answered ${response.status}: the address no longer works`);
   }
-  const ok = await requireOk(response, "Sivu");
+  const ok = await requireOk(response, "Page");
   if (Number(ok.headers.get("content-length")) > MAX_PAGE_CHARS) throw new Error(TOO_LARGE);
   return await readCapped(ok);
 };
 
-const TOO_LARGE = "Sivu on liian suuri luettavaksi";
+const TOO_LARGE = "The page is too large to read";
 
-/** The body as text, stopped and refused once it passes MAX_PAGE_CHARS, header or not. */
 const readCapped = async (response: Response): Promise<string> => {
   if (response.body === null) return "";
   const reader = response.body.getReader();
@@ -156,10 +145,7 @@ const readCapped = async (response: Response): Promise<string> => {
   }
 };
 
-/**
- * One page instrument's evening run: its stored recipe if that still reads the
- * page, otherwise one model ask per PAGE_REASK_DAYS.
- */
+/** One page instrument's evening run: the stored recipe if it still reads the page, else one model ask per PAGE_REASK_DAYS. */
 export const refreshPage = async (
   db: Db,
   instrument: PageInstrument,
@@ -175,7 +161,7 @@ export const refreshPage = async (
       source: SOURCE,
       instrumentId: instrument.id,
       ok: false,
-      message: "Sivun osoite ei ole julkinen https-osoite, sitä ei haettu",
+      message: "The page address is not a public https address, so it was not fetched",
     });
     await setStatus(db, instrument, "attention");
     return "attention";
@@ -185,7 +171,7 @@ export const refreshPage = async (
   try {
     html = await fetchPage(instrument.sourceKey, opts.fetchImpl);
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Tuntematon virhe";
+    const message = cause instanceof Error ? cause.message : "Unknown error";
     await logAttempt(db, { source: SOURCE, instrumentId: instrument.id, ok: false, message });
     if (cause instanceof PageGoneError) {
       await setStatus(db, instrument, "attention");
@@ -222,7 +208,7 @@ export const refreshPage = async (
       source: SOURCE,
       instrumentId: instrument.id,
       ok: false,
-      message: "Tallennettu kuvaus ei lukenut sivua, uutta ei kysytty",
+      message: "The stored recipe did not read the page, and no new one was requested",
     });
     await setStatus(db, instrument, "attention");
     return "attention";
@@ -245,11 +231,7 @@ export const refreshPage = async (
   return (await write(db, instrument, written.price)) ? "ok" : stillAttention(instrument);
 };
 
-/**
- * A typed page address, checked before anything is saved: fetched once and
- * read by a recipe the model writes and the app verifies. A refusal or a
- * failed fetch comes back as a Finnish reason.
- */
+/** A typed page address, checked before saving: fetched once and read by a model-written, app-verified recipe. */
 export const checkPage = async (
   url: string,
   expect: PageExpect,
@@ -257,14 +239,14 @@ export const checkPage = async (
   client: ChatClient,
 ): Promise<{ recipe: PageRecipe; price: FetchedPrice } | { error: string }> => {
   if (!isPublicPageUrl(url)) {
-    return { error: "Osoitteen on oltava julkinen https-osoite ilman porttia tai IP-osoitetta." };
+    return { error: "The address must be a public https address without a port or an IP address." };
   }
   let html: string;
   try {
     html = await fetchPage(url, fetchImpl);
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : "Tuntematon virhe";
-    return { error: `Sivua ei voitu hakea: ${reason}` };
+    const reason = cause instanceof Error ? cause.message : "Unknown error";
+    return { error: `The page could not be fetched: ${reason}` };
   }
   return await writePageRecipe(html, expect, client);
 };

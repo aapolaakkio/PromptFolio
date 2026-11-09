@@ -9,11 +9,7 @@ import type { FetchImpl } from "../prices/types.ts";
 import { gatedFetch } from "../prices/yahoo-gate.ts";
 import { lookupInstrument, type InstrumentLookup, type PageLookup } from "./lookup.ts";
 
-/**
- * "Nothing found" may be a listing Yahoo gains later, so it is asked again. A
- * page the web search found but no recipe could verify is "form" too, so it
- * is searched for again no sooner than this.
- */
+// "Nothing found" may become a listing later, and an unverifiable found page is "form" too, so both are re-asked after this.
 const FORM_RETRY_MS = 7 * 24 * 60 * 60_000;
 
 const StoredLookup = z.object({
@@ -25,14 +21,12 @@ const StoredLookup = z.object({
   listingCurrency: z.string().nullable(),
   outcome: z.enum(["found", "form", "pending"]),
   formReason: z.enum(["nothing", "currency", "name"]).nullable(),
-  // Absent from rows written before page sources existed.
   pageRecipe: PageRecipeSchema.nullable().default(null),
 });
 
 export const lookupKey = (isin: string | null, name: string): string =>
   isin ?? `name:${name.trim().toLowerCase()}`;
 
-/** A stored result, or null for a row of an older shape: a miss, never a wrong answer. */
 export const readStoredLookup = (stored: string): InstrumentLookup | null => {
   try {
     const parsed = StoredLookup.safeParse(JSON.parse(stored));
@@ -67,18 +61,14 @@ const upsertLookup = async (
     });
 };
 
-/** Remembers `result` under `key`, replacing whatever was there. */
-export const storeLookup = (
+const storeLookup = (
   db: Db,
   key: string,
   result: InstrumentLookup,
   checkedAt: Date,
 ): Promise<void> => upsertLookup(db, key, result, checkedAt);
 
-/**
- * Remembers `result` under `key` unless a found entry is there already: a
- * lookup made from a name never overrides one made from the ISIN itself.
- */
+/** Remembers `result` unless a found entry exists: a name lookup never overrides one made from the ISIN. */
 export const storeLookupUnlessFound = (
   db: Db,
   key: string,
@@ -100,7 +90,6 @@ export const rememberedLookup = async (
   const key = lookupKey(isin, name);
   const cached = await readCached(db, key, now());
   if (cached) {
-    // The same ISIN may be held in another currency than the one remembered.
     if (
       cached.outcome === "found" &&
       currency !== null &&
