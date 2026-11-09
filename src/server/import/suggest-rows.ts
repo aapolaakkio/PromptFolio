@@ -120,12 +120,13 @@ const numbersIn = (raw: string): ReadonlyMap<string, ReadonlySet<boolean>> => {
   return found;
 };
 
-/** Each number the text prints, as printed (dates, ISINs and long references are not numbers). */
-export const numberTokensIn = (raw: string): string[] =>
+/** Each number the text prints, as printed. A document hides dates, ISINs and references; prose (`prose`) hides nothing, since a model's sentence has none of them and "5.5." must stay a number. */
+export const numberTokensIn = (raw: string, prose = false): string[] =>
   [
-    ...blank(raw, [DATE_TEXT, DATE_WITHOUT_YEAR, IBAN_TEXT, ISIN_TEXT, LONG_NUMBER]).matchAll(
-      NUMBER_TOKENS,
-    ),
+    ...(prose
+      ? raw
+      : blank(raw, [DATE_TEXT, DATE_WITHOUT_YEAR, IBAN_TEXT, ISIN_TEXT, LONG_NUMBER])
+    ).matchAll(NUMBER_TOKENS),
   ].map((match) => match[0]);
 
 const isNegative = (value: string): boolean => /^[-\u2212]/.test(value.trim());

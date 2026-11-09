@@ -93,7 +93,7 @@ describe("getWeeklySummary", () => {
       client: scripted("Your portfolio is worth 9999.00 euros."),
     });
     expect(out.text).toBeNull();
-    expect(out.facts.changeEur).toBe("100.00");
+    expect(out.facts.changeExcludingDepositsEur).toBe("100.00");
   });
 
   test("a model that throws gives the facts and a null text", async () => {
@@ -101,7 +101,7 @@ describe("getWeeklySummary", () => {
     await seed(userId);
     const out = await getWeeklySummary(db, userId, { now, client: scripted(new Error("down")) });
     expect(out.text).toBeNull();
-    expect(out.facts.changeEur).toBe("100.00");
+    expect(out.facts.changeExcludingDepositsEur).toBe("100.00");
   });
 
   test("a null text is retried only after an hour", async () => {
@@ -169,7 +169,46 @@ describe("getWeeklySummary", () => {
     await seed(a);
     await getWeeklySummary(db, a, { now, client: scripted(GOOD) });
     const out = await getWeeklySummary(db, b, { now, client: scripted(new Error("down")) });
-    expect(out.facts.changeEur).toBe("0.00");
+    expect(out.facts.changeExcludingDepositsEur).toBe("0.00");
     expect(out.text).toBeNull();
+  });
+
+  test("two loads at once make one model call", async () => {
+    const userId = await newUser();
+    await seed(userId);
+    // The first read seeds the user's spending rules; two first reads collide there, which is not what is tested.
+    await gatherFacts(db, userId, now);
+    const client = scripted(GOOD);
+
+    const [a, b] = await Promise.all([
+      getWeeklySummary(db, userId, { now, client }),
+      getWeeklySummary(db, userId, { now, client }),
+    ]);
+
+    expect(client.asked).toHaveLength(1);
+    expect([a.text, b.text]).toContain(GOOD);
+  });
+
+  test("a failed refresh keeps the earlier text and facts and uses up the day", async () => {
+    const userId = await newUser();
+    await seed(userId);
+    await getWeeklySummary(db, userId, { now, client: scripted(GOOD) });
+    await setCreatedAt(userId, 25 * 3_600_000);
+
+    const out = await getWeeklySummary(db, userId, {
+      now,
+      client: scripted(new Error("down")),
+      refresh: true,
+    });
+
+    expect(out.text).toBe(GOOD);
+    expect(out.canRefresh).toBe(false);
+    const row = await db
+      .select()
+      .from(weeklySummaries)
+      .where(eq(weeklySummaries.userId, userId))
+      .get();
+    expect(row?.text).toBe(GOOD);
+    expect(row && row.createdAt.getTime()).toBeGreaterThan(now.getTime() - 60_000);
   });
 });

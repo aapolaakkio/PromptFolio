@@ -1,7 +1,10 @@
 import { and, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 
+import { cashSeries } from "../../core/cash.ts";
 import { yearlyCostSummary } from "../../core/fund-costs.ts";
+import { fundingCashFlows } from "../../core/ledger.ts";
+import { valueSeries } from "../../core/returns.ts";
 import {
   addMoney,
   divMoney,
@@ -20,23 +23,34 @@ import { notSpendingIds } from "../spending/internal.ts";
 import { recurringPayments } from "../spending/recurring.ts";
 import { rulesFor } from "../spending/rules.ts";
 import { holdingsFor, loadPortfolio } from "../valuation.ts";
-import { spendingView, uncategorisedView, valueSeriesView } from "../views/portfolio.ts";
+import { spendingView, uncategorisedView } from "../views/portfolio.ts";
+import { helsinkiToday, shiftDay } from "./helsinki.ts";
 
 const WINDOW_DAYS = 7;
 const BASELINE_WEEKS = 12;
 const MAX_MOVERS = 3;
 const MAX_NAMES = 10;
+const MAX_NEW_NAMES = 5;
 const RECURRING_LOOKBACK_DAYS = 400;
 const DAY_MS = 86_400_000;
 
 /** Counts and euro totals of the owner's own portfolio, plus instrument names. No account numbers and no payee names: this JSON is what the model sees. */
 export const SummaryFacts = z.object({
-  windowDays: z.number(),
-  baselineWeeks: z.number(),
   totalValueEur: z.string(),
-  changeEur: z.string(),
+  netDepositsEur: z.string(),
+  changeExcludingDepositsEur: z.string(),
   changePct: z.string().nullable(),
-  movers: z.array(z.object({ name: z.string(), changeEur: z.string(), changePct: z.string() })),
+  changeDirection: z.enum(["up", "down", "flat"]),
+  /** Some holding had no real price a week ago, so the change is a rough figure. */
+  changeIsEstimate: z.boolean(),
+  movers: z.array(
+    z.object({
+      name: z.string(),
+      changeEur: z.string(),
+      changePct: z.string(),
+      direction: z.enum(["up", "down"]),
+    }),
+  ),
   importsMade: z.number(),
   newInstrumentCount: z.number(),
   newInstruments: z.array(z.string()),
@@ -50,8 +64,7 @@ export const SummaryFacts = z.object({
 });
 export type SummaryFacts = z.infer<typeof SummaryFacts>;
 
-const day = (now: Date, daysBack: number): string =>
-  new Date(now.getTime() - daysBack * DAY_MS).toISOString().slice(0, 10);
+const day = (now: Date, daysBack: number): string => shiftDay(helsinkiToday(now), -daysBack);
 
 const ofText = (text: string): Money => parseMoney(text, EUR);
 
@@ -65,30 +78,51 @@ const pctText = (change: Money, base: Money): string | null =>
     ? null
     : ((Number(change.minor) * 100) / Math.abs(Number(base.minor))).toFixed(1);
 
+/** Investments plus the cash of the accounts that hold them; a bank account's spending is not a portfolio loss. */
 const valueChange = async (db: Db, userId: string, from: string, to: string) => {
-  const series = await valueSeriesView(db, userId, from, to);
-  const total = (point: (typeof series)[number] | undefined): Money =>
-    point === undefined ? zeroMoney(EUR) : addMoney(ofText(point.valueEur), ofText(point.cashEur));
-  const start = total(series[0]);
-  const end = total(series.at(-1));
-  const change = subMoney(end, start);
-  return { end, change, pct: pctText(change, start) };
+  const { investedTxns, cashTxns, instruments, prices, bankAccountIds } = await loadPortfolio(
+    db,
+    userId,
+  );
+  const bank = new Set(bankAccountIds);
+  const values = valueSeries(investedTxns, instruments, prices, from, to);
+  const cash = cashSeries(
+    cashTxns.filter((txn) => !bank.has(txn.accountId)),
+    prices.fxOn,
+    from,
+    to,
+  );
+  const total = (index: number): Money =>
+    addMoney(
+      values.at(index)?.valueEur ?? zeroMoney(EUR),
+      cash.at(index)?.cashEur ?? zeroMoney(EUR),
+    );
+  const start = total(0);
+  const end = total(-1);
+  const deposits = fundingCashFlows(investedTxns)
+    .filter((flow) => flow.date > from && flow.date <= to)
+    .reduce((sum, flow) => addMoney(sum, flow.amountEur), zeroMoney(EUR));
+  const change = subMoney(subMoney(end, start), deposits);
+  return { end, deposits, change, pct: pctText(change, start) };
 };
 
-/** Only holdings with the same quantity both days: a purchase is not a price move. */
-const biggestMovers = async (db: Db, userId: string, from: string, to: string) => {
-  const [before, after] = await Promise.all([
-    holdingsFor(db, userId, from),
-    holdingsFor(db, userId, to),
-  ]);
+/** A price a week ago that is stored and fresh; anything else (cost, carried forward, missing) is not a real start. */
+const isRealValue = (holding: { stale: boolean; valueEur: string | null }): boolean =>
+  !holding.stale && holding.valueEur !== null;
+
+/** Only holdings with the same quantity both days and a real price both days: a purchase or a guess is not a price move. */
+const biggestMovers = (
+  before: Awaited<ReturnType<typeof holdingsFor>>,
+  after: Awaited<ReturnType<typeof holdingsFor>>,
+) => {
   const earlier = new Map(before.map((holding) => [holding.instrumentId, holding]));
   return after
     .flatMap((holding) => {
       const then = earlier.get(holding.instrumentId);
       if (then === undefined || then.quantity !== holding.quantity) return [];
-      if (then.valueEur === null || holding.valueEur === null) return [];
-      const change = subMoney(ofText(holding.valueEur), ofText(then.valueEur));
-      const pct = pctText(change, ofText(then.valueEur));
+      if (!isRealValue(then) || !isRealValue(holding)) return [];
+      const change = subMoney(ofText(holding.valueEur ?? "0"), ofText(then.valueEur ?? "0"));
+      const pct = pctText(change, ofText(then.valueEur ?? "0"));
       return change.minor === 0n || pct === null
         ? []
         : [{ name: redacted(holding.name), change, pct }];
@@ -99,6 +133,7 @@ const biggestMovers = async (db: Db, userId: string, from: string, to: string) =
       name: mover.name,
       changeEur: formatMoney(mover.change),
       changePct: mover.pct,
+      direction: mover.change.minor > 0n ? ("up" as const) : ("down" as const),
     }));
 };
 
@@ -162,8 +197,9 @@ export const gatherFacts = async (db: Db, userId: string, now: Date): Promise<Su
 
   // In turn, not together: the first spending read seeds the user's rules, and two seeds collide.
   const value = await valueChange(db, userId, weekAgo, today);
-  const movers = await biggestMovers(db, userId, weekAgo, today);
+  const holdingsBefore = await holdingsFor(db, userId, weekAgo);
   const holdings = await holdingsFor(db, userId, today);
+  const movers = biggestMovers(holdingsBefore, holdings);
   const importsMade = await importsSince(db, userId, since);
   const created = await newInstrumentsSince(db, userId, since);
   const thisWeek = await spendingView(db, userId, day(now, WINDOW_DAYS - 1), today, "category", 1);
@@ -181,15 +217,16 @@ export const gatherFacts = async (db: Db, userId: string, now: Date): Promise<Su
   });
 
   return {
-    windowDays: WINDOW_DAYS,
-    baselineWeeks: BASELINE_WEEKS,
     totalValueEur: formatMoney(value.end),
-    changeEur: formatMoney(value.change),
+    netDepositsEur: formatMoney(value.deposits),
+    changeExcludingDepositsEur: formatMoney(value.change),
     changePct: value.pct,
+    changeDirection: value.change.minor === 0n ? "flat" : value.change.minor > 0n ? "up" : "down",
+    changeIsEstimate: !holdingsBefore.every(isRealValue),
     movers,
     importsMade,
     newInstrumentCount: created.length,
-    newInstruments: created.slice(0, MAX_NAMES),
+    newInstruments: created.slice(0, MAX_NEW_NAMES),
     needsAttentionCount: attention.length,
     needsAttention: attention.slice(0, MAX_NAMES),
     uncategorisedRows: uncategorised.merchants.reduce((sum, group) => sum + group.count, 0),

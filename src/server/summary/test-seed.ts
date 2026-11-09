@@ -140,3 +140,26 @@ export const committedImport = async (
     })
     .run();
 };
+
+export const deposit = async (userId: string, minor: number, tradeDate: string) => {
+  const accountId = (
+    await openAccount(db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }))
+  ).id;
+  await db
+    .insert(transactions)
+    .values({
+      accountId,
+      instrumentId: null,
+      type: "DEPOSIT",
+      tradeDate,
+      quantity: 0,
+      unitPrice: null,
+      amount: minor,
+      fee: 0,
+      tax: 0,
+      currency: EUR,
+      fxRateEur: 100_000_000,
+      contentHash: crypto.randomUUID(),
+    })
+    .run();
+};
