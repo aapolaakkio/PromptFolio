@@ -44,12 +44,16 @@ export const acceptedRange = (
   return next.end > next.start ? next : null;
 };
 
-const RANGES = [
+/** A number of months back, the calendar year so far, or everything. */
+type Preset = number | "ytd" | null;
+
+const RANGES: readonly { readonly label: string; readonly months: Preset }[] = [
+  { label: "YTD", months: "ytd" },
   { label: "1 y", months: 12 },
   { label: "3 y", months: 36 },
   { label: "5 y", months: 60 },
   { label: "All time", months: null },
-] as const;
+];
 
 type PlotRow = {
   at: number;
@@ -84,16 +88,14 @@ export const splitEstimated = (rows: readonly PlotRow[]) => {
   return { real, estimate };
 };
 
-/** Preset span: `months` back from the last point (not today), or everything. */
-export const presetWindow = (
-  rows: readonly PlotRow[],
-  months: number | null,
-): BrushRange<number> => {
+/** Preset span: `months` back from the last point (not today), that point's calendar year so far, or everything. */
+export const presetWindow = (rows: readonly PlotRow[], months: Preset): BrushRange<number> => {
   const first = rows[0]?.at ?? 0;
   const last = rows[rows.length - 1]?.at ?? 0;
   if (months === null) return { start: first, end: last };
   const from = new Date(last);
-  from.setUTCMonth(from.getUTCMonth() - months);
+  if (months === "ytd") from.setUTCMonth(0, 1);
+  else from.setUTCMonth(from.getUTCMonth() - months);
   return { start: Math.max(first, from.getTime()), end: last };
 };
 
@@ -101,7 +103,8 @@ export const within = (rows: readonly PlotRow[], window: BrushRange<number>): Pl
   rows.filter((row) => row.at >= window.start && row.at <= window.end);
 
 export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; label: string }) => {
-  const [months, setMonths] = useState<number | null>(null);
+  // The year so far by default: all-time squeezes recent moves into the right edge.
+  const [months, setMonths] = useState<Preset>("ytd");
   const [zoom, setZoom] = useState<BrushRange<number> | null>(null);
 
   const all = useMemo(() => plotRows(points), [points]);
@@ -195,7 +198,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
     [rows, window, split],
   );
 
-  const show = (next: number | null): void => {
+  const show = (next: Preset): void => {
     setMonths(next);
     setZoom(null);
   };

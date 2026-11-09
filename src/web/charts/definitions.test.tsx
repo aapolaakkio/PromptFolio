@@ -105,6 +105,15 @@ describe("presetWindow", () => {
     expect(within(rows, presetWindow(rows, 12)).map((row) => row.value)).toEqual([300, 400]);
   });
 
+  test("year to date starts on 1 January of the latest point's year", () => {
+    expect(within(rows, presetWindow(rows, "ytd")).map((row) => row.value)).toEqual([300, 400]);
+    const early = plotRows([
+      { date: "2025-12-31", value: 1 },
+      { date: "2026-01-02", value: 2 },
+    ]);
+    expect(within(early, presetWindow(early, "ytd")).map((row) => row.value)).toEqual([2]);
+  });
+
   test("keeps a longer preset's earlier points", () => {
     expect(within(rows, presetWindow(rows, 36)).map((row) => row.value)).toEqual([200, 300, 400]);
   });
