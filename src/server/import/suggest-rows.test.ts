@@ -220,15 +220,19 @@ describe("number checks", () => {
     }
   });
 
-  test("a spaced thousands number is accepted, and so is each piece of two numbers", async () => {
-    expect(await askOne("broker", "OSTO 1 234,56", brokerFields({ amountEur: "1234.56" }))).toEqual(
-      {
-        amountEur: "1234.56",
-      },
-    );
-    expect(await askOne("broker", "OSTO 10 123", brokerFields({ quantityText: "10" }))).toEqual({
-      quantityText: "10",
+  test("a spaced thousands number is accepted whole, never as a piece", async () => {
+    const raw = "OSTO 1 234,56";
+    expect(await askOne("broker", raw, brokerFields({ amountEur: "1234.56" }))).toEqual({
+      amountEur: "1234.56",
     });
+    expect(await askOne("broker", raw, brokerFields({ amountEur: "234,56" }))).toEqual({});
+    expect(await askOne("broker", raw, brokerFields({ quantityText: "1" }))).toEqual({});
+  });
+
+  test("a yearless date's digits are not numbers", async () => {
+    expect(
+      await askOne("broker", "OSTO 03.02. Nokia", brokerFields({ quantityText: "3" })),
+    ).toEqual({});
   });
 });
 
@@ -268,6 +272,20 @@ describe("sign and type checks", () => {
     });
     expect(await askOne("broker", "OSTO Nokia", brokerFields({ type: "SELL" }))).toEqual({});
     expect(await askOne("broker", "Nokia 100 kpl", brokerFields({ type: "BUY" }))).toEqual({});
+  });
+
+  test("labels match whole words: NOSTO is never a purchase", async () => {
+    expect(await askOne("broker", "NOSTO 100,00", brokerFields({ type: "BUY" }))).toEqual({});
+    expect(await askOne("broker", "NOSTO 100,00", brokerFields({ type: "WITHDRAWAL" }))).toEqual({
+      type: "WITHDRAWAL",
+    });
+    expect(await askOne("broker", "Ostokeskus Oyj 5", brokerFields({ type: "BUY" }))).toEqual({});
+  });
+
+  test("a row with a buy and a sell label gets no type", async () => {
+    const raw = "OSTO Nokia MYYNTI";
+    expect(await askOne("broker", raw, brokerFields({ type: "BUY" }))).toEqual({});
+    expect(await askOne("broker", raw, brokerFields({ type: "SELL" }))).toEqual({});
   });
 });
 
@@ -332,7 +350,7 @@ describe("keys and privacy", () => {
       [{ line: 1, raw: "x", message: "m" }],
       [],
     );
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("Row suggestions failed:", "Error");
     warn.mockRestore();
   });
 });

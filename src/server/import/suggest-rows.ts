@@ -65,6 +65,7 @@ Some rows of a ${kind === "broker" ? "broker transaction" : "bank statement"} fi
 - Answer with {"rows": [{"id": <id of the problem>, "fields": {...}}]}.`;
 
 const DATE_TEXT = /\d{1,4}[./-]\d{1,2}[./-]\d{1,4}/g;
+const DATE_WITHOUT_YEAR = /(?<![\d.])\d{1,2}\.\d{1,2}\.(?!\d)/g;
 const ISIN_TEXT = /\b[A-Z]{2}[A-Z0-9]{9}\d\b/g;
 const IBAN_TEXT = /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,4})?\b/g;
 const LONG_NUMBER = /(?<![A-Z\d])\d{9,}/g;
@@ -105,15 +106,14 @@ const NEGATIVE_FORM = {
 
 /** Each number the text prints, with whether it is printed as negative. */
 const numbersIn = (raw: string): ReadonlyMap<string, ReadonlySet<boolean>> => {
-  const text = blank(raw, [DATE_TEXT, IBAN_TEXT, ISIN_TEXT, LONG_NUMBER]);
+  const text = blank(raw, [DATE_TEXT, DATE_WITHOUT_YEAR, IBAN_TEXT, ISIN_TEXT, LONG_NUMBER]);
   const found = new Map<string, Set<boolean>>();
   for (const match of text.matchAll(NUMBER_TOKENS)) {
     const at = match.index ?? 0;
     const negative =
       NEGATIVE_FORM.before.test(text.slice(Math.max(0, at - 2), at)) ||
       NEGATIVE_FORM.after.test(text.slice(at + match[0].length, at + match[0].length + 4));
-    const pieces = [match[0], ...match[0].split(/\s+/)];
-    for (const reading of pieces.flatMap(readingsOf)) {
+    for (const reading of readingsOf(match[0])) {
       found.set(reading, (found.get(reading) ?? new Set()).add(negative));
     }
   }
@@ -167,11 +167,21 @@ const includesText = (value: string, raw: string): boolean =>
 
 const TYPE_KEYWORDS = Object.entries({ ...NORDNET.typeMap, ...OP_WEB_PASTE.typeMap });
 
-/** The app's own type labels (the recipes' type maps), so a model cannot turn a purchase into a sale. */
-const hasTypeKeyword = (type: string, raw: string): boolean =>
-  TYPE_KEYWORDS.some(
-    ([label, mapped]) => mapped === type && raw.toLowerCase().includes(label.toLowerCase()),
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The types whose labels (the recipes' type maps) are printed as whole words in the text. */
+const typesPrinted = (raw: string): ReadonlySet<string> =>
+  new Set(
+    TYPE_KEYWORDS.filter(([label]) =>
+      new RegExp(`(?<![\\p{L}\\p{N}_])${escaped(label)}(?![\\p{L}\\p{N}_])`, "iu").test(raw),
+    ).map(([, type]) => type),
   );
+
+/** A type is confirmed only when the text prints labels of that type and no other, so a model cannot turn a purchase into a sale. */
+const hasTypeKeyword = (type: string, raw: string): boolean => {
+  const printed = typesPrinted(raw);
+  return printed.size === 1 && printed.has(type);
+};
 
 const CHECKS = {
   broker: {
@@ -270,7 +280,7 @@ export const suggestRows = async (
     return new Map(found);
   } catch (cause) {
     // A model that is down or malformed is the same as no suggestion: the page shows blank rows.
-    console.warn("Row suggestions failed", cause);
+    console.warn("Row suggestions failed:", cause instanceof Error ? cause.name : "unknown");
     return new Map();
   }
 };
