@@ -1,9 +1,10 @@
 import { readBytes, readText } from "../files.ts";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
-import { instruments, transactions, yahooGate } from "../db/schema.ts";
+import { instrumentLookups, instruments, transactions, yahooGate } from "../db/schema.ts";
+import { lookupKey } from "../instruments/lookup-cache.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
@@ -613,6 +614,123 @@ describe("an import with an instrument nobody has added yet", () => {
     expect(result.inserted).toBe(1);
     const created = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
     expect(created).toMatchObject({ priceSource: "yahoo", sourceKey: "AUTO.HE" });
+    expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
+  });
+
+  test("an OP fund found by the finder commits though the browser drops the row's name", async () => {
+    const { userId } = await signUp(`imp-auto-op-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId, "op");
+    // A fund of its own, so no other test's instruments or lookups can answer for it.
+    const tag = crypto
+      .randomUUID()
+      .replace(/[^a-f]/g, "")
+      .slice(0, 8);
+    const fundName = `OP-TESTI${tag.toUpperCase()} INDEKSI A`;
+    const pageIsin = randomIsin();
+    const pageUrl = `https://example.test/op-testi${tag}`;
+    const text = (await opPasteText()).replaceAll("OP-MAAILMA INDEKSI A", fundName);
+    const keys = [lookupKey(null, fundName), pageIsin];
+    const figi = JSON.stringify([{ data: [{ name: fundName, securityType: "Open-End Fund" }] }]);
+    const chart = {
+      chart: {
+        result: [
+          {
+            meta: { currency: "EUR" },
+            timestamp: [1_700_000_000],
+            indicators: { quote: [{ close: [1.5] }] },
+          },
+        ],
+      },
+    };
+    service._setLookupFetch(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(pageUrl)) return new Response(`<h1>${fundName} ${pageIsin}</h1>`);
+      if (url.includes("openfigi")) return new Response(figi);
+      if (url.includes("finance/search")) {
+        return new Response(JSON.stringify({ quotes: [{ symbol: "0PTEST.F" }] }));
+      }
+      if (url.includes("chart/0PTEST.F")) return new Response(JSON.stringify(chart));
+      return new Response("", { status: 404 });
+    });
+    const down = (): Promise<never> => Promise.reject(new Error("malli ei käytössä"));
+    service._setPageLookup({
+      find: async (q) => (q.name === fundName ? { url: pageUrl, isin: pageIsin } : null),
+      client: { run: down },
+    });
+
+    try {
+      const previewed = await answer(() => service.previewPaste(userId, { text, accountId }));
+      expect(previewed.status).toBe(200);
+      // SAFETY: a 200 preview carries the draft, `added` included.
+      const body = previewed.body as {
+        sha256: string;
+        txns: DraftBody["txns"];
+        unknownIsins: DraftBody["unknownIsins"];
+        added: Array<{ isin: string; priceSource: string | null }>;
+      };
+      expect(body.added).toMatchObject([{ isin: pageIsin, priceSource: "yahoo" }]);
+      expect(body.unknownIsins.map((u) => u.name)).toEqual(["ESIMERKKI OYJ"]);
+
+      // What the review screen sends: the fund's rows, the share's removed, and
+      // no per-row name, which the screen does not carry.
+      const fundRows = body.txns
+        .filter((t) => t.isin === pageIsin)
+        .map(({ instrumentName: _name, ...rest }) => rest);
+      expect(fundRows.length).toBeGreaterThan(0);
+      const committed = await answer(() =>
+        service.commitDraftBody(userId, {
+          accountId,
+          filename: "liite.txt",
+          sha256: body.sha256,
+          kind: "paste",
+          draft: { txns: fundRows, problems: [], unknownIsins: [] },
+        }),
+      );
+      expect(committed.status).toBe(200);
+      // SAFETY: a 200 commit answers with the import it wrote.
+      const result = committed.body as { importId: number; inserted: number };
+      expect(result.inserted).toBe(fundRows.length);
+      const fund = await db.select().from(instruments).where(eq(instruments.isin, pageIsin)).get();
+      expect(fund).toBeDefined();
+      const linked = await linkedRows(result.importId);
+      expect(linked.every((r) => r.instrumentId === fund?.id)).toBe(true);
+    } finally {
+      service._setPageLookup(null);
+      await db.delete(instrumentLookups).where(inArray(instrumentLookups.key, keys));
+    }
+  });
+
+  test("a preview while Yahoo is paused still commits, as pending", async () => {
+    const { userId } = await signUp(`imp-auto-paused-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    const isin = freshIsin();
+    await db
+      .insert(yahooGate)
+      .values({ id: 1, pausedUntil: Date.now() + 3_600_000, backoffMs: 900_000 })
+      .onConflictDoUpdate({
+        target: yahooGate.id,
+        set: { pausedUntil: Date.now() + 3_600_000, backoffMs: 900_000 },
+      });
+
+    const previewed = await previewOne(userId, accountId, isin);
+    // SAFETY: a 200 preview carries the draft, `added` included.
+    const body = previewed.body as {
+      unknownIsins: unknown[];
+      added: Array<{ isin: string; pending: boolean }>;
+    };
+    expect(body.unknownIsins).toEqual([]);
+    expect(body.added).toMatchObject([{ isin, pending: true }]);
+
+    const committed = await commitPreviewed(userId, previewed, accountId, "csv");
+    expect(committed.status).toBe(200);
+    // SAFETY: a 200 commit answers with the import it wrote.
+    const result = committed.body as { importId: number };
+    const created = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
+    expect(created).toMatchObject({
+      priceSource: "manual",
+      sourceKey: isin,
+      lookupStatus: "pending",
+    });
     expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
   });
 
