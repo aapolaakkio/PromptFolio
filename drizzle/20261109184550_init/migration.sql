@@ -20,9 +20,42 @@ CREATE TABLE `accounts` (
 	`user_id` text NOT NULL,
 	`name` text NOT NULL,
 	`broker` text NOT NULL,
+	`kind` text DEFAULT 'brokerage' NOT NULL,
+	`account_type` text,
+	`maturity_date` text,
+	`interest_rate_bp` integer,
 	`base_currency` text DEFAULT 'EUR' NOT NULL,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
 	CONSTRAINT `fk_accounts_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE
+);
+--> statement-breakpoint
+CREATE TABLE `allocation_targets` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`user_id` text NOT NULL,
+	`dimension` text NOT NULL,
+	`key` text NOT NULL,
+	`weight_bp` integer NOT NULL,
+	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT `fk_allocation_targets_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE,
+	CONSTRAINT `allocation_targets_user_id_dimension_key_unique` UNIQUE(`user_id`,`dimension`,`key`)
+);
+--> statement-breakpoint
+CREATE TABLE `chat_messages` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`conversation_id` integer NOT NULL,
+	`role` text NOT NULL,
+	`content` text NOT NULL,
+	`tool_calls` text,
+	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT `fk_chat_messages_conversation_id_conversations_id_fk` FOREIGN KEY (`conversation_id`) REFERENCES `conversations`(`id`) ON DELETE CASCADE
+);
+--> statement-breakpoint
+CREATE TABLE `conversations` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`user_id` text NOT NULL,
+	`title` text,
+	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT `fk_conversations_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE
 );
 --> statement-breakpoint
 CREATE TABLE `fx_rates` (
@@ -30,6 +63,17 @@ CREATE TABLE `fx_rates` (
 	`currency` text NOT NULL,
 	`rate_eur` integer NOT NULL,
 	CONSTRAINT `fx_rates_pk` PRIMARY KEY(`date`, `currency`)
+);
+--> statement-breakpoint
+CREATE TABLE `import_recipes` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`user_id` text NOT NULL,
+	`fingerprint` text NOT NULL,
+	`kind` text NOT NULL,
+	`recipe` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT `fk_import_recipes_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE,
+	CONSTRAINT `import_recipes_user_id_fingerprint_unique` UNIQUE(`user_id`,`fingerprint`)
 );
 --> statement-breakpoint
 CREATE TABLE `imports` (
@@ -40,20 +84,46 @@ CREATE TABLE `imports` (
 	`sha256` text NOT NULL,
 	`status` text DEFAULT 'draft' NOT NULL,
 	`row_count` integer DEFAULT 0 NOT NULL,
+	`inserted_count` integer DEFAULT 0 NOT NULL,
+	`skipped_count` integer DEFAULT 0 NOT NULL,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
 	CONSTRAINT `fk_imports_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE
 );
 --> statement-breakpoint
+CREATE TABLE `instrument_lookups` (
+	`key` text PRIMARY KEY,
+	`outcome` text NOT NULL,
+	`result` text NOT NULL,
+	`checked_at` integer NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `instruments` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
-	`isin` text NOT NULL UNIQUE,
+	`isin` text UNIQUE,
 	`ticker` text,
 	`name` text NOT NULL,
 	`kind` text NOT NULL,
 	`currency` text NOT NULL,
 	`price_source` text NOT NULL,
 	`source_key` text NOT NULL,
+	`lookup_status` text DEFAULT 'ok' NOT NULL,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `page_recipes` (
+	`instrument_id` integer PRIMARY KEY,
+	`recipe` text,
+	`asked_at` integer,
+	CONSTRAINT `fk_page_recipes_instrument_id_instruments_id_fk` FOREIGN KEY (`instrument_id`) REFERENCES `instruments`(`id`) ON DELETE CASCADE
+);
+--> statement-breakpoint
+CREATE TABLE `pending_price_rejections` (
+	`instrument_id` integer PRIMARY KEY,
+	`date` text NOT NULL,
+	`close` integer NOT NULL,
+	`currency` text NOT NULL,
+	`streak` integer NOT NULL,
+	CONSTRAINT `fk_pending_price_rejections_instrument_id_instruments_id_fk` FOREIGN KEY (`instrument_id`) REFERENCES `instruments`(`id`) ON DELETE CASCADE
 );
 --> statement-breakpoint
 CREATE TABLE `price_fetch_log` (
@@ -111,6 +181,17 @@ CREATE TABLE `snapshots` (
 	CONSTRAINT `fk_snapshots_import_id_imports_id_fk` FOREIGN KEY (`import_id`) REFERENCES `imports`(`id`)
 );
 --> statement-breakpoint
+CREATE TABLE `spending_rules` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`user_id` text NOT NULL,
+	`pattern` text NOT NULL,
+	`category` text NOT NULL,
+	`source` text DEFAULT 'user' NOT NULL,
+	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT `fk_spending_rules_user_id_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE,
+	CONSTRAINT `spending_rule_uq` UNIQUE(`user_id`,`pattern`)
+);
+--> statement-breakpoint
 CREATE TABLE `transactions` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`account_id` integer NOT NULL,
@@ -153,6 +234,12 @@ CREATE TABLE `verification` (
 	`expires_at` integer NOT NULL,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `yahoo_gate` (
+	`id` integer PRIMARY KEY,
+	`paused_until` integer,
+	`backoff_ms` integer DEFAULT 0 NOT NULL
 );
 --> statement-breakpoint
 CREATE INDEX `accounts_user_idx` ON `accounts` (`user_id`);--> statement-breakpoint

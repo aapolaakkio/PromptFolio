@@ -1,1 +1,0 @@
-ALTER TABLE `account` ADD `issuer` text NOT NULL;
