@@ -3,7 +3,15 @@ import { eq } from "drizzle-orm";
 
 import { EUR } from "../../core/money.ts";
 import { testDb } from "../db/test-db.ts";
-import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
+import {
+  accounts,
+  instruments,
+  priceFetchLog,
+  prices,
+  transactions,
+  user,
+  yahooGate,
+} from "../db/schema.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import { backfillCommittedInstruments } from "./backfill-on-commit.ts";
 import { commitDraft } from "./commit.ts";
@@ -129,6 +137,33 @@ test("backfills the instrument a fresh commit just gave an earliest transaction 
   const rows = await db.select().from(prices).where(eq(prices.instrumentId, instrumentId)).all();
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ date: "2020-06-15", close: 300 });
+});
+
+test("a paused Yahoo makes no request and leaves the backfill to the evening run", async () => {
+  const { db, accountId, instrumentId } = await seed();
+  const draft = draftOf([
+    draftTxn({
+      accountId,
+      instrumentId,
+      type: "BUY",
+      tradeDate: "2020-06-15",
+      quantity: 10_000_000,
+      unitPrice: 300,
+      amount: -3_000_00,
+    }),
+  ]);
+  await commitDraft(db, commitArgs(accountId, draft));
+  await db
+    .insert(yahooGate)
+    .values({ id: 1, pausedUntil: Date.now() + 60 * 60_000, backoffMs: 15 * 60_000 })
+    .run();
+
+  await expect(
+    backfillCommittedInstruments(db, draft, { fetchImpl: mustNotBeCalled }),
+  ).resolves.toBeUndefined();
+
+  expect(await db.select().from(prices).all()).toHaveLength(0);
+  expect(await db.select().from(priceFetchLog).all()).toHaveLength(0);
 });
 
 test("re-importing the same rows (all skipped as duplicates) still triggers backfill -- how a pre-existing holding catches up without waiting for the nightly sweep", async () => {

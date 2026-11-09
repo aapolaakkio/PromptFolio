@@ -5,8 +5,17 @@ import { asc, eq } from "drizzle-orm";
 
 import { EUR, parseCurrency } from "../../core/money.ts";
 import { testDb } from "../db/test-db.ts";
-import { accounts, instruments, priceFetchLog, prices, transactions, user } from "../db/schema.ts";
+import {
+  accounts,
+  instruments,
+  priceFetchLog,
+  prices,
+  transactions,
+  user,
+  yahooGate,
+} from "../db/schema.ts";
 import { backfillInstrument, backfillMany, refreshPrices, runScheduledRefresh } from "./refresh.ts";
+import { YahooPausedError } from "./yahoo-gate.ts";
 
 const SEK = parseCurrency("SEK");
 
@@ -91,13 +100,35 @@ const mustNotBeCalled = async (): Promise<Response> => {
   throw new Error("must not be called");
 };
 
+/** An instrument someone holds: refreshPrices skips one nobody does. */
+const seedHeld = async (db: TestDb, over: Partial<typeof instruments.$inferInsert> = {}) => {
+  const instrument = await seedInstrument(db, over);
+  await seedTransaction(db, {
+    instrumentId: instrument.id,
+    tradeDate: "2026-01-02",
+    quantity: 1_000_000,
+  });
+  return instrument;
+};
+
+const pauseYahoo = async (db: TestDb): Promise<void> => {
+  await db
+    .insert(yahooGate)
+    .values({ id: 1, pausedUntil: Date.now() + 60 * 60_000, backoffMs: 15 * 60_000 })
+    .run();
+};
+
 // --- refreshPrices -----------------------------------------------------------
 
 test("writes one price row per instrument and logs success", async () => {
   const { db } = await testDb();
-  await seedInstrument(db);
-  const result = await refreshPrices(db, { fetchImpl: yahooStub(4.31), today: "2026-08-27" });
-  expect(result).toEqual({ ok: 1, failed: 0 });
+  await seedHeld(db);
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(4.31),
+    today: "2026-08-27",
+  });
+  expect(result).toEqual({ ok: 1, failed: 0, paused: false });
   expect((await db.select().from(prices).all())[0]!.close).toBe(431);
   const log = await db.select().from(priceFetchLog).all();
   expect(log).toHaveLength(1);
@@ -106,8 +137,8 @@ test("writes one price row per instrument and logs success", async () => {
 
 test("one failing source does not stop the others", async () => {
   const { db } = await testDb();
-  await seedInstrument(db);
-  await seedInstrument(db, {
+  await seedHeld(db);
+  await seedHeld(db, {
     isin: crypto.randomUUID(),
     name: "OP-Suomi A",
     kind: "fund",
@@ -118,8 +149,12 @@ test("one failing source does not stop the others", async () => {
   const mixed = async (url: string | URL | Request): Promise<Response> =>
     urlOf(url).includes("op.fi") ? new Response("down", { status: 503 }) : yahooStub(4.31)();
 
-  const result = await refreshPrices(db, { fetchImpl: mixed, today: "2026-08-27" });
-  expect(result).toEqual({ ok: 1, failed: 1 });
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: mixed,
+    today: "2026-08-27",
+  });
+  expect(result).toEqual({ ok: 1, failed: 1, paused: false });
   const log = await db.select().from(priceFetchLog).all();
   expect(log.filter((l) => !l.ok)[0]!.message).toContain("503");
 });
@@ -128,7 +163,7 @@ test("stores a fund's latest value, which is always dated before the day it is f
   // OP's page on a Monday shows Friday's NAV. Asking for today alone dropped
   // it, so a fund never got a price from the daily refresh at all.
   const { db } = await testDb();
-  const fund = await seedInstrument(db, {
+  const fund = await seedHeld(db, {
     isin: crypto.randomUUID(),
     name: "OP-Maailma Indeksi A",
     kind: "fund",
@@ -143,24 +178,28 @@ test("stores a fund's latest value, which is always dated before the day it is f
     today: "2026-08-24",
   });
 
-  expect(result).toEqual({ ok: 1, failed: 0 });
+  expect(result).toEqual({ ok: 1, failed: 0, paused: false });
   const stored = await db.select().from(prices).where(eq(prices.instrumentId, fund.id)).all();
   expect(stored.map((p) => [p.date, p.close])).toEqual([["2026-08-21", 28360]]);
 });
 
 test("skips manual instruments without logging a failure", async () => {
   const { db } = await testDb();
-  await seedInstrument(db, { priceSource: "manual", sourceKey: "n/a" });
-  const result = await refreshPrices(db, { fetchImpl: yahooStub(4.31), today: "2026-08-27" });
-  expect(result).toEqual({ ok: 0, failed: 0 });
+  await seedHeld(db, { priceSource: "manual", sourceKey: "n/a" });
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(4.31),
+    today: "2026-08-27",
+  });
+  expect(result).toEqual({ ok: 0, failed: 0, paused: false });
   expect(await db.select().from(priceFetchLog).all()).toEqual([]);
 });
 
 test("re-running the same day overwrites rather than duplicating", async () => {
   const { db } = await testDb();
-  await seedInstrument(db);
-  await refreshPrices(db, { fetchImpl: yahooStub(4.31), today: "2026-08-27" });
-  await refreshPrices(db, { fetchImpl: yahooStub(4.4), today: "2026-08-27" });
+  await seedHeld(db);
+  await refreshPrices(db, { yahooSpacingMs: 0, fetchImpl: yahooStub(4.31), today: "2026-08-27" });
+  await refreshPrices(db, { yahooSpacingMs: 0, fetchImpl: yahooStub(4.4), today: "2026-08-27" });
   const rows = await db.select().from(prices).all();
   expect(rows).toHaveLength(1);
   expect(rows[0]!.close).toBe(440);
@@ -168,7 +207,7 @@ test("re-running the same day overwrites rather than duplicating", async () => {
 
 test("reports a large-jump rejection as a failure with a message distinct from a fetch error", async () => {
   const { db } = await testDb();
-  const instrument = await seedInstrument(db);
+  const instrument = await seedHeld(db);
   await db
     .insert(prices)
     .values({
@@ -181,8 +220,12 @@ test("reports a large-jump rejection as a failure with a message distinct from a
     })
     .run();
   // 4310.00 EUR vs. a prior 4.00 EUR -- a >1000x jump, well past the plausible range.
-  const result = await refreshPrices(db, { fetchImpl: yahooStub(4310), today: "2026-08-27" });
-  expect(result).toEqual({ ok: 0, failed: 1 });
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(4310),
+    today: "2026-08-27",
+  });
+  expect(result).toEqual({ ok: 0, failed: 1, paused: false });
   const log = await db.select().from(priceFetchLog).all();
   expect(log[0]!.ok).toBe(false);
   expect(log[0]!.message).toContain("epäuskottavana");
@@ -194,7 +237,7 @@ test("reports a large-jump rejection as a failure with a message distinct from a
 
 test("a value confirmed across 3 daily refreshes is re-baselined, logged loudly, and counted ok", async () => {
   const { db } = await testDb();
-  const instrument = await seedInstrument(db);
+  const instrument = await seedHeld(db);
   await db
     .insert(prices)
     .values({
@@ -210,15 +253,27 @@ test("a value confirmed across 3 daily refreshes is re-baselined, logged loudly,
   // Simulates a steep reverse split, one scheduled weekday refresh at a
   // time: each day is a >10x jump from the original 400 baseline, but
   // consistent with the day before it.
-  const first = await refreshPrices(db, { fetchImpl: yahooStub(44), today: "2026-08-02" });
-  expect(first).toEqual({ ok: 0, failed: 1 });
-  const second = await refreshPrices(db, { fetchImpl: yahooStub(44.5), today: "2026-08-03" });
-  expect(second).toEqual({ ok: 0, failed: 1 });
+  const first = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(44),
+    today: "2026-08-02",
+  });
+  expect(first).toEqual({ ok: 0, failed: 1, paused: false });
+  const second = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(44.5),
+    today: "2026-08-03",
+  });
+  expect(second).toEqual({ ok: 0, failed: 1, paused: false });
   // Not yet in `prices` -- still pending confirmation.
   expect(await db.select().from(prices).all()).toHaveLength(1);
 
-  const third = await refreshPrices(db, { fetchImpl: yahooStub(45), today: "2026-08-04" });
-  expect(third).toEqual({ ok: 1, failed: 0 });
+  const third = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: yahooStub(45),
+    today: "2026-08-04",
+  });
+  expect(third).toEqual({ ok: 1, failed: 0, paused: false });
 
   const log = await db.select().from(priceFetchLog).all();
   const lastLog = log[log.length - 1]!;
@@ -228,6 +283,90 @@ test("a value confirmed across 3 daily refreshes is re-baselined, logged loudly,
   const rows = await db.select().from(prices).all();
   expect(rows).toHaveLength(2); // the original 2026-08-01 row, plus the re-baselined new one.
   expect(rows.find((r) => r.close === 4_500)).toBeDefined();
+});
+
+test("asks Yahoo once per held listing, in one run, and once for a symbol held twice", async () => {
+  const { db } = await testDb();
+  await seedHeld(db);
+  await seedHeld(db, { isin: crypto.randomUUID(), ticker: "SAP.DE", sourceKey: "SAP.DE" });
+  await seedHeld(db, { isin: crypto.randomUUID(), sourceKey: "NOKIA.HE" });
+  const urls: string[] = [];
+  const recording = async (input: string | URL | Request): Promise<Response> => {
+    urls.push(urlOf(input));
+    return yahooStub(4.31)();
+  };
+
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: recording,
+    today: "2026-08-27",
+  });
+
+  expect(result).toEqual({ ok: 3, failed: 0, paused: false });
+  expect(urls.filter((url) => url.includes("chart/NOKIA.HE"))).toHaveLength(1);
+  expect(urls.filter((url) => url.includes("chart/SAP.DE"))).toHaveLength(1);
+});
+
+test("an instrument nobody holds is not asked for", async () => {
+  const { db } = await testDb();
+  await seedInstrument(db);
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: mustNotBeCalled,
+    today: "2026-08-27",
+  });
+  expect(result).toEqual({ ok: 0, failed: 0, paused: false });
+});
+
+test("a paused Yahoo asks nothing of it, logs nothing for it, and still refreshes funds", async () => {
+  const { db } = await testDb();
+  await seedHeld(db);
+  await seedHeld(db, {
+    isin: crypto.randomUUID(),
+    name: "OP-Maailma Indeksi A",
+    kind: "fund",
+    priceSource: "op_fund",
+    sourceKey: "op-maailma-indeksi",
+    ticker: null,
+  });
+  await pauseYahoo(db);
+  const page = "<dl><dt>Osuuden arvo (21.08.)</dt><dd>283,60 EUR</dd></dl>";
+  const onlyOp = async (input: string | URL | Request): Promise<Response> => {
+    if (urlOf(input).includes("yahoo")) throw new Error("Yahoo must not be asked");
+    return new Response(page);
+  };
+
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: onlyOp,
+    today: "2026-08-24",
+  });
+
+  expect(result).toEqual({ ok: 1, failed: 0, paused: true });
+  const log = await db.select().from(priceFetchLog).all();
+  expect(log.map((row) => row.source)).toEqual(["op_fund"]);
+});
+
+test("a 429 mid-run keeps the quotes already fetched and asks no more", async () => {
+  const { db } = await testDb();
+  await seedHeld(db);
+  await seedHeld(db, { isin: crypto.randomUUID(), ticker: "SAP.DE", sourceKey: "SAP.DE" });
+  await seedHeld(db, { isin: crypto.randomUUID(), ticker: "KCR.HE", sourceKey: "KCR.HE" });
+  const calls = { count: 0 };
+  const secondIs429 = async (): Promise<Response> => {
+    calls.count += 1;
+    return calls.count === 1 ? yahooStub(4.31)() : new Response("", { status: 429 });
+  };
+
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    fetchImpl: secondIs429,
+    today: "2026-08-27",
+  });
+
+  expect(result).toEqual({ ok: 1, failed: 0, paused: true });
+  expect(calls.count).toBe(2);
+  expect(await db.select().from(prices).all()).toHaveLength(1);
 });
 
 // --- backfillInstrument --------------------------------------------------------
@@ -491,6 +630,38 @@ test("backfillMany aggregates a mixed batch: one instrument backfills, one is sk
     today: "2026-08-27",
   });
   expect(result).toEqual({ attempted: 1, backfilled: 1, incomplete: 0, errored: 0 });
+});
+
+test("backfill through a paused gate makes no request and logs nothing", async () => {
+  const { db } = await testDb();
+  const instrument = await seedInstrument(db);
+  await seedTransaction(db, { instrumentId: instrument.id, tradeDate: "2020-01-01" });
+  await pauseYahoo(db);
+  await expect(
+    backfillInstrument(db, instrument.id, { fetchImpl: mustNotBeCalled }),
+  ).rejects.toThrow(YahooPausedError);
+  expect(await db.select().from(priceFetchLog).all()).toEqual([]);
+});
+
+test("backfillMany stops asking Yahoo after a 429 but still backfills other sources", async () => {
+  const { db } = await testDb();
+  const first = await seedInstrument(db);
+  await seedTransaction(db, { instrumentId: first.id, tradeDate: "2026-08-20" });
+  const second = await seedInstrument(db, { isin: crypto.randomUUID(), sourceKey: "SAP.DE" });
+  await seedTransaction(db, { instrumentId: second.id, tradeDate: "2026-08-20" });
+  const calls = { count: 0 };
+  const always429 = async (): Promise<Response> => {
+    calls.count += 1;
+    return new Response("", { status: 429 });
+  };
+
+  const result = await backfillMany(db, [first.id, second.id], {
+    fetchImpl: always429,
+    today: "2026-08-27",
+  });
+
+  expect(result).toEqual({ attempted: 0, backfilled: 0, incomplete: 0, errored: 0 });
+  expect(calls.count).toBe(1);
 });
 
 // --- end-to-end: backfill closes the empty-history gap -------------------------

@@ -36,6 +36,10 @@ import type { Draft } from "./map.ts";
  * own try/catch here -- this function's "never rejects" contract must hold regardless of
  * which of the two backfills it triggers actually fails.
  *
+ * Yahoo is asked through the gate (inside `backfillInstrument`). While it is paused no request
+ * is made and nothing is logged; the instrument still needs backfill, so the evening sweep picks
+ * it up.
+ *
  * **Never awaited by its caller.** `backfillMany` already isolates each instrument's own
  * failure (never throws), but the point of not awaiting this at all is latency, not just
  * safety: a first import of several new instruments can mean several years-long fetches, and

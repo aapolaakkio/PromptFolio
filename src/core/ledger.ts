@@ -22,17 +22,25 @@ const unitDirection = (type: Txn["type"]): 1 | -1 | null => {
   }
 };
 
-const byTradeDateThenId = (a: Txn, b: Txn): number =>
-  a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1;
+/** The fields a unit count needs, so a caller without money values can count units too. */
+export type UnitTxn = Pick<Txn, "id" | "instrumentId" | "type" | "tradeDate" | "quantity">;
+
+const byTradeDateThenId = (
+  a: Pick<Txn, "id" | "tradeDate">,
+  b: Pick<Txn, "id" | "tradeDate">,
+): number => (a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1);
 
 /** Every transaction dated on or before `on`, oldest first. Exported for core/cash.ts. */
-export const upTo = (txns: readonly Txn[], on: IsoDate): Txn[] =>
+export const upTo = <T extends Pick<Txn, "id" | "tradeDate">>(
+  txns: readonly T[],
+  on: IsoDate,
+): T[] =>
   txns
     .filter((t) => t.tradeDate <= on)
     .slice()
     .sort(byTradeDateThenId);
 
-export const positionsAt = (txns: readonly Txn[], on: IsoDate): Map<number, Quantity> => {
+export const positionsAt = (txns: readonly UnitTxn[], on: IsoDate): Map<number, Quantity> => {
   const positions = new Map<number, Quantity>();
   for (const t of upTo(txns, on)) {
     if (t.instrumentId === null) continue;

@@ -4,8 +4,10 @@ import type { Db } from "../db/index.ts";
 import { instruments, priceFetchLog, prices, transactions } from "../db/schema.ts";
 import { backfillFxRates, refreshFxRates } from "../fx.ts";
 import { sourceFor } from "./registry.ts";
+import { heldInstrumentIds, latestQuotesUntilPaused } from "./intraday.ts";
 import type { FetchImpl, FetchedPrice } from "./types.ts";
 import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write.ts";
+import { YahooPausedError, gatedFetch } from "./yahoo-gate.ts";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
@@ -35,14 +37,6 @@ const describeFailure = (cause: unknown): string =>
   cause instanceof Error ? cause.message : "Tuntematon virhe";
 
 /**
- * Today's price for every non-manual instrument, each attempt isolated from the
- * rest and each logged. A manual instrument is skipped without a log row: a
- * human owns its price, so no fetch was attempted.
- *
- * A point the plausibility check refuses is reported as a failure, not folded
- * into a clean "ok" -- the fetch worked, the data was not trusted.
- */
-/**
  * How far back the daily refresh accepts a price. A fund publishes its value
  * for the previous business day, so on a Monday the latest NAV is Friday's;
  * asking for today alone dropped every fund price, every day.
@@ -52,74 +46,152 @@ const RECENT_DAYS = 7;
 const daysBefore = (iso: string, days: number): string =>
   new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
 
-export const refreshPrices = async (
+type Priced = Pick<typeof instruments.$inferSelect, "id" | "priceSource" | "sourceKey">;
+
+/**
+ * Writes one instrument's fetched points and logs how it went. Returns whether
+ * it counts as ok.
+ *
+ * A point the plausibility check refuses is reported as a failure, not folded
+ * into a clean "ok" -- the fetch worked, the data was not trusted.
+ */
+const recordPoints = async (
   db: Db,
-  opts: { fetchImpl?: FetchImpl; today?: string } = {},
-): Promise<{ ok: number; failed: number }> => {
-  const asOf = opts.today ?? today();
+  instrument: Priced,
+  points: readonly FetchedPrice[],
+): Promise<boolean> => {
+  const sourceId = instrument.priceSource;
+  const { written, rejectedImplausible, reBaselined } = await writePrices(
+    db,
+    instrument.id,
+    sourceId,
+    points,
+  );
+
+  if (reBaselined > 0) {
+    // Loud on purpose: an implausible price was just confirmed as a real
+    // permanent change, which is worth a human's attention.
+    const message =
+      `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
+      `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
+      (rejectedImplausible > 0 ? ` (${rejectedImplausible} yhä hylätty)` : "");
+    console.warn(`Hintasarja uudelleenperustettu: ${sourceId} instrumentille ${instrument.id}`);
+    await logAttempt(db, { source: sourceId, instrumentId: instrument.id, ok: true, message });
+    return true;
+  }
+  if (rejectedImplausible > 0) {
+    await logAttempt(db, {
+      source: sourceId,
+      instrumentId: instrument.id,
+      ok: false,
+      message:
+        `${written} hintapistettä tallennettu, ${rejectedImplausible} hylätty ` +
+        `epäuskottavana hintahyppynä (yli ${MAX_PLAUSIBLE_RATIO}x)`,
+    });
+    return false;
+  }
+  await logAttempt(db, {
+    source: sourceId,
+    instrumentId: instrument.id,
+    ok: true,
+    message: `${written} hintapistettä`,
+  });
+  return true;
+};
+
+/** A fund or other non-Yahoo source, one page per instrument. */
+const refreshFromPage = async (
+  db: Db,
+  instrument: Priced,
+  opts: { readonly fetchImpl?: FetchImpl; readonly asOf: string },
+): Promise<boolean> => {
+  const source = sourceFor(instrument.priceSource);
+  try {
+    const points = await source.fetch({
+      sourceKey: instrument.sourceKey,
+      from: daysBefore(opts.asOf, RECENT_DAYS),
+      to: opts.asOf,
+      fetchImpl: opts.fetchImpl,
+    });
+    return await recordPoints(db, instrument, points);
+  } catch (cause) {
+    await logAttempt(db, {
+      source: source.id,
+      instrumentId: instrument.id,
+      ok: false,
+      message: describeFailure(cause),
+    });
+    return false;
+  }
+};
+
+/**
+ * Every Yahoo listing's latest quote, asked through the gate. A pause stops
+ * Yahoo for the rest of the run: what was found is kept, the rest waits for
+ * the next run without a log row each.
+ */
+const refreshFromYahoo = async (
+  db: Db,
+  listed: readonly Priced[],
+  opts: { readonly fetchImpl?: FetchImpl; readonly spacingMs?: number },
+): Promise<{ ok: number; failed: number; paused: boolean }> => {
+  if (listed.length === 0) return { ok: 0, failed: 0, paused: false };
+  const symbols = [...new Set(listed.map((row) => row.sourceKey))];
+  const { quotes, paused } = await latestQuotesUntilPaused(
+    symbols,
+    gatedFetch(db, opts.fetchImpl ?? fetch),
+    opts.spacingMs,
+  );
+
   let ok = 0;
   let failed = 0;
-
-  for (const instrument of await db.select().from(instruments).all()) {
-    if (instrument.priceSource === "manual") continue;
-    const source = sourceFor(instrument.priceSource);
-
-    try {
-      const points = await source.fetch({
-        sourceKey: instrument.sourceKey,
-        from: daysBefore(asOf, RECENT_DAYS),
-        to: asOf,
-        fetchImpl: opts.fetchImpl,
-      });
-      const { written, rejectedImplausible, reBaselined } = await writePrices(
-        db,
-        instrument.id,
-        source.id,
-        points,
-      );
-
-      if (reBaselined > 0) {
-        // Loud on purpose: an implausible price was just confirmed as a real
-        // permanent change, which is worth a human's attention.
-        const message =
-          `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
-          `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
-          (rejectedImplausible > 0 ? ` (${rejectedImplausible} yhä hylätty)` : "");
-        console.warn(
-          `Hintasarja uudelleenperustettu: ${source.id} instrumentille ${instrument.id}`,
-        );
-        await logAttempt(db, { source: source.id, instrumentId: instrument.id, ok: true, message });
-        ok++;
-      } else if (rejectedImplausible > 0) {
-        failed++;
-        await logAttempt(db, {
-          source: source.id,
-          instrumentId: instrument.id,
-          ok: false,
-          message:
-            `${written} hintapistettä tallennettu, ${rejectedImplausible} hylätty ` +
-            `epäuskottavana hintahyppynä (yli ${MAX_PLAUSIBLE_RATIO}x)`,
-        });
-      } else {
-        ok++;
-        await logAttempt(db, {
-          source: source.id,
-          instrumentId: instrument.id,
-          ok: true,
-          message: `${written} hintapistettä`,
-        });
-      }
-    } catch (cause) {
+  for (const instrument of listed) {
+    const quote = quotes.get(instrument.sourceKey);
+    if (quote === undefined) {
+      if (paused) continue;
       failed++;
       await logAttempt(db, {
-        source: source.id,
+        source: "yahoo",
         instrumentId: instrument.id,
         ok: false,
-        message: describeFailure(cause),
+        message: `Yahoo ei palauttanut hintaa tunnukselle ${instrument.sourceKey}`,
       });
+    } else if (await recordPoints(db, instrument, [quote])) {
+      ok++;
+    } else {
+      failed++;
     }
   }
-  return { ok, failed };
+  return { ok, failed, paused };
+};
+
+/**
+ * Today's price for every held, non-manual instrument, each attempt isolated
+ * from the rest and each logged. An instrument nobody holds is skipped, and so
+ * is a manual one: a human owns its price, so no fetch was attempted.
+ */
+export const refreshPrices = async (
+  db: Db,
+  opts: { fetchImpl?: FetchImpl; today?: string; yahooSpacingMs?: number } = {},
+): Promise<{ ok: number; failed: number; paused: boolean }> => {
+  const asOf = opts.today ?? today();
+  const held = await heldInstrumentIds(db);
+  const priced = (await db.select().from(instruments).all()).filter(
+    (row) => row.priceSource !== "manual" && held.has(row.id),
+  );
+
+  let ok = 0;
+  let failed = 0;
+  for (const instrument of priced.filter((row) => row.priceSource !== "yahoo")) {
+    if (await refreshFromPage(db, instrument, { fetchImpl: opts.fetchImpl, asOf })) ok++;
+    else failed++;
+  }
+  const yahoo = await refreshFromYahoo(
+    db,
+    priced.filter((row) => row.priceSource === "yahoo"),
+    { fetchImpl: opts.fetchImpl, spacingMs: opts.yahooSpacingMs },
+  );
+  return { ok: ok + yahoo.ok, failed: failed + yahoo.failed, paused: yahoo.paused };
 };
 
 /**
@@ -143,7 +215,11 @@ export type BackfillResult = {
   readonly incomplete: boolean;
 };
 
-/** Fetches history back to the instrument's earliest transaction and writes it. */
+/**
+ * Fetches history back to the instrument's earliest transaction and writes it.
+ * A Yahoo instrument asks through the gate, and a pause is thrown as
+ * `YahooPausedError` with nothing logged.
+ */
 export const backfillInstrument = async (
   db: Db,
   instrumentId: number,
@@ -169,15 +245,15 @@ export const backfillInstrument = async (
   const to = opts.today ?? today();
   const source = sourceFor(instrument.priceSource);
 
+  const fetchImpl =
+    instrument.priceSource === "yahoo" ? gatedFetch(db, opts.fetchImpl ?? fetch) : opts.fetchImpl;
   let points: FetchedPrice[];
   try {
-    points = await source.fetch({
-      sourceKey: instrument.sourceKey,
-      from,
-      to,
-      fetchImpl: opts.fetchImpl,
-    });
+    points = await source.fetch({ sourceKey: instrument.sourceKey, from, to, fetchImpl });
   } catch (cause) {
+    // Not a failure of this instrument: Yahoo asked us to wait, and the caller
+    // decides what that means for the rest of its run.
+    if (cause instanceof YahooPausedError) throw cause;
     await logAttempt(db, {
       source: source.id,
       instrumentId,
@@ -310,14 +386,25 @@ export const backfillMany = async (
   let incomplete = 0;
   let errored = 0;
 
+  let paused = false;
+
   for (const instrumentId of new Set(instrumentIds)) {
     if (!(await needsBackfill(db, instrumentId))) continue;
-    attempted++;
     try {
       const result = await backfillInstrument(db, instrumentId, opts);
+      attempted++;
       if (result.inserted > 0) backfilled++;
       if (result.incomplete) incomplete++;
     } catch (cause) {
+      // Every later Yahoo call is refused by the gate without a request, so
+      // the rest of the run keeps going for the other sources. Still needing
+      // backfill, the instrument is picked up by the evening sweep.
+      if (cause instanceof YahooPausedError) {
+        if (!paused) console.warn(`Taustatäyttö: ${cause.message}, Yahoo jää myöhemmäksi`);
+        paused = true;
+        continue;
+      }
+      attempted++;
       errored++;
       console.error(
         `Taustatäyttö epäonnistui odottamattomasti instrumentille ${instrumentId}`,
@@ -343,7 +430,10 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
   }
   try {
     const result = await refreshPrices(db);
-    console.log(`Hintapäivitys: ${result.ok} onnistui, ${result.failed} epäonnistui`);
+    console.log(
+      `Hintapäivitys: ${result.ok} onnistui, ${result.failed} epäonnistui` +
+        (result.paused ? " (Yahoo tauolla)" : ""),
+    );
   } catch (cause) {
     console.error("Hintapäivitys epäonnistui", cause);
   }
