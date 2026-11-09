@@ -1,16 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #fbfaf8;
-  --color-surface: #ffffff;
-  --color-ink: #14171a;
-  --color-muted: #5c6670;
-  --color-line: #e3e0da;
-  --color-gain: #1f7a3f;
+  /* Light: banknote paper. Dark: the vault. Both lean green so the page reads as money. */
+  --color-bg: #eef3e9;
+  --color-surface: #fbfdf9;
+  --color-ink: #13231a;
+  --color-muted: #56665b;
+  --color-line: #d3ddcb;
+  --color-gain: #1a7f3c;
   --color-loss: #b3261e;
-  --color-accent: #14484f;
+  /* Dollar green; white text on it is 5.3:1. */
+  --color-accent: #1d7a47;
+  --color-on-accent: #ffffff;
 
-  /* Series colours, light mode: validated for colour-vision separation against this surface. Three sit under 3:1 on white, allowed only because every chart has a legend or direct labels. */
+  /* Series colours, light mode: validated for colour-vision separation against a near-white surface. Three sit under 3:1, allowed only because every chart has a legend or direct labels. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -26,36 +29,43 @@
   --radius-card: 0.625rem;
 }
 
-/* Dark mode redefines the same tokens, so no component needs a `dark:` variant. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #14171a;
-    --color-surface: #1c2024;
-    --color-ink: #f2f1ee;
-    --color-muted: #9aa4ad;
-    --color-line: #2c3136;
-    --color-gain: #4ade80;
-    --color-loss: #f87171;
-    --color-accent: #5eead4;
+/* `data-theme` is set before first paint by the script in `__root.tsx` (the owner's choice, else the system's). Dark redefines the same tokens, so no component needs a `dark:` variant. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0b1510;
+  --color-surface: #12201a;
+  --color-ink: #e9f1e7;
+  --color-muted: #93a69a;
+  --color-line: #233629;
+  --color-gain: #5fd38d;
+  --color-loss: #f87171;
+  /* The dollar bill's own green; dark text on it is about 8:1. */
+  --color-accent: #85bb65;
+  --color-on-accent: #0b1a10;
 
-    /* The same eight hues stepped for the dark surface, validated against #1c2024. */
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --series-4: #c98500;
-    --series-5: #d55181;
-    --series-6: #008300;
-    --series-7: #9085e9;
-    --series-8: #e66767;
-  }
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
 }
 
 @layer base {
   html {
-    color-scheme: light dark;
+    color-scheme: light;
   }
   body {
     @apply bg-bg text-ink font-sans antialiased;
+    /* A soft green glow from the top, like light on a banknote. */
+    background-image: radial-gradient(
+      120% 60% at 50% 0%,
+      color-mix(in srgb, var(--color-accent) 14%, transparent),
+      transparent 70%
+    );
+    background-attachment: fixed;
   }
   h1 {
     @apply text-2xl font-semibold tracking-tight mb-6;
@@ -71,7 +81,7 @@
     @apply bg-surface text-ink border border-line rounded-md px-3 py-2 text-base;
   }
   button {
-    @apply bg-accent text-white rounded-md px-4 py-2 font-medium disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply bg-accent text-on-accent rounded-md px-4 py-2 font-medium disabled:opacity-40 disabled:cursor-not-allowed;
   }
   table {
     @apply w-full border-collapse;
@@ -91,6 +101,11 @@
 
 @utility card {
   @apply bg-surface border border-line rounded-[--radius-card] p-5;
+}
+
+/* A button that is not the page's main action: the theme switch in the header. */
+@utility quiet-button {
+  @apply bg-transparent text-muted px-2 py-1 text-sm font-normal hover:text-ink;
 }
 
 /* Undoes the base button styling for sort headers inside a table. */

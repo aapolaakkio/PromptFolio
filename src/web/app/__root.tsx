@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 
+import { THEME_SCRIPT } from "../lib/theme.ts";
 import styles from "../styles.css?url";
 
 const queryClient = new QueryClient({
@@ -16,9 +17,11 @@ export const Route = createRootRoute({
       { title: "PromptFolio" },
     ],
     links: [{ rel: "stylesheet", href: styles }],
+    // Inline and first, so the theme is set before anything paints.
+    scripts: [{ children: THEME_SCRIPT }],
   }),
   component: () => (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>

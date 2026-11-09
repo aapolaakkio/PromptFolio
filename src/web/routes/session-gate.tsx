@@ -1,5 +1,7 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
+import { ThemeToggle } from "./ThemeToggle.tsx";
+
 type SessionGateProps = {
   readonly isPending: boolean;
   readonly hasSession: boolean;
@@ -44,6 +46,7 @@ export const SessionGate = ({ isPending, hasSession, onSignOut }: SessionGatePro
             Imports
           </Link>
         </nav>
+        <ThemeToggle />
         <button type="button" onClick={onSignOut}>
           Sign out
         </button>
