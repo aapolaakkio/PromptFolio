@@ -1,3 +1,4 @@
+import { APIConnectionError } from "@anthropic-ai/sdk";
 import { readText } from "../files.ts";
 import { urlOf } from "../prices/types.ts";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -762,7 +763,7 @@ describe("lookupInstrument, a page found by web search", () => {
       stubFetch(await misses()),
       0,
       {
-        find: finder(new TypeError("fetch failed")).find,
+        find: finder(new APIConnectionError({ message: "down" })).find,
         client: recipeClient(GOOD),
         referenceMinor: null,
       },
@@ -777,7 +778,7 @@ describe("lookupInstrument, a page found by web search", () => {
       0,
       {
         find: finder({ url: PAGE_URL, isin: FUND_ISIN }).find,
-        client: recipeClient(new TypeError("fetch failed")),
+        client: recipeClient(new APIConnectionError({ message: "down" })),
         referenceMinor: null,
       },
     );

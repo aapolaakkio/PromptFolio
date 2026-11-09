@@ -456,4 +456,24 @@ describe("fetchPage limits", () => {
     await expect(fetchPage(URL_, async () => response)).rejects.toThrow();
     expect(read).toBe(false);
   });
+
+  test("a body with no content-length is cut off once it passes the limit", async () => {
+    const chunk = new TextEncoder().encode("x".repeat(1_000_000));
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+    });
+    await expect(fetchPage(URL_, async () => new Response(body))).rejects.toThrow(
+      "Sivu on liian suuri luettavaksi",
+    );
+    expect(pulled).toBeLessThan(10);
+  });
+
+  test("a body under the limit is read whole", async () => {
+    const page = `<p>${"é".repeat(1000)}</p>`;
+    expect(await fetchPage(URL_, async () => new Response(page))).toBe(page);
+  });
 });

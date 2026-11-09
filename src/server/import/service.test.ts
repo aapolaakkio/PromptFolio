@@ -1,3 +1,4 @@
+import { APIConnectionError } from "@anthropic-ai/sdk";
 import { readBytes, readText } from "../files.ts";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { eq, inArray } from "drizzle-orm";
@@ -738,7 +739,7 @@ describe("an import with an instrument nobody has added yet", () => {
     const { userId } = await signUp(`imp-auto-model-down-${crypto.randomUUID()}@example.com`);
     const accountId = await openAccount(userId);
     const isin = freshIsin();
-    const down = (): Promise<never> => Promise.reject(new TypeError("fetch failed"));
+    const down = (): Promise<never> => Promise.reject(new APIConnectionError({ message: "down" }));
     service._setPageLookup({ find: down, client: { run: down } });
 
     try {

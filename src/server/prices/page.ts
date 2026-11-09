@@ -133,11 +133,27 @@ export const fetchPage = async (
     throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
   }
   const ok = await requireOk(response, "Sivu");
-  // ponytail: only a declared length is checked; a body with none is cut by the recipe's own limit.
-  if (Number(ok.headers.get("content-length")) > MAX_PAGE_CHARS) {
-    throw new Error("Sivu on liian suuri luettavaksi");
+  if (Number(ok.headers.get("content-length")) > MAX_PAGE_CHARS) throw new Error(TOO_LARGE);
+  return await readCapped(ok);
+};
+
+const TOO_LARGE = "Sivu on liian suuri luettavaksi";
+
+/** The body as text, stopped and refused once it passes MAX_PAGE_CHARS, header or not. */
+const readCapped = async (response: Response): Promise<string> => {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    text += decoder.decode(value, { stream: true });
+    if (text.length > MAX_PAGE_CHARS) {
+      await reader.cancel();
+      throw new Error(TOO_LARGE);
+    }
   }
-  return await ok.text();
 };
 
 /**
