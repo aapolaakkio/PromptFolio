@@ -7,6 +7,8 @@ const SOURCES = {
   yahoo: YAHOO,
   nordnet_fund: NORDNET_FUND,
   op_fund: OP_FUND,
+  // ponytail: Task 4 replaces this placeholder with the page source.
+  page: MANUAL,
   manual: MANUAL,
 } satisfies Record<PriceSourceId, PriceSource>;
 

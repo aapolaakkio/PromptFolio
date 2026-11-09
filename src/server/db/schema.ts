@@ -123,7 +123,7 @@ export const instruments = sqliteTable("instruments", {
   // Any ISO 4217 code -- see the comment on accounts.baseCurrency above.
   currency: text("currency").$type<Currency>().notNull(),
   priceSource: text("price_source", {
-    enum: ["yahoo", "nordnet_fund", "op_fund", "manual"],
+    enum: ["yahoo", "nordnet_fund", "op_fund", "page", "manual"],
   }).notNull(),
   sourceKey: text("source_key").notNull(),
   // "pending" while a registry lookup is still owed, "attention" when it needs the user.
@@ -148,6 +148,15 @@ export const instrumentLookups = sqliteTable("instrument_lookups", {
   outcome: text("outcome", { enum: ["found", "form", "pending"] }).notNull(),
   result: text("result").notNull(),
   checkedAt: integer("checked_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** The verified recipe for reading a page instrument's price; null while none is verified. */
+export const pageRecipes = sqliteTable("page_recipes", {
+  instrumentId: integer("instrument_id")
+    .primaryKey()
+    .references(() => instruments.id, { onDelete: "cascade" }),
+  recipe: text("recipe"),
+  askedAt: integer("asked_at"),
 });
 
 export const imports = sqliteTable("imports", {
