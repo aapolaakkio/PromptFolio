@@ -5,11 +5,7 @@ import { addInstrument } from "../instruments/store.ts";
 
 import { EUR } from "../../core/money.ts";
 
-// The chat tools are the only thing standing between the model and a made-up
-// number: the system prompt forbids arithmetic in prose, so whatever these
-// return is what the user is told. These tests therefore assert on the exact
-// strings, and on the two properties every result must carry -- the date it is
-// good for, and whether any price behind it is stale.
+// Chat tool results are what the user is told, so these assert exact strings and that every result carries its date and staleness.
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let saveTargets: (typeof import("../rebalance.ts"))["saveTargets"];
@@ -59,14 +55,13 @@ const randomIsin = (): string =>
 const createAccount = async (userId: string, name = "Nordnet"): Promise<number> =>
   (await openAccountRow(db, userId, CreateAccount.parse({ name, broker: "nordnet" }))).id;
 
-/** A bank account, the only kind a statement's spending may land on. */
 const createBankAccount = async (userId: string): Promise<number> =>
   (
     await openAccountRow(
       db,
       userId,
       CreateAccount.parse({
-        name: "OP käyttötili",
+        name: "OP current account",
         broker: "op",
         kind: "bank",
         accountType: "current",
@@ -86,7 +81,6 @@ const createInstrument = async (cookie: string, name: string): Promise<number> =
   return response.id;
 };
 
-/** 10 units at 10,00 EUR, so a later price of 12,00 makes the maths checkable by eye. */
 const buy = async (accountId: number, instrumentId: number, date: string): Promise<void> => {
   await db
     .insert(transactions)
@@ -127,7 +121,6 @@ const deposit = async (accountId: number, date: string, minor: number): Promise<
     .run();
 };
 
-/** One card payment on a bank account, as a statement import would write it. */
 const spend = async (
   accountId: number,
   note: string,
@@ -154,7 +147,6 @@ const spend = async (
     .run();
 };
 
-/** Money arriving on a bank account, with the text a statement would carry. */
 const receive = async (
   accountId: number,
   note: string,
@@ -195,7 +187,6 @@ const price = async (instrumentId: number, date: string, minor: number): Promise
     .run();
 };
 
-/** A broker's holdings statement, as an import would have written it. */
 const statement = async (
   accountId: number,
   instrumentId: number,
@@ -216,8 +207,6 @@ const statement = async (
       snapshotId: snapshot.id,
       instrumentId,
       quantity: units * 1_000_000,
-      // The statement's own price and value. Reconciliation compares units, not
-      // money, so these only have to be present and consistent.
       nav: 1200,
       marketValue: units * 1200,
     })
@@ -231,7 +220,6 @@ const toolNamed = (tools: Tools, name: string): Tools[number] => {
   return tool;
 };
 
-/** One user, one account, one instrument bought at 10,00 and last priced at 12,00. */
 const seed = async (): Promise<{
   tools: Tools;
   instrumentId: number;
@@ -261,8 +249,7 @@ const seed = async (): Promise<{
 describe("get_holdings", () => {
   test("reports quantity, cost and value as decimal strings for the asked date", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_holdings").run({ on: "2026-06-01" })) as {
       asOf: string;
       stale: boolean;
@@ -285,8 +272,6 @@ describe("get_holdings", () => {
 
   test("refuses an unknown argument, so a hallucinated parameter cannot pass silently", async () => {
     const { tools } = await seed();
-    // The schema is what the SDK validates against before `run` is ever
-    // called, so an invented parameter has to be refused there.
     expect(toolNamed(tools, "get_holdings").schema.safeParse({ userId: "someone" }).success).toBe(
       false,
     );
@@ -297,24 +282,19 @@ describe("scoping", () => {
   test("sees only the calling user's own holdings", async () => {
     const { tools: mine } = await seed();
     await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await mine
       .find((t) => t.name === "get_holdings")
       ?.run({ on: "2026-06-01" })) as {
       holdings: unknown[];
     };
-    // The other user's seed created its own instrument and transactions in the
-    // same database; a leak would show up here as a second row.
     expect(result.holdings).toHaveLength(1);
   });
 
   test("names only instruments the user's own ledger references", async () => {
     const { tools: mine } = await seed();
-    // The registry is shared, so the other user's fund exists in the same table.
     await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(mine, "get_instruments").run({})) as { instruments: unknown[] };
     expect(result.instruments).toHaveLength(1);
   });
@@ -323,15 +303,13 @@ describe("scoping", () => {
 describe("get_cash", () => {
   test("reports the deposit that has not been invested, per account", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_cash").run({ on: "2026-06-01" })) as {
       asOf: string;
       totalEur: string;
       balances: Array<{ account: string; currency: string; amount: string }>;
     };
 
-    // The seed deposits 1000,00 and spends 100,00 on the holding.
     expect(result.asOf).toBe("2026-06-01");
     expect(result.totalEur).toBe("900.00");
     expect(result.balances).toEqual([
@@ -352,8 +330,7 @@ describe("get_cash", () => {
 describe("get_allocation", () => {
   test("splits by the requested dimension and totals to one", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_allocation").run({
       on: "2026-06-01",
       dimension: "currency",
@@ -363,8 +340,6 @@ describe("get_allocation", () => {
     };
 
     expect(result.dimension).toBe("currency");
-    // 120,00 of holding plus the 900,00 the deposit left uninvested: cash is
-    // part of the allocation (spec 10e/E1), so the chat and the dashboard agree.
     expect(result.slices).toEqual([{ label: "EUR", valueEur: "1020.00", weight: 1 }]);
   });
 });
@@ -372,8 +347,7 @@ describe("get_allocation", () => {
 describe("get_returns", () => {
   test("returns twr and mwr, and says which period they cover", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_returns").run({
       from: "2026-01-01",
       to: "2026-06-01",
@@ -382,7 +356,6 @@ describe("get_returns", () => {
     expect(result.from).toBe("2026-01-01");
     expect(result.to).toBe("2026-06-01");
     expect(result.valueEur).toBe("120.00");
-    // 100,00 -> 120,00 with no flows in between.
     expect(result.twr).toBeCloseTo(0.2, 6);
     expect(result.mwr).not.toBeNull();
   });
@@ -391,8 +364,7 @@ describe("get_returns", () => {
 describe("get_value_series", () => {
   test("thins a long period instead of truncating it, keeping both ends", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_value_series").run({
       from: "2026-01-01",
       to: "2026-06-01",
@@ -408,8 +380,7 @@ describe("get_value_series", () => {
 describe("get_transactions", () => {
   test("returns newest first and says when the answer was cut short", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_transactions").run({ limit: 1 })) as {
       returned: number;
       truncated: boolean;
@@ -426,8 +397,7 @@ describe("get_transactions", () => {
 describe("payload limits", () => {
   test("caps a multi-year series at 60 points, keeping the last day", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_value_series").run({
       from: "2020-01-01",
       to: "2026-06-01",
@@ -456,12 +426,11 @@ describe("payload limits", () => {
 describe("get_spending", () => {
   test("returns totals already added up, per category", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4215, "2026-03-01");
     await spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3120, "2026-03-02");
-    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -1850, "2026-03-03");
+    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA EXAMPLE", -1850, "2026-03-03");
 
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_spending").run({
       from: "2026-01-01",
       to: "2026-12-31",
@@ -471,7 +440,7 @@ describe("get_spending", () => {
       uncategorisedShare: number;
     };
 
-    const food = result.groups.find((group) => group.label === "Ruokakauppa");
+    const food = result.groups.find((group) => group.label === "Groceries");
     expect(food?.totalEur).toBe("-73.35");
     expect(food?.count).toBe(2);
     expect(result.totalEur).toBe("-91.85");
@@ -480,8 +449,8 @@ describe("get_spending", () => {
 
   test("groups by counterparty when asked", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -1785, "2026-03-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -1785, "2026-03-02");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_spending").run({
@@ -490,7 +459,7 @@ describe("get_spending", () => {
       groupBy: "counterparty",
     })) as { groups: Array<{ label: string; totalEur: string }> };
 
-    expect(result.groups[0]?.label).toBe("K-MARKET ESIMERKKI");
+    expect(result.groups[0]?.label).toBe("K-MARKET EXAMPLE");
     expect(result.groups[0]?.totalEur).toBe("-60.00");
   });
 });
@@ -498,12 +467,11 @@ describe("get_spending", () => {
 describe("get_uncategorised_spending", () => {
   test("names the merchants no rule matched, so the model can propose a class", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4215, "2026-03-01");
     await spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -1000, "2026-03-02");
     await spend(bankAccountId, "PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE", -500, "2026-03-03");
 
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_uncategorised_spending").run({
       from: "2026-01-01",
       to: "2026-12-31",
@@ -512,7 +480,6 @@ describe("get_uncategorised_spending", () => {
       merchants: Array<{ name: string; totalEur: string; count: number }>;
     };
 
-    // The recognised grocery shop is not here; the unknown one is, summed.
     expect(result.merchants).toHaveLength(1);
     expect(result.merchants[0]?.name).toBe("JOKIN TUNTEMATON LIIKE");
     expect(result.merchants[0]?.totalEur).toBe("-15.00");
@@ -541,16 +508,14 @@ describe("calculate", () => {
       values: ["10.00", "0"],
     })) as { error?: string };
 
-    // A thrown tool kills the turn; a message lets the model say what happened.
-    expect(result.error).toContain("Nollalla");
+    expect(result.error).toContain("divide by zero");
   });
 });
 
 describe("get_instruments", () => {
   test("lists the registered instruments", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed a few
-    // lines above in tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_instruments").run({})) as {
       instruments: Array<{ name: string; kind: string; currency: string }>;
     };
@@ -563,8 +528,7 @@ describe("get_instruments", () => {
 describe("get_tax_year", () => {
   test("reports taxable income for the year, and never a euro of tax owed", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
-    // tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_tax_year").run({ year: 2026 })) as {
       year: number;
       availableYears: readonly number[];
@@ -576,23 +540,19 @@ describe("get_tax_year", () => {
     expect(result.year).toBe(2026);
     expect(result.taxableGainEur).toBe("0.00");
     expect(result.dividendTaxableEur).toBe("0.00");
-    // The bracket depends on capital income the app cannot see, so a chat
-    // answer must have no rate to reach for either.
+    // The bracket depends on capital income the app cannot see, so there is no rate to reach for.
     expect(JSON.stringify(result)).not.toContain("30 %");
     expect(result).not.toHaveProperty("taxOwedEur");
   });
 
   test("answers for the current year when the ledger has no taxable event", async () => {
     const { tools } = await seed();
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
-    // tools.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_tax_year").run({})) as {
       year: number;
       availableYears: readonly number[];
     };
 
-    // An empty report is the true answer, and availableYears says which years
-    // hold anything -- better than refusing to answer at all.
     expect(result.year).toBe(new Date().getUTCFullYear());
     expect(result.availableYears).toEqual([]);
   });
@@ -602,21 +562,19 @@ describe("get_drift", () => {
   test("reports the gap to target and never suggests a trade", () => {
     return (async () => {
       const { tools } = await seed();
-      // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
-      // tools.ts; the assertion only names the fields read below.
+      // SAFETY: the tool's literal has this shape.
       const result = (await toolNamed(tools, "get_drift").run({})) as {
         asOf: string;
         groupBy: string;
         totalEur: string;
         incomplete: boolean;
-        rows: readonly { erä: string; ilmanTavoitetta: boolean }[];
+        rows: readonly { item: string; untargeted: boolean }[];
         note: string;
       };
 
       expect(result.groupBy).toBe("kind");
-      // With no targets set, every slice is untargeted rather than at zero.
-      expect(result.rows.every((row) => row.ilmanTavoitetta)).toBe(true);
-      expect(result.note).toContain("Et anna sijoitusneuvoja");
+      expect(result.rows.every((row) => row.untargeted)).toBe(true);
+      expect(result.note).toContain("You give no investment advice");
     })();
   });
 
@@ -624,11 +582,10 @@ describe("get_drift", () => {
     const { tools } = await seed();
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_drift").run({})) as {
-      fees: readonly { year: number; kulutEur: string; pidätettyVeroEur: string }[];
+      fees: readonly { year: number; feesEur: string; withheldTaxEur: string }[];
     };
 
-    // The two are different things and the tool must not let an answer add
-    // them together, so each year carries them as separate fields.
+    // Kept as separate fields so an answer cannot add them.
     expect(result.fees).toEqual([]);
   });
 });
@@ -636,11 +593,10 @@ describe("get_drift", () => {
 describe("get_cash_flow", () => {
   test("splits a period into what came in, what went out, and what was left", async () => {
     const { tools, bankAccountId } = await seed();
-    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-01");
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-03-02");
+    await receive(bankAccountId, "PALKKA — EXAMPLE OYJ", 300_000, "2026-03-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -20_000, "2026-03-02");
 
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
-    // tools-money.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_cash_flow").run({
       from: "2026-03-01",
       to: "2026-03-31",
@@ -656,13 +612,13 @@ describe("get_cash_flow", () => {
     expect(result.spendingEur).toBe("200.00");
     expect(result.leftoverEur).toBe("2800.00");
     expect(result.spentMoreThanEarned).toBe(false);
-    expect(result.byCategory[0]?.label).toBe("Ruokakauppa");
+    expect(result.byCategory[0]?.label).toBe("Groceries");
   });
 
   test("says so when the period spent more than it earned", async () => {
     const { tools, bankAccountId } = await seed();
-    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 10_000, "2026-04-01");
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -30_000, "2026-04-02");
+    await receive(bankAccountId, "PALKKA — EXAMPLE OYJ", 10_000, "2026-04-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -30_000, "2026-04-02");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_cash_flow").run({
@@ -670,8 +626,7 @@ describe("get_cash_flow", () => {
       to: "2026-04-30",
     })) as { leftoverEur: string; spentMoreThanEarned: boolean };
 
-    // Reported as a positive figure with a flag, never as a negative "left
-    // over", which reads as money in the account.
+    // A positive figure with a flag: a negative "left over" reads as money in the account.
     expect(result.leftoverEur).toBe("200.00");
     expect(result.spentMoreThanEarned).toBe(true);
   });
@@ -680,8 +635,8 @@ describe("get_cash_flow", () => {
 describe("get_spending_trend", () => {
   test("gives a month per row so a trend can be seen without twelve calls", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -20_000, "2026-02-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -10_000, "2026-01-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -20_000, "2026-02-10");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_spending_trend").run({
@@ -690,24 +645,23 @@ describe("get_spending_trend", () => {
     })) as { months: readonly { month: string; expensesEur: string }[] };
 
     expect(result.months.map((month) => month.month)).toEqual(["2026-01", "2026-02"]);
-    // Expenses are reported as a positive magnitude, as `monthlyFlows` states.
     expect(result.months[0]?.expensesEur).toBe("100.00");
     expect(result.months[1]?.expensesEur).toBe("200.00");
   });
 
   test("follows one category when asked for one", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -10_000, "2026-01-10");
-    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA ESIMERKKI", -5_000, "2026-01-11");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -10_000, "2026-01-10");
+    await spend(bankAccountId, "PKORTTIMAKSU — RAVINTOLA EXAMPLE", -5_000, "2026-01-11");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_spending_trend").run({
       from: "2026-01-01",
       to: "2026-01-31",
-      category: "ruoka",
+      category: "groceries",
     })) as { category: string; label: string; months: readonly { totalEur: string }[] };
 
-    expect(result.label).toBe("Ruokakauppa");
+    expect(result.label).toBe("Groceries");
     expect(result.months[0]?.totalEur).toBe("100.00");
   });
 
@@ -732,15 +686,12 @@ describe("get_deposit_plan", () => {
     };
 
     expect(result.depositEur).toBe("1000.00");
-    // No targets are set in the seed, so there is nothing to allocate toward --
-    // and an empty plan must read as "no target set", not as "put in nothing".
     expect(result.allocations).toEqual([]);
-    expect(result.note).toContain("tavoite");
+    expect(result.note).toContain("No target");
   });
 
   test("splits the money toward the target once one is set", async () => {
     const { tools, userId } = await seed();
-    // 100 % of one slice, in basis points, as the server function stores it.
     const saved = await saveTargets(db, userId, "kind", [{ key: "fund", weightBp: 10_000 }]);
     expect(saved.ok).toBe(true);
 
@@ -750,19 +701,17 @@ describe("get_deposit_plan", () => {
       note: string;
     };
 
-    // One slice, targeted at everything, so the whole deposit goes there.
     expect(result.allocations).toHaveLength(1);
     expect(result.allocations[0]?.amountEur).toBe("500.00");
-    // The rule the whole tool exists inside: it may say where to buy, never
-    // what to sell.
-    expect(result.note).toContain("Et anna sijoitusneuvoja");
+    // It may say where to buy, never what to sell.
+    expect(result.note).toContain("You give no investment advice");
   });
 
   test("rejects an amount that is not money", async () => {
     const { tools } = await seed();
     const plan = toolNamed(tools, "get_deposit_plan");
 
-    expect(() => plan.schema.parse({ amountEur: "tuhat euroa" })).toThrow();
+    expect(() => plan.schema.parse({ amountEur: "a thousand euros" })).toThrow();
     expect(() => plan.schema.parse({ amountEur: "-500.00" })).toThrow();
   });
 });
@@ -770,8 +719,8 @@ describe("get_deposit_plan", () => {
 describe("get_transaction_class", () => {
   test("shows the class a row was given and why it was left out", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
-    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-05-02");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4_215, "2026-05-01");
+    await receive(bankAccountId, "PALKKA — EXAMPLE OYJ", 300_000, "2026-05-02");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_transaction_class").run({
@@ -787,7 +736,7 @@ describe("get_transaction_class", () => {
     };
 
     const groceries = result.transactions.find((txn) => txn.text.includes("K-MARKET"));
-    expect(groceries?.categoryLabel).toBe("Ruokakauppa");
+    expect(groceries?.categoryLabel).toBe("Groceries");
     expect(groceries?.counted).toBe(true);
 
     const salary = result.transactions.find((txn) => txn.text.includes("PALKKA"));
@@ -797,7 +746,7 @@ describe("get_transaction_class", () => {
 
   test("searches the text, so one payee can be asked about by name", async () => {
     const { tools, bankAccountId } = await seed();
-    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4_215, "2026-05-01");
+    await spend(bankAccountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4_215, "2026-05-01");
     await spend(bankAccountId, "PKORTTIMAKSU — LIDL HELSINKI", -3_120, "2026-05-02");
 
     // SAFETY: as above.
@@ -812,42 +761,36 @@ describe("get_transaction_class", () => {
   });
 });
 
-// The only tools in the app that write. What they may touch is the whole point:
-// the classification, never the ledger, and never a rule its owner wrote.
+// The only writing tools: classification, never the ledger, never a rule its owner wrote.
 describe("save_spending_rules", () => {
   test("stores a rule for a payee the ledger actually holds", async () => {
     const { tools, bankAccountId } = await seed();
     await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
 
-    // SAFETY: `run` returns this tool's own literal, whose shape is fixed in
-    // tools-rules.ts; the assertion only names the fields read below.
+    // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "save_spending_rules").run({
-      rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
+      rules: [{ pattern: "OUTOKAUPPA", category: "groceries" }],
     })) as { added: readonly { pattern: string; label: string; matches: number }[] };
 
     expect(result.added).toHaveLength(1);
-    expect(result.added[0]?.label).toBe("Ruokakauppa");
-    // Says what the rule now catches, so an answer can report the effect.
+    expect(result.added[0]?.label).toBe("Groceries");
     expect(result.added[0]?.matches).toBe(1);
 
-    // And the rule is live: the same payment now reads as groceries.
-    // SAFETY: as above -- get_spending's literal is fixed in tools.ts.
+    // SAFETY: as above.
     const spending = (await toolNamed(tools, "get_spending").run({
       from: "2026-07-01",
       to: "2026-07-31",
     })) as { groups: readonly { label: string }[] };
-    expect(spending.groups.some((group) => group.label === "Ruokakauppa")).toBe(true);
+    expect(spending.groups.some((group) => group.label === "Groceries")).toBe(true);
   });
 
   test("refuses a payee that is nowhere in the ledger", async () => {
     const { tools } = await seed();
 
-    // A statement line is text the app did not write. If a crafted one could
-    // talk the model into a rule, the rule would still have to name a merchant
-    // this ledger holds -- and this one does not.
+    // A crafted statement line cannot get a rule for a merchant this ledger does not hold.
     // SAFETY: as above.
     const result = (await toolNamed(tools, "save_spending_rules").run({
-      rules: [{ pattern: "KEKSITTY KAUPPA", category: "ruoka" }],
+      rules: [{ pattern: "KEKSITTY KAUPPA", category: "groceries" }],
     })) as { added: readonly unknown[]; skipped: readonly string[] };
 
     expect(result.added).toEqual([]);
@@ -870,31 +813,30 @@ describe("update_spending_rule and remove_spending_rule", () => {
     const { tools, bankAccountId } = await seed();
     await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
     await toolNamed(tools, "save_spending_rules").run({
-      rules: [{ pattern: "OUTOKAUPPA", category: "ruoka" }],
+      rules: [{ pattern: "OUTOKAUPPA", category: "groceries" }],
     });
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "OUTOKAUPPA",
-      category: "ravintolat",
+      category: "restaurants",
     })) as { changed: boolean; from: string; to: string };
 
     expect(result.changed).toBe(true);
-    expect(result.from).toBe("Ruokakauppa");
-    expect(result.to).toBe("Ravintolat ja kahvilat");
+    expect(result.from).toBe("Groceries");
+    expect(result.to).toBe("Restaurants and cafes");
   });
 
   test("will not touch a rule the user wrote", async () => {
     const { tools, bankAccountId, userId } = await seed();
     await spend(bankAccountId, "PKORTTIMAKSU — OUTOKAUPPA OY", -2_500, "2026-07-01");
-    // The user's own decision, stored the way the Kulutus page stores it.
-    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "ruoka" }], "user");
+    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "groceries" }], "user");
 
     // SAFETY: as above.
     // SAFETY: as above.
     const changed = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "OUTOKAUPPA",
-      category: "ravintolat",
+      category: "restaurants",
     })) as { changed: boolean; reason: string };
     // SAFETY: as above.
     const removed = (await toolNamed(tools, "remove_spending_rule").run({
@@ -913,11 +855,11 @@ describe("update_spending_rule and remove_spending_rule", () => {
     // SAFETY: as above.
     const result = (await toolNamed(tools, "update_spending_rule").run({
       pattern: "K-MARKET",
-      category: "vapaa-aika",
+      category: "leisure",
     })) as { changed: boolean; from: string };
 
     expect(result.changed).toBe(true);
-    expect(result.from).toBe("Ruokakauppa");
+    expect(result.from).toBe("Groceries");
   });
 
   test("reports a rule that is not there rather than inventing one", async () => {
@@ -925,7 +867,7 @@ describe("update_spending_rule and remove_spending_rule", () => {
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "remove_spending_rule").run({
-      pattern: "EI TÄLLAISTA",
+      pattern: "NO SUCH RULE",
     })) as { removed: boolean; reason: string };
 
     expect(result.removed).toBe(false);
@@ -936,17 +878,17 @@ describe("update_spending_rule and remove_spending_rule", () => {
 describe("get_spending_rules", () => {
   test("lists the rules and says which ones are the user's own", async () => {
     const { tools, userId } = await seed();
-    await addRules(db, userId, [{ pattern: "OMA SÄÄNTÖ", category: "koti" }], "user");
+    await addRules(db, userId, [{ pattern: "OWN RULE", category: "home" }], "user");
 
     // SAFETY: as above.
-    const result = (await toolNamed(tools, "get_spending_rules").run({ search: "OMA SÄÄNTÖ" })) as {
+    const result = (await toolNamed(tools, "get_spending_rules").run({ search: "OWN RULE" })) as {
       count: number;
       bySource: { user: number };
       rules: readonly { pattern: string; label: string; source: string }[];
     };
 
-    expect(result.rules[0]?.pattern).toBe("OMA SÄÄNTÖ");
-    expect(result.rules[0]?.label).toBe("Koti ja remontti");
+    expect(result.rules[0]?.pattern).toBe("OWN RULE");
+    expect(result.rules[0]?.label).toBe("Home and renovation");
     expect(result.rules[0]?.source).toBe("user");
     expect(result.bySource.user).toBe(1);
   });
@@ -963,17 +905,14 @@ describe("get_reconciliation", () => {
       note: string;
     };
 
-    // The seeded brokerage account has no snapshot. Zero differences here means
-    // nothing was compared, and the result has to make that impossible to read
-    // as agreement.
+    // Zero differences with no snapshot means nothing was compared; it must not read as agreement.
     expect(result.accounts[0]?.checkedAgainst).toBeNull();
     expect(result.unchecked).toContain("Nordnet");
-    expect(result.note).toContain("älä sano että se täsmää");
+    expect(result.note).toContain("do not say it matches");
   });
 
   test("names the holdings whose derived quantity disagrees with the statement", async () => {
     const { tools, accountId, instrumentId } = await seed();
-    // The ledger derives 10 units from its transactions; the broker says 12.
     await statement(accountId, instrumentId, 12, "2026-06-01");
 
     // SAFETY: as above.
@@ -992,7 +931,6 @@ describe("get_reconciliation", () => {
     expect(checked?.rows[0]?.name).toBe("Testirahasto");
     expect(checked?.rows[0]?.derived).toBe("10.000000");
     expect(checked?.rows[0]?.statement).toBe("12.000000");
-    // Positive means the ledger is missing units -- a transaction never imported.
     expect(checked?.rows[0]?.delta).toBe("2.000000");
   });
 
@@ -1004,7 +942,7 @@ describe("get_reconciliation", () => {
       accounts: readonly { account: string }[];
     };
 
-    expect(result.accounts.map((account) => account.account)).not.toContain("OP käyttötili");
+    expect(result.accounts.map((account) => account.account)).not.toContain("OP current account");
   });
 });
 
@@ -1033,7 +971,7 @@ describe("get_recurring_payments", () => {
 describe("get_net_worth_series", () => {
   test("adds the bank balances the value series leaves out", async () => {
     const { tools, bankAccountId } = await seed();
-    await receive(bankAccountId, "PALKKA — ESIMERKKI OYJ", 50_000, "2026-01-03");
+    await receive(bankAccountId, "PALKKA — EXAMPLE OYJ", 50_000, "2026-01-03");
 
     // SAFETY: as above.
     const result = (await toolNamed(tools, "get_net_worth_series").run({
@@ -1044,10 +982,7 @@ describe("get_net_worth_series", () => {
     };
 
     const last = result.points.at(-1);
-    // 10 units last priced at 12,00 is 120,00 of positions. The cash is every
-    // account's, not only the bank's: 1 000,00 deposited at the broker less the
-    // 100,00 the shares cost, plus 500,00 of salary -- and none of that 1 400,00
-    // appears in get_value_series, which is the whole reason this tool exists.
+    // Cash is every account's, not only the bank's, and none of it appears in get_value_series.
     expect(last?.positionsEur).toBe("120.00");
     expect(last?.cashEur).toBe("1400.00");
     expect(last?.totalEur).toBe("1520.00");

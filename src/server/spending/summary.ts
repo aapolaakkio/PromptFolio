@@ -6,25 +6,19 @@ import { categoriseWith, isRefund, type SpendingRule } from "./rules.ts";
 type SpendingGroup = {
   readonly key: string;
   readonly label: string;
-  /** Always negative or zero: this is money that left. */
   readonly totalEur: string;
   readonly count: number;
 };
 
-export type SpendingSummary = {
+type SpendingSummary = {
   readonly from: IsoDate;
   readonly to: IsoDate;
   readonly totalEur: string;
   readonly groups: SpendingGroup[];
-  /**
-   * Rows that could not be attributed to any rule, as a share of the total.
-   * Always reported: a spending answer that quietly leaves out a third of the
-   * money is worse than no answer, and the reader cannot tell without this.
-   */
+  /** Share of the total not attributed to any rule; always reported, as a spending answer that hides a third of the money is worse than none. */
   readonly uncategorisedShare: number;
 };
 
-/** One transaction, reduced to what a spending view needs. */
 type SpendingRow = { readonly note: string; readonly amount: Money; readonly date: IsoDate };
 
 export const groupKey = (
@@ -36,29 +30,16 @@ export const groupKey = (
     const category: Category = categoriseWith(row.note, rules);
     return [category, CATEGORY_LABELS[category]];
   }
-  // The counterparty is the note's middle field when the bank printed one
-  // ("PKORTTIMAKSU — K-MARKET ESIMERKKI"), and the label itself otherwise.
+  // The counterparty is the note's middle field when the bank printed one ("PKORTTIMAKSU — K-MARKET EXAMPLE"), else the label.
   const parts = row.note.split(" — ");
   const name = (parts.length > 1 ? parts[1] : parts[0]) ?? "";
-  return [name.toUpperCase(), name === "" ? "Nimetön" : name];
+  return [name.toUpperCase(), name === "" ? "Unnamed" : name];
 };
 
 /**
- * What was spent between two dates, grouped and already added up.
- *
- * Summing happens here rather than in the assistant's prose because the model is
- * forbidden from doing arithmetic (chat/runner.ts's system prompt) -- an answer
- * about a year of groceries has to be a figure the code computed, or it is a
- * guess wearing a euro sign.
- *
- * Only money leaving is counted. A salary is not negative spending, and netting
- * it against the shopping would produce a "food" total that moves when someone
- * gets paid.
- *
- * `txns` must already be restricted to bank accounts. A share purchase is money
- * leaving an account too, and counting it here would report an investment as
- * expenditure -- the largest "spending" of the year would be the year's biggest
- * buy. Callers use `Portfolio.bankAccountIds` for that.
+ * What was spent between two dates, grouped and summed (the model may not do arithmetic).
+ * Only money leaving counts, so pay does not net against shopping. `txns` must be bank accounts
+ * only (`Portfolio.bankAccountIds`), or a share purchase would be reported as spending.
  */
 export const summariseSpending = (
   txns: readonly Txn[],
@@ -66,22 +47,15 @@ export const summariseSpending = (
     from: IsoDate;
     to: IsoDate;
     by: "category" | "counterparty";
-    /** The user's own rules -- see spending/rules.ts. */
     rules: readonly SpendingRule[];
-    /** Groups to return, largest first. The rest are folded into one "muut" row. */
     limit?: number;
   },
 ): SpendingSummary => {
   const rows: SpendingRow[] = txns
     .filter((txn) => txn.tradeDate >= args.from && txn.tradeDate <= args.to)
-    // An opening balance is what an account already held, not money spent. A
-    // negative one -- the ledger showing more outgoings than the bank's stated
-    // balance explains -- was being reported as the year's largest expense.
+    // An opening balance is what the account already held, not spending (a negative one once topped the expenses).
     .filter((txn) => txn.type !== "OPENING_BALANCE")
-    // Refunds are kept even though they are positive: a shop giving money back
-    // reduces what was spent there rather than earning anything, so it belongs
-    // against its own category. Every other credit is income and is not
-    // spending at all.
+    // Refunds stay: a shop giving money back reduces spending in its own category. Other credits are income.
     .filter((txn) => txn.currency === EUR && (txn.amount.minor < 0n || isRefund(txn.note ?? "")))
     .map((txn) => ({ note: txn.note ?? "", amount: txn.amount, date: txn.tradeDate }));
 
@@ -98,7 +72,7 @@ export const summariseSpending = (
 
   const total = rows.reduce((sum, row) => addMoney(sum, row.amount), zeroMoney(EUR));
   const uncategorised = rows
-    .filter((row) => categoriseWith(row.note, args.rules) === "muu")
+    .filter((row) => categoriseWith(row.note, args.rules) === "other")
     .reduce((sum, row) => addMoney(sum, row.amount), zeroMoney(EUR));
 
   const sorted = [...totals.entries()]
@@ -108,7 +82,6 @@ export const summariseSpending = (
       total: entry.total,
       count: entry.count,
     }))
-    // Most spent first, which is what a person asks about.
     .sort((a, b) => (a.total.minor === b.total.minor ? 0 : a.total.minor < b.total.minor ? -1 : 1));
 
   const limit = args.limit ?? sorted.length;
@@ -121,13 +94,11 @@ export const summariseSpending = (
     count: entry.count,
   }));
 
-  // The tail is folded into one row rather than dropped: the groups must still
-  // add up to the total, or a reader adding them by eye gets a different answer
-  // from the one the tool reported.
+  // The tail is folded into one row so the groups still add up to the total.
   if (rest.length > 0) {
     groups.push({
       key: "muut",
-      label: `Muut (${rest.length})`,
+      label: `Other (${rest.length})`,
       totalEur: formatMoney(
         rest.reduce((sum, entry) => addMoney(sum, entry.total), zeroMoney(EUR)),
       ),
@@ -140,9 +111,7 @@ export const summariseSpending = (
     to: args.to,
     totalEur: formatMoney(total),
     groups,
-    // A magnitude ratio, not a signed one: both figures are negative, and
-    // dividing them directly yields -0 when nothing was left unclassified,
-    // which reads as a different number to anyone comparing against 0.
+    // A magnitude ratio: dividing two negatives yields -0 when nothing was unclassified.
     uncategorisedShare:
       total.minor === 0n ? 0 : Math.abs(Number(uncategorised.minor) / Number(total.minor)),
   };

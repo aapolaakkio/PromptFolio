@@ -2,14 +2,11 @@ import { describe, expect, test } from "vitest";
 
 import { calculate } from "./calculator.ts";
 
-// The assistant may now do arithmetic, which it could not before. This is what
-// keeps that safe: the sums happen in integer hundredths, so a figure it states
-// is exact rather than whatever a float came to.
+// Sums run in integer hundredths, so stated figures are exact.
 
 describe("calculate", () => {
   test("adds money exactly, where floating point would not", () => {
-    // 0.1 + 0.2 is 0.30000000000000004 in a float, and a euro figure ending in
-    // four is the kind of wrong that survives review.
+    // A float gives 0.30000000000000004.
     expect(calculate({ operation: "sum", values: ["0.10", "0.20"] }).result).toBe("0.30");
     expect(calculate({ operation: "sum", values: ["42.15", "31.20", "18.50"] }).result).toBe(
       "91.85",
@@ -54,20 +51,24 @@ describe("calculate", () => {
       "10.00 + 5.00 = 15.00",
     );
     expect(calculate({ operation: "percent", values: ["200.00", "10"] }).working).toBe(
-      "10 % luvusta 200.00 = 20.00",
+      "10 % of 200.00 = 20.00",
     );
   });
 
   test("refuses something that is not a number rather than treating it as zero", async () => {
-    expect(() => calculate({ operation: "sum", values: ["noin sata"] })).toThrow(/ei kelpaa/);
+    expect(() => calculate({ operation: "sum", values: ["about a hundred"] })).toThrow(
+      /Invalid number/,
+    );
   });
 
   test("refuses division by zero instead of returning an infinity", async () => {
-    expect(() => calculate({ operation: "divide", values: ["10.00", "0"] })).toThrow(/Nollalla/);
+    expect(() => calculate({ operation: "divide", values: ["10.00", "0"] })).toThrow(
+      /divide by zero/,
+    );
   });
 
   test("refuses an empty calculation", async () => {
-    expect(() => calculate({ operation: "sum", values: [] })).toThrow(/vähintään yksi/);
+    expect(() => calculate({ operation: "sum", values: [] })).toThrow(/at least one/);
   });
 
   test("rounds a third of a cent rather than dropping it", () => {

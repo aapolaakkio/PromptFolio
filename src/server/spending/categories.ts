@@ -1,77 +1,63 @@
-/**
- * What a payment was for, from the text a bank prints on it.
- *
- * The assistant may not do arithmetic in prose, so "how much did I spend on food"
- * has to be computed in code -- which means the server decides what counts as food.
- *
- * Shallow on purpose: a case-insensitive substring match, first rule wins. No
- * learning, nothing that could reclassify a year of history between two runs.
- * Anything unmatched is reported rather than hidden.
- */
+// Category from the text a bank prints. Shallow on purpose: case-insensitive substring, first rule wins, no learning, so history never reclassifies between runs. Unmatched is reported, not hidden.
 export type Category =
-  | "ruoka"
-  | "ravintolat"
-  | "liikenne"
-  | "asuminen"
-  | "terveys"
-  | "vapaa-aika"
-  | "verkkokauppa"
-  | "vaatteet"
-  | "koti"
-  | "lemmikit"
-  | "lapset"
-  | "matkailu"
-  | "koulutus"
-  | "lahjat"
-  | "tilaukset"
-  | "pankki"
-  | "lainat"
-  | "vakuutukset"
-  | "verot"
-  | "siirrot"
-  | "palkka"
-  | "korko"
-  | "muu";
+  | "groceries"
+  | "restaurants"
+  | "transport"
+  | "housing"
+  | "health"
+  | "leisure"
+  | "online-shopping"
+  | "clothing"
+  | "home"
+  | "pets"
+  | "children"
+  | "travel"
+  | "education"
+  | "gifts"
+  | "subscriptions"
+  | "bank-fees"
+  | "loans"
+  | "insurance"
+  | "taxes"
+  | "transfers"
+  | "salary"
+  | "interest"
+  | "other";
 
 export const CATEGORY_LABELS = {
-  ruoka: "Ruokakauppa",
-  ravintolat: "Ravintolat ja kahvilat",
-  liikenne: "Liikenne",
-  asuminen: "Asuminen",
-  terveys: "Terveys",
-  "vapaa-aika": "Vapaa-aika",
-  verkkokauppa: "Verkkokauppa",
-  vaatteet: "Vaatteet",
-  koti: "Koti ja remontti",
-  lemmikit: "Lemmikit",
-  lapset: "Lapset",
-  matkailu: "Matkailu",
-  koulutus: "Koulutus",
-  lahjat: "Lahjat ja hyväntekeväisyys",
-  tilaukset: "Tilaukset ja jäsenmaksut",
-  pankki: "Pankkikulut",
-  lainat: "Lainat ja luotot",
-  vakuutukset: "Vakuutukset",
-  verot: "Verot",
-  siirrot: "Tilisiirrot",
-  palkka: "Palkka ja etuudet",
-  korko: "Korot",
-  muu: "Muu",
+  groceries: "Groceries",
+  restaurants: "Restaurants and cafes",
+  transport: "Transport",
+  housing: "Housing",
+  health: "Health",
+  leisure: "Leisure",
+  "online-shopping": "Online shopping",
+  clothing: "Clothing",
+  home: "Home and renovation",
+  pets: "Pets",
+  children: "Children",
+  travel: "Travel",
+  education: "Education",
+  gifts: "Gifts and charity",
+  subscriptions: "Subscriptions and memberships",
+  "bank-fees": "Bank fees",
+  loans: "Loans and credit",
+  insurance: "Insurance",
+  taxes: "Taxes",
+  transfers: "Account transfers",
+  salary: "Salary and benefits",
+  interest: "Interest",
+  other: "Other",
 } satisfies Record<Category, string>;
 
 type Rule = { readonly category: Category; readonly patterns: readonly string[] };
 
-/**
- * Finnish merchants as OP prints them -- upper case, often with a location
- * appended, hence substring matching. Order matters where a name could match
- * twice: a restaurant inside a shop is a restaurant.
- */
+// Finnish merchants as OP prints them (upper case, location appended, hence substring). Order matters: a restaurant inside a shop is a restaurant.
 const SEED: readonly Rule[] = [
-  { category: "korko", patterns: ["TALLETUSKORKO", "KORKO", "INTEREST"] },
+  { category: "interest", patterns: ["TALLETUSKORKO", "KORKO", "INTEREST"] },
   {
-    category: "palkka",
-    // "OPINTOTUKI" is longer than the "OPINTO" that would otherwise claim it
-    // for education, and it is money in rather than a course paid for.
+    category: "salary",
+    // "OPINTOTUKI" must beat "OPINTO" (education): it is money in, not a course paid for.
     patterns: [
       "PALKKA",
       "ETUUS",
@@ -84,12 +70,10 @@ const SEED: readonly Rule[] = [
       "ASUMISTUKI",
     ],
   },
-  { category: "verot", patterns: ["VEROHALLINTO", "VEROTILI", "JÄÄNNÖSVERO", "ENNAKKOVERO"] },
+  { category: "taxes", patterns: ["VEROHALLINTO", "VEROTILI", "JÄÄNNÖSVERO", "ENNAKKOVERO"] },
   {
-    // A repayment is not a bank charge: most of it is the owner's own money
-    // reducing a debt, and only its interest is a cost. Its own line rather
-    // than mixed in with service fees.
-    category: "lainat",
+    // A repayment is mostly the owner's own money reducing a debt; only the interest is a cost, so not with service fees.
+    category: "loans",
     patterns: [
       "LAINANHOITO",
       "LUOTON MAKSU",
@@ -104,15 +88,15 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "pankki",
+    category: "bank-fees",
     patterns: ["PALVELUMAKSU", "TILINHOITO", "KORTTIMAKSU KK"],
   },
   {
-    category: "vakuutukset",
+    category: "insurance",
     patterns: ["VAKUUTUS", "IF VAHINKO", "POHJOLA VAKUUTUS", "LÄHITAPIOLA", "TURVA", "FENNIA"],
   },
   {
-    category: "ravintolat",
+    category: "restaurants",
     patterns: [
       "RAVINTOLA",
       "PIZZ",
@@ -142,7 +126,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "ruoka",
+    category: "groceries",
     patterns: [
       "K-MARKET",
       "K-SUPERMARKET",
@@ -169,7 +153,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "liikenne",
+    category: "transport",
     patterns: [
       "HSL",
       "VR ",
@@ -200,7 +184,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "asuminen",
+    category: "housing",
     patterns: [
       "VUOKRA",
       "ISÄNNÖINTI",
@@ -221,7 +205,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "koti",
+    category: "home",
     patterns: [
       "K-RAUTA",
       "RAUTIA",
@@ -241,7 +225,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "terveys",
+    category: "health",
     patterns: [
       "APTEEKKI",
       "TERVEYS",
@@ -259,7 +243,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "vaatteet",
+    category: "clothing",
     patterns: [
       "H&M",
       "ZARA",
@@ -279,15 +263,15 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "lemmikit",
+    category: "pets",
     patterns: ["ELÄINLÄÄKÄRI", "MUSTI JA MIRRI", "FAUNATAR", "ELÄINKAUPPA", "ZOOPLUS"],
   },
   {
-    category: "lapset",
+    category: "children",
     patterns: ["PÄIVÄKOTI", "VARHAISKASVATUS", "LASTENTARHA", "KOULURUOKA", "PRISMA LELU", "LELU"],
   },
   {
-    category: "matkailu",
+    category: "travel",
     patterns: [
       "HOTEL",
       "HOTELLI",
@@ -307,15 +291,15 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "koulutus",
+    category: "education",
     patterns: ["YLIOPISTO", "AMMATTIKORKEA", "KURSSI", "OPINTO", "KIRJASTO", "UDEMY", "COURSERA"],
   },
   {
-    category: "lahjat",
+    category: "gifts",
     patterns: ["LAHJA", "KUKKA", "INTERFLORA", "PUNAINEN RISTI", "UNICEF", "PELASTAKAA LAPSET"],
   },
   {
-    category: "tilaukset",
+    category: "subscriptions",
     patterns: [
       "SPOTIFY",
       "NETFLIX",
@@ -338,7 +322,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "vapaa-aika",
+    category: "leisure",
     patterns: [
       "STEAM",
       "PLAYSTATION",
@@ -362,7 +346,7 @@ const SEED: readonly Rule[] = [
     ],
   },
   {
-    category: "verkkokauppa",
+    category: "online-shopping",
     patterns: [
       "VERKKOKAUPPA",
       "AMAZON",
@@ -379,23 +363,15 @@ const SEED: readonly Rule[] = [
       "ETSY",
     ],
   },
-  { category: "siirrot", patterns: ["TILISIIRTO", "PANO", "OTTO", "TALLETUSAUTOM", "MOBILEPAY"] },
+  { category: "transfers", patterns: ["TILISIIRTO", "PANO", "OTTO", "TALLETUSAUTOM", "MOBILEPAY"] },
 ];
 
-/**
- * The built-in rules, one row per pattern. They seed a user's own table once and
- * then live in the database. Kept in code rather than a migration so a new
- * install begins with something useful.
- */
+// Seeded into a user's own table once, then live in the database. In code, not a migration, so a new install starts useful.
 export const SEED_RULES: readonly { pattern: string; category: Category }[] = SEED.flatMap((rule) =>
   rule.patterns.map((pattern) => ({ pattern, category: rule.category })),
 );
 
-/**
- * The Finnish name for a category key. The fallback covers a rule stored before a
- * category was renamed, showing the raw key rather than nothing.
- */
+/** The fallback shows the raw key for a rule stored before a category was renamed. */
 export const labelForCategory = (category: string): string =>
-  // SAFETY: `categoriseWith` only ever returns a `Category`, which is exactly
-  // the set of keys `CATEGORY_LABELS` is declared over.
+  // SAFETY: `categoriseWith` only returns a `Category`, and `CATEGORY_LABELS` covers them all.
   CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] ?? category;

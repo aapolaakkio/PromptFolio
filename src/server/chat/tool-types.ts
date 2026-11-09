@@ -7,28 +7,15 @@ export type { Db } from "../db/index.ts";
 
 export const IsoDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the form YYYY-MM-DD");
 
 export const today = (): IsoDate => new Date().toISOString().slice(0, 10);
 
-/**
- * How much of the ledger one tool call may hand the model.
- *
- * Both are token budgets, not display limits: a tool result stays in the
- * conversation and is re-sent with every later turn, so an over-generous
- * default is paid for again and again. Each tool says when it truncated, and
- * `limit` lets the model ask for more when a question needs it.
- */
+/** Token budgets, not display limits: a tool result is re-sent every later turn. Tools say when they truncated; `limit` asks for more. */
 export const MAX_SERIES_POINTS = 60;
 export const DEFAULT_TXN_LIMIT = 25;
 
-/**
- * Every argument any tool accepts, in one type. Each tool still declares its
- * own strict schema -- that is what the model is shown and what rejects a
- * hallucinated parameter -- and re-parses its input; this shared type only
- * describes what a validated argument object can hold, so no tool's `run` has
- * to take `unknown`.
- */
+// Each tool declares its own strict schema and re-parses; this type only avoids `unknown` in `run`.
 export type ToolArgs = {
   readonly on?: string;
   readonly from?: string;
@@ -39,48 +26,25 @@ export type ToolArgs = {
   readonly operation?: "sum" | "subtract" | "multiply" | "divide" | "percent" | "average";
   readonly values?: readonly string[];
   readonly year?: number;
-  /** The allocation dimension a drift question is asked on. */
   readonly by?: Dimension;
-  /** One spending category to follow over time, by its key. */
   readonly category?: string;
-  /** Money about to be paid in, as a decimal string. */
   readonly amountEur?: string;
-  /** Free text matched against a transaction's own bank text. */
   readonly search?: string;
-  /** One classification rule's payee pattern. */
   readonly pattern?: string;
-  /** Classification rules to store, for the tools that write them. */
   readonly rules?: readonly { readonly pattern: string; readonly category: string }[];
 };
 
-/** What a tool hands back: JSON, because that is what the model reads. */
 export type JsonValue = string | number | boolean | null | readonly JsonValue[];
 export type ToolResult = { readonly [key: string]: JsonValue | ToolResult | readonly ToolResult[] };
 
 /**
- * The tools the chat model may call (spec §8).
- *
- * All but three only read. The three that write -- in `tools-rules.ts` -- write
- * the classification and nothing else: no tool can create, change or delete a
- * transaction, an account or a price, so the ledger the figures are derived
- * from stays exactly what was imported.
- *
- * Every one is a thin wrapper over the same `core` function the dashboard calls,
- * so chat and screen cannot disagree about a number. None of them writes, none
- * takes a user id from the model -- the caller binds that from the session, so a
- * question can never reach another household member's ledger however it is
- * phrased.
- *
- * Each result carries the date it was computed for and whether any part of it is
- * stale, because the model is instructed to state both and can only do that if
- * the tool tells it. Money and quantities cross as decimal strings, the same
- * wire rule the HTTP API follows: a model that receives a float is one rounding
- * away from quoting a number the ledger never held.
+ * The tools the chat model may call. Only the three in `tools-rules.ts` write, and only classification.
+ * Each wraps the same `core` function the dashboard calls, and the user id comes from the session,
+ * never the model. Results carry their date and staleness; money and quantities are decimal strings.
  */
 export type ChatTool = {
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodType<ToolArgs>;
-  /** Async because every one of these reads D1, which is async. */
   readonly run: (input: ToolArgs) => Promise<ToolResult>;
 };

@@ -31,21 +31,12 @@ import type { Db } from "../db/index.ts";
 import { accounts } from "../db/schema.ts";
 import { cashFor, loadPortfolio, withAvailability } from "../valuation.ts";
 
-/**
- * What the handlers used to compute between reading a request and writing a
- * response. Real logic -- it decides what a chart may draw and what must be
- * reported as excluded -- so it lives as a function of database, user and
- * arguments rather than only being reachable through a Request.
- */
+/** The view logic behind the screens, as functions of database, user and arguments rather than only reachable through a Request. */
 
-/**
- * Payment labels, as opposed to payees. When the statement carried no payee the
- * grouping falls back to one of these, and a rule written on it would catch
- * every payment of that kind rather than the one shop in front of the reader.
- */
+/** Payment labels, not payees: when a statement has no payee, a rule on one would catch every payment of that kind. */
 const DAY_MS = 86_400_000;
 
-/** The calendar day before `date`, which is where a window's opening value is read. */
+/** The calendar day before `date`, where a window's opening value is read. */
 const dayBefore = (date: IsoDate): IsoDate =>
   new Date(Date.parse(date) - DAY_MS).toISOString().slice(0, 10);
 
@@ -82,14 +73,9 @@ export const valueSeriesView = async (
   to: IsoDate,
 ) => {
   const { investedTxns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
-  // Without a start given, the ledger's own first day -- a fixed floor like
-  // 1900 draws a century of flat zero before anything happened, and bills a
-  // point per day for it.
+  // Without a start, the ledger's first day: a fixed floor like 1900 draws a century of flat zero. Both series are one point per day over the same range.
   const start = from ?? earliestTradeDate(investedTxns) ?? to;
-  // Both series are one point per calendar day over the same range, so the two
-  // line up index for index and the chart can draw them together.
   const invested = investedSeries(investedTxns, start, to);
-  // Cash on the same days, from the bank and broker rows that move money.
   const cash = cashSeries(cashTxns, prices.fxOn, start, to);
   return valueSeries(investedTxns, instruments, prices, start, to).map((point, index) => ({
     date: point.date,
@@ -97,13 +83,9 @@ export const valueSeriesView = async (
     investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
     cashEur: formatMoney(cash[index]?.cashEur ?? zeroMoney(EUR)),
     stale: point.stale,
-    // A holding with no price yet that day, valued at what was paid for it:
-    // the chart draws these days apart, since they show no real movement.
+    // A holding with no price yet that day is valued at cost; the chart draws these days apart.
     costValued: point.costValuedInstrumentIds.length > 0,
-    // Instruments excluded from this day's valueEur because their net
-    // position was negative (an unmatched disposal -- see core/ledger.ts's
-    // negativePositionIds). Cross-reference against /api/holdings, which
-    // carries each instrument's ISIN, name and Finnish explanation.
+    // Instruments excluded from this day's valueEur (negative net position from an unmatched disposal); /api/holdings carries their ISIN and name.
     excludedInstrumentIds: point.excludedInstrumentIds,
   }));
 };
@@ -112,9 +94,7 @@ export const allocationView = async (db: Db, userId: string, dimension: Dimensio
   const { txns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
 
-  // Cash is part of the allocation (spec 10c/C2): a portfolio holding a
-  // fifth of its value in an unspent deposit is not 100 % invested, and a
-  // pie chart that says so is wrong.
+  // Cash is part of the allocation: a portfolio a fifth in an unspent deposit is not 100 % invested.
   const cash = await withAvailability(
     db,
     userId,
@@ -130,9 +110,7 @@ export const allocationView = async (db: Db, userId: string, dimension: Dimensio
     cash,
   );
 
-  // Two reasons a holding leaves every slice, both of which must be visible
-  // rather than a silent gap: one it could not price, and one whose position is
-  // negative. Merged into one list, named so a caller can act on it.
+  // A holding leaves every slice for one of two visible reasons: it could not be priced, or its position is negative.
   const excludedIds = new Set([...negativePositionIds(txns, on), ...excludedInstrumentIds]);
   const excludedInstruments = [...excludedIds].flatMap((instrumentId) => {
     const instrument = byId.get(instrumentId);
@@ -159,8 +137,7 @@ export const cashFlowView = async (
 ) => {
   const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
-  // Every account that is not a bank one holds investments, and its own
-  // deposits are the reliable record of money moved into it.
+  // Every non-bank account holds investments; its own deposits are the reliable record of money moved in.
   const invested = new Set(
     txns.map((txn) => txn.accountId).filter((accountId) => !bank.has(accountId)),
   );
@@ -188,8 +165,7 @@ export const monthlyView = async (db: Db, userId: string, from: IsoDate, to: Iso
   };
   return {
     months: monthlyFlows(shared),
-    // The same months split by category, for the chart that shows whether
-    // one is creeping upward -- which a single period's Sankey cannot say.
+    // The same months by category, to show whether one is creeping up (a single Sankey cannot).
     byCategory: monthlyByCategory({
       ...shared,
       labelFor: labelForCategory,
@@ -221,13 +197,12 @@ export const uncategorisedView = async (db: Db, userId: string, from: IsoDate, t
   const moved = notSpendingIds(txns, bank);
   const rules = await rulesFor(db, userId);
 
-  // Only what no rule matched: this is the list a person works through to
-  // teach the app, so anything already classified is noise in it.
+  // Only what no rule matched: the list a person works through to teach the app.
   const unmatched = txns.filter(
     (txn) =>
       bank.has(txn.accountId) &&
       !moved.has(txn.id) &&
-      categoriseWith(txn.note ?? "", rules) === "muu",
+      categoriseWith(txn.note ?? "", rules) === "other",
   );
 
   const summary = summariseSpending(unmatched, { from, to, by: "counterparty", rules });
@@ -239,9 +214,7 @@ export const uncategorisedView = async (db: Db, userId: string, from: IsoDate, t
       name: group.label,
       totalEur: group.totalEur,
       count: group.count,
-      // A row whose payee the statement never carried is grouped under its
-      // own label ("MAKSUPALVELU"). A rule on that would file every bill
-      // payment the same way, so the screen must not offer it as one.
+      // A row with no payee is grouped under its own label ("MAKSUPALVELU"); a rule on that would file every bill payment alike, so do not offer one.
       payeeKnown: !LABEL_ONLY.has(group.label.toUpperCase()),
     })),
     categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
@@ -256,13 +229,9 @@ export const spendingView = async (
   by: "category" | "counterparty",
   limit: number,
 ) => {
-  // Bank rows only -- see summariseSpending's own note on why a purchase is
-  // not spending.
   const { txns, bankAccountIds } = await loadPortfolio(db, userId);
   const bank = new Set(bankAccountIds);
-  // A payment that funded a fund purchase, moved money to the owner's own
-  // savings, or settled the credit card is not spending, and would
-  // otherwise sit among the shops as one of the year's largest lines.
+  // A payment that funded a fund purchase, moved money to own savings or settled the card is not spending.
   const moved = notSpendingIds(txns, bank);
   return summariseSpending(
     txns.filter((txn) => bank.has(txn.accountId) && !moved.has(txn.id)),
@@ -273,14 +242,9 @@ export const spendingView = async (
 export const returnsView = async (db: Db, userId: string, from: IsoDate, to: IsoDate) => {
   const { cashTxns, investedTxns, instruments, prices } = await loadPortfolio(db, userId);
   const byId = new Map(instruments.map((instrument) => [instrument.id, instrument]));
-  // Invested transactions only: a bank account's rows are spending and
-  // salary, and DEPOSIT/WITHDRAWAL feed XIRR as external flows, so leaving
-  // them in would report every grocery payment as capital withdrawn.
+  // Invested transactions only: bank rows would read every grocery payment as capital withdrawn from XIRR's DEPOSIT/WITHDRAWAL flows.
   const series = valueSeries(investedTxns, instruments, prices, from, to);
-  // Two different lists on purpose: xirr measures when the investor moved cash,
-  // twr measures positions, whose flows are purchases rather than deposits.
-  // Chosen per account from whichever record it keeps -- measuring one broker's
-  // holdings against another's deposits reported three times the true rate.
+  // xirr measures when the investor moved cash, twr measures positions. Chosen per account from whichever record it keeps: mixing one broker's holdings with another's deposits reported three times the true rate.
   const mwrFlows = fundingCashFlows(investedTxns).filter(
     (flow) => flow.date >= from && flow.date <= to,
   );
@@ -289,14 +253,7 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
   );
   const final = series.at(-1);
 
-  // What the portfolio was already worth going into `from`, as an implicit
-  // contribution -- without it xirr sees the final value appear from nothing and
-  // returns a plausible wrong rate rather than failing.
-  //
-  // Taken from the day before `from`, not `from` itself, which already reflects a
-  // trade dated exactly then. That keeps it a no-op for a since-inception range:
-  // with nothing earlier the day-before value is zero, so a deposit dated `from`
-  // is counted once through the ordinary flows and not doubled here.
+  // The value already held going into `from`, as an implicit contribution: without it xirr sees the final value appear from nothing. Read from the day before `from`, which keeps it a no-op for a since-inception range (a deposit dated `from` is not doubled).
   const opening = valueSeries(
     investedTxns,
     instruments,
@@ -305,13 +262,7 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
     dayBefore(from),
   )[0];
 
-  // core/returns.ts's xirr() takes contributions as NEGATIVE and
-  // withdrawals as POSITIVE. externalCashFlows() carries the ledger's
-  // own sign instead (a DEPOSIT is a positive amount -- money added to
-  // the account; a WITHDRAWAL is negative), so every flow is negated
-  // here to cross into xirr's convention. `negateMoney` (not a
-  // format/parse round-trip) so a negative WITHDRAWAL amount does not
-  // turn into an unparsable double-negative string.
+  // xirr takes contributions as NEGATIVE and withdrawals as POSITIVE; the ledger signs them the other way, so negate with `negateMoney` (a format/parse round-trip breaks on a negative WITHDRAWAL).
   let mwr: number | null = null;
   try {
     mwr = final
@@ -327,22 +278,11 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
         )
       : null;
   } catch {
-    // xirr() throws when it has fewer than two cash flows, when every
-    // flow shares one sign (e.g. deposits with nothing yet invested, so
-    // the tracked position value stays zero), or when neither Newton's
-    // method nor its bisection fallback converges. In every case the
-    // honest answer is "unknown", not a fabricated rate -- the UI shows
-    // "—" for `null`, which is distinguishable from a genuine 0 return.
+    // xirr throws with under two flows, one sign only, or no convergence: the honest answer is "unknown" (null, shown as "—"), not a fabricated rate.
     mwr = null;
   }
 
-  // C5: every instrument excluded from `valueEur` on ANY day inside [from, to] --
-  // not just `final`'s day -- because `twr` (spec §7) is a function of the whole
-  // series, not just its last point: a holding unpriceable for a stretch in the
-  // middle of the window can drive `twr` to `null` (see that function's doc) even
-  // when the final day's own value is complete. Deduped and enriched with
-  // isin/name the same way `/api/allocation`'s `excludedInstruments` already is,
-  // so the dashboard can name the holding instead of showing a bare id.
+  // Instruments excluded on ANY day in [from, to], not just the last: a mid-window gap can drive `twr` to null. Deduped and enriched with isin/name like /api/allocation's `excludedInstruments`.
   const ownedAccounts = new Map(
     (
       await db
@@ -359,10 +299,7 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
     return instrument ? [{ instrumentId, isin: instrument.isin, name: instrument.name }] : [];
   });
 
-  // Cash on the last day and the total including it, computed here so the client
-  // never does money arithmetic and one definition of "what it is worth" serves
-  // the dashboard and the chat. The returns below stay position-only: an unspent
-  // deposit lowers the total without meaning the portfolio performed worse.
+  // Cash on the last day and the total including it, so the client does no money arithmetic. Returns stay position-only: an unspent deposit is not underperformance.
   const cashAtEnd = await withAvailability(
     db,
     userId,
@@ -377,8 +314,7 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
     to,
     valueEur: formatMoney(positionsEur),
     cashEur: formatMoney(cashEur),
-    // What of that cash could actually be spent on the day, and what is tied
-    // up in a deposit until it matures.
+    // What of that cash is spendable, and what is locked until maturity.
     availableCashEur: formatMoney(availableCashEur(cashAtEnd)),
     lockedCashEur: formatMoney(lockedCashEur(cashAtEnd)),
     valueWithCashEur: formatMoney(addMoney(positionsEur, cashEur)),
@@ -386,13 +322,7 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
     twr: twr(series, twrFlows),
     mwr,
     excludedInstruments,
-    /**
-     * Accounts whose broker exports no cash movements at all, so their
-     * contributions are inferred from purchases. Named here rather than
-     * left implicit: the money-weighted figure means something slightly
-     * different for them, and silently picking a definition is what
-     * produced a confidently wrong number before.
-     */
+    /** Accounts whose broker exports no cash movements, so contributions are inferred from purchases and the money-weighted figure means something slightly different. */
     accountsMissingCashRecord: accountsMissingCashRecord(investedTxns).flatMap((accountId) => {
       const account = ownedAccounts.get(accountId);
       return account ? [{ accountId, name: account }] : [];

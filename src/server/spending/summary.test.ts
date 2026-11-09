@@ -6,10 +6,7 @@ import { SEED_RULES } from "./categories.ts";
 import { categoriseWith, type SpendingRule } from "./rules.ts";
 import { summariseSpending } from "./summary.ts";
 
-// The assistant is not allowed to add these up in prose, so whatever this
-// returns is what a person is told they spent. The tests therefore pin the
-// exact figures, and the two rules that keep a total honest: only money leaving
-// is counted, and nothing is silently left out of it.
+// The model may not add in prose, so these pin exact figures and the two honesty rules: only money leaving counts, nothing silently left out.
 
 let nextId = 1;
 const row = (
@@ -34,7 +31,6 @@ const row = (
   note,
 });
 
-/** The built-in rules, as a user's table holds them before anything is added. */
 const RULES: SpendingRule[] = SEED_RULES.map((rule) => ({ ...rule, source: "seed" }));
 
 const categorise = (note: string) => categoriseWith(note, RULES);
@@ -43,22 +39,22 @@ const YEAR = { from: "2026-01-01", to: "2026-12-31", rules: RULES } as const;
 
 describe("categorise", () => {
   test("puts Finnish grocery chains under food", () => {
-    expect(categorise("PKORTTIMAKSU — K-MARKET ESIMERKKI")).toBe("ruoka");
-    expect(categorise("PKORTTIMAKSU — LIDL HELSINKI 4321")).toBe("ruoka");
-    expect(categorise("PKORTTIMAKSU — S-MARKET")).toBe("ruoka");
+    expect(categorise("PKORTTIMAKSU — K-MARKET EXAMPLE")).toBe("groceries");
+    expect(categorise("PKORTTIMAKSU — LIDL HELSINKI 4321")).toBe("groceries");
+    expect(categorise("PKORTTIMAKSU — S-MARKET")).toBe("groceries");
   });
 
   test("separates eating out from the shopping", () => {
-    expect(categorise("PKORTTIMAKSU — RAVINTOLA ESIMERKKI")).toBe("ravintolat");
-    expect(categorise("PKORTTIMAKSU — WOLT")).toBe("ravintolat");
+    expect(categorise("PKORTTIMAKSU — RAVINTOLA EXAMPLE")).toBe("restaurants");
+    expect(categorise("PKORTTIMAKSU — WOLT")).toBe("restaurants");
   });
 
-  test("leaves an unknown merchant in the reported 'muu', never in a real category", () => {
-    expect(categorise("PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE")).toBe("muu");
+  test("leaves an unknown merchant in the reported 'other', never in a real category", () => {
+    expect(categorise("PKORTTIMAKSU — JOKIN TUNTEMATON LIIKE")).toBe("other");
   });
 
   test("does not care how the bank capitalises a name", () => {
-    expect(categorise("pkorttimaksu — k-market esimerkki")).toBe("ruoka");
+    expect(categorise("pkorttimaksu — k-market esimerkki")).toBe("groceries");
   });
 });
 
@@ -73,7 +69,7 @@ describe("summariseSpending", () => {
       { ...YEAR, by: "category" },
     );
 
-    const food = summary.groups.find((group) => group.key === "ruoka");
+    const food = summary.groups.find((group) => group.key === "groceries");
     expect(food?.totalEur).toBe("-73.35");
     expect(food?.count).toBe(2);
     expect(summary.totalEur).toBe("-91.85");
@@ -83,13 +79,13 @@ describe("summariseSpending", () => {
     const summary = summariseSpending(
       [
         row("PKORTTIMAKSU — K-MARKET", "-42.15"),
-        row("PALKKA — ESIMERKKI OYJ", "3200.00", "2026-03-05", "DEPOSIT"),
+        row("PALKKA — EXAMPLE OYJ", "3200.00", "2026-03-05", "DEPOSIT"),
       ],
       { ...YEAR, by: "category" },
     );
 
     expect(summary.totalEur).toBe("-42.15");
-    expect(summary.groups.some((group) => group.key === "palkka")).toBe(false);
+    expect(summary.groups.some((group) => group.key === "salary")).toBe(false);
   });
 
   test("stays inside the asked period", () => {
@@ -150,40 +146,38 @@ describe("summariseSpending", () => {
 
   test("ignores a row with no note rather than inventing a category for it", () => {
     const summary = summariseSpending([row("", "-10.00")], { ...YEAR, by: "category" });
-    expect(summary.groups[0]?.key).toBe("muu");
+    expect(summary.groups[0]?.key).toBe("other");
     expect(summary.uncategorisedShare).toBeCloseTo(1, 10);
   });
 });
 
 describe("the widened category rules", () => {
   test("recognise the shops a Finnish statement actually names", () => {
-    expect(categorise("PKORTTIMAKSU — K-CITYMARKET TURKU")).toBe("ruoka");
-    expect(categorise("PKORTTIMAKSU — KOTIPIZZA SALO")).toBe("ravintolat");
-    expect(categorise("PKORTTIMAKSU — EASYPARK")).toBe("liikenne");
-    expect(categorise("PKORTTIMAKSU — GIGANTTI")).toBe("verkkokauppa");
-    expect(categorise("PKORTTIMAKSU — H&M HELSINKI")).toBe("vaatteet");
-    expect(categorise("PKORTTIMAKSU — MUSTI JA MIRRI")).toBe("lemmikit");
-    expect(categorise("PKORTTIMAKSU — SCANDIC")).toBe("matkailu");
-    expect(categorise("MAKSUPALVELU — SPOTIFY")).toBe("tilaukset");
-    expect(categorise("MAKSUPALVELU — VEROHALLINTO")).toBe("verot");
-    expect(categorise("PKORTTIMAKSU — K-RAUTA")).toBe("koti");
+    expect(categorise("PKORTTIMAKSU — K-CITYMARKET TURKU")).toBe("groceries");
+    expect(categorise("PKORTTIMAKSU — KOTIPIZZA SALO")).toBe("restaurants");
+    expect(categorise("PKORTTIMAKSU — EASYPARK")).toBe("transport");
+    expect(categorise("PKORTTIMAKSU — GIGANTTI")).toBe("online-shopping");
+    expect(categorise("PKORTTIMAKSU — H&M HELSINKI")).toBe("clothing");
+    expect(categorise("PKORTTIMAKSU — MUSTI JA MIRRI")).toBe("pets");
+    expect(categorise("PKORTTIMAKSU — SCANDIC")).toBe("travel");
+    expect(categorise("MAKSUPALVELU — SPOTIFY")).toBe("subscriptions");
+    expect(categorise("MAKSUPALVELU — VEROHALLINTO")).toBe("taxes");
+    expect(categorise("PKORTTIMAKSU — K-RAUTA")).toBe("home");
   });
 
   test("keep a loan repayment apart from a bank's service fee", () => {
-    // Most of a repayment is the owner's own money reducing a debt; only its
-    // interest is a cost. Filing it under "Pankkikulut" said it was all fee.
-    expect(categorise("LUOTON MAKSU — PANKKI OYJ")).toBe("lainat");
-    expect(categorise("LAINANHOITO")).toBe("lainat");
-    expect(categorise("PALVELUMAKSU")).toBe("pankki");
+    // Most of a repayment is the owner's own money; only the interest is a cost.
+    expect(categorise("LUOTON MAKSU — PANKKI OYJ")).toBe("loans");
+    expect(categorise("LAINANHOITO")).toBe("loans");
+    expect(categorise("PALVELUMAKSU")).toBe("bank-fees");
   });
 
-  test("still leave a shop nobody wrote a rule for in Muu", () => {
-    // The point of the "muu" bucket is that it is honest, not that it is empty.
-    expect(categorise("PKORTTIMAKSU — PIENI PUOTI 12345")).toBe("muu");
+  test("still leave a shop nobody wrote a rule for in Other", () => {
+    expect(categorise("PKORTTIMAKSU — PIENI PUOTI 12345")).toBe("other");
   });
 
   test("keep eating out apart from the weekly shop", () => {
-    expect(categorise("PKORTTIMAKSU — RAVINTOLA PRISMA")).toBe("ravintolat");
+    expect(categorise("PKORTTIMAKSU — RAVINTOLA PRISMA")).toBe("restaurants");
   });
 });
 
@@ -191,7 +185,7 @@ describe("rows that are not spending", () => {
   test("an opening balance is left out, however negative", () => {
     const summary = summariseSpending(
       [
-        row("Alkusaldo, johdettu saldosta", "-1200.00", "2026-03-01", "OPENING_BALANCE"),
+        row("Opening balance, derived from balance", "-1200.00", "2026-03-01", "OPENING_BALANCE"),
         row("PKORTTIMAKSU — K-MARKET", "-42.15"),
       ],
       { ...YEAR, by: "category" },

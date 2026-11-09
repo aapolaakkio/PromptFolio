@@ -6,9 +6,7 @@ import { SEED_RULES } from "./categories.ts";
 import { recurringPayments } from "./recurring.ts";
 import type { SpendingRule } from "./rules.ts";
 
-// The question this answers is "what am I committed to every month", and the
-// two ways it lies are opposite: reporting the weekly shop as a subscription,
-// and missing a bill because one month's payment landed a few days late.
+// "What am I committed to" can lie both ways: the weekly shop as a subscription, or a missed bill because one payment landed late.
 
 const RULES: SpendingRule[] = SEED_RULES.map((rule) => ({ ...rule, source: "seed" }));
 
@@ -50,27 +48,24 @@ describe("recurringPayments", () => {
     expect(payments).toHaveLength(1);
     expect(payments[0]?.cadence).toBe("monthly");
     expect(payments[0]?.typicalEur).toBe("12.99");
-    // The figure a person actually weighs a subscription against.
     expect(payments[0]?.annualEur).toBe("155.88");
     expect(payments[0]?.active).toBe(true);
   });
 
   test("does not call the weekly shop a subscription", () => {
-    // Same payee, a regular rhythm -- and a different amount every time, which
-    // is the whole difference between a shop and a standing cost.
+    // Same payee and rhythm but a different amount each time: a shop, not a standing cost.
     const payments = found([
-      row("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-42.15", "2026-06-01"),
-      row("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-18.90", "2026-06-08"),
-      row("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-63.40", "2026-06-15"),
-      row("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-31.05", "2026-06-22"),
+      row("PKORTTIMAKSU — K-MARKET EXAMPLE", "-42.15", "2026-06-01"),
+      row("PKORTTIMAKSU — K-MARKET EXAMPLE", "-18.90", "2026-06-08"),
+      row("PKORTTIMAKSU — K-MARKET EXAMPLE", "-63.40", "2026-06-15"),
+      row("PKORTTIMAKSU — K-MARKET EXAMPLE", "-31.05", "2026-06-22"),
     ]);
 
     expect(payments).toEqual([]);
   });
 
   test("tolerates a payment that lands a few days late", () => {
-    // A bill paid on the 3rd, the 6th and the 2nd is one bill, not three
-    // unrelated payments: the gaps are 34 and 27 days.
+    // Paid on the 3rd, 6th and 2nd is one bill (gaps 34 and 27 days).
     const payments = found([
       row("TILISIIRTO — VAKUUTUS OY", "-30.00", "2026-04-03"),
       row("TILISIIRTO — VAKUUTUS OY", "-30.00", "2026-05-07"),
@@ -91,8 +86,7 @@ describe("recurringPayments", () => {
       "2026-06-30",
     );
 
-    // Still reported, because "you used to pay this" is an answer; silently
-    // omitting it would read as never having been paid at all.
+    // Still reported: omitting it would read as never paid.
     expect(payments[0]?.active).toBe(false);
     expect(payments[0]?.lastDate).toBe("2025-03-10");
   });
@@ -112,8 +106,7 @@ describe("recurringPayments", () => {
       row("TILISIIRTO — OMA SÄÄSTÖ", "-100.00", "2026-05-01"),
       row("TILISIIRTO — OMA SÄÄSTÖ", "-100.00", "2026-06-01"),
     ];
-    // A standing transfer to one's own savings is regular and identical every
-    // month, and it is not a cost -- the caller's exclusions decide that.
+    // A standing transfer to one's own savings is not a cost; the caller's exclusions decide.
     const payments = recurringPayments({
       txns: rows,
       rules: RULES,

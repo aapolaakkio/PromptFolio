@@ -6,14 +6,12 @@ import type { ChatClient } from "../chat/runner.ts";
 import { CATEGORY_LABELS } from "./categories.ts";
 import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules.ts";
 
-/** How many unknown merchants one import may ask the model about. */
 const BATCH_LIMIT = 40;
 
 export type ClassifyResult = {
   readonly asked: number;
   readonly added: number;
   readonly rejected: number;
-  /** Null when nothing needed classifying, or when the model could not be reached. */
   readonly error: string | null;
 };
 
@@ -21,13 +19,7 @@ const ProposalsSchema = z.object({
   rules: z.array(z.object({ pattern: z.string(), category: z.string() })).max(BATCH_LIMIT),
 });
 
-/**
- * The merchants an import brought in that no rule covers.
- *
- * Names are shortened to the counterparty alone -- the label and message around
- * it are per payment, and asking about "PKORTTIMAKSU — K-MARKET — 12.3.2026"
- * would produce a rule that matches exactly one row.
- */
+/** Merchants no rule covers, shortened to the counterparty: a per-payment label would yield a rule matching one row. */
 export const unknownMerchants = (
   txns: readonly Txn[],
   rules: readonly SpendingRule[],
@@ -38,7 +30,7 @@ export const unknownMerchants = (
     if (!accountIds.has(txn.accountId)) continue;
     if (txn.amount.minor >= 0n) continue;
     const note = txn.note ?? "";
-    if (categoriseWith(note, rules) !== "muu") continue;
+    if (categoriseWith(note, rules) !== "other") continue;
     const parts = note.split(" — ");
     const merchant = (parts.length > 1 ? parts[1] : parts[0])?.trim().toUpperCase() ?? "";
     if (merchant !== "") seen.add(merchant);
@@ -48,24 +40,24 @@ export const unknownMerchants = (
 
 const promptFor = (merchants: readonly string[]): string =>
   [
-    "Luokittele nämä maksunsaajat suomalaisen pankkitiliotteen kuluiksi.",
+    "Classify these payees from a Finnish bank statement into spending categories.",
+    "The app serves Finnish customers; their accounts and banks are Finnish, and Finnish law and practice apply.",
     "",
-    "Käytettävissä olevat luokat:",
+    "Available categories:",
     ...Object.entries(CATEGORY_LABELS).map(([id, label]) => `- ${id}: ${label}`),
     "",
-    "Maksunsaajat:",
+    "Payees:",
     ...merchants.map((name) => `- ${name}`),
     "",
-    "Vastaa pelkkänä JSON-oliona muodossa",
-    '{"rules":[{"pattern":"K-MARKET","category":"ruoka"}]}',
-    "Säännöt:",
-    "- pattern on ISOilla kirjaimilla ja sen on oltava osajono maksunsaajan nimestä.",
-    "- Käytä lyhyintä nimeä joka tunnistaa ketjun (esim. 'K-MARKET', ei 'K-MARKET SALO 123').",
-    "- Jätä pois maksunsaajat joita et tunnista. Väärä luokka on huonompi kuin ei luokkaa.",
-    "- Älä keksi uusia luokkia; käytä vain yllä lueteltuja tunnisteita.",
+    "Reply with a JSON object only, in the form",
+    '{"rules":[{"pattern":"K-MARKET","category":"groceries"}]}',
+    "Rules:",
+    "- pattern is in UPPER CASE and must be a substring of the payee name.",
+    "- Use the shortest name that identifies the chain (e.g. 'K-MARKET', not 'K-MARKET SALO 123').",
+    "- Leave out payees you do not recognise. A wrong category is worse than none.",
+    "- Do not invent categories; use only the ids listed above.",
   ].join("\n");
 
-/** The first JSON object in a reply, since a model may wrap it in prose or a fence. */
 const parseProposals = (text: string): { pattern: string; category: string }[] => {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -79,19 +71,10 @@ const parseProposals = (text: string): { pattern: string; category: string }[] =
 };
 
 /**
- * Asks the model to classify the merchants an import did not recognise, and
- * stores what it proposes as rules.
- *
- * One batched call per import rather than one per merchant, and capped: a year
- * of card payments can name several hundred shops, and the point is to teach the
- * rules the common ones, not to spend a euro on the tail.
- *
- * Every proposal is checked before it is stored -- the category must be one that
- * exists, and the pattern must actually occur in a merchant name the import
- * brought in. A model asked for JSON will occasionally invent a category or a
- * shop, and a wrong rule quietly mis-files spending from then on. Failure is
- * reported, never thrown: an import that succeeded must not be undone because
- * the classifier could not be reached.
+ * Asks the model to classify unrecognised merchants and stores its proposals as rules. One capped
+ * batch per import (a year can name hundreds of shops). Each proposal is checked: the category must
+ * exist and the pattern must occur in an imported merchant name, since a model invents both.
+ * Failure is reported, never thrown: a succeeded import must not be undone by the classifier.
  */
 export const classifyNewMerchants = async (
   db: Db,
@@ -110,15 +93,13 @@ export const classifyNewMerchants = async (
   try {
     const reply = await args.client.run({
       model: args.model,
-      // Room for a rule per merchant and then some. At 2048 a full batch's JSON
-      // was cut off mid-object, which parsed to nothing and reported as "no new
-      // rules" -- a silent failure that looked like a quiet success.
+      // Room for a rule per merchant: at 2048 a full batch was cut off mid-object and silently reported "no new rules".
       max_tokens: 8192,
       messages: [
         {
           role: "system",
           content:
-            "Olet luokittelija. Vastaat pelkällä JSONilla, ilman selityksiä tai koodilohkoja.",
+            "You are a classifier for a Finnish personal-finance app whose customers, banks and brokers are Finnish. Reply in English with JSON only, no explanations or code fences.",
         },
         { role: "user", content: promptFor(merchants) },
       ],
@@ -135,18 +116,15 @@ export const classifyNewMerchants = async (
       asked: merchants.length,
       added: added.length,
       rejected: rejected.length,
-      // A reply that yielded nothing is reported as a failure rather than as an
-      // import with no new merchants: the two look identical from the outside,
-      // and one of them needs looking at.
-      error:
-        parsed.length === 0 ? "Malli ei palauttanut yhtään sääntöä (vastaus ei jäsentynyt)" : null,
+      // An unparsed reply is reported as a failure; from outside it looks like an import with no new merchants.
+      error: parsed.length === 0 ? "The model returned no rules (reply did not parse)" : null,
     };
   } catch (cause) {
     return {
       asked: merchants.length,
       added: 0,
       rejected: 0,
-      error: cause instanceof Error ? cause.message : "Luokittelu epäonnistui",
+      error: cause instanceof Error ? cause.message : "Classification failed",
     };
   }
 };

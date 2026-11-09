@@ -21,42 +21,35 @@ const MAX_TOKENS = 16000;
 /** Tool rounds in one turn. A model still calling tools past this is circling, not working. */
 const MAX_ROUNDS = 10;
 
-/**
- * What the assistant is allowed to be. The rules are not politeness: a
- * portfolio answer that invents a number is worse than no answer, so the model
- * is told in the strongest terms available that arithmetic is the tools' job.
- * Everything it says about money must trace back to a tool result -- and when
- * the tools cannot answer, saying so is the correct answer.
- */
-export const SYSTEM_PROMPT = `Olet PromptFolio-sovelluksen sijoitus- ja talousavustaja. Vastaat suomeksi.
+// A portfolio answer that invents a number is worse than none, so the prompt makes arithmetic the tools' job and "cannot tell" a valid answer.
+export const SYSTEM_PROMPT = `You are the investment and personal-finance assistant of the PromptFolio app. You answer in English.
 
-Käytettävissäsi on työkaluja, jotka lukevat käyttäjän oman salkun ja pankkitilien tapahtumista lasketut luvut. Säännöt:
+The app serves Finnish customers: their accounts, banks, brokers and taxes are Finnish. Follow Finnish law and Finnish tax rules (for example capital income tax and the deemed acquisition cost) whenever you explain or calculate anything.
 
-1. Perusluvut tulevat aina työkaluista, eivät muistista tai arvauksesta. Jos työkalu ei anna lukua, sano ettei sitä ole saatavilla.
-2. Saat johtaa uusia lukuja (erotuksia, osuuksia, keskiarvoja, kuukausitasoja). Käytä siihen calculate-työkalua äläkä laske päässäsi: sentin virhe omassa taloudessa on virhe, ei pyöristys. Kerro lyhyesti mistä johdettu luku muodostuu.
-3. Kerro aina mihin päivään luvut perustuvat (työkalun 'asOf'). Jos työkalu palauttaa 'stale': true, kerro että osa hinnoista on vanhentuneita.
-4. Jos työkalu palauttaa null tai kertoo ettei lukua voi laskea, sano se suoraan.
-5. Kulujen luokittelu perustuu sääntöihin, jotka eivät tunne kaikkia kauppoja. Tuntemattomat näkyvät luokassa Muu. Saat tallentaa sääntöjä save_spending_rules-työkalulla, korjata väärän luokan update_spending_rule-työkalulla ja poistaa liian laajan säännön remove_spending_rule-työkalulla. Nämä ovat ainoat työkalut jotka kirjoittavat, ja ne kirjoittavat vain luokittelun -- eivät koskaan tapahtumia. Säännöt: tallenna vain nimiä jotka näit työkalun tuloksissa, älä keksi maksunsaajia, kerro aina mitä tallensit tai muutit, ja jos työkalu kertoo säännön kuuluvan käyttäjälle, sano että sen voi muuttaa Kulutus-sivulla. Ennen kuin tallennat kerralla useita, kerro mitä aiot tallentaa.
-6. Et anna sijoitusneuvoja etkä ennusta tuottoja. Kuvailet salkun ja talouden tilaa ja historiaa.
-7. Veroluvut ovat veronalaisia tuloja, eivät veron määrää. Älä kerro paljonko veroa menee äläkä käytä veroprosenttia: pääomatulon 30/34 % raja riippuu myös tuloista, joita nämä työkalut eivät näe. Jos osakesäästötilin noston kohdalla on 'blocked', kerro syy äläkä arvaa lukua. Muistuta että luvut on tarkoitettu esitäytetyn veroilmoituksen tarkistamiseen.
-8. Tavoitejakaumasta voit kertoa eron ja mitä sen korjaaminen vaatisi, mutta et kehota ostamaan tai myymään. Jos kerrot myynnistä, kerro myös paljonko voittoa se realisoisi -- se on voitto, ei vero. Pidätetty pääomatulovero ei ole kulu.
-9. Vastaa lyhyesti. Luvut euroina kahdella desimaalilla.`;
+You have tools that read figures computed from the user's own portfolio and bank-account transactions. Rules:
+
+1. Base figures always come from the tools, never from memory or guesswork. If a tool gives no figure, say it is not available.
+2. You may derive new figures (differences, shares, averages, monthly levels). Use the calculate tool for it and do not calculate in your head: a one-cent error in someone's own finances is an error, not rounding. Briefly say what a derived figure is made of.
+3. Always say which date the figures are based on (the tool's 'asOf'). If a tool returns 'stale': true, say that some prices are out of date.
+4. If a tool returns null or says a figure cannot be calculated, say so directly.
+5. Spending categories come from rules that do not know every shop. Unknown ones show up in the category Other. You may save rules with the save_spending_rules tool, fix a wrong category with the update_spending_rule tool, and delete an over-broad rule with the remove_spending_rule tool. These are the only tools that write, and they write only the categorisation -- never transactions. Rules: save only names you saw in tool results, do not invent payees, always say what you saved or changed, and if a tool says a rule belongs to the user, say it can be changed on the Spending page. Before saving several at once, say what you are about to save.
+6. You give no investment advice and make no return forecasts. You describe the state and history of the portfolio and finances.
+7. Tax figures are taxable income, not the amount of tax. Do not say how much tax will be paid and do not use a tax rate: the 30/34 % capital-income threshold also depends on income these tools cannot see. If a share savings account withdrawal is 'blocked', give the reason and do not guess a figure. Remind the user that the figures are meant for checking the pre-filled tax return.
+8. About the target allocation you may report the difference and what correcting it would take, but you do not urge buying or selling. If you mention a sale, also say how much gain it would realise -- that is gain, not tax. Withheld capital income tax is not a fee.
+9. Answer briefly. Give figures in euros with two decimals.`;
 
 export type ChatEvent =
   | { readonly type: "conversation"; readonly id: number }
   | { readonly type: "tool"; readonly name: string }
-  /** A piece of the answer as the model writes it; the `answer` that follows is the whole. */
   | { readonly type: "delta"; readonly text: string }
   | { readonly type: "answer"; readonly text: string }
   | { readonly type: "error"; readonly message: string };
 
 export type ToolCall = { readonly id: string; readonly name: string; readonly arguments: string };
 
-/** What one model call gives back: text, tool calls, or both. */
 export type ModelReply = {
   readonly text: string;
   readonly toolCalls: readonly ToolCall[];
-  /** The raw content, for replaying the turn with its thinking intact. */
   readonly blocks?: readonly BetaContentBlock[];
 };
 
@@ -72,7 +65,6 @@ export type ChatMessage =
   | { readonly role: "tool"; readonly content: string; readonly tool_call_id: string };
 
 export type ToolDefinition = BetaTool;
-/** Anthropic runs it; its results come back in the same reply, not as tool calls. */
 export type ServerTool = BetaWebSearchTool20260318;
 
 export type TurnParams = {
@@ -80,21 +72,15 @@ export type TurnParams = {
   readonly max_tokens: number;
   readonly messages: readonly ChatMessage[];
   readonly tools: readonly (ToolDefinition | ServerTool)[];
-  /** JSON mode, for a reading rather than a conversation. Sent as structured output. */
   readonly response_format?: {
     readonly type: "json_schema";
     readonly json_schema: JSONSchema.BaseSchema;
   };
 };
 
-/**
- * The one call the runner needs. A shape rather than the binding itself, so the
- * tests drive the whole loop -- tool dispatch, event order, what goes back to
- * the model -- against a scripted model, with no account and no cost.
- */
-export type RunOptions = {
+/** The one call the runner needs, as a shape so tests drive the loop against a scripted model. */
+type RunOptions = {
   readonly signal?: AbortSignal;
-  /** Called with each piece of text as the model produces it. */
   readonly onDelta?: (text: string) => void;
 };
 
@@ -102,11 +88,7 @@ export type ChatClient = {
   readonly run: (params: TurnParams, options?: RunOptions) => Promise<ModelReply>;
 };
 
-/**
- * The conversation in the Messages API's shape. System text moves to the
- * top-level `system`; a tool result is a user turn, and the API joins
- * consecutive user turns, so parallel calls still answer as one.
- */
+/** Messages API shape: system text goes top-level; a tool result is a user turn, and consecutive user turns are joined by the API. */
 const toApiMessages = (messages: readonly ChatMessage[]): BetaMessageParam[] =>
   messages.flatMap((message): BetaMessageParam[] => {
     switch (message.role) {
@@ -124,7 +106,6 @@ const toApiMessages = (messages: readonly ChatMessage[]): BetaMessageParam[] =>
           },
         ];
       case "assistant": {
-        // The reply exactly as the model gave it: thinking blocks must go back unchanged.
         if (message.blocks !== undefined)
           return [{ role: "assistant", content: [...message.blocks] }];
         const calls = (message.tool_calls ?? []).map((call) => ({
@@ -168,27 +149,20 @@ const toReply = (message: BetaMessage): ModelReply => {
   return { text, toolCalls, blocks: message.content };
 };
 
-const REFUSED = "Malli kieltäytyi vastaamasta tähän pyyntöön";
+const REFUSED = "The model refused to answer this request";
 
-/** Thinking can't be turned off on these models; effort is the dial. */
 const EFFORT = "medium";
 
-/**
- * Claude, through Cloudflare AI Gateway when `AI_GATEWAY_ID` names one (logs,
- * caching and spend limits in the Cloudflare dashboard), straight to the
- * Anthropic API otherwise. Built per call site rather than at import time, so
- * the Worker still serves the rest of the app without a key.
- */
+/** Claude via Cloudflare AI Gateway when `AI_GATEWAY_ID` is set, else direct. Built per call so the Worker serves the rest without a key. */
 export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
   const apiKey = env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista");
+  if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY is missing from the server settings");
 
   return {
     run: async (params, options) => {
       const baseURL = env.AI_GATEWAY_ID
         ? await env.AI.gateway(env.AI_GATEWAY_ID).getUrl("anthropic")
         : undefined;
-      // An Authenticated Gateway refuses requests without this Cloudflare token.
       const gatewayToken = env.AI_GATEWAY_TOKEN;
       const anthropic = new Anthropic({
         apiKey,
@@ -196,8 +170,7 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
         fetch: fetchImpl,
         defaultHeaders: {
           "cf-aig-authorization": baseURL && gatewayToken ? `Bearer ${gatewayToken}` : null,
-          // The SDK sends the key as `Authorization: Bearer`, which AI Gateway
-          // does not recognise as an Anthropic credential; `x-api-key` it does.
+          // AI Gateway does not recognise `Authorization: Bearer` as an Anthropic key; `x-api-key` it does.
           "x-api-key": apiKey,
           authorization: null,
         },
@@ -219,7 +192,6 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
                 ? undefined
                 : { type: "json_schema", schema: transformJSONSchema(format.json_schema) },
           },
-          // Undefined fields are left out of the request body.
           tools: params.tools.length === 0 ? undefined : [...params.tools],
           betas: fallback ? ["server-side-fallback-2026-07-01"] : undefined,
           fallbacks: fallback ? "default" : undefined,
@@ -233,7 +205,6 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
   };
 };
 
-/** The tools as the model sees them: name, purpose, and the JSON schema of what they take. */
 export const toolDefinitions = (tools: readonly ChatTool[]): ToolDefinition[] =>
   tools.map((tool) => ({
     name: tool.name,
@@ -245,30 +216,21 @@ export const toolDefinitions = (tools: readonly ChatTool[]): ToolDefinition[] =>
     }) as ToolDefinition["input_schema"],
   }));
 
-/**
- * Runs one tool call and returns what the model reads. Every failure -- a name
- * the model invented, arguments the schema refuses, a tool that throws -- comes
- * back as a message rather than an exception: a thrown tool would kill the
- * whole turn, whereas a message lets the model say what it could not find out.
- */
+/** Runs one tool call. Every failure comes back as a message, since a thrown tool would kill the turn. */
 const runTool = async (tools: readonly ChatTool[], call: ToolCall): Promise<string> => {
   const tool = tools.find((candidate) => candidate.name === call.name);
-  if (tool === undefined) return JSON.stringify({ error: `Tuntematon työkalu: ${call.name}` });
+  if (tool === undefined) return JSON.stringify({ error: `Unknown tool: ${call.name}` });
   try {
     const raw: unknown = JSON.parse(call.arguments.trim() === "" ? "{}" : call.arguments);
     return JSON.stringify(await tool.run(tool.schema.parse(raw)));
   } catch (cause) {
     return JSON.stringify({
-      error: cause instanceof Error ? cause.message : "Työkalu epäonnistui",
+      error: cause instanceof Error ? cause.message : "Tool failed",
     });
   }
 };
 
-/**
- * A model call whose text pieces can be read as they arrive. The callback the
- * client offers is turned into an async iterable, so `runTurn` can yield the
- * pieces from inside its own loop; the iterable ends when the reply settles.
- */
+/** A model call whose text pieces can be iterated as they arrive; ends when the reply settles. */
 const withDeltas = (client: ChatClient, params: TurnParams, signal?: AbortSignal) => {
   let queue: readonly string[] = [];
   let settled = false;
@@ -307,12 +269,7 @@ const withDeltas = (client: ChatClient, params: TurnParams, signal?: AbortSignal
   return { deltas, reply };
 };
 
-/**
- * One turn, yielding an event per tool dispatched and one answer at the end.
- * The loop is ours: ask, run whatever the model called, hand the results back,
- * until it answers in words. The events exist so an answer can be traced to
- * the data behind it, and so a reader sees progress rather than a blank screen.
- */
+/** One turn: an event per tool dispatched, then one answer. The loop is ours: ask, run the tools called, hand results back, until it answers in words. */
 export async function* runTurn(
   client: ChatClient,
   tools: readonly ChatTool[],
@@ -326,9 +283,7 @@ export async function* runTurn(
   let answered = false;
 
   for (let round = 0; round < MAX_ROUNDS && !answered; round++) {
-    // The signal is the client's: when the browser drops the connection, the
-    // in-flight request is cancelled rather than run to completion. A tool
-    // loop that nobody is reading still costs tokens.
+    // The client's signal: a dropped connection cancels the request, since an unread tool loop still costs tokens.
     const streamed = withDeltas(
       client,
       { model, max_tokens: MAX_TOKENS, messages, tools: definitions },
@@ -364,7 +319,6 @@ export async function* runTurn(
 
   yield {
     type: "answer",
-    text:
-      answered || last !== "" ? last : "En saanut vastausta valmiiksi: työkalukutsuja tuli liikaa.",
+    text: answered || last !== "" ? last : "I could not finish the answer: too many tool calls.",
   };
 }

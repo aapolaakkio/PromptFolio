@@ -17,22 +17,8 @@ import { addInstrument } from "../instruments/store.ts";
 import { EUR, parseMoney } from "../../core/money.ts";
 import { xirr } from "../../core/returns.ts";
 
-// Exercises the portfolio views (src/server/views/portfolio.ts) against a real,
-// migrated database and a real Better Auth session, mirroring
-// accounts.test.ts's and instruments.test.ts's setup -- including their
-// reliance on ../test-setup.ts (a vitest.config.ts `setupFiles` entry) to
-// have already pinned the shared database to a migrated in-memory
-// database before this file's own code runs. This file must NOT call
-// resetDbHandleForTests(), set DATABASE_PATH, or call the shared database
-// itself -- see test-setup.ts's and accounts.test.ts's comments for why.
-//
-// The database is shared with every other *.test.ts file in the process,
-// so every account/instrument/user this file creates uses a fresh
-// crypto.randomUUID()-derived identity, and every ISIN is random rather
-// than a hardcoded literal another file's fixtures already use (e.g.
-// instruments.test.ts's default "FI0009000681").
+// Real migrated DB pinned by test-setup.ts (never reset it here). Shared across files, so ids and ISINs are random.
 
-/** What the views default to when a caller names no date. */
 const today = (): string => new Date().toISOString().slice(0, 10);
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
@@ -59,13 +45,12 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email is Better Auth's documented
-  // success response, which always carries `{ token, user: { id, ... } }`.
+  // SAFETY: Better Auth's sign-up response always carries `{ token, user: { id } }`.
   const body = (await response.json()) as { user: { id: string } };
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
 
-/** A syntactically valid but never-real ISIN, derived from a fresh randomUUID -- see file header. */
+/** A valid but never-real ISIN from a fresh UUID. */
 const randomIsin = (): string =>
   `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
 
@@ -86,13 +71,6 @@ const createInstrument = async (isin: string): Promise<number> => {
     })
   ).id;
 };
-
-// The four routes read transactions/prices directly, and Task 16 adds no
-// HTTP route for writing either -- transactions arrive via the import
-// pipeline (Tasks 10-12), prices via the refresh job (Task 15). Seeding
-// them for these route-level tests therefore goes straight through the
-// shared database, exactly like valuation.test.ts's lower-level seed.
-/** The two response shapes the cash tests read, parsed rather than cast. */
 
 const seedHolding = async (
   userId: string,
@@ -121,10 +99,7 @@ const seedHolding = async (
       tradeDate: opts.buyDate,
       quantity: opts.quantity,
       unitPrice: opts.unitPrice,
-      // `amount` is the fee-inclusive total cash that moved (see
-      // `Txn.amount`'s doc in core/types.ts) -- `principal` here is the
-      // pre-fee trade value, so the fee is folded in before it is stored,
-      // matching what a real broker export reports.
+      // `amount` is the fee-inclusive cash total, as brokers report it.
       amount: -(opts.principal + fee),
       fee,
       tax: 0,
@@ -155,11 +130,6 @@ const seedHolding = async (
   return { accountId, instrumentId };
 };
 
-// The 401-without-a-session block lived here and went with the routes. Every
-// server function that touches the ledger declares the authed middleware, which
-// resolves the session or redirects to /login; there is no way to call one
-// without it, so there is nothing left for a test to sneak past.
-
 // --- GET /api/holdings ---
 
 describe("GET /api/holdings", () => {
@@ -184,9 +154,6 @@ describe("GET /api/holdings", () => {
     expect(holding.priceDate).toBe("2024-01-10");
     // Priced on 10.1. but requested as of 1.6. -- carried forward, so stale.
     expect(holding.stale).toBe(true);
-    // The only holding -> the entire weight denominator -> 100% of it.
-    // weight is a `number` on the wire, like allocation's own `weight`, never
-    // a decimal string.
     expect(holding.weight).toBe(1);
   });
 
@@ -201,28 +168,11 @@ describe("GET /api/holdings", () => {
       prices: [{ date: "2024-01-10", close: 100 }],
     });
 
-    // The id comes from the session, so a stranger asking is a stranger's
-    // own empty portfolio -- not a way to reach someone else's.
+    // The id comes from the session: a stranger sees their own empty portfolio.
     expect(await holdingsFor(db, stranger.userId, today())).toEqual([]);
   });
 
-  // "rejects a malformed 'on' parameter" belonged to the URL. getHoldings takes
-  // an ISO date or nothing, so a caller cannot express "not-a-date" -- and the
-  // validator refuses it before the handler runs if one somehow does.
-
-  // Regression: an OP import pasted one page at a time can easily land a
-  // SELL on the ledger before the BUY it disposes of, which is on an
-  // earlier page not yet imported. core/costbasis.ts's buildLots() throws a
-  // correct, well-worded domain error for this (UnmatchedDisposalError).
-  // This USED TO take the whole holdings screen down with a whole-request
-  // 400 (see git history on this file) -- during a page-by-page import that
-  // is the normal state, so the user would be locked out of their whole
-  // portfolio until the last page landed. It must instead degrade per
-  // position: every holding is still returned, and only the affected one is
-  // marked, with the same instrument (ISIN and name -- user-facing facts,
-  // never the internal numeric instrumentId) and trade date, and the same
-  // "what to do about it" wording this app has shown for this condition
-  // since it was first caught.
+  // Regression: a SELL imported before its BUY degrades only that position (marked with ISIN, name, date and a what-to-do message), not the whole screen.
   test("degrades the affected position instead of 400ing the whole request when a sale has no matching purchase", async () => {
     const { userId } = await signUp(`holdings-unmatched-${crypto.randomUUID()}@example.com`);
     const { db } = await import("../db/index.ts");
@@ -255,8 +205,6 @@ describe("GET /api/holdings", () => {
     const body = await holdingsFor(db, userId, "2025-01-01");
     expect(body).toHaveLength(1);
     const holding = body[0]!;
-    // The raw ledger fact is still reported honestly: 10 units disposed, 0
-    // ever acquired, so -10.
     expect(holding.quantity).toBe("-10.000000");
     expect(holding.costEur).toBeNull();
     expect(holding.valueEur).toBeNull();
@@ -267,11 +215,8 @@ describe("GET /api/holdings", () => {
     expect(message).toContain(isin);
     expect(message).toContain("Test Co"); // createInstrument()'s fixed instrument name
     expect(message).toContain("2025-01-01");
-    // Tells the user what to do: import the missing purchase or remove the row.
-    expect(message).toMatch(/tuo|poista/i);
-    // No internal detail leaked: not core's own raw exception wording, which
-    // names the instrument by its internal numeric id ("instrument N")
-    // rather than the user-facing ISIN/name used above.
+    expect(message).toMatch(/import|delete/i);
+    // No internal detail leaked (core's raw error names the numeric instrument id).
     expect(message).not.toMatch(/cannot dispose/i);
     expect(message).not.toMatch(/instrument \d/i);
   });
@@ -281,7 +226,6 @@ describe("GET /api/holdings", () => {
     const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    // A perfectly ordinary holding...
     const { accountId } = await seedHolding(userId, {
       buyDate: "2024-01-10",
       quantity: 10_000_000,
@@ -290,7 +234,6 @@ describe("GET /api/holdings", () => {
       prices: [{ date: "2024-01-10", close: 100 }],
     });
 
-    // ...alongside a second instrument with an unmatched sale.
     const brokenIsin = randomIsin();
     const brokenInstrumentId = await createInstrument(brokenIsin);
     await db
@@ -341,10 +284,6 @@ describe("GET /api/value-series", () => {
 
     const body = await valueSeriesView(db, userId, "2024-01-01", "2024-01-05");
     expect(body).toHaveLength(5);
-    // 10 units at 10.00/unit = 100.00; at 11.00/unit = 110.00. The purchase
-    // cost 100.00 and none of it has come back out, so invested capital is
-    // flat across the window -- the gap to `valueEur` is what the chart draws
-    // as the return.
     expect(body[0]).toEqual({
       date: "2024-01-01",
       valueEur: "100.00",
@@ -391,9 +330,7 @@ describe("GET /api/value-series", () => {
   });
 
   test("refuses a backwards range", async () => {
-    // Kept as a schema test because that is where the rule moved: an empty
-    // chart for a typo'd date looks exactly like an empty chart for an empty
-    // portfolio, so the refusal has to happen before the query runs.
+    // Schema test: an empty chart for a typo'd date looks like an empty portfolio, so refuse before querying.
     expect(Range.safeParse({ from: "2024-06-01", to: "2024-01-01" }).success).toBe(false);
     expect(Range.safeParse({ from: "2024-01-01", to: "2024-06-01" }).success).toBe(true);
   });
@@ -402,10 +339,7 @@ describe("GET /api/value-series", () => {
     expect(Range.safeParse({ from: "01-01-2024" }).success).toBe(false);
   });
 
-  // Defence in depth: scoping is already proven at the shared loadPortfolio()
-  // choke point (valuation.test.ts's "loads only the requesting user's
-  // rows"), but this is one of the four routes every screen reads from, so
-  // it is worth one direct route-level check per route too.
+  // Scoping is proven in loadPortfolio(); one direct check per route too.
   test("scopes value to the caller and never counts another user's position", async () => {
     const owner = await signUp(`series-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`series-stranger-${crypto.randomUUID()}@example.com`);
@@ -418,8 +352,6 @@ describe("GET /api/value-series", () => {
     });
 
     const body = await valueSeriesView(db, stranger.userId, "2024-01-01", "2024-01-01");
-    // Nothing of the owner's leaks into a stranger's series -- neither what it
-    // is worth nor what was put into it.
     expect(body).toEqual([
       {
         date: "2024-01-01",
@@ -433,12 +365,7 @@ describe("GET /api/value-series", () => {
     ]);
   });
 
-  // Regression: verified directly against positionsAt() that an unmatched SELL
-  // reports a negative quantity for that instrument (e.g. instrument 7, quantity
-  // -10.000000 for a bare 10-unit sale with no prior buy). valueSeries() must not
-  // multiply that by a price and report a negative "value" for the day -- and it
-  // must not silently disappear from the total either, so the instrument is named
-  // in excludedInstrumentIds instead.
+  // Regression: an unmatched SELL (negative quantity) must not be priced into a negative value; it is named in excludedInstrumentIds.
   test("a negative (unmatched-disposal) position never makes the daily value negative", async () => {
     const { userId } = await signUp(`series-negative-${crypto.randomUUID()}@example.com`);
     const { db } = await import("../db/index.ts");
@@ -489,10 +416,7 @@ describe("GET /api/allocation", () => {
     });
 
     const body = await allocationView(db, userId, "kind", "2024-01-01");
-    // 10 units at 10.00/unit = 100.00.
-    expect(body.slices).toEqual([
-      { key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 },
-    ]);
+    expect(body.slices).toEqual([{ key: "stock", label: "Shares", valueEur: "100.00", weight: 1 }]);
     expect(body.excludedInstruments).toEqual([]);
   });
 
@@ -510,17 +434,12 @@ describe("GET /api/allocation", () => {
     expect(body.slices.map((s) => s.key)).toContain("EUR");
   });
 
-  // Regression: a SELL with no matching earlier BUY drives positionsAt() negative
-  // for that instrument (core/ledger.ts). allocateBy() must never multiply that
-  // negative quantity by a price and fold it into a slice's total -- and the
-  // instrument must not just vanish from the response either, which would be
-  // just as misleading as a fabricated negative amount.
+  // Regression: an unmatched SELL must not add a negative amount to a slice, nor vanish from the response.
   test("a negative (unmatched-disposal) position never contributes a negative amount, and is named in excludedInstruments instead", async () => {
     const { userId } = await signUp(`alloc-negative-${crypto.randomUUID()}@example.com`);
     const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    // One ordinary holding...
     await seedHolding(userId, {
       buyDate: "2024-01-01",
       quantity: 10_000_000,
@@ -529,7 +448,6 @@ describe("GET /api/allocation", () => {
       prices: [{ date: "2024-01-01", close: 1000 }],
     });
 
-    // ...and a second instrument sold with nothing ever bought.
     const cookieAccountId = await createAccount(userId);
     const brokenIsin = randomIsin();
     const brokenInstrumentId = await createInstrument(brokenIsin);
@@ -554,11 +472,7 @@ describe("GET /api/allocation", () => {
       .run();
 
     const body = await allocationView(db, userId, "kind", "2024-01-01");
-    // Only the ordinary holding's 100.00 -- the broken instrument contributes
-    // nothing, positive or negative.
-    expect(body.slices).toEqual([
-      { key: "stock", label: "Osakkeet", valueEur: "100.00", weight: 1 },
-    ]);
+    expect(body.slices).toEqual([{ key: "stock", label: "Shares", valueEur: "100.00", weight: 1 }]);
     expect(body.slices.every((s) => Number(s.valueEur) >= 0)).toBe(true);
     expect(body.excludedInstruments).toEqual([
       { instrumentId: brokenInstrumentId, isin: brokenIsin, name: "Test Co" },
@@ -566,15 +480,11 @@ describe("GET /api/allocation", () => {
   });
 
   test("refuses a grouping that is not one", () => {
-    // "sector" is not a slicing this app has. It used to reach the handler as a
-    // string and be rejected there; now the argument type is the union, so the
-    // line below does not compile -- and the validator refuses it at the edge
-    // for anything that arrives from outside TypeScript.
     expect(AllocationInput.safeParse({ by: "sector" }).success).toBe(false);
     expect(AllocationInput.safeParse({ by: "currency" }).success).toBe(true);
   });
 
-  // Defence in depth -- see the matching comment on /api/value-series.
+  // Defence in depth: see /api/value-series.
   test("scopes allocation to the caller and never counts another user's position", async () => {
     const owner = await signUp(`alloc-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`alloc-stranger-${crypto.randomUUID()}@example.com`);
@@ -651,36 +561,11 @@ describe("GET /api/returns", () => {
     const body = await returnsView(db, userId, "2024-01-01", "2025-01-01");
     expect(body.valueEur).toBe("10000.00");
     expect(body.stale).toBe(false);
-    // C4: this used to assert -0.3650793650793651 -- a "hardening" of the exact bug this
-    // fix removes (see core/returns.ts's `twr` doc and core/ledger.ts's `investedCashFlows`
-    // doc for the full story). That number came from feeding twr() the DEPOSIT (10,000.00)
-    // and WITHDRAWAL (1,000.00) as its flows, against a `series` that prices invested
-    // positions only (spec §7) -- two different portfolios. The DEPOSIT is bigger than the
-    // same-day BUY (8,000.00, the only thing actually invested), so the flow inflated a base
-    // the position never actually had; the WITHDRAWAL was drawn from idle cash, not the
-    // position, but was subtracted from the base as if it had been. Neither is a real
-    // consequence of the instrument's own 80.00 -> 100.00 move.
-    //
-    // The only thing that actually happened to the *invested* portfolio here is: 100 units
-    // bought at 80.00 on 2024-01-01 (matching that day's valueSeries point exactly, so the
-    // BUY contributes no sub-period factor -- see `twr`'s doc, a ledger's first purchase
-    // never is), held unchanged through 2025-01-01 where the price is 100.00. No SELL, no
-    // TRANSFER, nothing else moves the position, so there is exactly one sub-period:
-    // (10000.00 - 0) / 8000.00 - 1 = 0.25. The DEPOSIT and WITHDRAWAL are real ledger events
-    // but never touch a position, so `investedCashFlows` correctly excludes them from twr's
-    // input -- verified by an equivalent direct core/returns.ts twr() call before pinning
-    // this number.
+    // 100 units bought at 80.00, priced 100.00 a year later: one sub-period, 10000/8000 - 1 = 0.25. The deposit and withdrawal never touch a position, so twr excludes them.
     expect(body.twr).toBeCloseTo(0.25, 9);
-    // Regression: a withdrawal's negative ledger amount, negated into
-    // xirr's sign convention via a format-then-reparse of "-<already
-    // negative>", used to produce an unparsable "--100.00" and silently
-    // fall into the null branch on every call that included a withdrawal.
-    // `negateMoney` fixes this -- with a deposit, a withdrawal and growth
-    // all present, MWR must be a real number, not null.
+    // Regression: negating a withdrawal's negative amount used to give an unparsable "--100.00" and a null MWR.
     expect(body.mwr).not.toBeNull();
-    // `?? Number.NaN` only narrows `number | null` to `number` for the type
-    // checker -- if `mwr` were unexpectedly null despite the assertion
-    // above, `isFinite(NaN)` is false, so this still fails loudly.
+    // `?? NaN` only narrows the type; a null mwr still fails.
     expect(Number.isFinite(body.mwr ?? Number.NaN)).toBe(true);
   });
 
@@ -691,9 +576,7 @@ describe("GET /api/returns", () => {
 
     const accountId = await createAccount(userId);
 
-    // A deposit that is never invested: valueSeries only prices tracked
-    // positions, so the tracked value stays 0 for the whole window and
-    // xirr sees only non-positive amounts -- "unknown", not "0%".
+    // A never-invested deposit leaves tracked value at 0: xirr is "unknown", not "0%".
     await db
       .insert(transactions)
       .values({
@@ -727,9 +610,7 @@ describe("GET /api/returns", () => {
     expect(body.valueEur).toBe("0.00");
   });
 
-  // C5: the Critical fix -- an unvaluable holding must never collapse `twr` to a
-  // fabricated rate, and the caller must be able to see *why* (see core/returns.ts's
-  // `twr` doc and this route's own `excludedInstruments` comment).
+  // An unvaluable holding must never collapse `twr` to a fabricated rate.
   test("reports twr: null and names the holding in excludedInstruments when a second instrument has no price at all", async () => {
     const { userId } = await signUp(`returns-excluded-${crypto.randomUUID()}@example.com`);
     const { accountId } = await seedHolding(userId, {
@@ -744,9 +625,7 @@ describe("GET /api/returns", () => {
     const { transactions } = await import("../db/schema.ts");
 
     const unpricedInstrumentId = await createInstrument(randomIsin());
-    // A second holding bought the same day, in the same account -- but deliberately
-    // never given a `prices` row at all, e.g. an S-Pankki/Danske manual fund set to
-    // `manual` before its first NAV entry (spec §10a A5).
+    // A second holding bought the same day with no `prices` row (e.g. a manual fund before its first NAV).
     await db
       .insert(transactions)
       .values({
@@ -768,24 +647,18 @@ describe("GET /api/returns", () => {
       .run();
 
     const body = await returnsView(db, userId, "2024-01-01", "2024-01-05");
-    // Superseded twice over. It first reported -1 (-100%) for an otherwise flat,
-    // priced position; then null, because a never-priced holding excluded every
-    // sub-period. A holding with no price yet is now carried at its cost basis, so
-    // nothing is missing, nothing jumps, and a flat window is honestly 0%. The
-    // property that has to hold throughout is that no fabricated rate appears.
+    // A never-priced holding is carried at cost, so a flat window is honestly 0%.
     expect(body.twr).toBe(0);
     expect(body.excludedInstruments.map((i) => i.instrumentId)).not.toContain(unpricedInstrumentId);
   });
 
   test("refuses a backwards range", async () => {
-    // Kept as a schema test because that is where the rule moved: an empty
-    // chart for a typo'd date looks exactly like an empty chart for an empty
-    // portfolio, so the refusal has to happen before the query runs.
+    // Schema test: an empty chart for a typo'd date looks like an empty portfolio, so refuse before querying.
     expect(Range.safeParse({ from: "2024-06-01", to: "2024-01-01" }).success).toBe(false);
     expect(Range.safeParse({ from: "2024-01-01", to: "2024-06-01" }).success).toBe(true);
   });
 
-  // Defence in depth -- see the matching comment on /api/value-series.
+  // Defence in depth: see /api/value-series.
   test("scopes returns to the caller and never counts another user's position", async () => {
     const owner = await signUp(`returns-owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`returns-stranger-${crypto.randomUUID()}@example.com`);
@@ -802,15 +675,7 @@ describe("GET /api/returns", () => {
     expect(body.mwr).toBeNull();
   });
 
-  // Regression for the reviewed Important finding: filtering externalCashFlows
-  // to [from, to] alone silently drops whatever the portfolio was already
-  // worth going into `from` -- xirr() then treats the final value as having
-  // appeared from nothing and returns a finite, plausible, WRONG rate rather
-  // than null or an error. This must be exercised with `from` genuinely
-  // AFTER inception (not the default since-inception range, where the
-  // pre-window value is always zero and the bug is invisible), and the
-  // assertion must pin the actual number -- not merely check it is non-null,
-  // which the pre-fix code could also produce by coincidence.
+  // Regression: with `from` after inception, the value already held going into `from` must be an opening flow. Pin the number, not just non-null.
   test("MWR over a window starting after inception accounts for the value already there", async () => {
     const { userId } = await signUp(`returns-windowed-${crypto.randomUUID()}@example.com`);
     await seedHolding(userId, {
@@ -827,36 +692,19 @@ describe("GET /api/returns", () => {
     const body = await returnsView(db, userId, "2024-07-01", "2025-01-01");
     expect(body.valueEur).toBe("6000.00"); // 100 x 60.00
 
-    // Independently derived expected flows, with no dependency on
-    // portfolio.ts's own implementation: the value already held on
-    // 2024-07-01 (100 units still priced at the 1.1. close of 50.00, since
-    // no later price exists yet) is a -5000.00 implicit contribution; there
-    // are no deposits or withdrawals inside the window; the final value on
-    // 2025-01-01 is +6000.00 (100 x 60.00). Computed via the same, already
-    // separately-tested core.xirr -- this checks that portfolio.ts assembled
-    // the RIGHT flows, not that xirr's own math is right (core/returns.test.ts
-    // already covers that).
+    // Expected flows derived independently: -5000.00 held on 2024-07-01, +6000.00 on 2025-01-01, no deposits. Checks portfolio.ts assembles the right flows, not xirr's math.
     const expected = xirr([{ date: "2024-07-01", amountEur: parseMoney("-5000.00", EUR) }], {
       date: "2025-01-01",
       amountEur: parseMoney("6000.00", EUR),
     });
     expect(body.mwr).not.toBeNull();
     expect(body.mwr).toBeCloseTo(expected, 9);
-    // Sanity bound: a real position that grew 20% over a half-year window
-    // should show as substantial double-digit annualised growth, not a
-    // number near zero (which is what the pre-fix bug would NOT have
-    // produced either, since it never added an opening flow at all -- but
-    // pinning a plausible range guards against a fix that silently changed
-    // the wrong thing).
+    // Sanity bound: 20% growth over half a year is substantial double-digit annualised.
     expect(body.mwr ?? Number.NaN).toBeGreaterThan(0.3);
   });
 });
 
 describe("GET /api/cash", () => {
-  // The anonymous-caller test went with the route. Every server function on
-  // this screen declares the authed middleware, which resolves a session or
-  // redirects -- there is no path into one that skips it.
-
   test("reports what a deposit left uninvested, and adds it to the portfolio value", async () => {
     const { userId } = await signUp(`cash-${crypto.randomUUID()}@example.com`);
     const { accountId } = await seedHolding(userId, {
@@ -870,7 +718,6 @@ describe("GET /api/cash", () => {
     const { db } = await import("../db/index.ts");
     const { transactions } = await import("../db/schema.ts");
 
-    // 500,00 in, 100,00 spent on the holding above: 400,00 left as cash.
     await db
       .insert(transactions)
       .values([
@@ -896,8 +743,6 @@ describe("GET /api/cash", () => {
     expect(cashBody.rows[0]?.currency).toBe("EUR");
 
     const returnsBody = await returnsView(db, userId, "2024-01-01", "2024-01-01");
-    // Positions and cash stay separate and are also given added up, so the
-    // dashboard never has to do money arithmetic of its own.
     expect(returnsBody.valueEur).toBe("100.00");
     expect(returnsBody.cashEur).toBe("400.00");
     expect(returnsBody.valueWithCashEur).toBe("500.00");
@@ -914,8 +759,7 @@ describe("GET /api/cash", () => {
     });
 
     const body = await cashView(db, userId, "2024-01-01");
-    // The purchase alone would sum to -100,00, which is an artefact of an
-    // export that lists securities only -- not a debt.
+    // The purchase alone sums to -100.00: an artefact of a securities-only export, not a debt.
     expect(body.rows).toEqual([]);
     expect(body.totalEur).toBe("0.00");
   });
@@ -958,7 +802,6 @@ describe("bank accounts", () => {
       contentHash: crypto.randomUUID(),
     });
 
-    // The brokerage account funds its own purchase, so there is a real flow.
     await db
       .insert(transactions)
       .values([cashRow(accountId, "DEPOSIT", "2023-12-31", 10_000)])
@@ -967,13 +810,12 @@ describe("bank accounts", () => {
     const askReturns = () => returnsView(db, userId, "2024-01-01", "2024-06-01");
     const before = await askReturns();
 
-    // A bank account with a salary in and a grocery run out.
     const bankId = (
       await openAccountRow(
         db,
         userId,
         CreateAccount.parse({
-          name: "OP käyttötili",
+          name: "OP current account",
           broker: "op",
           kind: "bank",
           accountType: "current",
@@ -994,7 +836,6 @@ describe("bank accounts", () => {
     expect(after.twr).toBe(before.twr);
     expect(after.mwr).toBe(before.mwr);
     expect(after.valueEur).toBe(before.valueEur);
-    // ...but the money is real and shows up in what the portfolio is worth.
     expect(after.cashEur).toBe("3157.85");
     expect(after.valueWithCashEur).toBe("3277.85");
   });
@@ -1003,7 +844,7 @@ describe("bank accounts", () => {
 describe("a fixed-term deposit's cash", () => {
   const openDeposit = async (userId: string, maturityDate: string | null): Promise<number> => {
     const account = {
-      name: "OP määräaikaistili",
+      name: "OP fixed-term account",
       broker: "op",
       kind: "bank",
       accountType: "fixed_term",
@@ -1087,7 +928,7 @@ describe("a fixed-term deposit's cash", () => {
         db,
         userId,
         CreateAccount.parse({
-          name: "OP käyttötili",
+          name: "OP current account",
           broker: "op",
           kind: "bank",
           accountType: "current",
@@ -1112,7 +953,7 @@ describe("GET /api/spending/uncategorised", () => {
         db,
         userId,
         CreateAccount.parse({
-          name: "OP käyttötili",
+          name: "OP current account",
           broker: "op",
           kind: "bank",
           accountType: "current",
@@ -1147,40 +988,31 @@ describe("GET /api/spending/uncategorised", () => {
 
   const ask = (userId: string) => uncategorisedView(db, userId, "2026-01-01", "2026-12-31");
 
-  // The anonymous-caller case is the middleware's, as above.
-
   test("GET /api/spending/transactions lists every movement with the class it was given", async () => {
-    // The categorised totals are summaries, and a summary nobody can open is
-    // one they have to take on trust. This is the ledger behind them.
     const { userId } = await signUp(`ledger-${crypto.randomUUID()}@example.com`);
     const accountId = await bankAccount(userId);
-    await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
-    await spend(accountId, "PALKKA — ESIMERKKI OYJ", 300_000, "2026-03-02");
+    await spend(accountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4215, "2026-03-01");
+    await spend(accountId, "PALKKA — EXAMPLE OYJ", 300_000, "2026-03-02");
 
     const response = await classifiedView(db, userId, "2026-01-01", "2026-12-31");
     const body = response;
 
-    // Newest first, each with its class, and money in named as income rather
-    // than dropped from the list.
     expect(body.transactions[0]!.text).toContain("PALKKA");
     expect(body.transactions[0]!.excludedReason).toBe("income");
     expect(body.transactions[0]!.counted).toBe(false);
-    expect(body.transactions[1]!.categoryLabel).toBe("Ruokakauppa");
+    expect(body.transactions[1]!.categoryLabel).toBe("Groceries");
     expect(body.transactions[1]!.amountEur).toBe("-42.15");
   });
-
-  // The anonymous-caller case is the middleware's, as above.
 
   test("lists what no rule matched, summed per payee, and nothing else", async () => {
     const { userId } = await signUp(`uncat-${crypto.randomUUID()}@example.com`);
     const accountId = await bankAccount(userId);
-    await spend(accountId, "PKORTTIMAKSU — K-MARKET ESIMERKKI", -4215, "2026-03-01");
+    await spend(accountId, "PKORTTIMAKSU — K-MARKET EXAMPLE", -4215, "2026-03-01");
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -500, "2026-03-03");
 
     const body = await ask(userId);
 
-    // The grocery shop has a seed rule; the unknown one is here, added up.
     expect(body.merchants).toEqual([
       { name: "PIENI PUOTI OY", totalEur: "-15.00", count: 2, payeeKnown: true },
     ]);
@@ -1194,22 +1026,19 @@ describe("GET /api/spending/uncategorised", () => {
     await spend(accountId, "PKORTTIMAKSU — PIENI PUOTI OY", -1000, "2026-03-02");
     expect((await ask(userId)).merchants).toHaveLength(1);
 
-    await addRules(db, userId, [{ pattern: "PIENI PUOTI OY", category: "ruoka" }], "user");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI OY", category: "groceries" }], "user");
 
-    // Which is the whole loop this screen exists for: see it, file it, gone.
     expect((await ask(userId)).merchants).toEqual([]);
   });
 
   test("marks a bare payment label as having no payee, so no rule is offered for it", async () => {
     const { userId } = await signUp(`uncat-label-${crypto.randomUUID()}@example.com`);
     const accountId = await bankAccount(userId);
-    // A statement that carried no payee leaves the note as the label alone.
     await spend(accountId, "MAKSUPALVELU", -45_297, "2026-03-01");
 
     const body = await ask(userId);
 
-    // A rule on "MAKSUPALVELU" would file every bill payment as whatever this
-    // one turned out to be -- rent, in the case that produced this test.
+    // A rule on "MAKSUPALVELU" would file every bill payment under one category.
     expect(body.merchants[0]?.name).toBe("MAKSUPALVELU");
     expect(body.merchants[0]?.payeeKnown).toBe(false);
   });

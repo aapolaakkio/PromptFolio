@@ -47,22 +47,21 @@ describe("classifiedTransactions", () => {
   test("gives every row the class the rules gave it", () => {
     const [groceries] = classify([row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10")]);
 
-    expect(groceries?.category).toBe("ruoka");
-    expect(groceries?.categoryLabel).toBe("RUOKA");
+    expect(groceries?.category).toBe("groceries");
+    expect(groceries?.categoryLabel).toBe("GROCERIES");
     expect(groceries?.counted).toBe(true);
     expect(groceries?.excludedReason).toBeNull();
   });
 
   test("shows why a row is not spending rather than leaving it out", () => {
-    // The totals apply these exclusions silently; a ledger that also hid the
-    // rows would leave the reader unable to check any figure against anything.
+    // The totals exclude silently; the ledger shows these rows so each figure can be checked.
     const rows = classify([
-      row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
-      row(1, "Alkusaldo", "-1200.00", "2026-01-01", "OPENING_BALANCE"),
+      row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+      row(1, "Opening balance", "-1200.00", "2026-01-01", "OPENING_BALANCE"),
     ]);
 
     expect(rows.find((entry) => entry.text.startsWith("PALKKA"))?.excludedReason).toBe("income");
-    expect(rows.find((entry) => entry.text === "Alkusaldo")?.excludedReason).toBe(
+    expect(rows.find((entry) => entry.text === "Opening balance")?.excludedReason).toBe(
       "opening-balance",
     );
     expect(rows.every((entry) => !entry.counted)).toBe(true);

@@ -2,23 +2,15 @@ import { accountsMissingCashRecord } from "../../core/ledger.ts";
 import { EUR } from "../../core/money.ts";
 import type { Txn } from "../../core/types.ts";
 
-/** How far apart the two halves of one transfer may be booked. */
 const WINDOW_DAYS = 5;
 
 const dayNumber = (date: string): number => Date.parse(`${date}T00:00:00Z`) / 86_400_000;
 
 /**
- * The owner moving their own money between their own accounts, matched as pairs.
- *
- * Text cannot do this: a transfer to savings is labelled with the owner's own
- * name, and a rule matching that would catch genuine payments to a person of
- * that name -- and the assistant's classification can out-match a transfer rule
- * and turn moved savings into income, which it did.
- *
- * A pair is one row out and one in, same amount, within days, matched nearest
- * first and each row used once. Conservative: a transfer whose other half is on
- * an account this app does not know stays income or spending, because from the
- * ledger's point of view that is what it is.
+ * The owner's own transfers between their accounts, matched as pairs: one row out and one in,
+ * same amount, within days, nearest first, each row used once. Text cannot do it (the owner's own
+ * name would also catch payments to a namesake, and an assistant rule once turned savings into
+ * income). A transfer whose other half is on an unknown account stays income or spending.
  */
 export const internalTransferIds = (txns: readonly Txn[]): ReadonlySet<number> => {
   const paired = new Set<number>();
@@ -55,14 +47,9 @@ export const internalTransferIds = (txns: readonly Txn[]): ReadonlySet<number> =
 };
 
 /**
- * Bank payments that funded a purchase, and so are investing, not spending.
- *
- * A fund saving leaves as an ordinary payment and arrives as a purchase, never
- * as a deposit, because a broker listing securities only never records the cash.
- * Both halves are negative, so the pairing above cannot see them.
- *
- * Matched on amount and window, against purchases on accounts keeping no cash
- * record. Where a broker does keep one, its deposit is the better half.
+ * Bank payments that funded a purchase (investing, not spending). A fund saving leaves as a
+ * payment and arrives as a purchase, never a deposit, so both halves are negative and the pairing
+ * above cannot see it. Matched on amount and window against purchases on accounts with no cash record.
  */
 export const investmentPaymentIds = (
   txns: readonly Txn[],
@@ -98,28 +85,14 @@ export const investmentPaymentIds = (
   return matched;
 };
 
-/**
- * Invested accounts whose own export never records cash arriving -- OP's
- * securities view is one. Their purchases stand in for the deposits that fund
- * them, which is how a regular fund saving is recognised as investing rather
- * than spending.
- */
+// Accounts whose export never records cash arriving (OP's securities view): purchases stand in for the deposits.
 export const cashlessAccountIds = (
   txns: readonly Txn[],
   bankAccountIds: ReadonlySet<number>,
 ): ReadonlySet<number> =>
   new Set(accountsMissingCashRecord(txns).filter((accountId) => !bankAccountIds.has(accountId)));
 
-/**
- * Every row that is a movement rather than a cost.
- *
- * One definition, because there were several and they disagreed: the same period
- * read differently depending on which view you opened, and a credit card bill
- * sat among the shops as one of the year's largest lines.
- *
- * Needs the whole ledger: an internal transfer is only recognisable by its other
- * half, which is on another account.
- */
+/** Every row that is a movement rather than a cost. One definition, as views disagreed; needs the whole ledger since a transfer is recognised by its other half. */
 export const notSpendingIds = (
   txns: readonly Txn[],
   bankAccountIds: ReadonlySet<number>,

@@ -50,7 +50,6 @@ const Spending = z
 const Calculation = z
   .object({
     operation: z.enum(["sum", "subtract", "multiply", "divide", "percent", "average"]),
-    /** Decimal strings, so nothing is lost on the way in. */
     values: z.array(z.string()).min(1).max(200),
   })
   .strict();
@@ -66,8 +65,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_holdings",
     description:
-      "Nykyiset omistukset: määrä, hankintameno, markkina-arvo, tuotto ja paino. " +
-      "Anna 'on' jos haluat tilanteen menneeltä päivältä.",
+      "Current holdings: quantity, cost basis, market value, return and weight. " +
+      "Pass 'on' for the position on a past date.",
     schema: OnDate,
     run: async (input) => {
       const { on = today() } = OnDate.parse(input);
@@ -75,8 +74,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       return {
         asOf: on,
         stale: rows.some((row) => row.stale),
-        // Named here so an answer about total worth does not have to add cash in
-        // prose -- which the system prompt forbids. get_cash breaks it down.
+        // Named so an answer about total worth does not add cash in prose; get_cash breaks it down.
         cashEur: (await cashFor(db, userId, on)).totalEur,
         holdings: rows.map((row) => ({
           name: row.name,
@@ -88,8 +86,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           valueEur: row.valueEur,
           unrealisedEur: row.unrealisedEur,
           weight: row.weight,
-          // Named rather than hidden: an answer that quietly omits a holding
-          // reads as one the owner does not have.
+          // Named: a silently omitted holding reads as one the owner does not have.
           unvaluableReason: row.valuationError ?? row.costBasisError?.message ?? null,
         })),
       };
@@ -98,9 +95,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_cash",
     description:
-      "Sijoittamaton käteinen tileittäin ja valuutoittain. Erottelee heti käytettävissä " +
-      "olevan rahan ja määräaikaistalletukset, joita ei voi nostaa ennen eräpäivää. " +
-      "Käteinen on mukana salkun arvossa ja jakaumassa, mutta ei tuottoluvuissa.",
+      "Uninvested cash by account and currency. Separates money available immediately " +
+      "from fixed-term deposits that cannot be withdrawn before maturity. " +
+      "Cash is included in portfolio value and allocation, but not in return figures.",
     schema: OnDate,
     run: async (input) => {
       const { on = today() } = OnDate.parse(input);
@@ -108,9 +105,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
       return {
         asOf: on,
         totalEur,
-        // Money in a fixed-term deposit is the owner's but cannot be spent until
-        // it matures; one figure covering both would answer "what do I have
-        // available" wrongly.
+        // Fixed-term deposits are owned but not spendable; one figure would misanswer "what do I have available".
         availableEur,
         lockedEur,
         balances: rows.map((row) => ({
@@ -122,10 +117,10 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           availableFrom: row.availableFrom,
         })),
         note:
-          "Tilit, joiden aineistossa ei ole lainkaan käteistapahtumia (esim. OP:n " +
-          "arvopaperinäkymä), eivät näy tässä lainkaan -- niiden saldoa ei voi johtaa. " +
-          "locked: true tarkoittaa määräaikaistalletusta, jota ei voi nostaa ennen " +
-          "availableFrom-päivää.",
+          "Accounts whose data has no cash transactions at all (e.g. OP's securities " +
+          "view) are not listed -- their balance cannot be derived. " +
+          "locked: true means a fixed-term deposit that cannot be withdrawn before " +
+          "the availableFrom date.",
       };
     },
   },
@@ -133,8 +128,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_allocation",
     description:
-      "Omistusten jakauma valitulla ulottuvuudella: kind (laji), currency (valuutta), " +
-      "account (tili) tai instrument (arvopaperi).",
+      "Allocation of holdings along the chosen dimension: kind, currency, " +
+      "account or instrument.",
     schema: Allocation,
     run: async (input) => {
       const { on = today(), dimension = "kind" } = Allocation.parse(input);
@@ -164,13 +159,12 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_returns",
     description:
-      "Tuottoluvut: aikapainotettu (twr) ja oma tuotto (xirr, rahapainotettu), " +
-      "sekä salkun arvo jakson lopussa.",
+      "Return figures: time-weighted (twr) and own return (xirr, money-weighted), " +
+      "and the portfolio value at the end of the period.",
     schema: Range,
     run: async (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
-      // Invested rows only: a bank account's spending is not portfolio
-      // performance (see valuation.ts's `Portfolio.investedTxns`).
+      // Invested rows only: bank spending is not portfolio performance.
       const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
       const final = series.at(-1);
@@ -185,8 +179,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           .map((f) => ({ date: f.date, amountEur: negateMoney(f.amountEur) }));
         mwr = final ? xirr(flows, { date: final.date, amountEur: final.valueEur }) : null;
       } catch {
-        // xirr refuses when it cannot converge or has too few flows. "Unknown"
-        // is the honest answer, and the model is told to say so.
+        // xirr may not converge or lack flows; "unknown" is the honest answer.
         mwr = null;
       }
 
@@ -198,27 +191,22 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         twr: twr(series, twrFlows),
         mwr,
         note:
-          "twr on aikapainotettu tuotto koko jaksolta (ei vuosittaistettu). " +
-          "mwr on vuosittainen sisäinen korkokanta. null tarkoittaa, ettei lukua voi laskea.",
+          "twr is the time-weighted return over the whole period (not annualised). " +
+          "mwr is the annual internal rate of return. null means the figure cannot be calculated.",
       };
     },
   },
   {
     name: "get_value_series",
     description:
-      "Salkun arvon kehitys jaksolla. Palauttaa enintään 60 pistettä tasavälein, " +
-      "eli pitkältä jaksolta noin kuukausittain.",
+      "Portfolio value over a period. Returns at most 60 evenly spaced points, " +
+      "i.e. roughly monthly for a long period.",
     schema: Range,
     run: async (input) => {
       const { from = "2015-01-01", to = today() } = Range.parse(input);
       const { investedTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
-      // Thinned rather than truncated: a truncated series would answer "how did
-      // it develop" with only its beginning. 60 points is what a sentence about
-      // the shape of a curve needs -- a daily series over several years costs
-      // thousands of tokens per turn, and every one of them is re-sent on each
-      // later round trip of the same conversation. The chart on the dashboard is
-      // where the full resolution belongs.
+      // Thinned, not truncated, so the shape survives; 60 points is enough and a daily series costs thousands of tokens re-sent each round trip.
       const step = Math.max(1, Math.ceil(series.length / MAX_SERIES_POINTS));
       return {
         from,
@@ -232,8 +220,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_transactions",
     description:
-      "Tapahtumat aikajärjestyksessä, uusimmat ensin. Rajaa 'from'/'to' päivillä ja " +
-      "'limit' määrällä (oletus 25, enintään 200).",
+      "Transactions in date order, newest first. Narrow with 'from'/'to' dates and " +
+      "'limit' (default 25, at most 200).",
     schema: Transactions,
     run: async (input) => {
       const {
@@ -269,9 +257,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_spending",
     description:
-      "Mihin rahaa on kulunut pankkitileiltä jaksolla. groupBy: category (luokittain, " +
-      "esim. ruoka, ravintolat, liikenne) tai counterparty (saajittain). Summat on " +
-      "laskettu valmiiksi -- älä laske niitä itse yhteen.",
+      "Where money went from bank accounts in a period. groupBy: category (e.g. groceries, " +
+      "restaurants, transport) or counterparty (by payee). Sums are already " +
+      "calculated -- do not add them up yourself.",
     schema: Spending,
     run: async (input) => {
       const {
@@ -280,9 +268,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         groupBy = "category",
         limit = 15,
       } = Spending.parse(input);
-      // Bank rows only, minus the movements: a share purchase is money leaving
-      // too, and counting it -- or a transfer to savings, or the credit card
-      // bill -- would report the year's biggest movement as its biggest expense.
+      // Bank rows minus movements: a share purchase, savings transfer or card bill would otherwise be the biggest "expense".
       const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
       const moved = notSpendingIds(txns, bank);
@@ -302,8 +288,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         // Said out loud so an answer cannot imply every euro was classified.
         uncategorisedShare: summary.uncategorisedShare,
         note:
-          "Summat ovat negatiivisia (rahaa ulos). Luokittelu perustuu maksun tekstiin, " +
-          "joten osa päätyy luokkaan Muu. Kerro uncategorisedShare jos se on merkittävä.",
+          "Sums are negative (money out). Categorisation is based on the payment text, " +
+          "so some end up in the category Other. Mention uncategorisedShare if it is significant.",
       };
     },
   },
@@ -311,8 +297,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_uncategorised_spending",
     description:
-      "Maksut, joita sääntöpohjainen luokittelu ei tunnistanut (luokka Muu), saajittain " +
-      "ja summattuna. Käytä tätä kun haluat arvioida itse mihin ne kuuluvat.",
+      "Payments the rule-based categorisation did not recognise (category Other), by payee " +
+      "and summed. Use this when you want to judge for yourself where they belong.",
     schema: Spending,
     run: async (input) => {
       const { from = "1900-01-01", to = today(), limit = 30 } = Spending.parse(input);
@@ -325,7 +311,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           (txn) =>
             bank.has(txn.accountId) &&
             !moved.has(txn.id) &&
-            categoriseWith(txn.note ?? "", rules) === "muu",
+            categoriseWith(txn.note ?? "", rules) === "other",
         ),
         { from, to, by: "counterparty", limit, rules },
       );
@@ -339,9 +325,9 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           count: group.count,
         })),
         note:
-          "Nämä eivät osu mihinkään sääntöön. Voit arvioida luokan nimen perusteella, " +
-          "mutta sano selvästi että kyse on arviosta -- sääntöpohjaiset luvut ovat varmoja, " +
-          "arviosi ei.",
+          "These match no rule. You may judge the category from the name, " +
+          "but say clearly that it is an estimate -- rule-based figures are certain, " +
+          "yours is not.",
       };
     },
   },
@@ -349,18 +335,16 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "calculate",
     description:
-      "Laskee tarkasti sentin tarkkuudella: sum, subtract, multiply, divide, percent, average. " +
-      "Käytä tätä aina kun johdat luvun toisista luvuista -- älä laske päässäsi.",
+      "Calculates exactly, to the cent: sum, subtract, multiply, divide, percent, average. " +
+      "Always use this when deriving a figure from other figures -- do not calculate in your head.",
     schema: Calculation,
-    // The one tool that touches no data at all, but it shares `ChatTool`'s
-    // async shape with the rest rather than making the type a union of two.
     run: (input) => {
       const { operation, values } = Calculation.parse(input);
       try {
         return Promise.resolve(calculate({ operation, values }));
       } catch (cause) {
         return Promise.resolve({
-          error: cause instanceof Error ? cause.message : "Laskenta epäonnistui",
+          error: cause instanceof Error ? cause.message : "Calculation failed",
         });
       }
     },
@@ -368,14 +352,12 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
 
   {
     name: "get_instruments",
-    description: "Rekisteröidyt arvopaperit: nimi, ISIN, laji, valuutta ja hintalähde.",
+    description: "Registered instruments: name, ISIN, kind, currency and price source.",
     schema: NoArgs,
     run: async (input) => {
       NoArgs.parse(input);
       const { txns, instruments } = await loadPortfolio(db, userId);
-      // The instrument registry is shared across the household by design (one
-      // ISIN, one row), so it is narrowed here to what this user's own ledger
-      // actually references -- chat must not name a fund only someone else owns.
+      // The registry is household-shared; narrow to what this user's ledger references so chat never names someone else's fund.
       const owned = new Set(txns.map((t) => t.instrumentId));
       return {
         instruments: instruments
@@ -393,62 +375,55 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_drift",
     description:
-      "Ero tavoitejakaumaan: kunkin erän tavoite, nykyosuus ja erotus prosentteina ja euroina, " +
-      "sekä kulut vuosittain. by: kind (oletus), currency, account tai instrument. " +
-      "Älä ehdota kauppoja -- kerro ero ja mitä sen korjaaminen vaatisi.",
+      "Gap to the target allocation: each item's target, current share and difference in percent and euros, " +
+      "and fees per year. by: kind (default), currency, account or instrument. " +
+      "Do not suggest trades -- report the gap and what correcting it would take.",
     schema: Grouping,
     run: async (input) => {
       const { by = "kind" } = Grouping.parse(input);
       const on = today();
-      // Reads through the same functions the Tasapaino screen calls, so chat
-      // and the screen cannot disagree about how far off the portfolio is.
       const drift = await driftReportFor(db, userId, by, on);
       const fees = await feeReportFor(db, userId);
       return {
         asOf: on,
         groupBy: by,
         totalEur: drift.totalEur,
-        // Said out loud: one unpriceable holding makes every slice's euro
-        // figure wrong by an unknown amount, not only its own.
+        // One unpriceable holding makes every slice's euro figure wrong by an unknown amount.
         incomplete: drift.incomplete,
         rows: drift.rows.map((row) => ({
-          erä: row.label,
-          tavoite: row.targetPercent,
-          nyt: row.actualPercent,
-          ero: row.driftPercent,
-          siirrettävä: row.driftEur,
-          tavoitteessa: row.withinBand,
-          ilmanTavoitetta: row.untargeted,
+          item: row.label,
+          target: row.targetPercent,
+          current: row.actualPercent,
+          difference: row.driftPercent,
+          movableEur: row.driftEur,
+          withinBand: row.withinBand,
+          untargeted: row.untargeted,
         })),
         fees: fees.map((year) => ({
           year: year.year,
-          kulutEur: year.totalEur,
-          pidätettyVeroEur: year.withheldTaxEur,
+          feesEur: year.totalEur,
+          withheldTaxEur: year.withheldTaxEur,
         })),
         note:
-          "Ilman tavoitetta oleville erille ei lasketa eroa. Pidätetty pääomatulovero ei ole kulu " +
-          "vaan veroa voitosta. Et anna sijoitusneuvoja etkä kehota myymään.",
+          "No difference is calculated for untargeted items. Withheld capital income tax is not a fee " +
+          "but tax on a gain. You give no investment advice and do not urge selling.",
       };
     },
   },
   {
     name: "get_tax_year",
     description:
-      "Verovuoden luvut: luovutusvoitot ja -tappiot, osingot ja osakesäästötilin nostot. " +
-      "Nämä ovat veroilmoituksen tarkistamista varten -- veron määrää ei lasketa, koska " +
-      "pääomatulon veroprosentti riippuu myös tuloista joita sovellus ei näe. Ilman " +
-      "vuotta palautetaan viimeisin vuosi jolla on verotettavia tapahtumia.",
+      "Tax-year figures: disposal gains and losses, dividends and share savings account withdrawals. " +
+      "These are for checking the tax return -- the amount of tax is not calculated, because " +
+      "the capital-income tax rate also depends on income the app cannot see. Without a " +
+      "year, the latest year with taxable events is returned.",
     schema: TaxYear,
     run: async (input) => {
       const { year } = TaxYear.parse(input);
       const years = await taxYearsFor(db, userId);
-      // A ledger with no taxable event at all still answers, for the year we
-      // are in: an empty report is the true answer to "what do I owe on 2026",
-      // and `availableYears` says which years have anything in them.
+      // An empty ledger still answers for the current year; `availableYears` says which have data.
       const chosen = year ?? years[0] ?? Number(today().slice(0, 4));
 
-      // Reads through the same function the Verot screen calls, so chat and
-      // the screen cannot disagree about a figure someone files on.
       const report = await taxYearFor(db, userId, chosen);
       return {
         year: report.year,
@@ -460,7 +435,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         taxableGainEur: report.netEur,
         lossCarriedOut: report.lossCarriedOut,
         dividendTaxableEur: report.dividendTaxableEur,
-        // Said out loud so an answer cannot present a net figure as a gross one.
+        // Said out loud so a net figure is not presented as gross.
         dividendWithholdingMissing: report.dividends.some((row) => !row.withholdingRecorded),
         ost: report.ost.map((account) => ({
           account: account.accountName,
@@ -474,8 +449,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
           })),
         })),
         note:
-          "Veron määrää ei lasketa. Jos jokin osakesäästötilin nosto on blocked, sen " +
-          "veronalaista osuutta ei voitu laskea -- kerro syy äläkä arvaa lukua.",
+          "The amount of tax is not calculated. If a share savings account withdrawal is blocked, its " +
+          "taxable part could not be calculated -- give the reason and do not guess a figure.",
       };
     },
   },

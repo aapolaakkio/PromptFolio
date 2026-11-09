@@ -9,12 +9,7 @@ import { EUR } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
 import { z, ZodError } from "zod";
 
-// Snapshots are compared against the ledger, never merged into it, so these
-// tests care about two things: that a statement round-trips intact, and that
-// the reconciliation reports differences without touching any transaction.
-// Mirrors portfolio.test.ts's setup, including its reliance on ../test-setup.ts
-// (a vitest.config.ts `[test] preload`) having pinned the shared database to a
-// migrated in-memory database before this file's own code runs.
+// Snapshots are compared against the ledger, never merged: a statement must round-trip intact and reconciliation must not touch any transaction.
 
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 let service: typeof import("./service.ts");
@@ -28,7 +23,6 @@ const tableReader = {
 beforeAll(async () => {
   auth = (await import("../auth.ts")).getAuth();
   service = await import("./service.ts");
-  // Every statement is read by a recipe; this stands in for the model.
   service._setReaderClient(tableReader);
   transactions = (await import("../db/schema.ts")).transactions;
 });
@@ -50,7 +44,7 @@ const answer = async <T>(run: () => T | Promise<T>): Promise<Answer<T>> => {
     if (cause instanceof ZodError) {
       return {
         status: 400,
-        body: { error: cause.issues[0]?.message ?? "Virheellinen pyyntö" },
+        body: { error: cause.issues[0]?.message ?? "Invalid request" },
       };
     }
     throw cause;
@@ -160,7 +154,6 @@ describe("POST /api/snapshots", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "1" }],
     });
-    // 404, not 403: "not yours" must be indistinguishable from "does not exist".
     expect(response.status).toBe(404);
   });
 
@@ -173,7 +166,6 @@ describe("POST /api/snapshots", () => {
       source: "manual",
       rows: [{ instrumentId: 999_999, quantity: "1" }],
     });
-    // Dropping it silently would report a clean statement that never was.
     expect(response.status).toBe(400);
   });
 
@@ -208,6 +200,7 @@ describe("POST /api/snapshots", () => {
       ],
     });
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
+    // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
     const response = await reconcileOf(userId, snapshot.id);
@@ -231,7 +224,6 @@ describe("GET /api/snapshots/:id/reconcile", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "10" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
@@ -263,7 +255,6 @@ describe("GET /api/snapshots/:id/reconcile", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "15" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
@@ -294,14 +285,12 @@ describe("GET /api/snapshots/:id/reconcile", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "10" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
     const response = await reconcileOf(userId, snapshot.id);
     // SAFETY: as above.
     const body = response.body as { rows: Array<{ instrumentId: number }> };
-    // The other account's holding must not appear as a phantom difference.
     expect(body.rows.map((r) => r.instrumentId)).toEqual([instrumentId]);
   });
 
@@ -315,7 +304,6 @@ describe("GET /api/snapshots/:id/reconcile", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "1" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
@@ -347,7 +335,6 @@ describe("POST /api/snapshots/:id/adjust", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: statementQty }],
     });
-    // SAFETY: a 201 always returns the inserted snapshot.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
     return { userId, accountId, instrumentId, snapshotId: snapshot.id };
@@ -356,7 +343,6 @@ describe("POST /api/snapshots/:id/adjust", () => {
   test("adding units requires a cost basis rather than inventing one", async () => {
     const { userId, instrumentId, snapshotId } = await setup("15", "10000000");
     const response = await adjust(userId, snapshotId, { instrumentId });
-    // Defaulting it to zero would report the whole holding as gain later.
     expect(response.status).toBe(400);
   });
 
@@ -376,10 +362,9 @@ describe("POST /api/snapshots/:id/adjust", () => {
     };
     expect(txn.type).toBe("TRANSFER_IN");
     expect(txn.quantity).toBe(5_000_000);
-    // Negative: an acquisition's amount is the cash that left.
     expect(txn.amount).toBe(-50000);
     expect(txn.externalId).toBe(`adjustment:${snapshotId}:${instrumentId}`);
-    expect(txn.note).toContain("Täsmäytyskorjaus");
+    expect(txn.note).toContain("Reconciliation adjustment");
   });
 
   test("removing units takes no cost basis", async () => {
@@ -396,8 +381,7 @@ describe("POST /api/snapshots/:id/adjust", () => {
   test("the same row cannot be adjusted twice", async () => {
     const { userId, instrumentId, snapshotId } = await setup("15", "10000000");
     expect((await adjust(userId, snapshotId, { instrumentId, costEur: "500" })).status).toBe(200);
-    // Idempotency comes from the unique (accountId, externalId) index, so a
-    // second attempt is a conflict rather than a silent duplicate holding.
+    // Idempotency comes from the unique (accountId, externalId) index: a second attempt conflicts.
     expect((await adjust(userId, snapshotId, { instrumentId, costEur: "500" })).status).toBe(409);
   });
 
@@ -443,7 +427,6 @@ describe("DELETE /api/snapshots/:id", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "10" }],
     });
-    // SAFETY: a 201 always returns the inserted snapshot.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
@@ -462,7 +445,6 @@ describe("DELETE /api/snapshots/:id", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "15" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
     await answer(() =>
@@ -474,8 +456,7 @@ describe("DELETE /api/snapshots/:id", () => {
 
     const before = (await db.select().from(transactions).all()).length;
     expect((await remove(userId, snapshot.id)).status).toBe(200);
-    // Tidying up a statement must never retract a ledger entry the user chose
-    // to make -- that would change holdings as a side effect.
+    // Tidying up a statement must never retract a ledger entry the user chose.
     expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
@@ -489,13 +470,11 @@ describe("DELETE /api/snapshots/:id", () => {
       source: "manual",
       rows: [{ instrumentId, quantity: "1" }],
     });
-    // SAFETY: as above.
     // SAFETY: a 201 from POST /api/snapshots returns the inserted row's id.
     const snapshot = created.body as { id: number };
 
     const stranger = await signUp(`del-stranger-${crypto.randomUUID()}@example.com`);
     expect((await remove(stranger.userId, snapshot.id)).status).toBe(404);
-    // And it is still there afterwards.
     expect((await reconcileOf(owner.userId, snapshot.id)).status).toBe(200);
   });
 });
@@ -511,7 +490,7 @@ describe("POST /api/snapshots/paste", () => {
 
     const response = await paste(userId, {
       asOf: "2026-06-30",
-      text: [HEADER, "Esimerkki Indeksi\tEUR\t27,4431\t10072,715424"].join("\n"),
+      text: [HEADER, "Example Indeksi\tEUR\t27,4431\t10072,715424"].join("\n"),
     });
     expect(response.status).toBe(200);
     // SAFETY: a 200 from this route always returns { asOf, rows, problems }.
@@ -539,7 +518,7 @@ describe("POST /api/snapshots/paste", () => {
       asOf: "2026-06-30",
       text: [HEADER, "Paste Match Fund\tEUR\t10\t100,00"].join("\n"),
     });
-    // SAFETY: as above.
+    // SAFETY: a 200 from the paste route returns this shape.
     const body = response.body as {
       rows: Array<{ instrumentId: number | null }>;
     };
@@ -550,10 +529,10 @@ describe("POST /api/snapshots/paste", () => {
     const { userId } = await signUp(`paste-bad-${crypto.randomUUID()}@example.com`);
     const response = await paste(userId, {
       asOf: "2026-06-30",
-      text: [HEADER, "Hyvä\tEUR\t10\t100,00", "Huono\tEUR\tei-luku\t50,00"].join("\n"),
+      text: [HEADER, "Good\tEUR\t10\t100,00", "Bad\tEUR\tnot-a-number\t50,00"].join("\n"),
     });
     const body = ProposalSchema.parse(response.body);
-    expect(body.rows.map((r) => r.name)).toEqual(["Hyvä"]);
+    expect(body.rows.map((r) => r.name)).toEqual(["Good"]);
     expect(body.problems).toHaveLength(1);
   });
 
@@ -561,7 +540,7 @@ describe("POST /api/snapshots/paste", () => {
     const { userId } = await signUp(`paste-hdr-${crypto.randomUUID()}@example.com`);
     const response = await paste(userId, {
       asOf: "2026-06-30",
-      text: ["Nimi\tArvo EUR", "Esimerkki\t10,00"].join("\n"),
+      text: ["Nimi\tArvo EUR", "Example\t10,00"].join("\n"),
     });
     expect(response.status).toBe(400);
   });
@@ -590,7 +569,7 @@ describe("POST /api/snapshots/csv", () => {
 
   const CSV = [
     "Nimi\tValuutta\tMäärä\tArvo EUR",
-    "Esimerkki Indeksi\tEUR\t27,4431\t10072,715424",
+    "Example Indeksi\tEUR\t27,4431\t10072,715424",
   ].join("\n");
 
   // Nordnet writes UTF-16LE; read as UTF-8 the file is a run of null bytes.
@@ -608,7 +587,6 @@ describe("POST /api/snapshots/csv", () => {
     expect(body.asOf).toBe("2026-06-30");
     expect(body.rows[0]!.quantity).toBe("27.4431");
     expect(body.rows[0]!.marketValueEur).toBe("10072.72");
-    // A preview stores nothing.
     expect((await db.select().from(transactions).all()).length).toBe(before);
   });
 
@@ -622,25 +600,18 @@ describe("POST /api/snapshots/csv", () => {
 
   test("refuses a file whose header lacks a needed column", async () => {
     const { userId } = await signUp(`csv-bad-${crypto.randomUUID()}@example.com`);
-    const response = await upload(userId, utf16le("Nimi\tArvo EUR\nEsimerkki\t10,00"));
+    const response = await upload(userId, utf16le("Nimi\tArvo EUR\nExample\t10,00"));
     expect(response.status).toBe(400);
   });
 });
 
-// A holdings PDF is read by a recipe; `_setReaderClient` swaps in a scripted
-// model, and the printed total is carried into the proposal for the reconcile
-// screen to show. Reset after each test so a later test never silently reuses
-// a scripted recipe.
+// A holdings PDF is read by a recipe; `_setReaderClient` swaps in a scripted model, reset after each test.
 describe("a holdings PDF", () => {
   afterEach(() => {
     service._setReaderClient(tableReader);
   });
 
-  /**
-   * A holdings recipe for the fixture PDF's text, which is a bank statement:
-   * it reads one line as a holding so the wiring can be checked end to end --
-   * the statement's date, a total the holdings reach, and a name match.
-   */
+  /** A recipe for the fixture PDF's text (a bank statement): reads one line as a holding, with the statement's date, a reaching total and a name match. */
   const pdfRecipe = {
     ...TABLE_HOLDINGS_RECIPE,
     layout: "record",

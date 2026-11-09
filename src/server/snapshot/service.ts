@@ -16,12 +16,7 @@ import { extractPages } from "../import/pdf-read.ts";
 import { MAX_PASTE_CHARS } from "../import/service.ts";
 import { MAX_UPLOAD_BYTES } from "../import/upload.ts";
 
-/**
- * A fund name reduced to what two spellings of the same fund share: brokers
- * print their own suffixes ("-SIJOITUSRAHASTO A-OSUUDET") that the ledger's own
- * name does not carry. Only used to *suggest* a match, never to commit one --
- * the user confirms every row.
- */
+/** A fund name reduced to what two spellings share (brokers add suffixes like "-SIJOITUSRAHASTO A-OSUUDET"). Only to suggest a match; the user confirms every row. */
 const normalise = (name: string): string =>
   name
     .toLowerCase()
@@ -31,32 +26,24 @@ const normalise = (name: string): string =>
 
 const IsoDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the form YYYY-MM-DD");
 
 /**
- * Resolving one reconciliation row into a transaction the ledger did not have.
- *
- * `costEur` is required when units are arriving and refused when they are
- * leaving. An acquisition's cost basis cannot be guessed: defaulting it to zero
- * would report the holding's entire eventual value as gain, which is the exact
- * failure this project has already had to fix from three other causes. The
- * statement's own NAV can be offered as a default in the UI, but the figure
- * stored is one a person chose.
+ * Resolves one reconciliation row into a transaction. `costEur` is required when units arrive and refused when they leave:
+ * a defaulted-to-zero cost would report the holding's whole value as gain. The UI may offer the statement's NAV, but a person chooses the stored figure.
  */
 const Adjust = z.object({
   instrumentId: z.number().int().positive(),
   costEur: z.string().min(1).optional(),
 });
 
-/**
- * A holdings statement as the user supplies it: what the broker says was held on
- * a date. Quantities arrive as decimal strings, never JSON numbers -- the wire
- * format rule the whole project follows, so a fractional fund unit cannot lose
- * precision on the way in.
- */
+/** A holdings statement as supplied: what the broker says was held on a date. Quantities are decimal strings, never JSON numbers. */
 const PasteSnapshot = z.object({
   asOf: IsoDateSchema,
-  text: z.string().min(1, "Liitä taulukko ensin").max(MAX_PASTE_CHARS, "Liite on liian suuri"),
+  text: z
+    .string()
+    .min(1, "Paste the table first")
+    .max(MAX_PASTE_CHARS, "The pasted text is too large"),
 });
 
 const CreateSnapshot = z.object({
@@ -72,22 +59,18 @@ const CreateSnapshot = z.object({
         marketValue: z.string().min(1).optional(),
       }),
     )
-    .min(1, "Tilannevedos ilman rivejä ei kerro mitään"),
+    .min(1, "A snapshot without rows says nothing"),
   statedTotalEur: z.string().nullable().optional(),
 });
 
 /** Minor-unit integer from a decimal string, or a 400 naming the field. */
 const toMinor = (text: string, label: string): number => {
   const parsed = Number(text.replace(",", ".").replace(/\s/g, ""));
-  if (!Number.isFinite(parsed)) throw new HttpError(400, `${label} ei ole kelvollinen luku`);
+  if (!Number.isFinite(parsed)) throw new HttpError(400, `${label} is not a valid number`);
   return Math.round(parsed * 100);
 };
 
-/**
- * Snapshots are compared against the ledger, never merged into it (spec §5.2):
- * the worst a misread statement can do is show a difference the user dismisses.
- * Nothing here writes a transaction.
- */
+/** Snapshots are compared against the ledger, never merged into it: a misread statement can at worst show a difference the user dismisses. Nothing here writes a transaction. */
 export const AccountQuery = z.object({ accountId: z.number().int().positive() });
 export const SnapshotQuery = z.object({ snapshotId: z.number().int().positive() });
 export const AdjustInput = z.intersection(SnapshotQuery, Adjust);
@@ -106,8 +89,7 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
   const input = CreateSnapshot.parse(body);
   await assertAccountOwned(userId, input.accountId);
 
-  // Every row must name an instrument that exists, or the reconciliation would
-  // silently drop it and report a clean statement that never was.
+  // Every row must name an existing instrument, or reconciliation would drop it and report a clean statement that never was.
   const known = new Set(
     (
       await db
@@ -124,7 +106,7 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
   );
   const unknown = input.rows.find((row) => !known.has(row.instrumentId));
   if (unknown !== undefined) {
-    throw new HttpError(400, `Arvopaperia ${unknown.instrumentId} ei ole olemassa`);
+    throw new HttpError(400, `Instrument ${unknown.instrumentId} does not exist`);
   }
 
   const check = holdingsTotalCheck(
@@ -134,21 +116,17 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
   if (check !== null && !check.ok) {
     throw new HttpError(
       400,
-      `Rivien arvot eivät täsmää otteen kokonaisarvoon (ero ${check.differenceEur} €). Korjaa rivit ennen tallennusta.`,
+      `Row values do not match the statement total (difference ${check.differenceEur} €). Fix the rows before saving.`,
     );
   }
 
-  // ponytail: two steps, not one transaction. The rows need the snapshot's
-  // generated id, which only exists once its insert has run, and D1 has no
-  // interactive transaction to read it inside. The rows are still one batch,
-  // so the failure left behind is a snapshot with no rows -- visible and
-  // re-importable -- rather than a half-filled one.
+  // ponytail: two steps, not one transaction: the rows need the snapshot's generated id and D1 has no interactive transaction. A failure leaves a visible, re-importable snapshot with no rows.
   const snapshot = await db
     .insert(snapshots)
     .values({ accountId: input.accountId, asOf: input.asOf, source: input.source })
     .returning()
     .get();
-  if (snapshot === undefined) throw new HttpError(500, "Tilannevedoksen luonti epäonnistui");
+  if (snapshot === undefined) throw new HttpError(500, "Creating the snapshot failed");
 
   if (input.rows.length > 0) {
     const rows = input.rows.map((row) =>
@@ -157,11 +135,10 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
         instrumentId: row.instrumentId,
         quantity: Number(parseQuantity(row.quantity).scaled),
         nav: row.nav === undefined ? 0 : toMinor(row.nav, "NAV"),
-        marketValue: row.marketValue === undefined ? 0 : toMinor(row.marketValue, "Markkina-arvo"),
+        marketValue: row.marketValue === undefined ? 0 : toMinor(row.marketValue, "Market value"),
       }),
     );
-    // SAFETY: `db.batch` is typed as a non-empty tuple; the length check above
-    // is what establishes `rows` is non-empty here.
+    // SAFETY: `db.batch` wants a non-empty tuple; the length check above establishes it.
     await db.batch(rows as [(typeof rows)[number], ...typeof rows]);
   }
   return snapshot;
@@ -169,7 +146,7 @@ export const createSnapshot = async (userId: string, body: z.infer<typeof Create
 
 const ownedSnapshot = async (userId: string, snapshotId: number) => {
   const snapshot = await db.select().from(snapshots).where(eq(snapshots.id, snapshotId)).get();
-  if (!snapshot) throw new HttpError(404, "Tilannevedosta ei löydy");
+  if (!snapshot) throw new HttpError(404, "Snapshot not found");
   await assertAccountOwned(userId, snapshot.accountId);
   return snapshot;
 };
@@ -183,9 +160,7 @@ export const reconcileSnapshot = async (userId: string, snapshotId: number) => {
   const snapshot = await ownedSnapshot(userId, snapshotId);
   const stated = await statedRows(snapshotId);
 
-  // Only this account's transactions: a statement covers one account, and
-  // comparing it against the whole portfolio would report every holding
-  // elsewhere as a difference.
+  // This account only: comparing against the whole portfolio would report every other holding as a difference.
   const { txns, instruments: known } = await loadPortfolio(db, userId);
   const ownTxns: Txn[] = txns.filter((t) => t.accountId === snapshot.accountId);
   const nameOf = new Map(known.map((i) => [i.id, i.name]));
@@ -210,7 +185,7 @@ export const reconcileSnapshot = async (userId: string, snapshotId: number) => {
   };
 };
 
-export const proposalFrom = async (
+const proposalFrom = async (
   userId: string,
   asOf: string,
   parsed: {
@@ -241,7 +216,7 @@ export const _setReaderClient = (client: ChatClient | null): void => {
 
 /** The same ceiling every other upload has: the file is read whole, then sent in part to a model. */
 const assertSize = (file: File): void => {
-  if (file.size > MAX_UPLOAD_BYTES) throw new HttpError(413, "Tiedosto on liian suuri (max 5 MB)");
+  if (file.size > MAX_UPLOAD_BYTES) throw new HttpError(413, "File is too large (max 5 MB)");
 };
 
 /** A recipe's complaint, as a 400 the owner can read. */
@@ -256,61 +231,47 @@ const proposeFromText = async (userId: string, text: string, asOf: string) => {
   return proposalFrom(userId, asOf, { holdings: run.holdings, problems: run.problems });
 };
 
-/**
- * Proposes a snapshot from a broker's holdings export, read by a recipe like
- * every other import. Stores nothing -- the user confirms through
- * `createSnapshot`.
- */
+/** Proposes a snapshot from a broker's holdings export via a recipe. Stores nothing: the user confirms through `createSnapshot`. */
 export const proposeFromCsv = async (userId: string, form: FormData) => {
   const file = form.get("file");
   const asOf = IsoDateSchema.parse(form.get("asOf"));
-  if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  if (!(file instanceof File)) throw new HttpError(400, "File is missing");
   assertSize(file);
   try {
     const text = decodeHoldingsFile(new Uint8Array(await file.arrayBuffer()));
     return await proposeFromText(userId, text, asOf);
   } catch (cause) {
-    throw asBadRequest(cause, "Tiedostoa ei voitu lukea");
+    throw asBadRequest(cause, "The file could not be read");
   }
 };
 
-/**
- * Proposes a snapshot from a broker's on-screen holdings table, pasted in: a
- * tab-separated table or one value per line, whichever the recipe describes.
- */
+/** Proposes a snapshot from a pasted holdings table (tab-separated, or one value per line). */
 export const proposeFromPaste = async (userId: string, body: z.infer<typeof PasteSnapshot>) => {
   const input = PasteSnapshot.parse(body);
   try {
     return await proposeFromText(userId, input.text, input.asOf);
   } catch (cause) {
-    throw asBadRequest(cause, "Liitettyä taulukkoa ei voitu lukea");
+    throw asBadRequest(cause, "The pasted table could not be read");
   }
 };
 
-/**
- * Proposes a snapshot from a holdings statement PDF. The statement's own date
- * and printed total come with it; the recipe is only kept when the holdings add
- * up to that total, and the owner edits and confirms through `createSnapshot`,
- * which checks the total again.
- */
+/** Proposes a snapshot from a holdings PDF with its date and printed total. The recipe is kept only when holdings add up to that total, which `createSnapshot` checks again. */
 export const proposeFromPdf = async (userId: string, form: FormData) => {
   const file = form.get("file");
-  if (!(file instanceof File)) throw new HttpError(400, "Tiedosto puuttuu");
+  if (!(file instanceof File)) throw new HttpError(400, "File is missing");
   assertSize(file);
   try {
     const pages = await extractPages(await file.arrayBuffer());
     const text = pages.map((page) => page.text).join("\n");
     const run = await readHoldingsByRecipe(text, userId, readerClient ?? createClient(), true);
-    if (run.asOf === null) throw new Error("Otteen päivää ei löytynyt");
+    if (run.asOf === null) throw new Error("The statement date was not found");
     const proposal = await proposalFrom(userId, run.asOf, {
       holdings: run.holdings,
       problems: run.problems,
     });
     return {
       ...proposal,
-      // A holdings PDF's market value may be printed in a currency other than
-      // EUR; the row carries it along so the review screen can show it, while
-      // the total check (createSnapshot's) still treats marketValueEur as EUR.
+      // A holdings PDF may print market value in a non-EUR currency; the row carries it for the review screen, while createSnapshot's total check still treats marketValueEur as EUR.
       rows: proposal.rows.map((row, index) => ({
         ...row,
         currency: run.holdings[index]?.currency ?? EUR,
@@ -320,15 +281,11 @@ export const proposeFromPdf = async (userId: string, form: FormData) => {
       source: "pdf" as const,
     };
   } catch (cause) {
-    throw asBadRequest(cause, "PDF-tiedostoa ei voitu lukea");
+    throw asBadRequest(cause, "The PDF could not be read");
   }
 };
 
-/**
- * Removes a statement. Its rows go with it through the schema's cascade; any
- * adjusting transaction it produced deliberately does not -- an adjustment is a
- * ledger entry the user chose to make, and tidying up must not retract it.
- */
+/** Removes a statement and its rows (cascade). An adjusting transaction it produced stays: it is a ledger entry the user chose. */
 export const deleteSnapshot = async (userId: string, snapshotId: number) => {
   await ownedSnapshot(userId, snapshotId);
   await db.delete(snapshots).where(eq(snapshots.id, snapshotId)).run();
@@ -349,11 +306,9 @@ export const adjustSnapshotRow = async (
   const row = reconcile(own, stated, snapshot.asOf).find(
     (candidate) => candidate.instrumentId === input.instrumentId,
   );
-  if (!row) throw new HttpError(404, "Riviä ei löydy tästä otteesta");
+  if (!row) throw new HttpError(404, "Row not found in this statement");
 
-  // Identifiable forever, and idempotent: the unique (accountId, externalId)
-  // index means adjusting the same row twice is a conflict, not a silent
-  // duplicate.
+  // Identifiable forever and idempotent: the unique (accountId, externalId) index makes a repeat a conflict, not a duplicate.
   const externalId = `adjustment:${snapshotId}:${input.instrumentId}`;
   const existing = await db
     .select({ id: transactions.id })
@@ -362,21 +317,21 @@ export const adjustSnapshotRow = async (
       and(eq(transactions.accountId, snapshot.accountId), eq(transactions.externalId, externalId)),
     )
     .get();
-  if (existing) throw new HttpError(409, "Tämä rivi on jo korjattu");
+  if (existing) throw new HttpError(409, "This row has already been corrected");
 
-  if (row.withinTolerance) throw new HttpError(400, "Rivi täsmää jo — korjattavaa ei ole");
+  if (row.withinTolerance) throw new HttpError(400, "Row already matches — nothing to correct");
 
   const arriving = row.delta.scaled > 0n;
   if (arriving && input.costEur === undefined) {
-    throw new HttpError(400, "Hankintameno vaaditaan, kun osuuksia lisätään");
+    throw new HttpError(400, "Cost basis is required when units are added");
   }
   if (!arriving && input.costEur !== undefined) {
-    throw new HttpError(400, "Hankintamenoa ei anneta, kun osuuksia poistetaan");
+    throw new HttpError(400, "Cost basis must not be given when units are removed");
   }
 
   const quantity = row.delta.scaled > 0n ? row.delta.scaled : -row.delta.scaled;
   const amount = arriving ? -Math.round(Number(input.costEur!.replace(",", ".")) * 100) : 0;
-  if (!Number.isFinite(amount)) throw new HttpError(400, "Hankintameno ei ole kelvollinen luku");
+  if (!Number.isFinite(amount)) throw new HttpError(400, "Cost basis is not a valid number");
 
   return db
     .insert(transactions)
@@ -394,7 +349,7 @@ export const adjustSnapshotRow = async (
       fxRateEur: 100_000_000,
       externalId,
       contentHash: externalId,
-      note: `Täsmäytyskorjaus otteesta ${snapshotId} (${snapshot.asOf})`,
+      note: `Reconciliation adjustment from statement ${snapshotId} (${snapshot.asOf})`,
     })
     .returning()
     .get();

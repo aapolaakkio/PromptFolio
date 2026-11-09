@@ -15,10 +15,7 @@ import {
 } from "./runner.ts";
 import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
 
-// The whole loop is exercised against a scripted model, and the client against
-// a fake Messages API: no account, no network, no cost. The global fetch throws
-// (test-network-guard.ts), so a regression that reached the real service would
-// fail this file rather than quietly bill the user.
+// The loop runs against a scripted model and a fake Messages API; the global fetch throws, so a regression reaching the real service fails here.
 
 const says = (text: string): ModelReply => ({ text, toolCalls: [] });
 const calls = (...names: string[]): ModelReply => ({
@@ -26,7 +23,6 @@ const calls = (...names: string[]): ModelReply => ({
   toolCalls: names.map((name, index) => ({ id: `call_${index}`, name, arguments: "{}" })),
 });
 
-/** Every request the runner made, so a test can assert on what the model saw. */
 type Seen = { requests: TurnParams[] };
 
 const scripted = (replies: ModelReply[], seen: Seen = { requests: [] }): ChatClient => ({
@@ -53,30 +49,30 @@ const stubTool = (name: string, run: (args: ToolArgs) => Promise<ToolResult>): C
 
 describe("runTurn", () => {
   test("reports each tool the model called, then the final answer", async () => {
-    const client = scripted([calls("get_holdings"), says("Salkun arvo on 120,00 EUR.")]);
+    const client = scripted([calls("get_holdings"), says("The portfolio is worth 120.00 EUR.")]);
 
     const events = await drain(
       runTurn(
         client,
         [stubTool("get_holdings", () => Promise.resolve({}))],
-        [{ role: "user", content: "Paljonko salkku on arvoltaan?" }],
+        [{ role: "user", content: "What is my portfolio worth?" }],
       ),
     );
 
     expect(events).toEqual([
       { type: "tool", name: "get_holdings" },
-      { type: "answer", text: "Salkun arvo on 120,00 EUR." },
+      { type: "answer", text: "The portfolio is worth 120.00 EUR." },
     ]);
   });
 
   test("sends the model the rules that forbid it doing its own arithmetic", async () => {
     const seen: Seen = { requests: [] };
-    await drain(runTurn(scripted([says("ok")], seen), [], [{ role: "user", content: "moi" }]));
+    await drain(runTurn(scripted([says("ok")], seen), [], [{ role: "user", content: "hi" }]));
 
     expect(seen.requests[0]?.model).toBe(DEFAULT_CHAT_MODEL);
     expect(seen.requests[0]?.messages).toEqual([
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: "moi" },
+      { role: "user", content: "hi" },
     ]);
   });
 
@@ -88,7 +84,7 @@ describe("runTurn", () => {
       runTurn(
         client,
         [stubTool("get_holdings", () => Promise.resolve({ asOf: "2026-06-01" }))],
-        [{ role: "user", content: "moi" }],
+        [{ role: "user", content: "hi" }],
       ),
     );
 
@@ -105,32 +101,36 @@ describe("runTurn", () => {
   test("keeps the last text when the model speaks before and after a tool call", async () => {
     const client = scripted([
       { text: "Katson.", toolCalls: [{ id: "t", name: "get_returns", arguments: "{}" }] },
-      says("Tuotto oli 20,00 %."),
+      says("The return was 20.00 %."),
     ]);
 
     const events = await drain(
       runTurn(client, [stubTool("get_returns", () => Promise.resolve({}))], []),
     );
 
-    expect(events.at(-1)).toEqual({ type: "answer", text: "Tuotto oli 20,00 %." });
+    expect(events.at(-1)).toEqual({ type: "answer", text: "The return was 20.00 %." });
   });
 
   test("hands a failing tool back to the model as a message rather than killing the turn", async () => {
     const failing = stubTool("get_holdings", () => {
-      throw new Error("Päivämäärä on virheellinen");
+      throw new Error("The date is invalid");
     });
     const seen: Seen = { requests: [] };
 
     const events = await drain(
-      runTurn(scripted([calls("get_holdings"), says("En saanut lukua.")], seen), [failing], []),
+      runTurn(
+        scripted([calls("get_holdings"), says("I could not get the figure.")], seen),
+        [failing],
+        [],
+      ),
     );
 
     expect(seen.requests[1]?.messages.at(-1)).toEqual({
       role: "tool",
       tool_call_id: "call_0",
-      content: JSON.stringify({ error: "Päivämäärä on virheellinen" }),
+      content: JSON.stringify({ error: "The date is invalid" }),
     });
-    expect(events.at(-1)).toEqual({ type: "answer", text: "En saanut lukua." });
+    expect(events.at(-1)).toEqual({ type: "answer", text: "I could not get the figure." });
   });
 
   test("refuses a tool the model invented, and arguments the schema does not accept", async () => {
@@ -153,7 +153,7 @@ describe("runTurn", () => {
     await drain(runTurn(client, [strict], []));
 
     const results = seen.requests[1]?.messages.filter((m) => m.role === "tool") ?? [];
-    expect(results[0]?.content).toBe(JSON.stringify({ error: "Tuntematon työkalu: make_money" }));
+    expect(results[0]?.content).toBe(JSON.stringify({ error: "Unknown tool: make_money" }));
     expect(results[1]?.content).toContain("error");
   });
 
@@ -171,7 +171,7 @@ describe("runTurn", () => {
     expect(seen.requests).toHaveLength(10);
     expect(events.at(-1)).toEqual({
       type: "answer",
-      text: "En saanut vastausta valmiiksi: työkalukutsuja tuli liikaa.",
+      text: "I could not finish the answer: too many tool calls.",
     });
   });
 
@@ -196,7 +196,6 @@ describe("runTurn", () => {
   });
 });
 
-/** A Messages API stream that says `text` and calls `tools`, in SSE form. */
 const anthropicStream = (
   text: string,
   tools: { id: string; name: string; input: unknown }[] = [],
@@ -286,7 +285,6 @@ const anthropicStream = (
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
 };
 
-/** The parts of a Messages API request body the tests look at. */
 const RequestBody = z.looseObject({
   messages: z.array(
     z.object({
@@ -296,7 +294,6 @@ const RequestBody = z.looseObject({
   ),
 });
 
-/** A fetch that records each request body and answers with the given responses in turn. */
 const fakeAnthropic = (...responses: Response[]) => {
   const bodies: z.infer<typeof RequestBody>[] = [];
   const urls: string[] = [];
@@ -314,13 +311,13 @@ const fakeAnthropic = (...responses: Response[]) => {
 
 describe("createClient", () => {
   test("sends the Messages API shape: system on top, tool results as user turns", async () => {
-    const api = fakeAnthropic(anthropicStream("valmis"));
+    const api = fakeAnthropic(anthropicStream("done"));
     await createClient(api.fetchImpl).run({
       model: "claude-opus-5-5",
       max_tokens: 64,
       messages: [
         { role: "system", content: "ohje" },
-        { role: "user", content: "moi" },
+        { role: "user", content: "hi" },
         {
           role: "assistant",
           content: "",
@@ -334,7 +331,7 @@ describe("createClient", () => {
     const body = api.bodies[0];
     expect(body?.system).toBe("ohje");
     expect(body?.messages).toEqual([
-      { role: "user", content: "moi" },
+      { role: "user", content: "hi" },
       {
         role: "assistant",
         content: [{ type: "tool_use", id: "toolu_1", name: "laske", input: { a: 1 } }],
@@ -356,7 +353,7 @@ describe("createClient", () => {
     await createClient(api.fetchImpl).run({
       model: "claude-haiku-5-5",
       max_tokens: 64,
-      messages: [{ role: "user", content: "moi" }],
+      messages: [{ role: "user", content: "hi" }],
       tools: [],
       response_format: {
         type: "json_schema",
@@ -373,21 +370,23 @@ describe("createClient", () => {
 
   test("streams text, returns tool calls, and keeps the raw blocks for replay", async () => {
     const api = fakeAnthropic(
-      anthropicStream("katsotaan salkku", [{ id: "toolu_9", name: "get_holdings", input: {} }]),
+      anthropicStream("let me check the portfolio", [
+        { id: "toolu_9", name: "get_holdings", input: {} },
+      ]),
     );
     const pieces: string[] = [];
     const reply = await createClient(api.fetchImpl).run(
       {
         model: "claude-opus-5-5",
         max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
+        messages: [{ role: "user", content: "hi" }],
         tools: [],
       },
       { onDelta: (text) => pieces.push(text) },
     );
 
-    expect(pieces.join("")).toBe("katsotaan salkku");
-    expect(reply.text).toBe("katsotaan salkku");
+    expect(pieces.join("")).toBe("let me check the portfolio");
+    expect(reply.text).toBe("let me check the portfolio");
     expect(reply.toolCalls).toEqual([{ id: "toolu_9", name: "get_holdings", arguments: "{}" }]);
     expect(reply.blocks?.map((block) => block.type)).toEqual(["thinking", "text", "tool_use"]);
   });
@@ -395,10 +394,10 @@ describe("createClient", () => {
   test("a turn replays the model's own blocks, thinking included, on the next round", async () => {
     const api = fakeAnthropic(
       anthropicStream("", [{ id: "toolu_1", name: "get_holdings", input: {} }]),
-      anthropicStream("Arvo on 1,00 EUR."),
+      anthropicStream("The value is 1.00 EUR."),
     );
     const tool = stubTool("get_holdings", () => Promise.resolve({ value: "1.00" }));
-    await drain(runTurn(createClient(api.fetchImpl), [tool], [{ role: "user", content: "moi" }]));
+    await drain(runTurn(createClient(api.fetchImpl), [tool], [{ role: "user", content: "hi" }]));
 
     const replayed = api.bodies[1]?.messages[1]?.content;
     expect(Array.isArray(replayed) ? replayed.map((block) => block.type) : replayed).toEqual([
@@ -415,7 +414,7 @@ describe("createClient", () => {
     const reply = await createClient(api.fetchImpl).run({
       model: "claude-opus-5-5",
       max_tokens: 64,
-      messages: [{ role: "user", content: "moi" }],
+      messages: [{ role: "user", content: "hi" }],
       tools: [],
     });
     expect(reply.toolCalls).toEqual([]);
@@ -427,10 +426,10 @@ describe("createClient", () => {
       createClient(api.fetchImpl).run({
         model: "claude-opus-5-5",
         max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
+        messages: [{ role: "user", content: "hi" }],
         tools: [],
       }),
-    ).rejects.toThrow("kieltäytyi");
+    ).rejects.toThrow("refused");
   });
 
   test("goes through AI Gateway when one is named, with its token", async () => {
@@ -454,14 +453,13 @@ describe("createClient", () => {
       await createClient(api.fetchImpl).run({
         model: "claude-opus-5-5",
         max_tokens: 64,
-        messages: [{ role: "user", content: "moi" }],
+        messages: [{ role: "user", content: "hi" }],
         tools: [],
       });
       expect(api.urls[0]).toBe(
         "https://gateway.ai.cloudflare.com/v1/acct/promptfolio/anthropic/v1/messages",
       );
       expect(api.headers[0]?.get("cf-aig-authorization")).toBe("Bearer gateway-token");
-      // The only form of the key AI Gateway recognises as an Anthropic credential.
       expect(api.headers[0]?.get("x-api-key")).toBe(env.ANTHROPIC_API_KEY);
       expect(api.headers[0]?.has("authorization")).toBe(false);
     } finally {
@@ -484,7 +482,7 @@ describe("toolDefinitions", () => {
   test("describes a tool the way the model expects, schema included", () => {
     const tool: ChatTool = {
       name: "get_returns",
-      description: "Tuotto",
+      description: "Return",
       schema: z.object({ on: z.string().optional() }).strict(),
       run: () => Promise.resolve({}),
     };
@@ -492,7 +490,7 @@ describe("toolDefinitions", () => {
     expect(toolDefinitions([tool])).toEqual([
       {
         name: "get_returns",
-        description: "Tuotto",
+        description: "Return",
         input_schema: expect.objectContaining({
           type: "object",
           properties: { on: { type: "string" } },
@@ -507,16 +505,16 @@ describe("runTurn streaming", () => {
   test("yields each piece of the answer as a delta before the answer itself", async () => {
     const client: ChatClient = {
       run: (_params, options) => {
-        options?.onDelta?.("Salkun ");
-        options?.onDelta?.("arvo on 120,00 EUR.");
-        return Promise.resolve(says("Salkun arvo on 120,00 EUR."));
+        options?.onDelta?.("The portfolio ");
+        options?.onDelta?.("is worth 120.00 EUR.");
+        return Promise.resolve(says("The portfolio is worth 120.00 EUR."));
       },
     };
-    const events = await drain(runTurn(client, [], [{ role: "user", content: "moi" }]));
+    const events = await drain(runTurn(client, [], [{ role: "user", content: "hi" }]));
     expect(events).toEqual([
-      { type: "delta", text: "Salkun " },
-      { type: "delta", text: "arvo on 120,00 EUR." },
-      { type: "answer", text: "Salkun arvo on 120,00 EUR." },
+      { type: "delta", text: "The portfolio " },
+      { type: "delta", text: "is worth 120.00 EUR." },
+      { type: "answer", text: "The portfolio is worth 120.00 EUR." },
     ]);
   });
 
@@ -524,8 +522,8 @@ describe("runTurn streaming", () => {
     const client: ChatClient = {
       run: (_params, options) =>
         new Promise((resolve) => {
-          setTimeout(() => options?.onDelta?.("myöhemmin"), 5);
-          setTimeout(() => resolve(says("myöhemmin")), 10);
+          setTimeout(() => options?.onDelta?.("later"), 5);
+          setTimeout(() => resolve(says("later")), 10);
         }),
     };
     const events = await drain(runTurn(client, [], []));

@@ -24,7 +24,6 @@ import {
   type ToolResult,
 } from "./tool-types.ts";
 
-/** The earliest date a question may reach back to, as the HTTP routes use. */
 const LEDGER_START = "1900-01-01";
 
 const CATEGORY_KEYS = Object.keys(CATEGORY_LABELS);
@@ -37,11 +36,8 @@ const Trend = z
   .object({
     from: IsoDateSchema.optional(),
     to: IsoDateSchema.optional(),
-    // Named rather than free text: a category the model invents would silently
-    // report zero, which reads as "you spent nothing on that".
-    // SAFETY: `z.enum` needs a non-empty tuple, and `CATEGORY_LABELS` is a
-    // literal object with an entry for every category -- it cannot be empty
-    // without the app having no spending categories at all.
+    // Named, not free text: an invented category would report zero, reading as "you spent nothing".
+    // SAFETY: `z.enum` needs a non-empty tuple and `CATEGORY_LABELS` has an entry per category.
     category: z.enum(CATEGORY_KEYS as [string, ...string[]]).optional(),
   })
   .strict();
@@ -50,8 +46,8 @@ const Deposit = z
   .object({
     amountEur: z
       .string()
-      .regex(/^\d+([.,]\d{1,2})?$/, 'Summa on annettava euroina, esimerkiksi "1500.00"')
-      .refine((text) => parseMoney(text, EUR).minor > 0n, "Summan on oltava suurempi kuin nolla"),
+      .regex(/^\d+([.,]\d{1,2})?$/, 'The amount must be given in euros, for example "1500.00"')
+      .refine((text) => parseMoney(text, EUR).minor > 0n, "The amount must be greater than zero"),
     on: IsoDateSchema.optional(),
     by: z.enum(["kind", "currency", "account", "instrument"]).optional(),
   })
@@ -83,29 +79,20 @@ const Classified = z
   })
   .strict();
 
-/**
- * The tools that answer where money went and where the next of it should go.
- *
- * They live beside `tools.ts` rather than in it because that file already holds
- * twelve, and a single module listing every tool is the one that nobody can
- * read to the end. Same contract, same wire rules: read-only, decimal strings,
- * a bound user id the model cannot reach past.
- */
+// Where money went and where it should go next. Split from `tools.ts` to keep both readable; same read-only contract.
 export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_cash_flow",
     description:
-      "Jakson rahavirta: paljonko tuli sisään, paljonko meni ulos, paljonko sijoitettiin ja " +
-      "mitä jäi. Vastaa kysymykseen 'menikö kesäkuussa enemmän kuin tuli'. Summat on laskettu " +
-      "valmiiksi -- älä laske niitä itse yhteen.",
+      "Cash flow of a period: how much came in, how much went out, how much was invested and " +
+      "what was left. Answers 'did I spend more than I earned in June'. Sums are already " +
+      "calculated -- do not add them up yourself.",
     schema: CashFlow,
     run: async (input) => {
       const { from = LEDGER_START, to = today() } = CashFlow.parse(input);
       const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
-      // Every account that is not a bank one holds investments, and its own
-      // deposits are the reliable record of money moved into it -- the same
-      // derivation /api/spending/cashflow makes.
+      // Non-bank accounts hold investments; their own deposits are the reliable record of money moved in (as /api/spending/cashflow).
       const invested = new Set(
         txns.map((txn) => txn.accountId).filter((accountId) => !bank.has(accountId)),
       );
@@ -121,9 +108,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
 
       const totalOf = (id: string): string =>
         flow.nodes.find((node) => node.id === id)?.totalEur ?? "0.00";
-      // A shortfall is drawn as a flow *into* income, so that link is what says
-      // the period spent more than it earned. The figure itself stays positive:
-      // a negative "left over" reads as money sitting in the account.
+      // A shortfall is drawn as a flow into income; the figure stays positive, since a negative "left over" reads as idle money.
       const shortfall = flow.links.some((link) => link.from === "leftover");
 
       return {
@@ -139,9 +124,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
           .filter((node) => node.id.startsWith("out:"))
           .map((node) => ({ label: node.label, totalEur: node.totalEur })),
         note:
-          "Omien tilien väliset siirrot, sijoituksiin menneet maksut ja luottokortin laskun " +
-          "maksu eivät ole kulutusta eivätkä tuloa, joten ne on jätetty pois. " +
-          (shortfall ? "Jakso oli alijäämäinen: erotus katettiin säästöistä." : ""),
+          "Transfers between own accounts, payments into investments and paying a credit card " +
+          "bill are neither spending nor income, so they are left out. " +
+          (shortfall ? "The period ran a shortfall: the difference was covered from savings." : ""),
       };
     },
   },
@@ -149,9 +134,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_spending_trend",
     description:
-      "Kulutus kuukausi kerrallaan: tulot, menot ja erotus per kuukausi, tai yhden luokan " +
-      "kehitys kun category annetaan. Käytä tätä kun kysytään onko jokin kasvanut tai " +
-      "laskenut -- älä kutsu get_spending kerran per kuukausi.",
+      "Spending month by month: income, expenses and net per month, or the trend of one " +
+      "category when category is given. Use this when asked whether something has grown or " +
+      "fallen -- do not call get_spending once per month.",
     schema: Trend,
     run: async (input): Promise<ToolResult> => {
       const { from = LEDGER_START, to = today(), category } = Trend.parse(input);
@@ -177,7 +162,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
             totalEur: month.byCategory[category] ?? "0.00",
           })),
           truncated: byCategory.months.length > months.length,
-          note: "Summat ovat positiivisia lukuja siitä mitä kului.",
+          note: "Sums are positive numbers for what was spent.",
         };
       }
 
@@ -194,8 +179,8 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         })),
         truncated: all.length > months.length,
         note:
-          "expensesEur on positiivinen luku siitä mitä kului. netEur on tulot miinus menot: " +
-          "negatiivinen netEur tarkoittaa että kuukausi oli alijäämäinen.",
+          "expensesEur is a positive number for what was spent. netEur is income minus expenses: " +
+          "a negative netEur means the month ran a shortfall.",
       };
     },
   },
@@ -203,8 +188,8 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_deposit_plan",
     description:
-      "Mihin uusi raha kannattaa laittaa, jotta jakauma lähestyy tavoitetta. Anna summa " +
-      "euroina. Ehdottaa vain ostoja, ei koskaan myyntejä.",
+      "Where new money should go so the allocation approaches the target. Give the amount " +
+      "in euros. Only suggests purchases, never sales.",
     schema: Deposit,
     run: async (input) => {
       const { amountEur, on = today(), by = "kind" } = Deposit.parse(input);
@@ -221,11 +206,11 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         })),
         note:
           allocations.length === 0
-            ? "Tälle ulottuvuudelle ei ole asetettu tavoitetta, joten jakoa ei voi laskea. " +
-              "Tavoitteen voi asettaa Tasapaino-sivulla."
-            : "Osuudet on mitattu tavoitteesta, joka lasketaan talletuksen jälkeisestä " +
-              "kokonaisarvosta. Tämä ei realisoi voittoa eikä aiheuta veroa. " +
-              "Et anna sijoitusneuvoja etkä ehdota myyntejä.",
+            ? "No target is set for this dimension, so the split cannot be calculated. " +
+              "A target can be set on the Rebalance page."
+            : "Shares are measured against a target calculated from the total value after " +
+              "the deposit. This realises no gain and causes no tax. " +
+              "You give no investment advice and do not suggest sales.",
       };
     },
   },
@@ -233,9 +218,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_transaction_class",
     description:
-      "Yksittäiset pankkitapahtumat ja se luokka jonka ne saivat: mikä luokka, laskettiinko " +
-      "kulutukseen, ja jos ei niin miksi (oma siirto, sijoitus, tulo, alkusaldo). Käytä tätä " +
-      "kun kysytään miksi jokin ei näy kulutuksessa. search rajaa tapahtuman omaan tekstiin.",
+      "Individual bank transactions and the category they got: which category, whether it was " +
+      "counted as spending, and if not why (own transfer, investment, income, opening balance). Use this " +
+      "when asked why something does not show in spending. search narrows by the transaction's own text.",
     schema: Classified,
     run: async (input) => {
       const {
@@ -276,8 +261,8 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         })),
         truncated: matching.length > shown.length,
         note:
-          "counted=false tarkoittaa ettei rivi ole mukana kulutusluvuissa, ja excludedReason " +
-          "kertoo miksi. Luokka perustuu tapahtuman tekstiin, joten tuntematon maksaja on Muu.",
+          "counted=false means the row is not in the spending figures, and excludedReason " +
+          "says why. The category is based on the transaction text, so an unknown payer is Other.",
       };
     },
   },
@@ -285,9 +270,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_spending_rules",
     description:
-      "Käyttäjän luokittelusäännöt: hakusana (pattern), luokka ja kuka säännön teki (seed = " +
-      "sovelluksen oma, ai = sinä, user = käyttäjä itse). Katso tästä ennen kuin tallennat " +
-      "uuden säännön tai korjaat vanhaa -- näet mitä on jo olemassa ja mitä et saa muuttaa.",
+      "The user's categorisation rules: search term (pattern), category and who made the rule (seed = " +
+      "the app's own, ai = you, user = the user). Look here before saving a new rule " +
+      "or fixing an old one -- you see what already exists and what you may not change.",
     schema: RuleQuery,
     run: async (input): Promise<ToolResult> => {
       const { search, limit = 60 } = RuleQuery.parse(input);
@@ -318,7 +303,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
           source: rule.source,
         })),
         truncated: matching.length > shown.length,
-        note: "Sääntöjä joiden source on 'user' et voi muuttaa etkä poistaa.",
+        note: "You cannot change or delete rules whose source is 'user'.",
       };
     },
   },
@@ -326,9 +311,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_reconciliation",
     description:
-      "Täsmäytys: mitä välittäjän oma omistusraportti sanoo verrattuna siihen mitä tapahtumista " +
-      "lasketaan. Vastaa kysymykseen pitävätkö luvut paikkansa. Tili josta ei ole raporttia on " +
-      "tarkistamatta, ei kunnossa.",
+      "Reconcile: what the broker's own holdings report says compared with what is calculated " +
+      "from transactions. Answers whether the figures are correct. An account with no report is " +
+      "unchecked, not fine.",
     schema: NoArgs,
     run: async (input): Promise<ToolResult> => {
       NoArgs.parse(input);
@@ -349,9 +334,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         })),
         unchecked: checks.filter((check) => check.asOf === null).map((check) => check.account),
         note:
-          "checkedAgainst = null tarkoittaa ettei tililtä ole tuotu yhtään omistusraporttia, " +
-          "joten sitä ei ole verrattu mihinkään -- älä sano että se täsmää. Pankkitilin saldon " +
-          "täsmäytys tehdään Käteinen-sivulla, ei täällä.",
+          "checkedAgainst = null means no holdings report has been imported for the account, " +
+          "so it was compared against nothing -- do not say it matches. A bank account's balance " +
+          "is reconciled on the Cash page, not here.",
       };
     },
   },
@@ -359,9 +344,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_recurring_payments",
     description:
-      "Toistuvat maksut: tilaukset, vuokra, vakuutukset, lainanhoito. Sama saaja vähintään " +
-      "kolmesti, säännöllisin välein ja lähes samalla summalla. annualEur kertoo mitä maksu " +
-      "maksaa vuodessa. active=false tarkoittaa että maksu on loppunut.",
+      "Recurring payments: subscriptions, rent, insurance, loan repayments. The same payee at least " +
+      "three times, at regular intervals and for nearly the same amount. annualEur is what the payment " +
+      "costs per year. active=false means the payment has ended.",
     schema: Recurring,
     run: async (input): Promise<ToolResult> => {
       const { from = LEDGER_START, to = today() } = Recurring.parse(input);
@@ -391,9 +376,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
           active: payment.active,
         })),
         note:
-          "Summat ovat positiivisia lukuja siitä mitä maksetaan. Lista on päätelty " +
-          "tapahtumista, ei sopimuksista: vaihtelevasummainen maksu (esim. ruokakauppa) ei " +
-          "ole mukana, eikä maksu jota on tehty alle kolme kertaa.",
+          "Sums are positive numbers for what is paid. The list is inferred from " +
+          "transactions, not contracts: a payment of varying amount (e.g. a grocery shop) is " +
+          "not included, nor is a payment made fewer than three times.",
       };
     },
   },
@@ -401,16 +386,14 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "get_net_worth_series",
     description:
-      "Koko varallisuuden kehitys: sijoitusten arvo ja pankkitilien saldot yhteensä. " +
-      "get_value_series näyttää vain sijoitukset. Enintään 60 pistettä tasavälein.",
+      "Development of total wealth: investment value and bank account balances combined. " +
+      "get_value_series shows investments only. At most 60 evenly spaced points.",
     schema: NetWorth,
     run: async (input): Promise<ToolResult> => {
       const { from = "2015-01-01", to = today() } = NetWorth.parse(input);
       const { investedTxns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
       const series = valueSeries(investedTxns, instruments, prices, from, to);
-      // Thinned before the cash is valued, not after: each point costs a walk
-      // over every cash transaction, and sixty points is what a sentence about
-      // a curve needs.
+      // Thinned before valuing: each point walks every cash transaction.
       const step = Math.max(1, Math.ceil(series.length / MAX_SERIES_POINTS));
 
       return {
@@ -430,8 +413,8 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
             };
           }),
         note:
-          "Käteinen sisältää määräaikaistalletukset. Tilit joiden aineistossa ei ole " +
-          "käteistapahtumia eivät ole mukana lainkaan -- niiden saldoa ei voi johtaa.",
+          "Cash includes fixed-term deposits. Accounts whose data has no cash " +
+          "transactions are not included at all -- their balance cannot be derived.",
       };
     },
   },

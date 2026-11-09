@@ -1,8 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
-// Rules decide which bucket real spending falls into, and three parties write
-// them: the seed, the owner, and the assistant. These tests pin the order they
-// resolve in and what each is allowed to overwrite.
+// Three parties write rules (seed, owner, assistant); these tests pin resolution order and what each may overwrite.
 
 let addRules: (typeof import("./rules.ts"))["addRules"];
 let categoriseWith: (typeof import("./rules.ts"))["categoriseWith"];
@@ -19,7 +17,6 @@ beforeAll(async () => {
 });
 
 let next = 0;
-/** A real user, created the way the app creates one, so no test imports the schema. */
 const makeUser = async (): Promise<string> => {
   const email = `rules-${next++}-${crypto.randomUUID()}@example.com`;
   const response = await auth.handler(
@@ -30,7 +27,7 @@ const makeUser = async (): Promise<string> => {
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email always carries `{ user: { id } }`.
+  // SAFETY: a 200 from POST /sign-up/email carries `{ user: { id } }`.
   return ((await response.json()) as { user: { id: string } }).user.id;
 };
 
@@ -41,7 +38,7 @@ describe("rulesFor", () => {
     expect(seeded.length).toBeGreaterThan(50);
     expect(seeded.every((rule) => rule.source === "seed")).toBe(true);
 
-    // A rule the owner deletes must stay deleted; re-seeding would undo them.
+    // A deleted rule stays deleted; re-seeding would undo it.
     await removeRule(db, userId, "LIDL");
     expect((await rulesFor(db, userId)).some((rule) => rule.pattern === "LIDL")).toBe(false);
   });
@@ -49,7 +46,7 @@ describe("rulesFor", () => {
   test("keeps one user's rules out of another's", async () => {
     const mine = await makeUser();
     const theirs = await makeUser();
-    await addRules(db, mine, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "user");
+    await addRules(db, mine, [{ pattern: "PIENI PUOTI", category: "groceries" }], "user");
 
     expect((await rulesFor(db, theirs)).some((rule) => rule.pattern === "PIENI PUOTI")).toBe(false);
   });
@@ -57,20 +54,19 @@ describe("rulesFor", () => {
 
 describe("matchRule", () => {
   const rules = [
-    { pattern: "PRISMA", category: "ruoka" as const, source: "seed" as const },
-    { pattern: "RAVINTOLA PRISMA", category: "ravintolat" as const, source: "user" as const },
+    { pattern: "PRISMA", category: "groceries" as const, source: "seed" as const },
+    { pattern: "RAVINTOLA PRISMA", category: "restaurants" as const, source: "user" as const },
   ];
 
   test("the most specific pattern wins, not the first one stored", () => {
-    // Rules arrive from three sources in no fixed order, so "first match" would
-    // make the answer depend on insertion order.
-    expect(matchRule("PKORTTIMAKSU — RAVINTOLA PRISMA", rules)?.category).toBe("ravintolat");
-    expect(matchRule("PKORTTIMAKSU — PRISMA SALO", rules)?.category).toBe("ruoka");
+    // Sources arrive in no fixed order, so "first match" would depend on insertion order.
+    expect(matchRule("PKORTTIMAKSU — RAVINTOLA PRISMA", rules)?.category).toBe("restaurants");
+    expect(matchRule("PKORTTIMAKSU — PRISMA SALO", rules)?.category).toBe("groceries");
   });
 
   test("no rule means no guess", () => {
     expect(matchRule("PKORTTIMAKSU — TUNTEMATON", rules)).toBeNull();
-    expect(categoriseWith("PKORTTIMAKSU — TUNTEMATON", rules)).toBe("muu");
+    expect(categoriseWith("PKORTTIMAKSU — TUNTEMATON", rules)).toBe("other");
   });
 });
 
@@ -92,21 +88,21 @@ describe("addRules", () => {
     const userId = await makeUser();
     // "OY" would match half the businesses in Finland.
     expect(
-      (await addRules(db, userId, [{ pattern: "OY", category: "ruoka" }], "ai")).added,
+      (await addRules(db, userId, [{ pattern: "OY", category: "groceries" }], "ai")).added,
     ).toEqual([]);
   });
 
   test("leaves an existing rule alone rather than replacing it", async () => {
     const userId = await makeUser();
-    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
-    await addRules(db, userId, [{ pattern: "pieni puoti", category: "ruoka" }], "ai");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "leisure" }], "user");
+    await addRules(db, userId, [{ pattern: "pieni puoti", category: "groceries" }], "ai");
 
-    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("vapaa-aika");
+    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("leisure");
   });
 
   test("records who decided, so a guess can be told from an answer", async () => {
     const userId = await makeUser();
-    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "ruoka" }], "ai");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "groceries" }], "ai");
     const stored = (await rulesFor(db, userId)).find((rule) => rule.pattern === "PIENI PUOTI");
 
     expect(stored?.source).toBe("ai");
@@ -119,7 +115,7 @@ describe("removeRule", () => {
     const before = (await rulesFor(db, userId)).length;
 
     expect(await removeRule(db, userId, "lidl")).toBe(true);
-    expect(await removeRule(db, userId, "EI TÄLLAISTA")).toBe(false);
+    expect(await removeRule(db, userId, "NO SUCH RULE")).toBe(false);
     expect(await rulesFor(db, userId)).toHaveLength(before - 1);
   });
 });

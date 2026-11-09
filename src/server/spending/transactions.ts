@@ -3,7 +3,6 @@ import type { IsoDate, Txn } from "../../core/types.ts";
 import { internalTransferIds, investmentPaymentIds } from "./internal.ts";
 import { categoriseWith, type SpendingRule } from "./rules.ts";
 
-/** Why a row is not counted as spending, or `null` when it is. */
 type ExcludedReason =
   | "income"
   | "internal-transfer"
@@ -11,29 +10,18 @@ type ExcludedReason =
   | "opening-balance"
   | "other-currency";
 
-export type ClassifiedTxn = {
+type ClassifiedTxn = {
   readonly id: number;
   readonly date: IsoDate;
-  /** The broker's or bank's own text, which is what the rules match on. */
   readonly text: string;
   readonly amountEur: string;
-  /** The category a rule gave it, or `muu` when none matched. */
   readonly category: string;
   readonly categoryLabel: string;
   readonly counted: boolean;
   readonly excludedReason: ExcludedReason | null;
 };
 
-/**
- * Every bank movement in a period, with the class it was given and, where it
- * was left out of the spending figures, which rule left it out.
- *
- * The categorised totals are summaries, and a summary a person cannot open is
- * one they have to trust. This is the ledger behind them: it shows the same
- * exclusions the totals apply -- income, internal transfers, money that funded
- * an investment, opening balances -- as reasons on the row rather than as rows
- * that quietly are not there.
- */
+/** Every bank movement in a period with its class and, where excluded from spending, the reason, so a summary can be opened and checked. */
 export const classifiedTransactions = (args: {
   readonly txns: readonly Txn[];
   readonly rules: readonly SpendingRule[];

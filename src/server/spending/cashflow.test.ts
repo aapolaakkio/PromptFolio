@@ -8,9 +8,7 @@ import { internalTransferIds, investmentPaymentIds, notSpendingIds } from "./int
 import { monthlyByCategory, monthlyFlows } from "./monthly.ts";
 import type { SpendingRule } from "./rules.ts";
 
-// These three decide what a person is shown about their own year, so the tests
-// are about the two ways such a picture lies: counting the owner's own money
-// twice as income, and balancing itself with a flow nobody can account for.
+// The picture must not lie in two ways: counting the owner's own money twice as income, and balancing itself with an unexplained flow.
 
 const RULES: SpendingRule[] = SEED_RULES.map((rule) => ({ ...rule, source: "seed" }));
 
@@ -66,12 +64,10 @@ describe("internalTransferIds", () => {
   test("leaves a payment out to someone else alone", () => {
     const txns = [
       row(1, "PKORTTIMAKSU — K-MARKET", "-500.00", "2026-03-01"),
-      row(2, "PALKKA — ESIMERKKI OYJ", "500.00", "2026-03-02", "DEPOSIT"),
+      row(2, "PALKKA — EXAMPLE OYJ", "500.00", "2026-03-02", "DEPOSIT"),
     ];
 
-    // Same amount, adjacent days, but a shop is not the owner's own account.
-    // The pairing cannot tell those apart, which is why it needs two accounts
-    // and is deliberately conservative about everything else.
+    // A shop is not the owner's own account; the pairing needs two accounts and is conservative about the rest.
     expect(internalTransferIds(txns).size).toBe(2);
   });
 
@@ -91,17 +87,12 @@ describe("internalTransferIds", () => {
       row(2, "Tilinavaus", "500.00", "2026-03-01", "DEPOSIT"),
     ];
 
-    // Three rows, one unmatched: the second outgoing transfer has no partner.
     expect(internalTransferIds(txns).size).toBe(2);
   });
 });
 
 describe("notSpendingIds", () => {
-  // The by-category and by-payee lists used to apply no exclusion at all, so a
-  // credit card bill -- a lump sum moved to the card, not money spent -- was
-  // reported as one of the year's largest expenses under "Lainat ja luotot",
-  // while the same period's Sankey left it out. One definition, so the two
-  // views cannot disagree again.
+  // By-category and by-payee lists must apply the same exclusions as the Sankey (a card bill is not spending).
   test("covers the owner's own transfers as well as investment payments", () => {
     const txns = [
       row(1, "LUOTON MAKSU — OP KORTTI", "-450.00", "2026-04-01"),
@@ -118,7 +109,7 @@ describe("notSpendingIds", () => {
 });
 
 describe("cashFlowFor", () => {
-  const salary = row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT");
+  const salary = row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT");
   const groceries = row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10");
   const restaurant = row(1, "PKORTTIMAKSU — RAVINTOLA", "-100.00", "2026-01-11");
 
@@ -126,15 +117,12 @@ describe("cashFlowFor", () => {
     const flow = flowOf([salary, groceries, restaurant]);
 
     expect(nodeOf([salary, groceries, restaurant], "income")?.totalEur).toBe("3000.00");
-    expect(flow.nodes.find((node) => node.id === "out:ruoka")?.totalEur).toBe("200.00");
-    expect(flow.nodes.find((node) => node.id === "out:ravintolat")?.totalEur).toBe("100.00");
+    expect(flow.nodes.find((node) => node.id === "out:groceries")?.totalEur).toBe("200.00");
+    expect(flow.nodes.find((node) => node.id === "out:restaurants")?.totalEur).toBe("100.00");
   });
 
   test("never links to a category the refunds cancelled out", () => {
-    // A refund larger than the period's purchases in that category leaves a
-    // total of zero or less, which cannot be a node. The link used to be added
-    // anyway, and the diagram threw rather than dropped it: "target at link
-    // index 22 does not match a node key".
+    // A refund larger than the period's purchases gives a non-positive total, which cannot be a node (the diagram threw on the link).
     const flow = flowOf([
       salary,
       row(1, "PKORTTIMAKSU — RAVINTOLA", "-20.00", "2026-01-11"),
@@ -146,7 +134,7 @@ describe("cashFlowFor", () => {
       expect(keys.has(link.from)).toBe(true);
       expect(keys.has(link.to)).toBe(true);
     }
-    expect(keys.has("out:ravintolat")).toBe(false);
+    expect(keys.has("out:restaurants")).toBe(false);
   });
 
   test("does not count the owner's own transfer as income", () => {
@@ -155,9 +143,7 @@ describe("cashFlowFor", () => {
       row(2, "Tilinavaus", "1000.00", "2026-02-01", "DEPOSIT"),
     ];
 
-    // Deposit openings once arrived here as "income", because a
-    // rule the assistant wrote on the owner's own name out-matched the transfer
-    // rule. Pairing the two halves is what stops that.
+    // A rule on the owner's own name once out-matched the transfer rule and turned deposits into income; pairing prevents it.
     expect(nodeOf([salary, ...moved], "income")?.totalEur).toBe("3000.00");
   });
 
@@ -168,14 +154,12 @@ describe("cashFlowFor", () => {
 
   test("names the leftover as a residual, and its sign as which way it went", () => {
     const modest = flowOf([salary, groceries]);
-    // 3000 in, 200 spent: 2800 stayed.
-    expect(modest.nodes.find((node) => node.id === "leftover")?.label).toBe("Jäi tilille");
+    expect(modest.nodes.find((node) => node.id === "leftover")?.label).toBe("Left in account");
     expect(modest.nodes.find((node) => node.id === "leftover")?.totalEur).toBe("2800.00");
 
     const heavy = flowOf([salary, row(1, "PKORTTIMAKSU — K-MARKET", "-4000.00", "2026-01-10")]);
-    // Spending beyond the period's income is a fact about the period, not a
-    // number to hide behind a balanced-looking picture.
-    expect(heavy.nodes.find((node) => node.id === "leftover")?.label).toBe("Katettu säästöistä");
+    // Spending beyond income is a fact about the period; the picture must not hide it.
+    expect(heavy.nodes.find((node) => node.id === "leftover")?.label).toBe("Covered from savings");
     expect(heavy.nodes.find((node) => node.id === "leftover")?.totalEur).toBe("1000.00");
   });
 
@@ -186,7 +170,7 @@ describe("cashFlowFor", () => {
   });
 
   test("stays inside the period", () => {
-    const older = row(1, "PALKKA — ESIMERKKI OYJ", "9000.00", "2025-06-01", "DEPOSIT");
+    const older = row(1, "PALKKA — EXAMPLE OYJ", "9000.00", "2025-06-01", "DEPOSIT");
     expect(nodeOf([salary, older], "income")?.totalEur).toBe("3000.00");
   });
 
@@ -215,7 +199,7 @@ describe("monthlyFlows", () => {
   test("totals each month's income and spending separately", () => {
     const months = monthlyFlows({
       txns: [
-        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+        row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
         row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10"),
         row(1, "PKORTTIMAKSU — K-MARKET", "-150.00", "2026-02-10"),
       ],
@@ -244,7 +228,6 @@ describe("monthlyFlows", () => {
       to: "2026-03-31",
     });
 
-    // A chart that closes the gap implies activity that did not happen.
     expect(months.map((month) => month.month)).toEqual(["2026-01", "2026-02", "2026-03"]);
     expect(months[0]?.incomeEur).toBe("0.00");
   });
@@ -271,10 +254,7 @@ describe("monthlyFlows", () => {
 });
 
 describe("payments that are really investments", () => {
-  // A regular fund saving leaves the bank as an ordinary payment and lands at
-  // the broker as a purchase -- never as a deposit, because OP's securities
-  // export records no cash. Both halves are negative, so the opposite-sign
-  // pairing cannot see them.
+  // A fund saving leaves the bank as a payment and lands at the broker as a purchase (OP's export records no cash); both halves are negative.
   const saving = row(1, "SÄÄNN.SÄÄST. — RAHASTO", "-250.00", "2026-03-01");
   const purchase = row(9, "", "-250.00", "2026-03-02", "BUY");
   const CASHLESS = new Set([9]);
@@ -284,8 +264,7 @@ describe("payments that are really investments", () => {
   });
 
   test("are not matched when the broker records its own cash", () => {
-    // With a deposit on the broker's side, that deposit is the better half to
-    // count, and this rule would double it.
+    // A broker-side deposit is the better half; this rule would double it.
     expect(investmentPaymentIds([saving, purchase], new Set(), BANK).size).toBe(0);
   });
 
@@ -296,11 +275,7 @@ describe("payments that are really investments", () => {
 
   test("count as investing rather than as spending", () => {
     const flow = cashFlowFor({
-      txns: [
-        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
-        saving,
-        purchase,
-      ],
+      txns: [row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT"), saving, purchase],
       rules: RULES,
       bankAccountIds: BANK,
       investedAccountIds: new Set([9]),
@@ -317,19 +292,18 @@ describe("an opening balance", () => {
   test("is not spending, however negative it is", () => {
     const opening = row(
       1,
-      "Alkusaldo, johdettu saldosta",
+      "Opening balance, derived from balance",
       "-1200.00",
       "2026-01-01",
       "OPENING_BALANCE",
     );
     const flow = flowOf([
-      row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+      row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
       opening,
       row(1, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-01-10"),
     ]);
 
-    // A derived opening balance was being reported as the year's largest
-    // expense, which is a statement about the ledger, not about the owner.
+    // A derived opening balance was once reported as the largest expense.
     expect(flow.nodes.find((node) => node.id === "expenses")?.totalEur).toBe("200.00");
   });
 });
@@ -355,13 +329,12 @@ describe("monthlyByCategory", () => {
     });
 
     expect(report.months.map((month) => month.month)).toEqual(["2026-01", "2026-02"]);
-    expect(report.months[0]!.byCategory.ruoka).toBe("200.00");
-    expect(report.months[1]!.byCategory.ravintolat).toBe("0.00");
+    expect(report.months[0]!.byCategory.groceries).toBe("200.00");
+    expect(report.months[1]!.byCategory.restaurants).toBe("0.00");
   });
 
   test("gives every category a figure every month, so a stack has no holes", () => {
-    // A band that disappears for one month reads as missing data rather than
-    // as a month where nothing was spent on it.
+    // A vanishing band reads as missing data, not a month of zero.
     const report = monthlyByCategory({
       txns: [row(1, "PKORTTIMAKSU — RAVINTOLA", "-100.00", "2026-01-11")],
       ...args,
@@ -373,8 +346,7 @@ describe("monthlyByCategory", () => {
   });
 
   test("orders categories by their whole-period total, so colours stay put", () => {
-    // Ordering by the current month would repaint every band as the reader
-    // scrolls, and a palette that has to be re-learned is not a palette.
+    // Ordering by the current month would repaint the bands as the reader scrolls.
     const report = monthlyByCategory({
       txns: [
         row(1, "PKORTTIMAKSU — RAVINTOLA", "-500.00", "2026-01-11"),
@@ -384,31 +356,28 @@ describe("monthlyByCategory", () => {
       ...args,
     });
 
-    expect(report.categories.map((category) => category.key)).toEqual(["ruoka", "ravintolat"]);
-    expect(report.categories[0]!.label).toBe("RUOKA");
+    expect(report.categories.map((category) => category.key)).toEqual(["groceries", "restaurants"]);
+    expect(report.categories[0]!.label).toBe("GROCERIES");
   });
 
   test("leaves out what is not spending", () => {
     const report = monthlyByCategory({
       txns: [
-        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
-        row(1, "Alkusaldo", "-1200.00", "2026-01-01", "OPENING_BALANCE"),
+        row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-01-05", "DEPOSIT"),
+        row(1, "Opening balance", "-1200.00", "2026-01-01", "OPENING_BALANCE"),
         row(1, "TILISIIRTO — OMA SÄÄSTÖ", "-500.00", "2026-01-06"),
         row(2, "Tilinavaus", "500.00", "2026-01-06", "DEPOSIT"),
       ],
       ...args,
     });
 
-    // Income, an opening balance and a transfer between the owner's own
-    // accounts are none of them spending.
+    // Income, an opening balance and own-account transfers are not spending.
     expect(report.categories).toEqual([]);
   });
 });
 
 test("a nonsense start date does not ask for twenty thousand months", () => {
-  // A date field passes through partial values while being typed -- "0006-08-06"
-  // on the way to "2006-08-06" -- and obeying that literally produced a range
-  // no chart can draw, with every label repeating.
+  // A date field mid-typing ("0006-08-06") must not produce a range no chart can draw.
   const months = monthlyFlows({
     txns: [row(1, "PKORTTIMAKSU — K-MARKET", "-10.00", "2026-03-10")],
     rules: RULES,
@@ -418,15 +387,11 @@ test("a nonsense start date does not ask for twenty thousand months", () => {
   });
 
   expect(months.length).toBeLessThanOrEqual(600);
-  // The end of the range is kept, which is the part anyone typing a date is
-  // looking at.
   expect(months.at(-1)?.month).toBe("2026-12");
 });
 
 describe("a credit card bill", () => {
-  // The card's purchases are the spending. The bill that settles them is money
-  // moving between two accounts the owner holds -- counting it too would count
-  // the same month twice.
+  // The card's purchases are the spending; the bill settling them is an own-account movement and would count the month twice.
   const CARD = 3;
 
   test("cancels against the payment from the current account", () => {
@@ -448,21 +413,19 @@ describe("a credit card bill", () => {
   test("so the month's spending is the purchases, not the purchases plus the bill", () => {
     const flow = cashFlowFor({
       txns: [
-        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-06-01", "DEPOSIT"),
+        row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-06-01", "DEPOSIT"),
         row(CARD, "PKORTTIMAKSU — K-MARKET", "-200.00", "2026-06-10"),
         row(CARD, "Suoritus", "200.00", "2026-06-25", "DEPOSIT"),
         row(1, "LUOTON MAKSU", "-200.00", "2026-06-24"),
       ],
       rules: RULES,
-      // The card is a bank-kind account: its rows are spending like any other.
       bankAccountIds: new Set([1, 2, CARD]),
       investedAccountIds: BROKERAGE,
       ...YEAR,
     });
 
-    // 200 spent once, in the category the shop belongs to -- not 400, and not
-    // 200 filed under whatever "LUOTON MAKSU" matches.
-    expect(flow.nodes.find((node) => node.id === "out:ruoka")?.totalEur).toBe("200.00");
+    // 200 spent once, in the shop's category: not 400, and not 200 under whatever "LUOTON MAKSU" matches.
+    expect(flow.nodes.find((node) => node.id === "out:groceries")?.totalEur).toBe("200.00");
     expect(flow.nodes.find((node) => node.id === "expenses")?.totalEur).toBe("200.00");
   });
 });
@@ -472,11 +435,10 @@ describe("a card refund", () => {
   const BANKS = new Set([1, 2, CARD]);
 
   test("comes off the category it was spent in, rather than counting as income", () => {
-    // Nobody earned it. Counting it as income would both inflate what came in
-    // and leave the purchase it reverses standing at full price.
+    // Not income: that would inflate what came in and leave the reversed purchase at full price.
     const flow = cashFlowFor({
       txns: [
-        row(1, "PALKKA — ESIMERKKI OYJ", "3000.00", "2026-02-01", "DEPOSIT"),
+        row(1, "PALKKA — EXAMPLE OYJ", "3000.00", "2026-02-01", "DEPOSIT"),
         row(CARD, "PKORTTIMAKSU — RAVINTOLA", "-20.00", "2026-02-05"),
         row(CARD, "Hyvitys — RAVINTOLA", "4.49", "2026-02-06", "DEPOSIT"),
       ],
@@ -488,7 +450,7 @@ describe("a card refund", () => {
     });
 
     expect(flow.nodes.find((node) => node.id === "income")?.totalEur).toBe("3000.00");
-    expect(flow.nodes.find((node) => node.id === "out:ravintolat")?.totalEur).toBe("15.51");
+    expect(flow.nodes.find((node) => node.id === "out:restaurants")?.totalEur).toBe("15.51");
   });
 
   test("lowers the month's spending instead of raising its income", () => {
@@ -512,8 +474,7 @@ describe("a card refund", () => {
   });
 
   test("a card's own charges are spending like any other", () => {
-    // Interest and a maintenance fee arrive negative, so they are costs -- a
-    // card charges interest, it never pays it.
+    // Interest and a maintenance fee arrive negative, so they are costs.
     const months = monthlyFlows({
       txns: [
         row(CARD, "Korko", "-1.40", "2026-02-24"),
@@ -542,14 +503,14 @@ describe("cashFlowFor, split by payee", () => {
 
   test("names each payee where the category split names each category", () => {
     const flow = byPayee([
-      row(1, "PKORTTIMAKSU — K-MARKET ESIMERKKI", "-40.00", "2026-03-01"),
-      row(1, "PKORTTIMAKSU — K-MARKET ESIMERKKI", "-10.00", "2026-03-02"),
-      row(1, "PKORTTIMAKSU — ESIMERKKI RAVINTOLA", "-25.00", "2026-03-03"),
+      row(1, "PKORTTIMAKSU — K-MARKET EXAMPLE", "-40.00", "2026-03-01"),
+      row(1, "PKORTTIMAKSU — K-MARKET EXAMPLE", "-10.00", "2026-03-02"),
+      row(1, "PKORTTIMAKSU — EXAMPLE RAVINTOLA", "-25.00", "2026-03-03"),
     ]);
     const out = flow.nodes.filter((node) => node.id.startsWith("out:"));
     expect(out.map((node) => [node.label, node.totalEur])).toEqual([
-      ["K-MARKET ESIMERKKI", "50.00"],
-      ["ESIMERKKI RAVINTOLA", "25.00"],
+      ["K-MARKET EXAMPLE", "50.00"],
+      ["EXAMPLE RAVINTOLA", "25.00"],
     ]);
   });
 
@@ -561,7 +522,6 @@ describe("cashFlowFor, split by payee", () => {
     );
     const out = flow.nodes.filter((node) => node.id.startsWith("out:"));
     expect(out).toHaveLength(16);
-    // Payees spend 100 down to 83; the three smallest are 85 + 84 + 83.
-    expect(out.at(-1)).toMatchObject({ label: "Muut saajat", totalEur: "252.00" });
+    expect(out.at(-1)).toMatchObject({ label: "Other payees", totalEur: "252.00" });
   });
 });

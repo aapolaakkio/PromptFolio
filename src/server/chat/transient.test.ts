@@ -25,7 +25,7 @@ describe("isTransientFailure", () => {
   });
 
   test.each([
-    ["refusal", new Error("Malli kieltäytyi vastaamasta tähän pyyntöön")],
+    ["refusal", new Error("The model refused to answer this request")],
     ["a bug after the reply", new TypeError("Cannot read properties of undefined")],
     ["400", apiError(400)],
     ["401", apiError(401)],

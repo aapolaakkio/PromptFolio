@@ -4,10 +4,7 @@ import { EUR, parseMoney } from "../../core/money.ts";
 import type { IsoDate, Txn } from "../../core/types.ts";
 import type { ChatClient } from "../chat/runner.ts";
 
-// The model is allowed to teach the app new spending rules here, which makes
-// this the one place where a wrong answer becomes stored data. These tests are
-// therefore mostly about what is refused: an invented category, a pattern no
-// merchant carries, and a model that cannot be reached at all.
+// A wrong model answer becomes stored data here, so the tests are mostly about what is refused: an invented category, a pattern no merchant carries, an unreachable model.
 
 let classifyNewMerchants: (typeof import("./classify.ts"))["classifyNewMerchants"];
 let unknownMerchants: (typeof import("./classify.ts"))["unknownMerchants"];
@@ -24,7 +21,6 @@ beforeAll(async () => {
 });
 
 let next = 0;
-/** A real user, created the way the app creates one, so no test imports the schema. */
 const makeUser = async (): Promise<string> => {
   const email = `classify-${next++}-${crypto.randomUUID()}@example.com`;
   const response = await auth.handler(
@@ -35,7 +31,7 @@ const makeUser = async (): Promise<string> => {
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email always carries `{ user: { id } }`.
+  // SAFETY: a 200 from POST /sign-up/email carries `{ user: { id } }`.
   return ((await response.json()) as { user: { id: string } }).user.id;
 };
 
@@ -56,7 +52,6 @@ const spend = (note: string, amount: string, tradeDate: IsoDate = "2026-03-01"):
   note,
 });
 
-/** A model that answers with one fixed text, whatever it is asked. */
 const replying = (text: string): ChatClient => ({
   run: () => Promise.resolve({ text, toolCalls: [] }),
 });
@@ -71,13 +66,12 @@ describe("unknownMerchants", () => {
       [
         spend("PKORTTIMAKSU — PIENI PUOTI OY", "-12.00"),
         spend("PKORTTIMAKSU — PIENI PUOTI OY", "-8.00", "2026-03-02"),
-        spend("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-42.15"),
+        spend("PKORTTIMAKSU — K-MARKET EXAMPLE", "-42.15"),
       ],
       rules,
       ACCOUNTS,
     );
 
-    // The grocery shop already has a rule; the unknown one is asked about once.
     expect(merchants).toEqual(["PIENI PUOTI OY"]);
   });
 
@@ -104,13 +98,13 @@ describe("classifyNewMerchants", () => {
     const result = await classifyNewMerchants(db, userId, {
       txns,
       accountIds: ACCOUNTS,
-      client: replying('{"rules":[{"pattern":"PIENI PUOTI","category":"ruoka"}]}'),
+      client: replying('{"rules":[{"pattern":"PIENI PUOTI","category":"groceries"}]}'),
       model: "test",
     });
 
     expect(result).toEqual({ asked: 1, added: 1, rejected: 0, error: null });
     expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", await rulesFor(db, userId))).toBe(
-      "ruoka",
+      "groceries",
     );
   });
 
@@ -120,7 +114,7 @@ describe("classifyNewMerchants", () => {
       txns,
       accountIds: ACCOUNTS,
       client: replying(
-        'Tässä ehdotukset:\n```json\n{"rules":[{"pattern":"PIENI PUOTI","category":"ruoka"}]}\n```',
+        'Here are the suggestions:\n```json\n{"rules":[{"pattern":"PIENI PUOTI","category":"groceries"}]}\n```',
       ),
       model: "test",
     });
@@ -139,17 +133,18 @@ describe("classifyNewMerchants", () => {
 
     expect(result.added).toBe(0);
     expect(result.rejected).toBe(1);
-    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", await rulesFor(db, userId))).toBe("muu");
+    expect(categoriseWith("PKORTTIMAKSU — PIENI PUOTI OY", await rulesFor(db, userId))).toBe(
+      "other",
+    );
   });
 
   test("refuses a pattern no merchant in this import carries", async () => {
     const userId = await makeUser();
-    // A model that hallucinated a shop would otherwise file real spending under
-    // a rule matching something that was never bought.
+    // A hallucinated shop would otherwise file real spending under a rule for something never bought.
     const result = await classifyNewMerchants(db, userId, {
       txns,
       accountIds: ACCOUNTS,
-      client: replying('{"rules":[{"pattern":"STOCKMANN","category":"vaatteet"}]}'),
+      client: replying('{"rules":[{"pattern":"STOCKMANN","category":"clothing"}]}'),
       model: "test",
     });
 
@@ -159,23 +154,22 @@ describe("classifyNewMerchants", () => {
   test("never overwrites a rule already stored", async () => {
     const userId = await makeUser();
     const { addRules } = await import("./rules.ts");
-    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "vapaa-aika" }], "user");
+    await addRules(db, userId, [{ pattern: "PIENI PUOTI", category: "leisure" }], "user");
 
     await classifyNewMerchants(db, userId, {
       txns,
       accountIds: ACCOUNTS,
-      client: replying('{"rules":[{"pattern":"PIENI PUOTI","category":"ruoka"}]}'),
+      client: replying('{"rules":[{"pattern":"PIENI PUOTI","category":"groceries"}]}'),
       model: "test",
     });
 
-    // The person's own answer stands.
-    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("vapaa-aika");
+    expect(categoriseWith("PIENI PUOTI OY", await rulesFor(db, userId))).toBe("leisure");
   });
 
   test("asks nothing when every merchant is already covered", async () => {
     const userId = await makeUser();
     const result = await classifyNewMerchants(db, userId, {
-      txns: [spend("PKORTTIMAKSU — K-MARKET ESIMERKKI", "-42.15")],
+      txns: [spend("PKORTTIMAKSU — K-MARKET EXAMPLE", "-42.15")],
       accountIds: ACCOUNTS,
       client: replying("{}"),
       model: "test",
@@ -206,14 +200,12 @@ describe("classifyNewMerchants", () => {
     const result = await classifyNewMerchants(db, userId, {
       txns,
       accountIds: ACCOUNTS,
-      client: replying("En osaa sanoa."),
+      client: replying("I cannot tell."),
       model: "test",
     });
 
-    // A truncated or unparseable answer looks identical to "no new merchants"
-    // from the outside, and one of the two needs looking at. This was a real
-    // silent failure: a full batch's JSON hit the token ceiling mid-object.
+    // An unparseable answer looks like "no new merchants" from outside; a full batch once hit the token ceiling mid-object.
     expect(result.added).toBe(0);
-    expect(result.error).toContain("ei palauttanut");
+    expect(result.error).toContain("returned no rules");
   });
 });

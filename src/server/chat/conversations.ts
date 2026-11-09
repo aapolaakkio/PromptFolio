@@ -11,15 +11,13 @@ import { buildChatTools } from "./tools.ts";
 export const Ask = z
   .object({
     conversationId: z.number().int().positive().optional(),
-    message: z.string().trim().min(1, "Kysymys ei voi olla tyhjä").max(2000),
-    /** Which model answers this turn: the picker on the chat page, for trying them out. */
+    message: z.string().trim().min(1, "The question cannot be empty").max(2000),
     model: z.enum(CHAT_MODEL_IDS).optional(),
   })
   .strict();
 
 export const ConversationId = z.object({ id: z.number().int().positive() });
 
-/** Tests inject their own client and never reach the binding. */
 const resolveClient = (): ChatClient => createClient();
 
 let clientOverride: ChatClient | null = null;
@@ -27,15 +25,14 @@ export const _setChatClient = (client: ChatClient | null): void => {
   clientOverride = client;
 };
 
-// Ownership-first, and 404 rather than 403: telling a stranger that
-// conversation 7 exists but is not theirs is itself a leak.
+// Ownership first, and 404 not 403: confirming a stranger's conversation exists is a leak.
 const ownedConversation = async (userId: string, id: number) => {
   const row = await db
     .select()
     .from(conversations)
     .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
     .get();
-  if (!row) throw new HttpError(404, "Keskustelua ei löytynyt");
+  if (!row) throw new HttpError(404, "Conversation not found");
   return row;
 };
 
@@ -69,8 +66,7 @@ export const listConversations = async (userId: string) =>
   }));
 
 export const conversationMessages = async (userId: string, id: number) => {
-  // Awaited, not fired and forgotten: this is the ownership check, and a
-  // rejected promise nobody waits for lets the messages be returned anyway.
+  // Awaited: this is the ownership check, and an unawaited rejection would let messages through.
   await ownedConversation(userId, id);
   return await historyFor(id);
 };
@@ -82,11 +78,7 @@ export const deleteConversation = async (userId: string, id: number): Promise<vo
 
 const sse = (event: ChatEvent): string => `data: ${JSON.stringify(event)}\n\n`;
 
-/**
- * Runs one turn, yielding SSE bytes. Everything that can refuse the turn --
- * a missing key, someone else's thread, an empty question -- throws before the
- * stream exists, so those stay a status code rather than a mid-stream surprise.
- */
+/** Runs one turn, yielding SSE bytes. Anything that can refuse the turn throws before the stream exists, so it stays a status code. */
 export const startTurn = async (
   userId: string,
   input: z.infer<typeof Ask>,
@@ -103,10 +95,9 @@ export const startTurn = async (
           .returning()
           .get()
       : await ownedConversation(userId, conversationId);
-  if (conversation === undefined) throw new HttpError(500, "Keskustelun luonti epäonnistui");
+  if (conversation === undefined) throw new HttpError(500, "Creating the conversation failed");
 
-  // Stored before the model runs, so a turn that fails mid-way leaves the
-  // thread showing what was asked rather than losing it.
+  // Stored first, so a mid-way failure still shows what was asked.
   await db
     .insert(chatMessages)
     .values({ conversationId: conversation.id, role: "user", content: message })
@@ -120,9 +111,7 @@ export const startTurn = async (
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      // A browser that navigates away closes the stream under us, and
-      // enqueueing into a closed controller throws. Dropping the event is
-      // right -- there is no longer anyone to send it to.
+      // A closed stream (browser navigated away) makes enqueue throw; nobody is left to send to.
       const send = (event: ChatEvent) => {
         if (!open) return;
         try {
@@ -150,10 +139,9 @@ export const startTurn = async (
         }
       } catch (cause) {
         if (!signal.aborted) {
-          // The full error is for the server log only: an SDK error can carry
-          // request detail the browser has no business seeing.
+          // Server log only: an SDK error can carry request detail the browser must not see.
           console.error("Chat turn failed", cause);
-          send({ type: "error", message: "Vastauksen haku epäonnistui" });
+          send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {
         if (open) controller.close();

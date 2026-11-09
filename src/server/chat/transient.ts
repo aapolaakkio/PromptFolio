@@ -11,11 +11,9 @@ const statusOf = (cause: Error): number | null => {
 };
 
 /**
- * True for a failure worth trying again later: a network error, an abort or
- * timeout, HTTP 429, 5xx (Anthropic's 529 overloaded included). A refusal or a
- * 4xx is an answer, not a hiccup -- and so is a plain TypeError, which is a bug
- * here more often than a network failure (the SDK reports those as
- * APIConnectionError), and a bug retried every evening would bill every evening.
+ * A failure worth retrying later: network error, abort/timeout, 429, 5xx (529 included).
+ * Refusals and 4xx are answers; a plain TypeError is a bug (the SDK reports network failures
+ * as APIConnectionError), and a bug retried nightly would bill nightly.
  */
 export const isTransientFailure = (cause: unknown): boolean => {
   if (!(cause instanceof Error)) return false;

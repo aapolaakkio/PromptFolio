@@ -13,19 +13,16 @@ import {
 import { loadPortfolio } from "../valuation.ts";
 import { type ChatTool, type Db, type ToolResult } from "./tool-types.ts";
 
-/** How many rules one turn may write. A batch larger than this is a runaway. */
 const MAX_RULES_PER_CALL = 20;
 
 const CATEGORY_KEYS = Object.keys(CATEGORY_LABELS);
-// SAFETY: `z.enum` needs a non-empty tuple, and `CATEGORY_LABELS` is a literal
-// object with an entry for every category -- it cannot be empty without the app
-// having no spending categories at all.
+// SAFETY: `z.enum` needs a non-empty tuple and `CATEGORY_LABELS` has an entry per category.
 const CategoryEnum = z.enum(CATEGORY_KEYS as [string, ...string[]]);
 
 const PatternSchema = z
   .string()
   .trim()
-  .min(3, "Hakusanan on oltava vähintään kolme merkkiä")
+  .min(3, "The search term must be at least three characters")
   .max(120);
 
 const SaveRules = z
@@ -41,39 +38,25 @@ const ChangeRule = z.object({ pattern: PatternSchema, category: CategoryEnum }).
 const DropRule = z.object({ pattern: PatternSchema }).strict();
 
 /**
- * The tools that let the assistant classify, rather than only describe.
- *
- * These are the only tools in the app that write, and what they write is the
- * classification, never the ledger: no amount, date or transaction can be
- * created, changed or deleted through the assistant. A rule is a lens over the
- * rows, so a wrong one misreads a total and nothing more -- and it is visible
- * on Kulutus with its source, editable and deletable there.
- *
- * A payee's text comes from an imported bank statement, which is data the app
- * did not write. Two guards keep that from becoming an instruction: a new rule
- * must name a category the app already has, and its pattern must occur in a
- * payee this user's own ledger actually contains and no rule yet matches. The
- * worst a crafted statement line can achieve is a rule pointing at a real
- * merchant of the owner's, in the wrong category, which the owner can see and
- * undo.
+ * The only tools that write, and only classification, never the ledger; a wrong rule is visible
+ * and editable on the Spending page. Payee text is untrusted statement data, so a new rule must
+ * name an existing category and its pattern must occur in a payee of this user's ledger that no
+ * rule matches yet.
  */
 export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "save_spending_rules",
     description:
-      "Tallentaa luokittelusääntöjä, jotta tuntemattomat maksunsaajat menevät jatkossa oikeaan " +
-      "luokkaan. pattern on maksunsaajan nimen osa (isoin kirjaimin), category yksi sovelluksen " +
-      "luokista. Käytä get_uncategorised_spending tai get_transaction_class ensin ja tallenna " +
-      "vain nimiä jotka näkyivät niiden tuloksissa. Kerro käyttäjälle mitä tallensit.",
+      "Saves categorisation rules so unknown payees go to the right category in future. " +
+      "pattern is part of the payee name (in upper case), category one of the app's " +
+      "categories. Use get_uncategorised_spending or get_transaction_class first and save " +
+      "only names that appeared in their results. Tell the user what you saved.",
     schema: SaveRules,
     run: async (input): Promise<ToolResult> => {
       const { rules } = SaveRules.parse(input);
       const { txns, bankAccountIds } = await loadPortfolio(db, userId);
       const bank = new Set(bankAccountIds);
-      // The same guard the import-time classifier applies: a pattern must occur
-      // in a payee this ledger holds and nothing yet classifies. A model that
-      // invents a merchant, or repeats one out of a statement's own text,
-      // writes no rule.
+      // Same guard as import-time classification: an invented or statement-repeated merchant writes no rule.
       const unknown = unknownMerchants(txns, await rulesFor(db, userId), bank).map((name) =>
         name.toUpperCase(),
       );
@@ -89,15 +72,14 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
       }
 
       const { added, rejected } = await addRules(db, userId, grounded, "ai");
-      // What each new rule now catches, so an answer can say what changed
-      // rather than only that something did.
+      // What each new rule now catches, so an answer can say what changed.
       const after = await rulesFor(db, userId);
       const matched = (pattern: string): number =>
         txns.filter(
           (txn) =>
             bank.has(txn.accountId) &&
             (txn.note ?? "").toUpperCase().includes(pattern) &&
-            categoriseWith(txn.note ?? "", after) !== "muu",
+            categoriseWith(txn.note ?? "", after) !== "other",
         ).length;
 
       return {
@@ -109,11 +91,11 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
         })),
         skipped: [...rejected, ...unmatched],
         note:
-          "Säännöt tallennettiin lähteellä 'ai' ja käyttäjä voi muokata tai poistaa ne " +
-          "Kulutus-sivulla. " +
+          "The rules were saved with source 'ai' and the user can edit or delete them " +
+          "on the Spending page. " +
           (unmatched.length > 0
-            ? "Ohitetut nimet eivät esiinny yhdessäkään luokittelemattomassa tapahtumassa, " +
-              "joten niille ei tallennettu sääntöä."
+            ? "The skipped names do not appear in any uncategorised transaction, " +
+              "so no rule was saved for them."
             : ""),
       };
     },
@@ -122,9 +104,9 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "update_spending_rule",
     description:
-      "Muuttaa olemassa olevan säännön luokkaa, kun luokittelu meni väärin. Ei koske sääntöihin " +
-      "jotka käyttäjä on itse tehnyt -- ne kuuluvat hänelle, ja niistä on kerrottava että ne " +
-      "pitää muuttaa Kulutus-sivulla.",
+      "Changes the category of an existing rule when the categorisation went wrong. Does not apply to rules " +
+      "the user made themselves -- they belong to the user, and the user must be told they " +
+      "have to be changed on the Spending page.",
     schema: ChangeRule,
     run: async (input): Promise<ToolResult> => {
       const { pattern, category } = ChangeRule.parse(input);
@@ -139,9 +121,9 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
           reason: result.reason,
           note:
             result.reason === "owned-by-user"
-              ? "Tämän säännön on tehnyt käyttäjä itse, joten et voi muuttaa sitä. Kerro että " +
-                "sen voi muuttaa Kulutus-sivulla."
-              : "Tällaista sääntöä ei ole. Tarkista kirjoitusasu tai tallenna uusi sääntö.",
+              ? "The user made this rule themselves, so you cannot change it. Say that " +
+                "it can be changed on the Spending page."
+              : "No such rule exists. Check the spelling or save a new rule.",
         };
       }
       return {
@@ -156,8 +138,8 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
   {
     name: "remove_spending_rule",
     description:
-      "Poistaa säännön, joka osuu liian laajasti tai on väärin. Ei koske käyttäjän itse tekemiin " +
-      "sääntöihin. Poiston jälkeen osumat palaavat luokkaan Muu.",
+      "Deletes a rule that matches too broadly or is wrong. Does not apply to rules the user made " +
+      "themselves. After deletion, matches return to the category Other.",
     schema: DropRule,
     run: async (input): Promise<ToolResult> => {
       const { pattern } = DropRule.parse(input);
@@ -169,15 +151,15 @@ export const buildRuleTools = (db: Db, userId: string): ChatTool[] => [
           reason: result.reason,
           note:
             result.reason === "owned-by-user"
-              ? "Tämän säännön on tehnyt käyttäjä itse, joten et voi poistaa sitä."
-              : "Tällaista sääntöä ei ole.",
+              ? "The user made this rule themselves, so you cannot delete it."
+              : "No such rule exists.",
         };
       }
       return {
         removed: true,
         pattern: result.pattern,
         wasCategory: labelForCategory(result.was),
-        note: "Osumat palaavat luokkaan Muu, kunnes uusi sääntö tallennetaan.",
+        note: "Matches return to the category Other until a new rule is saved.",
       };
     },
   },
