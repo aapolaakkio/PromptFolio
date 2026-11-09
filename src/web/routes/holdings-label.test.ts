@@ -45,4 +45,15 @@ describe("instrumentLabel", () => {
       }),
     ).toBe("NOKIA.HE");
   });
+
+  test("a page shows its host and path", () => {
+    expect(
+      instrumentLabel({
+        isin: "FI4000567029",
+        sourceKey: "https://www.nordnet.fi/rahastot/lista/x?y=1",
+        priceSource: "page",
+        lookupStatus: "ok",
+      }),
+    ).toBe("FI4000567029 · www.nordnet.fi/rahastot/lista/x");
+  });
 });

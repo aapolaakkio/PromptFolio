@@ -1,9 +1,14 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import type { Currency } from "../../core/money.ts";
+import type { ChatClient } from "../chat/runner.ts";
 import type { Db } from "../db/index.ts";
-import { instruments, prices } from "../db/schema.ts";
+import { instruments, pageRecipes, prices } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
+import { checkPage } from "../prices/page.ts";
+import type { PageRecipe } from "../prices/page-recipe.ts";
+import { recordPoints } from "../prices/record.ts";
+import type { FetchedPrice, FetchImpl } from "../prices/types.ts";
 
 /** What a caller may set on a new instrument, already validated. */
 export type NewInstrument = {
@@ -96,4 +101,94 @@ export const updateInstrument = async (db: Db, id: number, fix: InstrumentFix) =
     .get();
   if (updated === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
   return updated;
+};
+
+/** What checking a typed page needs; injected so tests reach neither network nor model. */
+export type PageDeps = {
+  readonly fetchImpl: FetchImpl;
+  readonly client: ChatClient;
+  readonly today: string;
+};
+
+export type SavedPage = {
+  readonly instrument: typeof instruments.$inferSelect;
+  readonly price: FetchedPrice;
+};
+
+const saveRecipeAndPrice = async (
+  db: Db,
+  instrument: typeof instruments.$inferSelect,
+  recipe: PageRecipe,
+  price: FetchedPrice,
+): Promise<void> => {
+  const text = JSON.stringify(recipe);
+  await db
+    .insert(pageRecipes)
+    .values({ instrumentId: instrument.id, recipe: text, askedAt: Date.now() })
+    .onConflictDoUpdate({
+      target: pageRecipes.instrumentId,
+      set: { recipe: text, askedAt: Date.now() },
+    })
+    .run();
+  await recordPoints(db, instrument, [price]);
+};
+
+/** Registers a page instrument, but only once the page has been read and verified. */
+export const addPageInstrument = async (
+  db: Db,
+  body: NewInstrument,
+  deps: PageDeps,
+): Promise<SavedPage> => {
+  const checked = await checkPage(
+    body.sourceKey ?? "",
+    {
+      identity: body.isin ?? body.name,
+      currency: body.currency,
+      referenceMinor: null,
+      today: deps.today,
+    },
+    deps.fetchImpl,
+    deps.client,
+  );
+  if ("error" in checked) throw new HttpError(400, checked.error);
+  const instrument = await addInstrument(db, body);
+  await saveRecipeAndPrice(db, instrument, checked.recipe, checked.price);
+  return { instrument, price: checked.price };
+};
+
+/** Points an instrument at a page: verified first, then saved with its new recipe. */
+export const updatePageInstrument = async (
+  db: Db,
+  id: number,
+  fix: InstrumentFix,
+  deps: PageDeps,
+): Promise<SavedPage> => {
+  const existing = await db.select().from(instruments).where(eq(instruments.id, id)).get();
+  if (existing === undefined) throw new HttpError(404, "Arvopaperia ei löytynyt");
+  // A changed currency drops the stored prices, so none is a reference then.
+  const latest =
+    existing.currency === fix.currency
+      ? await db
+          .select({ close: prices.close })
+          .from(prices)
+          .where(eq(prices.instrumentId, id))
+          .orderBy(desc(prices.date))
+          .limit(1)
+          .get()
+      : undefined;
+  const checked = await checkPage(
+    fix.sourceKey.trim(),
+    {
+      identity: existing.isin ?? existing.name,
+      currency: fix.currency,
+      referenceMinor: latest?.close ?? null,
+      today: deps.today,
+    },
+    deps.fetchImpl,
+    deps.client,
+  );
+  if ("error" in checked) throw new HttpError(400, checked.error);
+  const instrument = await updateInstrument(db, id, fix);
+  await saveRecipeAndPrice(db, instrument, checked.recipe, checked.price);
+  return { instrument, price: checked.price };
 };

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
+import { formatMoney, money } from "../../core/money.ts";
+import type { FetchedPrice } from "../../server/prices/types.ts";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
 /** The four sources a price can come from, as the instrument store defines them. */
-export type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "manual";
+export type PriceSource = "yahoo" | "nordnet_fund" | "op_fund" | "page" | "manual";
 
 /**
  * Every source a person may choose. Yahoo prices listed shares and many funds
@@ -15,8 +17,13 @@ export const SOURCES = [
   { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },
   { id: "nordnet_fund", label: "Nordnet-rahasto (rahaston sivun osoitteen loppuosa)" },
   { id: "op_fund", label: "OP-rahasto (rahaston sivun osoitteen loppuosa)" },
+  { id: "page", label: "Hintasivu (osoite)" },
   { id: "manual", label: "Syötän arvon itse" },
 ] as const;
+
+/** What a page was read for on saving, shown so the person can see it was right. */
+export const readPriceLine = (price: FetchedPrice): string =>
+  `Luettu hinta: ${formatMoney(money(BigInt(price.closeMinor), price.currency))} ${price.currency} (${price.date})`;
 
 const ISIN_PATTERN = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
 
@@ -36,7 +43,7 @@ const isKind = (value: string): value is Kind => KIND_VALUES.some((k) => k === v
 const LookupSchema = z.object({
   kind: z.enum(KIND_VALUES).nullable(),
   name: z.string().nullable(),
-  priceSource: z.enum(["yahoo", "op_fund"]).nullable(),
+  priceSource: z.enum(["yahoo", "op_fund", "page"]).nullable(),
   sourceKey: z.string().nullable(),
   isin: z.string().nullable(),
   listingCurrency: z.string().nullable(),
@@ -88,6 +95,7 @@ export const UnknownInstrumentForm = ({
   const [sourceKey, setSourceKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [readLine, setReadLine] = useState<string | null>(null);
 
   /**
    * Fills the form from public registries once, on mount. Everything it sets
@@ -141,7 +149,7 @@ export const UnknownInstrumentForm = ({
     setError(null);
     setSubmitting(true);
     try {
-      await createInstrument({
+      const saved = await createInstrument({
         data: {
           isin: isinInput.trim() === "" ? undefined : isinInput.trim().toUpperCase(),
           name,
@@ -152,7 +160,8 @@ export const UnknownInstrumentForm = ({
           ticker: priceSource === "yahoo" ? sourceKey : null,
         },
       });
-      onResolved();
+      if (saved.price === null) onResolved();
+      else setReadLine(readPriceLine(saved.price));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui");
     } finally {
@@ -264,7 +273,9 @@ export const UnknownInstrumentForm = ({
                 ? "esim. nordnet-suomi-indeksi-eur-a401761d"
                 : priceSource === "op_fund"
                   ? "esim. op-maailma-indeksi"
-                  : "rahaston tunnus"
+                  : priceSource === "page"
+                    ? "https://www.example.fi/rahasto"
+                    : "rahaston tunnus"
           }
         />
         {priceSource === "manual" && (
@@ -278,9 +289,20 @@ export const UnknownInstrumentForm = ({
           {error}
         </p>
       )}
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Tallennetaan…" : "Tallenna arvopaperi"}
-      </button>
+      {readLine !== null ? (
+        <>
+          <p role="status" className="text-sm">
+            {readLine}
+          </p>
+          <button type="button" onClick={onResolved}>
+            Valmis
+          </button>
+        </>
+      ) : (
+        <button type="submit" disabled={submitting}>
+          {submitting ? "Tallennetaan…" : "Tallenna arvopaperi"}
+        </button>
+      )}
     </form>
   );
 };

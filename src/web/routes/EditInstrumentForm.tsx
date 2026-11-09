@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { editInstrument, getInstruments } from "../server/instruments.ts";
-import { type PriceSource, SOURCES } from "./UnknownInstrumentForm.tsx";
+import { type PriceSource, readPriceLine, SOURCES } from "./UnknownInstrumentForm.tsx";
 
 const isSource = (value: string): value is PriceSource => SOURCES.some((s) => s.id === value);
 
@@ -44,13 +44,14 @@ const Fields = (props: {
   const [sourceKey, setSourceKey] = useState(props.sourceKey);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [readLine, setReadLine] = useState<string | null>(null);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
     setSaving(true);
     try {
-      await editInstrument({
+      const saved = await editInstrument({
         data: {
           id: props.instrumentId,
           currency: currency.trim().toUpperCase(),
@@ -58,7 +59,8 @@ const Fields = (props: {
           sourceKey,
         },
       });
-      props.onSaved();
+      if (saved.price === null) props.onSaved();
+      else setReadLine(readPriceLine(saved.price));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui");
     } finally {
@@ -101,9 +103,18 @@ const Fields = (props: {
           {error}
         </p>
       )}
-      <button type="submit" disabled={saving}>
-        {saving ? "Tallennetaan…" : "Tallenna"}
-      </button>
+      {readLine !== null ? (
+        <>
+          <p role="status">{readLine}</p>
+          <button type="button" onClick={props.onSaved}>
+            Valmis
+          </button>
+        </>
+      ) : (
+        <button type="submit" disabled={saving}>
+          {saving ? "Tallennetaan…" : "Tallenna"}
+        </button>
+      )}
     </form>
   );
 };

@@ -5,7 +5,17 @@ import { db } from "../db/index.ts";
 import { eq } from "drizzle-orm";
 
 import { prices } from "../db/schema.ts";
-import { addInstrument, listInstruments, updateInstrument } from "./store.ts";
+import {
+  addInstrument,
+  addPageInstrument,
+  listInstruments,
+  updateInstrument,
+  updatePageInstrument,
+} from "./store.ts";
+import type { ChatClient } from "../chat/runner.ts";
+import { testDb } from "../db/test-db.ts";
+import { instruments, pageRecipes } from "../db/schema.ts";
+import type { PageRecipe } from "../prices/page-recipe.ts";
 
 // What api/instruments.test.ts checked through HTTP, checked here against the
 // function itself. Gone with the route: three "rejects a request with no
@@ -199,5 +209,107 @@ describe("updateInstrument", () => {
     await expect(
       updateInstrument(db, 999_999, { currency: EUR, priceSource: "manual", sourceKey: "" }),
     ).rejects.toThrow("ei löytynyt");
+  });
+});
+
+describe("page instruments", () => {
+  const PAGE_ISIN = "FI0000000001";
+  const URL_A = "https://example.test/rahasto";
+  const RECIPE: PageRecipe = {
+    kind: "page",
+    pattern: String.raw`NAV (?<price>[\d,]+) (?<currency>[A-Z]{3}) (?<date>\d{2}\.\d{2}\.\d{4})`,
+    dateFormat: "dd.mm.yyyy",
+    money: { decimal: ",", thousands: "", negative: "leading", twoColumn: false },
+    currency: null,
+  };
+  const html = (nav: string) => `<h1>Rahasto ${PAGE_ISIN}</h1><p>NAV ${nav} EUR 26.08.2026</p>`;
+  const serve = (body: string) => async (): Promise<Response> => new Response(body);
+  const model = (recipe: PageRecipe): ChatClient & { calls: number } => {
+    const client = {
+      calls: 0,
+      run: async () => {
+        client.calls += 1;
+        return { text: JSON.stringify(recipe), toolCalls: [] };
+      },
+    };
+    return client;
+  };
+  const deps = (body: string, client: ChatClient) => ({
+    fetchImpl: serve(body),
+    client,
+    today: "2026-08-27",
+  });
+  const NEW = {
+    isin: PAGE_ISIN,
+    ticker: null,
+    name: "Testirahasto",
+    kind: "fund" as const,
+    currency: EUR,
+    priceSource: "page" as const,
+    sourceKey: URL_A,
+  };
+
+  test("saving a page URL stores the verified recipe and its price", async () => {
+    const { db: tdb } = await testDb();
+
+    const saved = await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
+
+    expect(saved.price).toEqual({ date: "2026-08-26", closeMinor: 1234, currency: EUR });
+    const row = await tdb.select().from(pageRecipes).get();
+    expect(row?.instrumentId).toBe(saved.instrument.id);
+    expect(JSON.parse(row?.recipe ?? "null")).toEqual(RECIPE);
+    const stored = await tdb.select().from(prices).all();
+    expect(stored.map((p) => [p.date, p.close])).toEqual([["2026-08-26", 1234]]);
+  });
+
+  test("a page that cannot be read is refused and nothing changes", async () => {
+    const { db: tdb } = await testDb();
+    const useless = { ...RECIPE, pattern: String.raw`(?<date>nope)(?<price>nope)` };
+
+    await expect(
+      addPageInstrument(tdb, NEW, deps(html("12,34"), model(useless))),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(await tdb.select().from(instruments).all()).toEqual([]);
+    expect(await tdb.select().from(pageRecipes).all()).toEqual([]);
+    expect(await tdb.select().from(prices).all()).toEqual([]);
+  });
+
+  test("a non-https URL is refused", async () => {
+    const { db: tdb } = await testDb();
+    const client = model(RECIPE);
+
+    await expect(
+      addPageInstrument(
+        tdb,
+        { ...NEW, sourceKey: "http://example.test/rahasto" },
+        deps(html("12,34"), client),
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(client.calls).toBe(0);
+    expect(await tdb.select().from(instruments).all()).toEqual([]);
+  });
+
+  test("Muokkaa to a new URL replaces the recipe", async () => {
+    const { db: tdb } = await testDb();
+    const first = await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
+    const next: PageRecipe = {
+      ...RECIPE,
+      pattern: String.raw`Arvo (?<price>[\d,]+) (?<currency>[A-Z]{3}) (?<date>\d{2}\.\d{2}\.\d{4})`,
+    };
+    const page2 = `<h1>${PAGE_ISIN}</h1><p>Arvo 12,50 EUR 26.08.2026</p>`;
+
+    const updated = await updatePageInstrument(
+      tdb,
+      first.instrument.id,
+      { currency: EUR, priceSource: "page", sourceKey: "https://example.test/uusi" },
+      deps(page2, model(next)),
+    );
+
+    expect(updated.price.closeMinor).toBe(1250);
+    expect(updated.instrument.sourceKey).toBe("https://example.test/uusi");
+    const row = await tdb.select().from(pageRecipes).get();
+    expect(JSON.parse(row?.recipe ?? "null")).toEqual(next);
   });
 });

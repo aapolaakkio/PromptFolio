@@ -218,3 +218,27 @@ export const refreshPage = async (
   await saveAsk(db, instrument.id, { askedAt: opts.now, recipe: JSON.stringify(written.recipe) });
   return (await write(db, instrument, written.price)) ? "ok" : stillAttention(instrument);
 };
+
+/**
+ * A typed page address, checked before anything is saved: fetched once and
+ * read by a recipe the model writes and the app verifies. A refusal or a
+ * failed fetch comes back as a Finnish reason.
+ */
+export const checkPage = async (
+  url: string,
+  expect: PageExpect,
+  fetchImpl: FetchImpl,
+  client: ChatClient,
+): Promise<{ recipe: PageRecipe; price: FetchedPrice } | { error: string }> => {
+  if (!isPublicPageUrl(url)) {
+    return { error: "Osoitteen on oltava julkinen https-osoite ilman porttia tai IP-osoitetta." };
+  }
+  let html: string;
+  try {
+    html = await fetchPage(url, fetchImpl);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : "Tuntematon virhe";
+    return { error: `Sivua ei voitu hakea: ${reason}` };
+  }
+  return await writePageRecipe(html, expect, client);
+};

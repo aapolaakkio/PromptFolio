@@ -5,12 +5,27 @@ import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
 import type { InstrumentLookup } from "../../server/instruments/lookup.ts";
 import { rememberedLookup } from "../../server/instruments/lookup-cache.ts";
+import { createClient } from "../../server/chat/runner.ts";
 import {
   addInstrument,
+  addPageInstrument,
   listInstruments,
   updateInstrument,
+  updatePageInstrument,
+  type PageDeps,
 } from "../../server/instruments/store.ts";
+import type { FetchedPrice } from "../../server/prices/types.ts";
 import { authed, readable } from "./guard.ts";
+
+/** The model client is made only for a page, so the other sources work without a key. */
+const pageDeps = (): PageDeps => ({
+  fetchImpl: fetch,
+  client: createClient(),
+  today: new Date().toISOString().slice(0, 10),
+});
+
+/** What saving told the form: the price a page was read for, null for any other source. */
+export type SaveResult = { readonly price: FetchedPrice | null };
 
 const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen");
 
@@ -19,25 +34,14 @@ export const getInstruments = createServerFn()
   .middleware([authed])
   .handler(() => listInstruments(db));
 
-type FormLookup = Omit<InstrumentLookup, "priceSource"> & {
-  readonly priceSource: "yahoo" | "op_fund" | null;
-};
-
 /**
- * The form cannot register a page source: its recipe lives with the import
- * that found it. A page result an import remembered reads here as nothing found.
+ * A page result an import remembered prefills the form like any other source;
+ * the recipe stays behind, since saving checks the page again.
  */
-const forTheForm = (result: InstrumentLookup): FormLookup =>
-  result.priceSource === "page"
-    ? {
-        ...result,
-        priceSource: null,
-        sourceKey: null,
-        pageRecipe: null,
-        outcome: "form",
-        formReason: "nothing",
-      }
-    : { ...result, priceSource: result.priceSource };
+const forTheForm = (result: InstrumentLookup): InstrumentLookup => ({
+  ...result,
+  pageRecipe: null,
+});
 
 /** Asks the price sources what a security is, before anyone registers it: gated and remembered. */
 export const lookUpInstrument = createServerFn()
@@ -68,7 +72,7 @@ export const createInstrument = createServerFn({ method: "POST" })
         name: z.string().min(1).max(200),
         kind: z.enum(["stock", "etf", "fund", "cash"]),
         currency: currencyField,
-        priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
+        priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
         sourceKey: z.string().max(200).optional(),
       })
       .refine((body) => body.priceSource === "manual" || (body.sourceKey ?? "") !== "", {
@@ -80,7 +84,16 @@ export const createInstrument = createServerFn({ method: "POST" })
         path: ["isin"],
       }),
   )
-  .handler(({ data }) => readable(() => addInstrument(db, data)));
+  .handler(({ data }) =>
+    readable(async (): Promise<SaveResult> => {
+      if (data.priceSource !== "page") {
+        await addInstrument(db, data);
+        return { price: null };
+      }
+      const saved = await addPageInstrument(db, data, pageDeps());
+      return { price: saved.price };
+    }),
+  );
 
 /** Corrects an instrument's currency, price source or source code. */
 export const editInstrument = createServerFn({ method: "POST" })
@@ -89,8 +102,17 @@ export const editInstrument = createServerFn({ method: "POST" })
     z.object({
       id: z.number().int().positive(),
       currency: currencyField,
-      priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "manual"]),
+      priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
       sourceKey: z.string().max(200),
     }),
   )
-  .handler(({ data }) => readable(() => updateInstrument(db, data.id, data)));
+  .handler(({ data }) =>
+    readable(async (): Promise<SaveResult> => {
+      if (data.priceSource !== "page") {
+        await updateInstrument(db, data.id, data);
+        return { price: null };
+      }
+      const saved = await updatePageInstrument(db, data.id, data, pageDeps());
+      return { price: saved.price };
+    }),
+  );
