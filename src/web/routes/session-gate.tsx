@@ -1,5 +1,6 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
+import { Logo } from "./Logo.tsx";
 import { ThemeToggle } from "./ThemeToggle.tsx";
 
 type SessionGateProps = {
@@ -16,7 +17,7 @@ export const SessionGate = ({ isPending, hasSession, onSignOut }: SessionGatePro
   return (
     <>
       <header className="flex items-center gap-6 border-b border-line bg-surface px-5 py-3">
-        <span className="font-semibold tracking-tight">PromptFolio</span>
+        <Logo />
         <nav className="mr-auto flex gap-4">
           <Link to="/" className="text-muted no-underline hover:text-ink">
             Dashboard

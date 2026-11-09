@@ -2,6 +2,7 @@ import { type SubmitEvent, useState } from "react";
 import { errorMessage } from "../lib/errors.ts";
 import { createFirstAccount } from "../server/setup.ts";
 import { signIn } from "../lib/auth-client.ts";
+import { Logo } from "./Logo.tsx";
 
 type FirstRunFormProps = {
   /** Called after the account is created AND the resulting sign-in succeeds. */
@@ -57,7 +58,9 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
   return (
     <main className="grid min-h-dvh place-items-center">
       <form className="card w-80" onSubmit={(event) => void submit(event)}>
-        <h1>PromptFolio</h1>
+        <h1>
+          <Logo size={36} />
+        </h1>
         <p className="text-muted text-sm">
           Welcome. This form creates the app's first and only account, for yourself — accounts for
           family members are added separately.

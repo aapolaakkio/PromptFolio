@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type SubmitEvent, useState } from "react";
 import { signIn } from "../lib/auth-client.ts";
+import { Logo } from "./Logo.tsx";
 
 /** The sign-in form, extracted so `login.tsx` stays a thin orchestrator. */
 export const SignInForm = () => {
@@ -27,7 +28,9 @@ export const SignInForm = () => {
   return (
     <main className="grid min-h-dvh place-items-center">
       <form className="card w-80" onSubmit={(event) => void submit(event)}>
-        <h1>PromptFolio</h1>
+        <h1>
+          <Logo size={36} />
+        </h1>
         <label>
           Email
           <input

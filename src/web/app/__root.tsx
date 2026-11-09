@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 
 import { THEME_SCRIPT } from "../lib/theme.ts";
+import { FAVICON_HREF } from "../routes/Logo.tsx";
 import styles from "../styles.css?url";
 
 const queryClient = new QueryClient({
@@ -16,7 +17,10 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "PromptFolio" },
     ],
-    links: [{ rel: "stylesheet", href: styles }],
+    links: [
+      { rel: "stylesheet", href: styles },
+      { rel: "icon", type: "image/svg+xml", href: FAVICON_HREF },
+    ],
     // Inline and first, so the theme is set before anything paints.
     scripts: [{ children: THEME_SCRIPT }],
   }),
