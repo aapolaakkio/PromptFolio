@@ -23,6 +23,7 @@ import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 import { BankStatementImport } from "./BankStatementImport.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
+import { firstThenRest } from "./preview-order.ts";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
@@ -266,12 +267,10 @@ export const ImportsPage = () => {
 
   const previewFile = useMutation({
     mutationFn: () =>
-      Promise.all(
-        files.map(async (file) => {
-          const draft = await previewImport({ data: fileForm(file) });
-          return { name: file.name, file, draft, rows: editableRows(draft) };
-        }),
-      ),
+      firstThenRest(files, async (file) => {
+        const draft = await previewImport({ data: fileForm(file) });
+        return { name: file.name, file, draft, rows: editableRows(draft) };
+      }),
     onSuccess: showPreviews,
     onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
   });
@@ -451,7 +450,8 @@ export const ImportsPage = () => {
           {source === "file" ? (
             <section className="card mt-4">
               <label>
-                Välittäjän CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät)
+                Välittäjän CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät). Voit valita useita
+                tiedostoja kerralla.
                 <input
                   type="file"
                   accept=".csv,.pdf,text/csv,application/pdf"

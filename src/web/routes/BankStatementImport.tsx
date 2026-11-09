@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { commitBankDraftImport, previewBankImport } from "../server/bank-imports.ts";
+import { firstThenRest } from "./preview-order.ts";
 import { eur, fiDate } from "../lib/format.ts";
 import { describeImport, describeMaturity, describeReconciliation } from "./cash-view.ts";
 import { bankBalanceCheck, problemToRow } from "./draft-edit.ts";
@@ -63,12 +64,10 @@ export const BankStatementImport = ({ accountId }: { readonly accountId: number 
 
   const preview = useMutation({
     mutationFn: () =>
-      Promise.all(
-        files.map(async (file) => ({
-          name: file.name,
-          data: await previewBankImport({ data: formFor(file) }),
-        })),
-      ),
+      firstThenRest(files, async (file) => ({
+        name: file.name,
+        data: await previewBankImport({ data: formFor(file) }),
+      })),
     onMutate: () => {
       setImported([]);
       setDrafts([]);
@@ -131,7 +130,8 @@ export const BankStatementImport = ({ accountId }: { readonly accountId: number 
       <p className="text-muted text-sm">
         Pankin tapahtumavienti (CSV) tai tiliote (PDF). Sama tiedosto voidaan tuoda uudelleen: jo
         tuodut rivit ohitetaan pankin arkistointitunnuksen perusteella. Saman jakson voi tuoda
-        molemmissa muodoissa — PDF täydentää saajatiedot, jotka CSV jättää tyhjiksi.
+        molemmissa muodoissa — PDF täydentää saajatiedot, jotka CSV jättää tyhjiksi. Voit valita
+        useita tiedostoja kerralla, esim. kaikki kuukausien tiliotteet.
       </p>
       <input
         type="file"
