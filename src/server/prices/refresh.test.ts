@@ -862,3 +862,18 @@ test("refreshPrices spaces page fetches and still runs Yahoo", async () => {
   expect(pageAt).toHaveLength(2);
   expect(pageAt[1]! - pageAt[0]!).toBeGreaterThanOrEqual(35);
 });
+
+test("a direct backfill of a page instrument does not throw and writes nothing", async () => {
+  const { db } = await testDb();
+  const fund = await seedHeld(db, {
+    kind: "fund",
+    priceSource: "page",
+    sourceKey: "https://example.test/x",
+    ticker: null,
+  });
+  const result = await backfillInstrument(db, fund.id, { fetchImpl: mustNotBeCalled });
+  expect(result).toEqual({ inserted: 0, incomplete: false });
+  expect(await backfillMany(db, [fund.id], { fetchImpl: mustNotBeCalled })).toMatchObject({
+    attempted: 0,
+  });
+});

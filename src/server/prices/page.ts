@@ -78,9 +78,16 @@ const write = async (db: Db, instrument: PageInstrument, price: FetchedPrice): P
 const stillAttention = (instrument: PageInstrument): PageOutcome =>
   instrument.lookupStatus === "attention" ? "attention" : "failed";
 
+const GONE_STATUSES = new Set([404, 410]);
+
+class PageGoneError extends Error {}
+
 const fetchPage = async (instrument: PageInstrument, fetchImpl: FetchImpl): Promise<string> => {
-  const response = await requireOk(await fetchImpl(instrument.sourceKey), "Sivu");
-  return await response.text();
+  const response = await fetchImpl(instrument.sourceKey);
+  if (GONE_STATUSES.has(response.status)) {
+    throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
+  }
+  return await (await requireOk(response, "Sivu")).text();
 };
 
 /**
@@ -103,6 +110,10 @@ export const refreshPage = async (
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Tuntematon virhe";
     await logAttempt(db, { source: SOURCE, instrumentId: instrument.id, ok: false, message });
+    if (cause instanceof PageGoneError) {
+      await setStatus(db, instrument, "attention");
+      return "attention";
+    }
     return stillAttention(instrument);
   }
 
@@ -136,7 +147,8 @@ export const refreshPage = async (
       ok: false,
       message: "Tallennettu kuvaus ei lukenut sivua, uutta ei kysytty",
     });
-    return stillAttention(instrument);
+    await setStatus(db, instrument, "attention");
+    return "attention";
   }
 
   await saveAsk(db, instrument.id, { askedAt: opts.now });

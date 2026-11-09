@@ -158,7 +158,7 @@ test("the next night within 7 days makes no model call", async () => {
 
   const result = await run(db, instrument, "<p>sivu muuttui</p>", noModel);
 
-  expect(result).toBe("failed");
+  expect(result).toBe("attention");
 });
 
 test("after 7 days the model is asked again", async () => {
@@ -169,10 +169,10 @@ test("after 7 days the model is asked again", async () => {
   expect(client.calls).toBe(1);
 });
 
-test("with no client nothing is asked and the result is failed", async () => {
+test("with no client nothing is asked", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, null);
-  expect(await run(db, instrument, "<p>x</p>", null)).toBe("failed");
+  expect(await run(db, instrument, "<p>x</p>", null)).toBe("attention");
   expect((await db.select().from(pageRecipes).get())?.askedAt ?? null).toBeNull();
 });
 
@@ -185,7 +185,7 @@ test("an unreadable stored recipe counts as no recipe", async () => {
   expect(client.calls).toBe(1);
 });
 
-test("a fetch failure is failed, with no model call", async () => {
+test("a 404 marks attention with no model call", async () => {
   const { db } = await testDb();
   const instrument = await seedPage(db, RECIPE);
   const result = await refreshPage(db, instrument, {
@@ -194,7 +194,8 @@ test("a fetch failure is failed, with no model call", async () => {
     today: "2026-08-27",
     now: NOW,
   });
-  expect(result).toBe("failed");
+  expect(result).toBe("attention");
+  expect(await statusOf(db, instrument.id)).toBe("attention");
   expect((await db.select().from(priceFetchLog).all())[0]?.message).toContain("404");
 });
 
@@ -266,4 +267,31 @@ test("a 3-night consistent jump re-baselines a page instrument", async () => {
   expect(results).toEqual(["failed", "failed", "ok"]);
   const latest = (await db.select().from(prices).all()).find((p) => p.date === "2026-08-26");
   expect(latest?.close).toBe(50000);
+});
+
+test("a 503 stays failed and leaves the status", async () => {
+  const { db } = await testDb();
+  const instrument = await seedPage(db, RECIPE);
+  const result = await refreshPage(db, instrument, {
+    fetchImpl: async () => new Response("down", { status: 503 }),
+    client: noModel,
+    today: "2026-08-27",
+    now: NOW,
+  });
+  expect(result).toBe("failed");
+  expect(await statusOf(db, instrument.id)).toBe("ok");
+});
+
+test("a recipe that breaks within 7 days of an ask marks attention with no model call", async () => {
+  const { db } = await testDb();
+  const instrument = await seedPage(db, RECIPE, NOW - DAY);
+  expect(await run(db, instrument, "<p>sivu muuttui</p>", noModel)).toBe("attention");
+  expect(await statusOf(db, instrument.id)).toBe("attention");
+});
+
+test("no client: a broken recipe marks attention", async () => {
+  const { db } = await testDb();
+  const instrument = await seedPage(db, RECIPE);
+  expect(await run(db, instrument, "<p>sivu muuttui</p>", null)).toBe("attention");
+  expect(await statusOf(db, instrument.id)).toBe("attention");
 });

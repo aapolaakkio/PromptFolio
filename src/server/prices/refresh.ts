@@ -5,7 +5,7 @@ import { createClient } from "../chat/runner.ts";
 import type { Db } from "../db/index.ts";
 import { instruments, prices, transactions } from "../db/schema.ts";
 import { backfillFxRates, refreshFxRates } from "../fx.ts";
-import { refreshPage, PAGE_SPACING_MS } from "./page.ts";
+import { refreshPage, PAGE_SPACING_MS, type PageOutcome } from "./page.ts";
 import { logAttempt, recordPoints, type Priced } from "./record.ts";
 import { sourceFor } from "./registry.ts";
 import { heldInstrumentIds, latestQuotesUntilPaused } from "./intraday.ts";
@@ -103,7 +103,7 @@ const refreshPageSafely = async (
   db: Db,
   instrument: typeof instruments.$inferSelect,
   opts: Parameters<typeof refreshPage>[2],
-): Promise<"ok" | "failed" | "attention"> => {
+): Promise<PageOutcome> => {
   try {
     return await refreshPage(db, instrument, opts);
   } catch (cause) {
@@ -201,7 +201,10 @@ export const backfillInstrument = async (
     .from(instruments)
     .where(eq(instruments.id, instrumentId))
     .get();
-  if (!instrument || instrument.priceSource === "manual") return { inserted: 0, incomplete: false };
+  // A page needs refreshPage's model client; no history can be read from one.
+  if (!instrument || instrument.priceSource === "manual" || instrument.priceSource === "page") {
+    return { inserted: 0, incomplete: false };
+  }
 
   const earliest = await db
     .select({ tradeDate: transactions.tradeDate })
