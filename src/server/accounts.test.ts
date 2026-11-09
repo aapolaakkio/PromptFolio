@@ -25,10 +25,10 @@ test("wraps a handler result as JSON", async () => {
 
 test("maps HttpError to its status and a Finnish message", async () => {
   const response = await handle(async () => {
-    throw new HttpError(403, "Ei oikeuksia");
+    throw new HttpError(403, "Forbidden");
   })(new Request("http://x/"));
   expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: "Ei oikeuksia" });
+  expect(await response.json()).toEqual({ error: "Forbidden" });
 });
 
 test("maps a Zod failure to 400 with field detail", async () => {
@@ -38,8 +38,7 @@ test("maps a Zod failure to 400 with field detail", async () => {
     return json({});
   })(new Request("http://x/"));
   expect(response.status).toBe(400);
-  // SAFETY: handle()'s ZodError branch (asserted above via status 400)
-  // always shapes its body as `{ error, fields: [{ path, message }] }`.
+  // SAFETY: handle()'s ZodError branch (status 400) shapes its body as `{ error, fields: [{ path, message }] }`.
   const body = (await response.json()) as { error: string; fields: Array<{ path: string }> };
   expect(body.fields[0]!.path).toBe("name");
 });
@@ -53,23 +52,11 @@ test("never leaks an unexpected error message to the client", async () => {
 });
 
 // --- http.ts must not transitively import auth.ts or touch a database ---
-//
-// auth-guard.ts (and therefore auth.ts) reads the database binding and
-// refuses without a real BETTER_AUTH_SECRET. http.ts is meant to be usable by
-// any route module without paying that cost, so HttpError is re-exported from
-// errors.ts, not auth-guard.ts. Proved in a real child process (not a
-// same-process dynamic import) so module caching from earlier tests cannot
-// hide a transitive import.
-//
-// Plain Node is the point of the check now, not just its method: `db/index.ts`
-// imports `cloudflare:workers`, which only the Worker runtime and vitest's
-// alias resolve. A child process that imports http.ts and exits 0 is proof
-// that http.ts reaches neither.
+// Proved in a child process (not a dynamic import, which module caching could hide): plain Node cannot resolve
+// `cloudflare:workers`, so exit 0 means http.ts reaches neither the db nor auth.ts (HttpError is re-exported from errors.ts).
 test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database", () => {
   const httpPath = new URL("./http.ts", import.meta.url).pathname;
-  // Blanked rather than deleted: `wrangler types` declares these on
-  // NodeJS.ProcessEnv as required strings, and an empty secret is what
-  // resolveAuthSecret refuses anyway.
+  // Blanked rather than deleted: `wrangler types` declares these as required strings, and resolveAuthSecret refuses an empty one anyway.
   const envWithoutSecret: NodeJS.ProcessEnv = { ...process.env, BETTER_AUTH_SECRET: "" };
   const scratchCwd = mkdtempSync(join(tmpdir(), "promptfolio-http-import-"));
   try {
@@ -90,28 +77,9 @@ test("importing http.ts alone needs no BETTER_AUTH_SECRET and opens no database"
   }
 });
 
-// --- account functions / assertAccountOwned (src/server/accounts.ts) ---
-//
-// These need a real, migrated database and a real Better Auth session, so
-// auth.ts and accounts.ts are imported dynamically from beforeAll (import
-// statements are hoisted above this file's own top-level code, so a static
-// import would run before the database below is ready) — mirroring
-// src/server/auth.test.ts.
-//
-// This file must NOT call resetDbHandleForTests(), set DATABASE_PATH, or
-// call the shared database itself: ../test-setup.ts (a vitest.config.ts
-// `[test] preload` script, see its own comment for the full story) has
-// already done all of that, deterministically, before this file's own
-// code runs — regardless of file scheduling. auth.ts is a process-wide ES
-// module singleton (whichever code imports it first anywhere in the
-// process wins for the rest of the run), so this file simply trusts that
-// the shared database already points at a migrated in-memory
-// database and dynamically imports auth.ts/accounts.ts, both of which
-// bind to that same handle at their own first import. Duplicating that
-// setup here (an earlier version of this file did) is exactly what caused
-// a real foreign-key failure during Task 9's development when another
-// file's independent reset desynced it from this one — see
-// task-9-report.md's fix-up report.
+// --- account functions / assertAccountOwned ---
+// Need a real migrated database and Better Auth session. test-setup.ts has already pinned the shared in-memory database,
+// so never reset it here; auth.ts is a process-wide singleton, so import it dynamically from beforeAll.
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let assertAccountOwned: (typeof import("./accounts.ts"))["assertAccountOwned"];
@@ -140,16 +108,12 @@ const signUp = async (email: string): Promise<{ userId: string; cookie: string }
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email is Better Auth's documented
-  // success response, which always carries `{ token, user: { id, ... } }`.
+  // SAFETY: Better Auth's sign-up response always carries `{ token, user: { id } }`.
   const body = (await response.json()) as { user: { id: string } };
   return { userId: body.user.id, cookie: sessionCookieFrom(response) };
 };
 
 describe("listAccounts", () => {
-  // The no-session case is the authed middleware's, on every server function
-  // that touches the ledger. It cannot be skipped by calling one.
-
   test("lists only the caller's own accounts", async () => {
     const owner = await signUp(`owner-${crypto.randomUUID()}@example.com`);
     const stranger = await signUp(`stranger-${crypto.randomUUID()}@example.com`);
@@ -162,7 +126,7 @@ describe("listAccounts", () => {
     await openAccountRow(
       db,
       stranger.userId,
-      CreateAccount.parse({ name: "OP tili", broker: "op" }),
+      CreateAccount.parse({ name: "OP account", broker: "op" }),
     );
 
     const body = await listAccounts(db, owner.userId);
@@ -171,9 +135,6 @@ describe("listAccounts", () => {
 });
 
 describe("openAccount", () => {
-  // The no-session case is the authed middleware's, on every server function
-  // that touches the ledger. It cannot be skipped by calling one.
-
   test("creates an account owned by the caller and defaults baseCurrency to EUR", async () => {
     const { userId } = await signUp(`creator-${crypto.randomUUID()}@example.com`);
     const body = await openAccountRow(
@@ -187,8 +148,7 @@ describe("openAccount", () => {
   });
 
   test("refuses an invalid body, naming every field that is wrong", () => {
-    // The schema is the server function's validator, so this is the refusal a
-    // caller actually meets -- and it names both problems, not just the first.
+    // The schema is the validator, so this is the refusal a caller meets; it names both problems.
     const result = CreateAccount.safeParse({ name: "", broker: "not-a-real-broker" });
 
     expect(result.success).toBe(false);
@@ -196,8 +156,7 @@ describe("openAccount", () => {
     expect(fields.sort()).toEqual(["broker", "name"]);
   });
 
-  // §10a A1: the real portfolio holds SEK, never USD -- an account's base
-  // currency must accept any real ISO 4217 code, not just EUR/USD.
+  // The real portfolio holds SEK: base currency must accept any ISO 4217 code.
   test("creates an account with an explicit non-EUR/USD ISO base currency (SEK)", async () => {
     const { userId } = await signUp(`sek-account-${crypto.randomUUID()}@example.com`);
     const body = await openAccountRow(
@@ -259,51 +218,42 @@ describe("updateAccount", () => {
   const rename = (userId: string, id: number, name: string) =>
     updateAccount(db, userId, id, UpdateAccount.parse({ name }));
 
-  // The no-session case is the authed middleware's, on every server function
-  // that touches the ledger. It cannot be skipped by calling one.
-
   test("renames an account the caller owns", async () => {
     const { userId } = await signUp(`rename-${crypto.randomUUID()}@example.com`);
-    const id = await createAccount(userId, { name: "Vanha nimi", broker: "nordnet" });
+    const id = await createAccount(userId, { name: "Old name", broker: "nordnet" });
 
     expect((await rename(userId, id, "Nordnet OST"))?.name).toBe("Nordnet OST");
   });
 
   test("refuses an account belonging to someone else, as 404 rather than 403", async () => {
     const owner = await signUp(`rename-owner-${crypto.randomUUID()}@example.com`);
-    const id = await createAccount(owner.userId, { name: "Omistajan tili", broker: "op" });
+    const id = await createAccount(owner.userId, { name: "Owner's account", broker: "op" });
     const stranger = await signUp(`rename-stranger-${crypto.randomUUID()}@example.com`);
 
-    // Not found rather than forbidden: a stranger learns nothing, not even
-    // that the account exists.
+    // Not found rather than forbidden: a stranger learns nothing, not even that the account exists.
     await expect(rename(stranger.userId, id, "Kaapattu")).rejects.toThrow();
 
-    // And the name is untouched.
     const rows = await listAccounts(db, owner.userId);
-    expect(rows.find((row) => row.id === id)?.name).toBe("Omistajan tili");
+    expect(rows.find((row) => row.id === id)?.name).toBe("Owner's account");
   });
 
   test("refuses an empty name", async () => {
     const { userId } = await signUp(`rename-empty-${crypto.randomUUID()}@example.com`);
-    await createAccount(userId, { name: "Tili", broker: "op" });
+    await createAccount(userId, { name: "Account", broker: "op" });
 
     expect(UpdateAccount.safeParse({ name: "   " }).success).toBe(false);
   });
 
-  // The broker and base currency are facts the stored transactions were already
-  // interpreted under; changing either after rows exist would reinterpret them.
+  // Broker and base currency are facts stored transactions were interpreted under; changing either would reinterpret them.
   test("cannot change the broker or the base currency", async () => {
     const { userId } = await signUp(`rename-fixed-${crypto.randomUUID()}@example.com`);
-    const id = await createAccount(userId, { name: "Tili", broker: "op" });
+    const id = await createAccount(userId, { name: "Account", broker: "op" });
 
-    // The schema drops them: broker and base currency are facts the stored
-    // transactions were already interpreted under, so changing either after
-    // rows exist would reinterpret them.
     const updated = await updateAccount(
       db,
       userId,
       id,
-      UpdateAccount.parse({ name: "Tili", broker: "nordnet", baseCurrency: "USD" }),
+      UpdateAccount.parse({ name: "Account", broker: "nordnet", baseCurrency: "USD" }),
     );
 
     expect(updated?.broker).toBe("op");
@@ -330,7 +280,7 @@ test("stores an account type at creation, and leaves it null when unstated", asy
   const without = await openAccountRow(
     db,
     userId,
-    CreateAccount.parse({ name: "Tuntematon", broker: "op" }),
+    CreateAccount.parse({ name: "Unknown", broker: "op" }),
   );
   // Null, not "aot": an unconfirmed type must not read as an ordinary account.
   expect(without.accountType).toBeNull();
@@ -358,22 +308,20 @@ test("changes the account type without touching the name, and can clear it", asy
   const cleared = await patch({ accountType: null });
   expect(cleared?.accountType).toBeNull();
 
-  // An empty change is refused rather than treated as a no-op: it means the
-  // caller sent a form with nothing filled in.
+  // An empty change is refused: it means a form with nothing filled in.
   expect(UpdateAccount.safeParse({}).success).toBe(false);
 });
 
 test("refuses a bank account type on a brokerage account, and the reverse", async () => {
   const { userId } = await signUp(`kind-mismatch-${crypto.randomUUID()}@example.com`);
 
-  // "A brokerage account that is a savings account" is not a typo with an
-  // obvious fix, so it is refused rather than corrected.
+  // "A brokerage account that is a savings account" has no obvious fix, so it is refused rather than corrected.
   await expect(
     openAccountRow(
       db,
       userId,
       CreateAccount.parse({
-        name: "Sekava",
+        name: "Confusing",
         broker: "op",
         accountType: "savings",
       }),
@@ -385,7 +333,7 @@ test("refuses a bank account type on a brokerage account, and the reverse", asyn
       db,
       userId,
       CreateAccount.parse({
-        name: "Sekava",
+        name: "Confusing",
         broker: "op",
         kind: "bank",
         accountType: "ost",
@@ -412,12 +360,11 @@ test("refuses to move an account's type to the other kind's set after creation",
     await openAccountRow(
       db,
       userId,
-      CreateAccount.parse({ name: "OP käyttötili", broker: "op", kind: "bank" }),
+      CreateAccount.parse({ name: "OP current account", broker: "op", kind: "bank" }),
     )
   ).id;
 
-  // A bank account cannot become an arvo-osuustili by editing its type: the
-  // kind decides which types are allowed, and the kind does not change.
+  // A bank account cannot become a securities account by editing its type: the kind decides the allowed types.
   await expect(
     updateAccount(db, userId, id, UpdateAccount.parse({ accountType: "aot" })),
   ).rejects.toThrow();

@@ -1,13 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
-/**
- * PIDs of workerd processes left behind by an earlier run: parent is init (1)
- * and the binary is this repo's own. A run killed before its teardown -- a
- * timed-out command, a Ctrl-C mid-suite -- orphans its workerd, and nothing
- * else ever stops it. A running `pnpm run dev` keeps its parent, so it is
- * never matched.
- */
+/** PIDs of workerd processes orphaned by a run killed before teardown: parent is init (1) and the binary is this repo's. A running `pnpm run dev` keeps its parent, so it is never matched. */
 export const orphanedWorkerd = (psOutput: string, nodeModules: string): number[] =>
   psOutput.split("\n").flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);

@@ -1,14 +1,6 @@
-/**
- * HTTP error thrown by server-side guards and route handlers. Lives in its
- * own module (rather than alongside `requireUser` in auth-guard.ts) so that
- * pure HTTP helpers can depend on it without transitively importing auth.ts,
- * which opens a database connection and throws at import time when
- * `BETTER_AUTH_SECRET` is missing.
- */
+/** HTTP error thrown by guards and handlers. Its own module so pure HTTP helpers can use it without importing auth.ts (which opens a database and throws without `BETTER_AUTH_SECRET`). */
 export class HttpError extends Error {
-  // Assigned in the body rather than declared as a parameter property: that
-  // is TypeScript syntax Node cannot strip, only transform, and this runs
-  // under plain Node in test child processes.
+  // Assigned in the body, not a parameter property: Node cannot strip that syntax and this runs under plain Node in test child processes.
   readonly status: number;
 
   constructor(status: number, message: string) {

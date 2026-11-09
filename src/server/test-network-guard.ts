@@ -1,13 +1,4 @@
-/**
- * Runs before any test file loads, via vitest.config.ts's setup files.
- *
- * Replaces the global `fetch` with one that throws. "No live network calls in
- * the test suite, ever" held only as a property of every file happening to pass
- * its own `fetchImpl`, and a test that forgot would silently reach the real
- * network: slower, flaky, and exactly the kind of thing that stops failing
- * loudly. A test that genuinely needs the network should inject a `fetchImpl`
- * that reaches it deliberately.
- */
+/** Runs before any test file (vitest setup files): replaces global `fetch` with one that throws, so a test that forgets to inject `fetchImpl` fails loudly instead of silently reaching the network. A test that needs the network injects one deliberately. */
 globalThis.fetch = (): Promise<Response> => {
   throw new Error(
     "network blocked in tests: this call reached the real global fetch instead of an injected " +

@@ -4,22 +4,8 @@ import { db } from "./db/index.ts";
 import { testDb } from "./db/test-db.ts";
 import { user } from "./db/schema.ts";
 
-// This file exercises the first-run functions against the SAME shared, migrated
-// in-memory database every other server test file uses (see
-// ../test-setup.ts's comment -- this file must NOT call
-// resetDbHandleForTests(), set DATABASE_PATH, or call the shared database
-// itself). By the time any test below runs, other test files (auth.test.ts,
-// accounts.test.ts, ...) may already have created users in that shared
-// database, in an order this file does not control -- so the tests here
-// that need a database with a KNOWN user (the "already set up" tests)
-// create their own via a real Better Auth sign-up first, and never assert
-// the negative ("hasUsers is false") against the shared database.
-//
-// The "zero users" scenarios -- the empty-instance form actually working,
-// and the concurrent-request race -- are exactly the cases the shared
-// database cannot exercise (it may already be non-empty by the time this
-// file runs, order-dependent). Those call `testDb()`, which empties every
-// table, rather than the child process they used to need.
+// Uses the shared migrated in-memory database (never reset it here). Other files may already have created users, so "already set up" tests create their own via a real sign-up and never assert hasUsers is false there.
+// Zero-user scenarios (empty-instance form, concurrent race) call `testDb()`, which empties every table.
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let hasAnyUser: (typeof import("./setup.ts"))["hasAnyUser"];
@@ -52,9 +38,7 @@ const signUp = async (email: string): Promise<void> => {
 
 const userCount = async (): Promise<number> => {
   const row = await db.select({ n: count() }).from(user).get();
-  // `count()` over the whole table always returns a row, but saying so as a
-  // check rather than an assertion means a driver that ever stops doing it
-  // fails here with a sentence instead of somewhere else with a TypeError.
+  // `count()` always returns a row; checking it gives a readable failure if a driver ever stops.
   if (row === undefined) throw new Error("count() returned no row");
   return row.n;
 };
@@ -63,30 +47,22 @@ describe("hasAnyUser", () => {
   test("is callable with no session at all and reveals nothing beyond hasUsers", async () => {
     await signUp(`get-status-${crypto.randomUUID()}@example.com`);
     const state = { hasUsers: await hasAnyUser() };
-    // Once any user exists (guaranteed true here, this file just created
-    // one), the answer is EXACTLY { hasUsers: true } -- no count, no email,
-    // no name, nothing else. What the screen may not learn, it is not told.
+    // With any user present the answer is exactly { hasUsers: true }: no count, email or name.
     expect(state).toEqual({ hasUsers: true });
   });
 });
 
 describe("insertCredentialUser (the row-writing half of createFirstUser)", () => {
-  // Each of these empties the database first: the "exactly one owner" guard
-  // now lives inside insertCredentialUser as a conditional insert, so a
-  // non-empty table would make it write nothing.
-  //
-  // What matters here is row-shape correctness: does the account this writes
-  // actually authenticate through Better Auth's real, unmodified sign-in
-  // flow? Checked with a genuine hash and a genuine `auth.handler` sign-in
-  // call, not by asserting the row shape matches what we believe it expects.
+  // Each empties the database first: the "exactly one owner" guard is a conditional insert, so a non-empty table writes nothing.
+  // What matters is row shape: the account must authenticate through Better Auth's real sign-in, checked with a genuine hash and `auth.handler`.
   test("writes a user + account row pair that Better Auth's own sign-in flow accepts", async () => {
     await testDb();
     const email = `insert-credential-${crypto.randomUUID()}@example.com`;
     const password = "correct horse battery staple";
     const passwordHash = await hashPassword(password);
 
-    const created = await insertCredentialUser({ name: "Rivi", email, password }, passwordHash);
-    expect(created).toEqual({ id: expect.any(String), email, name: "Rivi" });
+    const created = await insertCredentialUser({ name: "Row", email, password }, passwordHash);
+    expect(created).toEqual({ id: expect.any(String), email, name: "Row" });
 
     const signInResponse = await auth.handler(
       new Request("http://localhost/api/auth/sign-in/email", {
@@ -131,17 +107,16 @@ describe("createFirstUser", () => {
 
     await expect(
       createFirstUser({
-        name: "Toinen käyttäjä",
+        name: "Second user",
         email: `refused-${crypto.randomUUID()}@example.com`,
         password: "correct horse battery staple",
       }),
-    ).rejects.toThrow("Tili on jo luotu");
+    ).rejects.toThrow("An account has already been created");
     expect(await userCount()).toBe(before);
   });
 
   test("refuses an invalid body, naming every field that is wrong", async () => {
-    // The schema is the refusal now: it is the server function's validator, so
-    // asserting on it is asserting on what a caller actually hits.
+    // The schema is the server function's validator, so this is what a caller hits.
     const result = CreateFirstUser.safeParse({
       name: "",
       email: "not-an-email",
@@ -153,10 +128,7 @@ describe("createFirstUser", () => {
   });
 });
 
-// --- Zero-user scenarios: `testDb()` empties every table, which is what these
-// need. They used to run in a child process because an empty database meant a
-// second SQLite file; a D1 binding cannot be handed to one, and no longer
-// needs to be.
+// --- Zero-user scenarios: `testDb()` empties every table ---
 
 describe("the first-run flow end-to-end, against a genuinely empty database", () => {
   test("reports no users, allows creating exactly one, then refuses a second -- and the created account can sign in", async () => {
@@ -165,20 +137,20 @@ describe("the first-run flow end-to-end, against a genuinely empty database", ()
     expect(await hasAnyUser()).toBe(false);
 
     const created = await createFirstUser({
-      name: "Omistaja",
+      name: "Owner",
       email: "owner@example.com",
       password: "correct horse battery staple",
     });
     expect(created).toEqual({
       id: expect.any(String),
       email: "owner@example.com",
-      name: "Omistaja",
+      name: "Owner",
     });
     expect(await hasAnyUser()).toBe(true);
 
     await expect(
       createFirstUser({
-        name: "Toinen",
+        name: "Other",
         email: "second@example.com",
         password: "correct horse battery staple",
       }),
@@ -202,15 +174,11 @@ describe("the first-run flow end-to-end, against a genuinely empty database", ()
     await testDb();
 
     const post = (email: string) =>
-      createFirstUser({ name: "Kilpailija", email, password: "correct horse battery staple" })
+      createFirstUser({ name: "Competitor", email, password: "correct horse battery staple" })
         .then(() => "created")
         .catch(() => "refused");
 
-    // Exactly one wins. The other is refused, not queued behind it and not
-    // allowed through: two owners of one household ledger is the one outcome
-    // this guard exists to prevent. The guard is the conditional insert plus
-    // the foreign key in insertCredentialUser, so it holds here even though
-    // both calls interleave at their awaits.
+    // Exactly one wins; the other is refused, neither queued nor let through (two owners of one ledger is what the guard prevents). The conditional insert plus the foreign key hold even with both calls interleaved.
     const outcomes = await Promise.all([post("racer-a@example.com"), post("racer-b@example.com")]);
     expect(outcomes.sort()).toEqual(["created", "refused"]);
   });

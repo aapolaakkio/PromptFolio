@@ -34,18 +34,10 @@ const seedUser = async (db: Db, id: string) => {
     .run();
 };
 
-/**
- * drizzle-orm@1.0.0-rc.5 wraps driver errors in `DrizzleQueryError`, whose
- * `.message` is just "Failed query: <sql>" — the underlying SQLite reason
- * (e.g. "UNIQUE constraint failed") lives on `.cause`. Bun's `toThrow`
- * matches `.message`, so assertions on the SQLite-level reason must go
- * through this helper instead.
- */
+/** `DrizzleQueryError.message` is only "Failed query: <sql>"; the SQLite reason (e.g. "UNIQUE constraint failed") is on `.cause`, so assert through this helper. */
 const causeMessage = async <T>(thrower: () => Promise<T>): Promise<string> => {
   try {
-    // Awaited, not just called: the driver rejects now rather than throwing,
-    // so an un-awaited call would sail past the catch and fail the "expected
-    // function to throw" line below instead.
+    // Awaited: the driver rejects rather than throws, so an un-awaited call would skip the catch.
     await thrower();
   } catch (error) {
     const cause = error instanceof Error ? error.cause : undefined;
@@ -191,10 +183,7 @@ test("declares one spending rule per pattern per user", () => {
   const config = getTableConfig(spendingRules);
   const constraint = config.uniqueConstraints[0];
 
-  // addRules checks this before inserting, but the constraint is what holds if
-  // two imports classify at the same time: without it the assistant could add a
-  // second rule for a pattern the owner had already answered, and which one
-  // applied would come down to row order.
+  // addRules checks first, but the constraint holds under concurrent imports: without it the assistant could add a second rule for an answered pattern and row order would decide which applies.
   expect(config.uniqueConstraints).toHaveLength(1);
   expect(constraint?.name).toBe("spending_rule_uq");
   expect(constraint?.columns.map((column) => column.name)).toEqual(["user_id", "pattern"]);
@@ -262,10 +251,7 @@ test("declares the accounts.user_id index and the price_fetch_log.run_at index",
 });
 
 test("declares one target per slice per dimension per user", () => {
-  // Asserted on the declaration, not only through an insert: the constraint is
-  // what stops a half-applied write leaving two targets for one slice, and a
-  // migration that quietly dropped it would still pass the insert test on a
-  // database created before the drop.
+  // Asserted on the declaration, not only via an insert: a migration that dropped the constraint would still pass the insert test on an older database.
   const config = getTableConfig(allocationTargets);
 
   expect(config.uniqueConstraints.map((uq) => uq.columns.map((c) => c.name).join(","))).toEqual([
@@ -284,9 +270,7 @@ test("a user cannot hold two targets for the same slice", async () => {
   };
   await db.insert(allocationTargets).values(row).run();
 
-  // A second target for the same slice is a contradiction, not an update: a
-  // set is replaced wholesale, never accumulated into, so two rows for one
-  // slice can only mean a half-applied write.
+  // A second target for one slice is a contradiction (sets are replaced wholesale), so it can only mean a half-applied write.
   await expect(db.insert(allocationTargets).values(row).run()).rejects.toThrow();
 });
 
@@ -298,8 +282,7 @@ test("the same slice can be targeted on two different dimensions", async () => {
     .values({ userId: "two-dimensions", dimension: "kind", key: "stock", weightBp: 10000 })
     .run();
 
-  // "stock" as a kind and "stock" as an account name are different slices that
-  // happen to share a key, so the index has to include the dimension.
+  // "stock" as a kind and as an account name are different slices sharing a key, so the index includes the dimension.
   await db
     .insert(allocationTargets)
     .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })

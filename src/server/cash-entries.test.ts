@@ -3,10 +3,7 @@ import { CreateAccount, openAccount as openAccountRow } from "./accounts.ts";
 import { db } from "./db/index.ts";
 import { cashView } from "./views/portfolio.ts";
 
-// The only route in the app that writes a transaction by hand. Everything else
-// arrives through the import pipeline, so these tests care about the two things
-// that keeps honest: it may only write cash rows (never a trade), and it may
-// only touch rows it wrote itself (never a broker's record).
+// The only route that writes a transaction by hand: it may only write cash rows (never a trade) and only touch rows it wrote itself (never a broker's record).
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let addCashEntry: (typeof import("./cash-entries.ts"))["addCashEntry"];
@@ -51,7 +48,7 @@ const openBankAccount = async (userId: string, accountType = "savings"): Promise
     await openAccountRow(
       db,
       userId,
-      CreateAccount.parse({ name: "OP säästötili", broker: "op", kind: "bank", accountType }),
+      CreateAccount.parse({ name: "OP savings account", broker: "op", kind: "bank", accountType }),
     )
   ).id;
 
@@ -71,16 +68,12 @@ const cashTotal = async (userId: string, on: string): Promise<string> =>
   (await cashView(db, userId, on)).totalEur;
 
 describe("addCashEntry", () => {
-  // "rejects a request with no session" is gone with the route: the authed
-  // middleware resolves a session or redirects, and there is no way past it.
-
   test("refuses an account belonging to someone else", async () => {
     const owner = await signUp();
     const stranger = await signUp();
     const accountId = await openBankAccount(owner.userId);
 
-    // Not found rather than forbidden, deliberately: telling a stranger that
-    // an account exists is itself something they should not learn.
+    // Not found rather than forbidden: telling a stranger an account exists is itself a leak.
     await expect(
       post(stranger.userId, {
         accountId,
@@ -95,8 +88,7 @@ describe("addCashEntry", () => {
     const { userId } = await signUp();
     const accountId = await openBankAccount(userId);
 
-    // A position must never come from a hand-written row: the schema does not
-    // accept a trade type at all.
+    // The schema does not accept a trade type, so a position never comes from a hand-written row.
     await expect(
       post(userId, { accountId, type: "BUY", tradeDate: "2026-01-15", amount: "100.00" }),
     ).rejects.toThrow();
@@ -149,8 +141,7 @@ describe("addCashEntry", () => {
 
     await post(userId, entry);
 
-    // The second is refused: one opening balance per account and currency,
-    // because two would silently double what the account started with.
+    // Refused: one opening balance per account and currency (two would double the starting money).
     await expect(post(userId, entry)).rejects.toThrow();
     expect(await cashTotal(userId, "2026-06-01")).toBe("1000.00");
   });
@@ -161,14 +152,13 @@ describe("opening balance", () => {
     const { userId } = await signUp();
     const accountId = await openBankAccount(userId);
 
-    // What a two-year statement cannot tell you: the account did not start at
-    // zero on the day its export begins.
+    // A two-year statement cannot tell you the account did not start at zero.
     await post(userId, {
       accountId,
       type: "OPENING_BALANCE",
       tradeDate: "2024-12-31",
       amount: "8000.00",
-      note: "Saldo ennen tiliotteiden alkua",
+      note: "Balance before the statements begin",
     });
     await post(userId, {
       accountId,
@@ -178,7 +168,6 @@ describe("opening balance", () => {
     });
 
     expect(await cashTotal(userId, "2025-06-01")).toBe("9000.00");
-    // ...and it is not counted before the day it is dated.
     expect(await cashTotal(userId, "2024-12-30")).toBe("0.00");
   });
 
@@ -194,9 +183,10 @@ describe("opening balance", () => {
 
     await post(userId, opening);
 
-    // The message names what is already there, because the fix is to delete
-    // that one first and the person needs to know which.
-    await expect(post(userId, { ...opening, amount: "9000.00" })).rejects.toThrow(/alkusaldo/);
+    // The message names the existing one, because the fix is to delete it first.
+    await expect(post(userId, { ...opening, amount: "9000.00" })).rejects.toThrow(
+      /opening balance/,
+    );
   });
 
   test("allows one per currency, since an account can hold more than one", async () => {
@@ -210,8 +200,7 @@ describe("opening balance", () => {
       amount: "8000.00",
     });
 
-    // SEK has no fx rate in this test database, so it must be refused rather
-    // than stored with a marker rate that would value the balance wrongly.
+    // SEK has no fx rate here, so it is refused rather than stored with a marker rate.
     await expect(
       post(userId, {
         accountId,
@@ -220,7 +209,7 @@ describe("opening balance", () => {
         amount: "5000.00",
         currency: "SEK",
       }),
-    ).rejects.toThrow(/Valuuttakurssia/);
+    ).rejects.toThrow(/No exchange rate/);
   });
 });
 
@@ -276,8 +265,7 @@ describe("listCashEntries and removeCashEntry", () => {
     });
     const id = created.id;
 
-    // A stranger cannot reach another household's row: the account check runs
-    // on the id the session resolved, not on anything the caller sent.
+    // A stranger cannot reach another household's row: the check runs on the session's id.
     await expect(removeCashEntry(stranger.userId, id)).rejects.toThrow();
   });
 });

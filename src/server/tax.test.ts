@@ -2,11 +2,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 
 import { EUR } from "../core/money.ts";
 
-// Covers the OST valuation and the view mapping in src/server/tax.ts, which
-// the route-level tests in api/tax.test.ts do not reach. Same setup rules as
-// every other server test: the shared database is already pinned to a
-// migrated in-memory database by ./test-setup.ts, and every identity here is
-// derived from a fresh crypto.randomUUID().
+// Covers the OST valuation and view mapping in tax.ts, which the route-level tests in api/tax.test.ts do not reach. Identities derive from a fresh crypto.randomUUID().
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let taxYearFor: (typeof import("./tax.ts"))["taxYearFor"];
@@ -29,18 +25,14 @@ const signUp = async (): Promise<string> => {
     }),
   );
   if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email is Better Auth's documented success
-  // response, which always carries `{ user: { id, ... } }`.
+  // SAFETY: Better Auth's sign-up response always carries `{ user: { id } }`.
   const body = (await response.json()) as { user: { id: string } };
   return body.user.id;
 };
 
 type Seeded = { userId: string; accountId: number; instrumentId: number };
 
-/**
- * An equity savings account holding one priced share, funded by a deposit,
- * with a dividend paid into an ordinary account alongside it.
- */
+/** An OST holding one priced share, funded by a deposit, plus a dividend into an ordinary account. */
 const seedOst = async (o: { priced: boolean; withdrawnOn?: string }): Promise<Seeded> => {
   const { db } = await import("./db/index.ts");
   const { accounts, instruments, prices, transactions } = await import("./db/schema.ts");
@@ -188,11 +180,7 @@ describe("taxYearFor", () => {
   });
 
   test("does not ask for a price the weekend could not have", async () => {
-    // A withdrawal dated a Sunday, valued from the Friday close -- the
-    // freshest price that can exist for it. Comparing the price's date to the
-    // withdrawal's directly, instead of asking `isPriceStale`, made every
-    // non-trading day look like a gap and offered to "fix" holdings that were
-    // fine. A real Sunday withdrawal is what surfaced it.
+    // A Sunday withdrawal is valued from the Friday close, the freshest price that can exist; comparing dates directly (instead of `isPriceStale`) made every non-trading day look like a gap.
     const { userId, instrumentId } = await seedOst({ priced: false, withdrawnOn: "2025-06-08" });
     const { db } = await import("./db/index.ts");
     const { prices } = await import("./db/schema.ts");
@@ -200,7 +188,6 @@ describe("taxYearFor", () => {
       .insert(prices)
       .values({
         instrumentId,
-        // The Friday before that Sunday.
         date: "2025-06-06",
         close: 20_000,
         currency: EUR,
@@ -225,7 +212,7 @@ describe("taxYearFor", () => {
     expect(withdrawal.blockedBy).toContain("Ost Co");
     expect(withdrawal.blockedBy).toContain("2025-06-02");
     // The remedy is an existing flow, so the message says what to do.
-    expect(withdrawal.blockedBy).toContain("Kirjaa hinta");
+    expect(withdrawal.blockedBy).toContain("Record a price");
   });
 
   test("reports a dividend's taxable share and flags the missing withholding", async () => {
@@ -238,8 +225,7 @@ describe("taxYearFor", () => {
     expect(report.dividends[0]!.instrument).toBe("Ost Co");
     expect(report.dividends[0]!.grossEur).toBe("100.00");
     expect(report.dividends[0]!.taxableEur).toBe("85.00");
-    // No broker export separates the withholding, so this must never read as
-    // "nothing was withheld".
+    // No export separates the withholding, so it must never read as "nothing was withheld".
     expect(report.dividends[0]!.withholdingRecorded).toBe(false);
     expect(report.dividendTaxableEur).toBe("85.00");
   });

@@ -1,13 +1,6 @@
 import { expect, test } from "vitest";
 
-/**
- * Exercises `test-network-guard.ts` itself (preloaded by every `vitest`
- * run, see vitest.config.ts) rather than relying on a throwaway manual check
- * that isn't committed anywhere. A passing suite is direct, ongoing proof
- * that a test which forgets to inject its own `fetchImpl` fails loudly
- * instead of silently reaching the real network -- not just a property
- * that happened to hold on the day this was written.
- */
+/** Proves the preloaded guard makes a test that forgets to inject its `fetchImpl` fail loudly instead of reaching the real network. */
 
 test("the real global fetch is replaced with one that throws, not silently reaches the network", async () => {
   expect(() => fetch("https://example.com")).toThrow(/network blocked in tests/);

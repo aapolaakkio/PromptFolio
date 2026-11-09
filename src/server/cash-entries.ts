@@ -12,35 +12,22 @@ import { fxRateOn } from "./fx.ts";
 
 const IsoDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the format YYYY-MM-DD");
 
-/**
- * The only cash movements a person may write by hand.
- *
- * Trades are absent: one carries an instrument, a quantity and a cost basis, and
- * inventing it here would put a position in the ledger no broker record backs.
- *
- * What is here is what an account produces when no export covers it, opening
- * balance included -- without which every balance derived from a statement is
- * silently short by whatever came before it.
- */
+/** The only cash movements a person may write by hand. Trades are absent: they carry an instrument and cost basis no broker record would back. Opening balance is included, else balances derived from a statement are short. */
 export const CashEntry = z
   .object({
     accountId: z.number().int().positive(),
     type: z.enum(["OPENING_BALANCE", "DEPOSIT", "WITHDRAWAL", "INTEREST"]),
     tradeDate: IsoDateSchema,
-    /** A decimal string, never a JSON number -- the wire rule money follows everywhere. */
-    amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Summa muodossa 1234.56"),
+    /** A decimal string, never a JSON number. */
+    amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Amount in the format 1234.56"),
     currency: currencyField.default(EUR),
     note: z.string().trim().max(200).optional(),
   })
   .strict();
 
-/**
- * The sign comes from the type, not the caller: asking for a signed amount makes
- * "-100" mean two things depending on the type beside it, and the ledger would
- * carry whichever the form happened to send.
- */
+/** The sign comes from the type, not the caller: a signed amount would make "-100" mean two things depending on the type. */
 const signedMinor = (type: z.infer<typeof CashEntry>["type"], amount: bigint): bigint =>
   type === "WITHDRAWAL" ? -amount : amount;
 
@@ -65,9 +52,7 @@ export const listCashEntries = async (userId: string, accountId: number) => {
 
   return {
     entries: rows
-      // Only hand-written rows: an imported row is the broker's record and
-      // must not be editable here, or the ledger would stop matching the
-      // export it came from.
+      // Hand-written rows only: an imported row is the broker's record and must not be editable.
       .filter((row) => row.importId === null && row.type !== "BUY" && row.type !== "SELL")
       .map((row) => ({
         id: row.id,
@@ -86,10 +71,7 @@ export const addCashEntry = async (userId: string, body: z.infer<typeof CashEntr
 
   const minor = signedMinor(body.type, parseMoney(body.amount, body.currency).minor);
 
-  // One opening balance per account and currency. A second would not read
-  // as a correction, it would silently double the money the account started
-  // with -- and nothing downstream could tell that had happened. Correcting
-  // one means deleting it and entering the right figure.
+  // One opening balance per account and currency: a second would silently double the starting money. Correct one by deleting it.
   if (body.type === "OPENING_BALANCE") {
     const existing = await db
       .select({ id: transactions.id })
@@ -105,26 +87,19 @@ export const addCashEntry = async (userId: string, body: z.infer<typeof CashEntr
     if (existing) {
       throw new HttpError(
         409,
-        `Tilillä on jo alkusaldo valuutassa ${body.currency}. Poista se ensin.`,
+        `The account already has an opening balance in ${body.currency}. Remove it first.`,
       );
     }
   }
 
-  // A non-EUR entry needs a rate for its own date, exactly like an imported
-  // row: without one the amount cannot be valued, and storing a marker rate
-  // would put a wrong number into every euro total that reads it.
+  // A non-EUR entry needs a rate for its own date, like an imported row; a marker rate would put a wrong number into every euro total.
   const fxRateEur =
     body.currency === EUR ? 100_000_000 : await fxRateOn(db, body.currency, body.tradeDate);
   if (fxRateEur === null) {
-    throw new HttpError(
-      400,
-      `Valuuttakurssia ${body.currency} ei löydy päivälle ${body.tradeDate}`,
-    );
+    throw new HttpError(400, `No exchange rate for ${body.currency} on ${body.tradeDate}`);
   }
 
-  // Hashed over the same material an imported row is, so entering the same
-  // movement twice is refused by the ledger's own unique index rather than
-  // silently doubling a balance.
+  // Hashed like an imported row, so entering the same movement twice hits the unique index instead of doubling a balance.
   const contentHash = createHash("sha256")
     .update(["manual", body.accountId, body.type, body.tradeDate, minor, body.currency].join("|"))
     .digest("hex");
@@ -136,7 +111,7 @@ export const addCashEntry = async (userId: string, body: z.infer<typeof CashEntr
       and(eq(transactions.accountId, body.accountId), eq(transactions.contentHash, contentHash)),
     )
     .get();
-  if (existing) throw new HttpError(409, "Sama tapahtuma on jo kirjattu");
+  if (existing) throw new HttpError(409, "The same entry has already been recorded");
 
   const created = await db
     .insert(transactions)
@@ -157,26 +132,23 @@ export const addCashEntry = async (userId: string, body: z.infer<typeof CashEntr
     })
     .returning()
     .get();
-  if (created === undefined) throw new HttpError(500, "Tapahtuman tallennus epäonnistui");
+  if (created === undefined) throw new HttpError(500, "Saving the entry failed");
 
   return { id: created.id };
 };
 
 /** Removes a manual row, and only a manual one. */
 export const removeCashEntry = async (userId: string, id: number) => {
-  // Ownership through the account, and only ever a row this route could have
-  // written: an imported transaction belongs to its broker's record, and
-  // deleting one here would silently desynchronise the ledger from the file
-  // it came from. Undoing an import is a separate, whole-import operation.
+  // Ownership through the account, and only rows this route could have written: deleting an imported one would desync the ledger from its file (undoing an import is a separate operation).
   const row = await db
     .select({ id: transactions.id, importId: transactions.importId })
     .from(transactions)
     .innerJoin(accounts, eq(accounts.id, transactions.accountId))
     .where(and(eq(transactions.id, id), eq(accounts.userId, userId)))
     .get();
-  if (!row) throw new HttpError(404, "Tapahtumaa ei löydy");
+  if (!row) throw new HttpError(404, "Entry not found");
   if (row.importId !== null) {
-    throw new HttpError(400, "Tuotua tapahtumaa ei voi poistaa täältä");
+    throw new HttpError(400, "An imported entry cannot be deleted here");
   }
 
   await db.delete(transactions).where(eq(transactions.id, id)).run();

@@ -2,23 +2,10 @@ import { parseCurrency, parseFxRate, EUR, type Currency } from "../core/money.ts
 import type { FetchImpl } from "./prices/types.ts";
 
 /**
- * ECB's SDMX data API, which replaced this project's use of the two flat CSV files at
- * `www.ecb.europa.eu/stats/eurofxref/`.
- *
- * **Why the change, verified live on 2026-08-28.** Both flat files are still served with
- * `200 OK` and `Content-Type: text/csv`, and both are frozen:
- *
- *  - `eurofxref.csv` — newest (and only) row is `14 July 2017`.
- *  - `eurofxref-hist.csv` — newest row is `2010-02-14`, and its cells are placeholders
- *    (`2,1,2,N/A,1,2,...`), not rates. SEK's column reads `2`, which inverts to a rate of
- *    exactly `0.5` EUR per SEK against a true rate near `0.09` — a holding valued through
- *    it came out roughly 5.5x too high, with nothing anywhere reporting an error, because
- *    the response was a perfectly well-formed CSV. The live data lives in the `.zip`
- *    variants of those URLs, which would need an unzip step in the server.
- *
- * The SDMX endpoint needs no unzipping, serves current data (checked: today's rate present),
- * reaches back to 1999, takes a date range, and takes several currencies in one request via
- * `+`. `detail=dataonly` trims the response to the columns actually read here.
+ * ECB's SDMX data API, used instead of the flat CSV files at `www.ecb.europa.eu/stats/eurofxref/`: those are
+ * still served with `200 OK` but frozen (`eurofxref.csv` ends 2017; `eurofxref-hist.csv` ends 2010 with placeholder
+ * cells: SEK reads `2` against a true ~0.09, so a holding came out ~5.5x too high with no error).
+ * SDMX needs no unzipping, has data back to 1999 and takes a date range and several currencies via `+`.
  */
 export const ECB_DATA_URL = "https://data-api.ecb.europa.eu/service/data/EXR";
 
@@ -38,11 +25,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** ECB publishes plain decimals and never a negative rate. */
 const RATE = /^\d+(\.\d+)?$/;
 
-/**
- * Inverts a rate already scaled by 1e8 (foreign-per-EUR, which is how ECB quotes) into
- * EUR-per-foreign at the same scale, in exact bigint arithmetic with the half-up rounding
- * `core/money.ts` uses everywhere else. 1 EUR = 1.0870 USD inverts to 91_996_320.
- */
+/** Inverts a scale-1e8 foreign-per-EUR rate (ECB's quoting) to EUR-per-foreign in exact bigint math, half-up like `core/money.ts`. 1 EUR = 1.0870 USD gives 91_996_320. */
 const invertScaledRate = (scaled: bigint): number => {
   const numerator = 10n ** 16n;
   const quotient = numerator / scaled;
@@ -51,24 +34,20 @@ const invertScaledRate = (scaled: bigint): number => {
 };
 
 /**
- * Parses the SDMX `csvdata` response: one row per currency per day, with the columns named
- * in the header line rather than positional, since `detail` changes how many there are.
- *
- * A row whose date or value does not parse is skipped rather than failing the response: ECB
- * marks a non-published day with an empty `OBS_VALUE`, and one such day must not discard
- * every other day's good rates. A response with no header at all *does* throw -- that is a
- * malformed download, not a data gap.
+ * Parses the SDMX `csvdata` response (columns named in the header, since `detail` changes their number).
+ * A row whose date or value does not parse is skipped: ECB marks a non-published day with an empty `OBS_VALUE`.
+ * A response with no header throws: that is a malformed download, not a data gap.
  */
 export const parseEcbSdmxCsv = (text: string, wanted: ReadonlySet<string>): EcbRow[] => {
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
   const header = lines[0]?.split(",").map((cell) => cell.trim());
-  if (header === undefined) throw new Error("ECB-vastaus on tyhjä");
+  if (header === undefined) throw new Error("ECB response is empty");
 
   const currencyAt = header.indexOf("CURRENCY");
   const dateAt = header.indexOf("TIME_PERIOD");
   const valueAt = header.indexOf("OBS_VALUE");
   if (currencyAt < 0 || dateAt < 0 || valueAt < 0) {
-    throw new Error(`ECB-vastauksesta puuttuu odotettu sarake: ${lines[0] ?? ""}`);
+    throw new Error(`The ECB response lacks an expected column: ${lines[0] ?? ""}`);
   }
 
   const out: EcbRow[] = [];
@@ -89,10 +68,7 @@ export const parseEcbSdmxCsv = (text: string, wanted: ReadonlySet<string>): EcbR
   return out;
 };
 
-/**
- * Fetches every `currencies` rate from `since` onward. EUR is dropped before the request:
- * it is the base, has no series of its own, and would make the SDMX key invalid.
- */
+/** Fetches every `currencies` rate from `since`. EUR is dropped first: it is the base and would make the SDMX key invalid. */
 export const fetchEcbRates = async (
   fetchImpl: FetchImpl,
   currencies: ReadonlySet<string>,
@@ -103,7 +79,7 @@ export const fetchEcbRates = async (
 
   const response = await fetchImpl(ecbSeriesUrl([...wanted], since));
   if (!response.ok) {
-    throw new Error(`ECB vastasi ${response.status} ${response.statusText}`);
+    throw new Error(`ECB answered ${response.status} ${response.statusText}`);
   }
   return parseEcbSdmxCsv(await response.text(), wanted);
 };

@@ -10,7 +10,7 @@ async function insertPageInstrument() {
     .insert(instruments)
     .values({
       isin: `XX${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`,
-      name: "Sivufondi",
+      name: "Page fund",
       kind: "fund",
       currency: parseCurrency("EUR"),
       priceSource: "page",

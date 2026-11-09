@@ -5,13 +5,7 @@ import { addInstrument } from "./instruments/store.ts";
 
 import { EUR } from "../core/money.ts";
 
-// Exercises the tax report (src/server/tax.ts) against a real migrated database
-// and a real Better Auth session, following portfolio.test.ts's setup exactly:
-// the shared database is already pinned to a migrated in-memory database
-// by ../test-setup.ts (a vitest.config.ts `setupFiles` entry), so this file
-// must not call resetDbHandleForTests() or migrate() itself. The database is
-// shared across every test file in the process, so every identity here is
-// derived from a fresh crypto.randomUUID().
+// Exercises the tax report (tax.ts) against a real migrated database and Better Auth session (setup as in portfolio.test.ts). Identities are random because the database is shared.
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let taxYearFor: (typeof import("./tax.ts"))["taxYearFor"];
@@ -106,8 +100,7 @@ const seedSale = async (
 
 describe("taxYearFor", () => {
   test("reports the year's disposals as decimal strings, naming the instrument", () => {
-    // A numeric instrument id is an internal detail; every user-facing message
-    // in this codebase names the instrument instead.
+    // A numeric instrument id is internal; user-facing messages name the instrument.
     return (async () => {
       const { userId } = await signUp(`tax-${crypto.randomUUID()}@example.com`);
       await seedSale(userId, {
@@ -123,9 +116,7 @@ describe("taxYearFor", () => {
       expect(body.disposals).toHaveLength(1);
       expect(body.disposals[0]!.instrument).toBe("Test Co");
       expect(body.disposals[0]!.accountName).toBe("Nordnet");
-      // Held under ten years: the deemed cost is 20 % of 5 000,00 = 1 000,00,
-      // giving a 4 000,00 gain against the actual 4 000,00 -- equal, so the
-      // actual method stands.
+      // Held under ten years: deemed cost 20 % of 5 000.00 = 1 000.00, a 4 000.00 gain equal to the actual one, so the actual method stands.
       expect(body.disposals[0]!.deemedPercent).toBe(20);
       expect(body.disposals[0]!.gainEur).toBe("4000.00");
       expect(body.disposals[0]!.quantity).toBe("10.000000");
@@ -163,12 +154,6 @@ describe("taxYearFor", () => {
 
     expect(body.disposals).toEqual([]);
   });
-
-  // Two tests are gone with the route they described: an anonymous caller is
-  // refused by the `authed` middleware every server function declares, and a
-  // year that is not a year is rejected by getTaxYear's own zod validator
-  // before the handler runs. Both were assertions about HTTP, and there is no
-  // longer any HTTP here to assert about.
 });
 
 describe("taxYearsFor", () => {

@@ -10,18 +10,9 @@ const sharedDb = db;
 
 const accountKind = z.enum(["brokerage", "bank"]);
 
-/**
- * Each kind's own types. A brokerage account is an arvo-osuustili or an
- * osakesäästötili, which decides how it is taxed; a bank account is a current,
- * savings or fixed-term one, which decides whether the money can be reached.
- * Neither set means anything applied to the other kind, so they are kept apart
- * rather than offered as one list nobody can pick wrongly from by accident.
- */
+/** Each kind's own types: brokerage is a regular securities account or an equity savings account (OST, which decides taxation); bank is current, savings or fixed-term (which decides whether money can be reached). Kept apart: neither set means anything for the other kind. */
 const BROKERAGE_TYPES = ["aot", "ost", "other"] as const;
-// "credit" is a bank-kind account that holds no money of its own: its rows are
-// card purchases and the payments that settle them. Kept out of the cash
-// figures (see valuation.ts's `cashTxns`), and it carries no interest rate or
-// maturity, so it belongs here rather than among the savings kinds.
+// "credit" is a bank-kind account holding no money of its own (card purchases and settling payments), kept out of cash figures (see valuation.ts `cashTxns`); no rate or maturity.
 const BANK_TYPES = ["current", "savings", "fixed_term", "credit"] as const;
 
 const accountType = z.enum([...BROKERAGE_TYPES, ...BANK_TYPES]);
@@ -31,16 +22,12 @@ const typesFor = (kind: "brokerage" | "bank"): readonly string[] =>
 
 const IsoDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the format YYYY-MM-DD");
 
-/**
- * A fixed-term deposit's terms. The rate crosses the wire as a decimal string
- * ("3.25") and is stored in basis points, the same discipline money follows:
- * nothing that has to be exact travels as a JSON number.
- */
+/** A fixed-term deposit's terms. The rate is a decimal string ("3.25") on the wire and basis points in storage. */
 const interestRate = z
   .string()
-  .regex(/^\d{1,2}([.,]\d{1,2})?$/, "Korko muodossa 3.25")
+  .regex(/^\d{1,2}([.,]\d{1,2})?$/, "Rate in the format 3.25")
   .transform((text) => Math.round(Number(text.replace(",", ".")) * 100));
 
 const terms = {
@@ -48,28 +35,20 @@ const terms = {
   interestRate: interestRate.nullable().optional(),
 };
 
-/**
- * Terms are refused where they mean nothing rather than stored and ignored: a
- * maturity date on a brokerage account is a claim nobody re-checks. A rate fits
- * either savings kind, a maturity date only a fixed-term deposit.
- */
+/** Terms are refused where meaningless rather than stored and ignored: a rate fits either savings kind, a maturity date only a fixed-term deposit. */
 const assertTermsMatchType = (
   type: z.infer<typeof accountType> | null | undefined,
   body: { maturityDate?: string | null; interestRate?: number | null },
 ): void => {
   if ((body.maturityDate ?? null) !== null && type !== "fixed_term") {
-    throw new HttpError(400, "Eräpäivä koskee vain määräaikaistiliä");
+    throw new HttpError(400, "A maturity date applies only to fixed-term accounts");
   }
   if ((body.interestRate ?? null) !== null && !BANK_TYPES.some((known) => known === type)) {
-    throw new HttpError(400, "Korko koskee vain pankkitilejä");
+    throw new HttpError(400, "An interest rate applies only to bank accounts");
   }
 };
 
-/**
- * An account's type has to belong to its own kind. Refused rather than
- * corrected: "a savings account that is an osakesäästötili" is not a typo with
- * an obvious fix, it is a request nobody can act on.
- */
+/** An account's type must belong to its kind. Refused, not corrected: "a savings account that is an equity savings account" has no obvious fix. */
 const assertTypeMatchesKind = (
   kind: "brokerage" | "bank",
   type: z.infer<typeof accountType> | null | undefined,
@@ -77,21 +56,17 @@ const assertTypeMatchesKind = (
   if (type === null || type === undefined) return;
   if (!typesFor(kind).includes(type)) {
     const allowed = typesFor(kind).join(", ");
-    throw new HttpError(400, `Tilin laji ${type} ei sovi tyypille ${kind} (sallitut: ${allowed})`);
+    throw new HttpError(
+      400,
+      `Account type ${type} does not fit kind ${kind} (allowed: ${allowed})`,
+    );
   }
 };
 
-/**
- * Name and type only. The broker and the base currency are what the stored rows
- * were already interpreted under, so changing either would reinterpret them.
- *
- * The type is editable because nothing has been interpreted under it yet: it
- * decides tax treatment, and one guessed and then frozen is how a tax report
- * ends up confidently wrong.
- */
+/** Name and type only: broker and base currency are what stored rows were interpreted under. The type is editable because it decides tax treatment and a guessed, frozen one makes a tax report confidently wrong. */
 export const UpdateAccount = z
   .object({
-    name: z.string().trim().min(1, "Nimi ei voi olla tyhjä").max(100).optional(),
+    name: z.string().trim().min(1, "Name cannot be empty").max(100).optional(),
     accountType: accountType.nullable().optional(),
     ...terms,
   })
@@ -101,7 +76,7 @@ export const UpdateAccount = z
       body.accountType !== undefined ||
       body.maturityDate !== undefined ||
       body.interestRate !== undefined,
-    { message: "Ei muutettavia kenttiä" },
+    { message: "No fields to change" },
   );
 
 export const CreateAccount = z.object({
@@ -109,32 +84,25 @@ export const CreateAccount = z.object({
   broker: z.enum(["nordnet", "op", "spankki", "danske", "other"]),
   baseCurrency: currencyField.default(EUR),
   kind: accountKind.default("brokerage"),
-  // Optional at creation: an owner importing a broker export may not know yet
-  // which of their accounts it covers. Left null until they say.
+  // Optional at creation: an owner importing an export may not know yet which account it covers.
   accountType: accountType.optional(),
   ...terms,
 });
 
-/**
- * Confirms the account belongs to the user, answering 404 otherwise -- the same
- * response a missing account gives, so "not yours" cannot be told from "does not
- * exist". Anything taking an account id from a caller must run this first.
- */
+/** Confirms the account belongs to the user, else 404 (the same as a missing one). Anything taking an account id from a caller runs this first. */
 export const assertAccountOwned = async (userId: string, accountId: number): Promise<void> => {
   const owned = await sharedDb
     .select({ id: accounts.id })
     .from(accounts)
     .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
     .get();
-  if (!owned) throw new HttpError(404, "Tiliä ei löydy");
+  if (!owned) throw new HttpError(404, "Account not found");
 };
 
-/** Every account this person owns. */
 export const listAccounts = async (db: Db, userId: string) => {
   return await db.select().from(accounts).where(eq(accounts.userId, userId)).all();
 };
 
-/** Opens one, refusing a type that does not match its kind or its terms. */
 export const openAccount = async (db: Db, userId: string, body: z.infer<typeof CreateAccount>) => {
   assertTypeMatchesKind(body.kind, body.accountType);
   assertTermsMatchType(body.accountType, body);
@@ -155,7 +123,6 @@ export const openAccount = async (db: Db, userId: string, body: z.infer<typeof C
   return created;
 };
 
-/** Renames one, or changes its type and deposit terms. */
 export const updateAccount = async (
   db: Db,
   userId: string,
@@ -164,16 +131,9 @@ export const updateAccount = async (
 ) => {
   await assertAccountOwned(userId, accountId);
 
-  // Only the fields the request actually carried: an absent `name` must not
-  // blank the stored one, and an absent type must not clear it. An explicit
-  // null for the type does clear it -- "I no longer know" is a valid answer.
-  // Terms are checked against the type the account will HAVE after this
-  // request, not the one it had before: setting type and maturity together
-  // in one PATCH is the normal way to record a new deposit.
+  // Only fields the request carried: an absent `name` or type must not clear the stored one, an explicit null type does. Terms are checked against the type the account will HAVE after this request (type and maturity are set together).
   const current = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
-  // The kind is fixed at creation: an account's transactions were imported
-  // and interpreted under it, and a brokerage account turned into a bank one
-  // would take its holdings out of the return figures with no trace.
+  // The kind is fixed at creation: turning a brokerage account into a bank one would drop its holdings from the return figures.
   if (current) {
     assertTypeMatchesKind(
       current.kind,

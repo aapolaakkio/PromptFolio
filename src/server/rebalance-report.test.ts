@@ -5,12 +5,7 @@ import { addInstrument } from "./instruments/store.ts";
 
 import { EUR } from "../core/money.ts";
 
-// Exercises rebalanceRoutes against a real migrated database and a real Better
-// Auth session, following portfolio.test.ts's setup: the shared database
-// is already pinned to a migrated in-memory database by ../test-setup.ts, so
-// this file must not call resetDbHandleForTests() or migrate() itself. Every
-// identity is derived from a fresh crypto.randomUUID(), because the database is
-// shared with every other test file in the process.
+// Exercises rebalanceRoutes against a real migrated database and Better Auth session (setup as in portfolio.test.ts). Identities are random because the database is shared.
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let rebalance: typeof import("./rebalance.ts");
@@ -102,18 +97,10 @@ describe("PUT /api/targets", () => {
 
     const targets = await rebalance.targetsFor(db, userId, "kind");
 
-    // Accumulating would leave a set summing to 200 %, refused on the next read
-    // after the write had already happened.
+    // Accumulating would leave a set summing to 200 %, refused only on the next read.
     expect(targets.map((t) => t.key).sort()).toEqual(["etf", "stock"]);
     expect(targets.every((t) => t.weightPercent === "50.00")).toBe(true);
   });
-
-  // The test that lived here checked the saved response against the screen's
-  // own schema, because parsing it with the wrong one was indistinguishable
-  // from the save having failed -- a successful write showed "tallennus
-  // epäonnistui" until it existed. The screen no longer parses anything: it
-  // calls the function and gets its return type, so the two shapes cannot
-  // drift apart for a schema to catch.
 
   test("keeps one user's targets away from another's", async () => {
     const owner = await signUp();
@@ -125,10 +112,6 @@ describe("PUT /api/targets", () => {
 
     expect(await rebalance.targetsFor(db, stranger.userId, "kind")).toEqual([]);
   });
-
-  // "refuses an anonymous caller" is gone with the route: every server function
-  // on this screen declares the authed middleware, which resolves the session
-  // or redirects, and there is no way to call one without going through it.
 });
 
 describe("the read routes", () => {
@@ -210,9 +193,4 @@ describe("the read routes", () => {
     expect(years[0]!.tradeFeesEur).toBe("5.00");
     expect(years[0]!.withheldTaxEur).toBe("0.00");
   });
-
-  // Two tests that described the URL rather than the behaviour are gone: an
-  // amount that is not an amount, and a grouping that is not one, are refused
-  // by the server functions' validators before a handler runs -- and a caller
-  // cannot express either, since the arguments are a union and a decimal string.
 });

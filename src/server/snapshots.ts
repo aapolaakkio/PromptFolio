@@ -7,7 +7,7 @@ import type { Db } from "./db/index.ts";
 import { accounts, snapshotRows, snapshots } from "./db/schema.ts";
 import { loadPortfolio } from "./valuation.ts";
 
-export type AccountCheck = {
+type AccountCheck = {
   readonly account: string;
   readonly asOf: string | null;
   readonly source: string | null;
@@ -20,15 +20,7 @@ export type AccountCheck = {
   }[];
 };
 
-/**
- * Each brokerage account against the newest holdings statement imported for it.
- *
- * The check the whole ledger rests on: every figure in this app is derived from
- * transactions, so the only way to know the derivation is right is to compare it
- * with what the broker itself says is held. An account with no statement is
- * reported as unchecked rather than as agreeing -- "nothing to compare" and
- * "compared and equal" are the two answers it must never merge.
- */
+/** Each brokerage account against its newest imported holdings statement: the check every transaction-derived figure rests on. No statement is reported as unchecked, never as agreeing. */
 export const reconciliationFor = async (
   db: Db,
   userId: string,
@@ -44,8 +36,7 @@ export const reconciliationFor = async (
   const { txns, instruments } = await loadPortfolio(db, userId);
   const nameOf = new Map(instruments.map((instrument) => [instrument.id, instrument.name]));
 
-  // Sequential rather than concurrent: a household has a handful of accounts,
-  // and an ordered pass keeps a failure attributable to one of them.
+  // Sequential: a household has few accounts, and an ordered pass keeps a failure attributable.
   const checks: AccountCheck[] = [];
   for (const account of owned) {
     const newest = (
@@ -64,9 +55,7 @@ export const reconciliationFor = async (
       quantity: { scaled: BigInt(row.quantity) },
     }));
 
-    // This account's rows only: a statement covers one account, and comparing
-    // it against the whole portfolio would report every holding elsewhere as a
-    // difference.
+    // This account's rows only: comparing against the whole portfolio would report every other holding as a difference.
     const own: Txn[] = txns.filter((txn) => txn.accountId === account.id);
     const differing = reconcile(own, stated, newest.asOf).filter((row) => !row.withinTolerance);
 

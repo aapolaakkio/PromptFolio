@@ -2,10 +2,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 
 import { EUR } from "../core/money.ts";
 
-// Covers what the routes do not reach: attributing a slice-level sale to the
-// instruments inside it, and the gain that sale would realise. Same setup rules
-// as every other server test -- the shared database is already pinned to a
-// migrated in-memory database by ./test-setup.ts.
+// Covers what the routes do not reach: attributing a slice-level sale to its instruments, and the gain it would realise.
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let rebalancePlanFor: (typeof import("./rebalance.ts"))["rebalancePlanFor"];
@@ -35,11 +32,7 @@ const signUp = async (): Promise<string> => {
   return body.user.id;
 };
 
-/**
- * Two shares and one fund, priced so the shares are worth twice their cost and
- * the fund exactly its cost. Targets put half in each, so the plan must sell
- * shares and buy fund.
- */
+/** Two shares and one fund: shares worth twice cost, the fund exactly cost. Half-and-half targets, so the plan sells shares and buys fund. */
 const seed = async (o: { costKnown: boolean }): Promise<string> => {
   const { db } = await import("./db/index.ts");
   const { accounts, instruments, prices, transactions } = await import("./db/schema.ts");
@@ -146,9 +139,7 @@ describe("rebalancePlanFor", () => {
     const plan = await rebalancePlanFor(db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");
 
-    // Shares are worth 800 of a 1 000 portfolio against a 50 % target, so 300
-    // must come out. Taken largest-first that is all from Big Co, which cost
-    // 300 and is worth 600: half of it, realising half its 300 gain.
+    // Shares are 800 of 1 000 against a 50 % target, so 300 comes out, all from Big Co (cost 300, worth 600): half of it, realising half its 300 gain.
     expect(sale?.key).toBe("stock");
     expect(sale?.amountEur).toBe("300.00");
     expect(sale?.realisedGainEur).toBe("150.00");
@@ -163,8 +154,7 @@ describe("rebalancePlanFor", () => {
     const plan = await rebalancePlanFor(db, userId, "kind", "2025-06-02");
     const sale = plan.trades.find((trade) => trade.side === "sell");
 
-    // A partial total presented as a whole one is exactly the error this view
-    // exists to avoid.
+    // A partial total shown as a whole one is the error this view avoids.
     expect(sale?.gainUnknown).toBe(true);
     expect(sale?.realisedGainEur).toBeNull();
     expect(plan.gainIncomplete).toBe(true);

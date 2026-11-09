@@ -14,20 +14,13 @@ const attempt = async (label: string, step: () => Promise<void>): Promise<void> 
   try {
     await step();
   } catch (cause) {
-    console.error(`Ajastettu vaihe ${label} epäonnistui`, cause);
+    console.error(`Scheduled step ${label} failed`, cause);
   }
 };
 
-/**
- * The Worker: TanStack Start answers every request, and the Cron Triggers in
- * wrangler.jsonc run the price refreshes. The evening cron runs the day's
- * price and rate refresh, the hourly one the intraday prices; both then
- * finish any paused instrument lookups. `waitUntil` keeps the Worker alive for
- * the whole chain.
- */
+/** TanStack Start answers requests; the Cron Triggers in wrangler.jsonc run the evening price and rate refresh and the hourly intraday prices, then finish paused instrument lookups. `waitUntil` keeps the Worker alive for the chain. */
 export default {
-  // Only the request: Workers would pass `env` second, where TanStack expects
-  // its own options. Bindings reach the app through `cloudflare:workers`.
+  // Only the request: Workers would pass `env` second, where TanStack expects its own options. Bindings come via `cloudflare:workers`.
   fetch: (request) => handler.fetch(request),
   scheduled(event, _env, ctx) {
     const prices =
@@ -38,8 +31,8 @@ export default {
         : () => runScheduledRefresh(db);
     ctx.waitUntil(
       (async () => {
-        await attempt("hinnat", prices);
-        await attempt("haut", async () => {
+        await attempt("prices", prices);
+        await attempt("lookups", async () => {
           // The model is asked only once a day, on the evening run.
           const deps = event.cron === EVENING_CRON ? pageDeps() : null;
           await resolvePending(db, fetch, undefined, deps ?? undefined);

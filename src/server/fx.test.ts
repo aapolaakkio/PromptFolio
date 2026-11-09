@@ -14,22 +14,11 @@ import type { FetchImpl } from "./prices/types.ts";
 const SEK = parseCurrency("SEK");
 const USD = parseCurrency("USD");
 
-/**
- * ECB's SDMX `csvdata` responses, recorded in the shape a real fetch returns (see
- * fx-ecb.ts for why the flat CSV files this used to read are unusable). `fixtureText`
- * carries one day, `histFixtureText` the same five days the ledger tests range over --
- * the rates are unchanged from the earlier fixtures, so every expected value below still
- * describes the same arithmetic.
- */
+/** ECB SDMX `csvdata` responses as a real fetch returns them: `fixtureText` carries one day, `histFixtureText` the five days the ledger tests range over. */
 const fixtureText = () => readText(`${import.meta.dirname}/fixtures/ecb-sdmx-daily.csv`);
 const histFixtureText = () => readText(`${import.meta.dirname}/fixtures/ecb-sdmx-hist.csv`);
 
-/**
- * Independently computed (Python `Decimal`, not this project's own code)
- * from the fixture's raw ECB cells, so these are an oracle, not a
- * tautology against `parseEcbCsv`'s own arithmetic. USD's value matches
- * the design doc's own worked example (1 EUR = 1.0870 USD -> 91_996_320).
- */
+/** Computed independently (Python `Decimal`) from the fixture's raw ECB cells, so an oracle rather than a tautology against `parseEcbCsv`. USD matches the design doc's example (1 EUR = 1.0870 USD -> 91_996_320). */
 type OracleCurrency = "USD" | "JPY" | "GBP" | "SEK" | "NOK";
 
 const EXPECTED_RATE_EUR = {
@@ -49,21 +38,7 @@ const expectedRate = (currency: string): number => {
   return EXPECTED_RATE_EUR[currency];
 };
 
-/**
- * The trimmed `ecb-eurofxref-hist.csv` fixture's own oracle, one row per date it carries,
- * newest first -- independently computed the same way as `EXPECTED_RATE_EUR` above (the
- * documented formula: `parseFxRate`'s scale-1e8 parse, then `invertScaledRate`'s
- * `1e16/scaled` half-up), not by calling `parseEcbHistCsv` itself. 2026-08-27's row is
- * deliberately identical to the daily fixture's own single row (same date, same values),
- * so a lookup on that date resolves to the same rate through either file -- asserted
- * directly below.
- *
- * The big gap between 2026-08-24 and 2020-01-02 is deliberate, not an oversight: it is what
- * lets a test prove `parseEcbHistCsv`'s `since` boundary (one row kept just *before* the
- * cutoff, for `fxRateOn`'s "on or before" fallback) without needing a full, multi-thousand-
- * row recording of the real file -- see this file's own report for exactly what was trimmed
- * from the real fetch.
- */
+/** The trimmed hist fixture's oracle, newest first, computed independently of `parseEcbHistCsv` (`parseFxRate`'s scale-1e8 parse, then `invertScaledRate`'s `1e16/scaled` half-up). 2026-08-27 equals the daily fixture's row. The gap to 2020-01-02 is deliberate: it proves the `since` boundary (one row kept just before the cutoff, for `fxRateOn`'s "on or before" fallback) without a full recording. */
 const HIST_EXPECTED_RATE_EUR = {
   "2026-08-27": { USD: 91_996_320, JPY: 631_233, GBP: 118_877_794, SEK: 8_901_549, NOK: 8_645_284 },
   "2026-08-26": { USD: 92_123_445, JPY: 632_711, GBP: 119_061_793, SEK: 8_930_166, NOK: 8_665_511 },
@@ -95,7 +70,7 @@ const seedTransaction = async (db: Db, currency: Currency) => {
     .insert(user)
     .values({
       id: userId,
-      name: "Testikäyttäjä",
+      name: "Test user",
       email: `${userId}@example.com`,
       emailVerified: true,
       createdAt: new Date(),
@@ -174,12 +149,12 @@ test("skips a day ECB did not publish rather than discarding the days it did", (
 
 test("rejects a response whose header is not the SDMX layout", async () => {
   expect(() => parseEcbSdmxCsv("Date,SEK\n2026-08-27,11.2340\n", new Set(["SEK"]))).toThrow(
-    /puuttuu odotettu sarake/,
+    /lacks an expected column/,
   );
 });
 
 test("rejects an empty response instead of reporting no rates", async () => {
-  expect(() => parseEcbSdmxCsv("", new Set(["SEK"]))).toThrow(/tyhjä/);
+  expect(() => parseEcbSdmxCsv("", new Set(["SEK"]))).toThrow(/empty/);
 });
 
 test("reads columns by name, so a response with extra columns still parses", () => {
@@ -260,15 +235,12 @@ test("surfaces a non-OK ECB response as a thrown error instead of silently stori
   await expect(refreshFxRates(db, { fetchImpl: failing })).rejects.toThrow(/503/);
 });
 
-// --- C1: currencies sourced from instruments too, not just transactions.currency ------
+// --- Currencies sourced from instruments too, not just transactions.currency ---
 
 test("fetches a currency held only by an instrument's own quotation currency, with no matching transaction currency at all", async () => {
-  // Reproduces C1 exactly: a fund whose transactions are booked in EUR (§10a A2/A5 --
-  // the cash that moved was EUR) but whose price/NAV is quoted in SEK. Before this fix,
-  // SEK never appeared in `transactions.currency`, so its rate was never fetched even
-  // though the instrument plainly needs one to be valued.
+  // A fund booked in EUR but quoted in SEK: SEK never appears in `transactions.currency`, yet the instrument needs its rate.
   const { db } = await testDb();
-  await seedTransaction(db, EUR); // only ever a EUR transaction -- no SEK row anywhere
+  await seedTransaction(db, EUR);
   await db
     .insert(instruments)
     .values({
@@ -314,7 +286,7 @@ test("unions transaction and instrument currencies without fetching a currency t
   expect(result).toEqual({ inserted: 1 });
 });
 
-// --- C1b: fxRateOn / ensureFxRate -- breaks the "first non-EUR transaction" deadlock ---
+// --- fxRateOn / ensureFxRate: breaks the "first non-EUR transaction" deadlock ---
 
 test("fxRateOn returns null with no matching row, and the newest row on or before the date otherwise", async () => {
   const { db } = await testDb();
@@ -342,9 +314,7 @@ test("ensureFxRate returns the existing rate without ever calling fetchImpl", as
 
 test("ensureFxRate fetches and stores ECB's rate on demand when nothing exists yet, breaking the deadlock", async () => {
   const { db } = await testDb();
-  // No fx_rates row at all -- exactly the deadlock: refreshFxRates() never fetches a
-  // currency the ledger doesn't hold yet, and this currency's first transaction is
-  // exactly what would introduce it.
+  // No fx_rates row: refreshFxRates() never fetches a currency the ledger doesn't hold yet, and this transaction would introduce it.
   const stub = async (): Promise<Response> => new Response(await fixtureText());
   const rate = await ensureFxRate(db, SEK, "2026-08-27", stub);
   expect(rate).toBe(EXPECTED_RATE_EUR.SEK);
@@ -356,8 +326,7 @@ test("ensureFxRate returns null (not a thrown error) when ECB has nothing older 
   const dispatch: FetchImpl = async () => new Response(await histFixtureText());
   const rate = await ensureFxRate(db, SEK, "2020-01-01", dispatch);
   expect(rate).toBeNull();
-  // Everything the request did return is still stored, so a later lookup on or after
-  // any of those dates is served without another fetch.
+  // Everything the request returned is stored, so later lookups need no fetch.
   expect(await db.select().from(fxRates).all()).toHaveLength(5);
 });
 
@@ -392,7 +361,7 @@ test("ensureFxRate swallows a fetch failure to null instead of throwing out of a
   expect(await db.select().from(fxRates).all()).toEqual([]);
 });
 
-// --- backfillFxRates -- the historical-file catch-up sweep (nightly + on import commit) ---
+// --- backfillFxRates: the historical catch-up sweep (nightly + on import commit) ---
 
 test("backfills nothing and touches no network for an empty ledger", async () => {
   const { db } = await testDb();
@@ -427,15 +396,14 @@ test("asks from the ledger's own earliest needed date, not from a recent window"
 });
 
 test("backfills a currency held only by an instrument's own quotation currency, back to that instrument's earliest transaction", async () => {
-  // Mirrors refreshFxRates' own C1 case, but for the historical catch-up: a fund whose
-  // transactions are booked in EUR (§10a A2/A5) but whose price/NAV is quoted in SEK.
+  // As above, for the historical catch-up: a EUR-booked, SEK-quoted fund.
   const { db } = await testDb();
   const userId = crypto.randomUUID();
   await db
     .insert(user)
     .values({
       id: userId,
-      name: "Testikäyttäjä",
+      name: "Test user",
       email: `${userId}@example.com`,
       emailVerified: true,
       createdAt: new Date(),
@@ -452,11 +420,11 @@ test("backfills a currency held only by an instrument's own quotation currency, 
     .values({
       isin: "SE0009123456",
       ticker: null,
-      name: "Testirahasto Ruotsi",
+      name: "Test fund Sweden",
       kind: "fund",
       currency: SEK,
       priceSource: "manual",
-      sourceKey: "testirahasto-sverige",
+      sourceKey: "test-fund-sverige",
     })
     .returning()
     .get();
@@ -478,13 +446,10 @@ test("backfills a currency held only by an instrument's own quotation currency, 
   expect(result).toEqual({ inserted: 5, currencies: 1 });
   const rows = await db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
   expect(rows).toHaveLength(5);
-  // Reaches all the way back to the fixture's own oldest row, well before the
-  // transaction's own 2026-08-24 date -- exactly what "not just today" means.
+  // Reaches back to the fixture's oldest row, not just the transaction's date.
   expect(rows.some((r) => r.date === "2020-01-02")).toBe(true);
 
-  // Idempotent: a second run finds SEK's history already reaches its earliest need and
-  // never touches the network again -- this is what keeps a nightly call cheap forever
-  // after the first real backfill, not a re-download of the whole file every night.
+  // Idempotent: once SEK's history reaches its earliest need, no further fetch (keeps nightly runs cheap).
   const mustNotBeCalled: FetchImpl = () => {
     throw new Error("must not be called");
   };
@@ -494,10 +459,10 @@ test("backfills a currency held only by an instrument's own quotation currency, 
 
 test("aggregates a mixed batch: one currency already covered is skipped, another still needing backfill is fetched -- one combined request either way", async () => {
   const { db } = await testDb();
-  // SEK already has a row reaching back before its own earliest need -- no backfill due.
+  // SEK already reaches back before its earliest need: no backfill due.
   await seedTransaction(db, SEK); // tradeDate 2026-01-01
   await db.insert(fxRates).values({ date: "2025-01-01", currency: SEK, rateEur: 9_000_000 }).run();
-  // USD needs a fresh fetch: no fx_rates row for it at all yet.
+  // USD has no fx_rates row yet: needs a fetch.
   await seedTransaction(db, USD); // tradeDate 2026-01-01
 
   let calls = 0;
@@ -509,7 +474,6 @@ test("aggregates a mixed batch: one currency already covered is skipped, another
   expect(calls).toBe(1); // one combined fetch, not one per currency
   expect(result.currencies).toBe(1); // only USD was pending
 
-  // SEK's pre-existing row is untouched -- still exactly the one row it started with.
   const sekRows = await db.select().from(fxRates).where(eq(fxRates.currency, SEK)).all();
   expect(sekRows).toEqual([{ date: "2025-01-01", currency: SEK, rateEur: 9_000_000 }]);
   // USD is now backfilled from the historical fixture.

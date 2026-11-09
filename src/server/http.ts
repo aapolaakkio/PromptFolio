@@ -1,23 +1,12 @@
 import { ZodError } from "zod";
 import { HttpError } from "./errors.ts";
 
-/**
- * Re-exported so a caller needs one import line. This module must stay free of
- * any dependency on auth.ts, which opens a database and throws at import time
- * without a secret -- proved by a test in a real child process.
- */
+/** Re-exported for one import line. Must not depend on auth.ts (it opens a database and throws without a secret): proved by a child-process test. */
 export { HttpError };
 
 export const json = <T>(data: T, status = 200): Response => Response.json(data, { status });
 
-/**
- * Turns anything a handler throws into a well-formed JSON response: an HttpError
- * into its own status and message, a ZodError into a 400 with field detail, and
- * anything else into a detail-free 500, logged in full server-side.
- *
- * That last one is a security boundary: an unexpected error's message can carry
- * SQL or file paths that must never reach a client.
- */
+/** Turns anything a handler throws into JSON: an HttpError into its status, a ZodError into a 400 with field detail, anything else into a detail-free 500 logged server-side (a message can carry SQL or paths). */
 export const handle =
   (fn: (request: Request) => Promise<Response>) =>
   async (request: Request): Promise<Response> => {
@@ -28,7 +17,7 @@ export const handle =
       if (cause instanceof ZodError) {
         return json(
           {
-            error: "Virheellinen pyyntö",
+            error: "Invalid request",
             fields: cause.issues.map((issue) => ({
               path: issue.path.join("."),
               message: issue.message,
@@ -38,6 +27,6 @@ export const handle =
         );
       }
       console.error("Unhandled request error", cause);
-      return json({ error: "Palvelinvirhe" }, 500);
+      return json({ error: "Server error" }, 500);
     }
   };

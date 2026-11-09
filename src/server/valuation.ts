@@ -29,11 +29,7 @@ import type { Instrument, IsoDate, Txn } from "../core/types.ts";
 import type { Db } from "./db/index.ts";
 import { accounts, fxRates, instruments, prices, transactions } from "./db/schema.ts";
 
-/**
- * Rebuilds core money from a stored row. The schema's currency type is a free,
- * unvalidated cast, and this is the one place money comes out of the database,
- * so it is the one place that cast is checked rather than trusted onward.
- */
+/** The one place money leaves the database: the stored currency is an unvalidated cast, so check it here. */
 const asMoney = (minor: number, currency: string): Money => ({
   minor: BigInt(minor),
   currency: parseCurrency(currency),
@@ -69,48 +65,22 @@ const groupBy = <T, K>(rows: readonly T[], keyOf: (row: T) => K): Map<K, T[]> =>
 };
 
 export type Portfolio = {
-  /** Every transaction the user owns, bank accounts included. Cash reads this. */
   readonly txns: readonly Txn[];
-  /**
-   * The same, minus every bank account -- what the return figures are computed
-   * from. A bank row is spending or salary, not a portfolio event, and a grocery
-   * payment left in would read as capital pulled out. Money that really reaches a
-   * broker still counts: the broker's own export records its arrival.
-   */
+  /** `txns` minus bank accounts: a grocery payment must not read as capital withdrawn. Money reaching a broker still counts via the broker's export. */
   readonly investedTxns: readonly Txn[];
   readonly instruments: readonly Instrument[];
   readonly prices: PriceLookup;
-  /** Account ids whose kind is a bank one, for callers that group by account. */
   readonly bankAccountIds: readonly number[];
-  /**
-   * The same, minus every credit account. A card holds no money, so counting its
-   * balance as cash subtracts the same money twice -- as the purchases and as
-   * the debt they created. Spending still reads `txns`, which is what it is about.
-   */
+  /** `txns` minus credit accounts: a card holds no money, so its balance would subtract the same spend twice. */
   readonly cashTxns: readonly Txn[];
-  /**
-   * The first price strictly after `date`, or null. Tells a market holiday from a
-   * real gap without an exchange calendar: a bar a day later and none on the date
-   * means the market was shut, and no Finnish holiday table covers a German one.
-   */
+  /** First price strictly after `date`, or null. Tells a market holiday from a real gap without an exchange calendar. */
   readonly nextPriceDateAfter: (instrumentId: number, date: IsoDate) => IsoDate | null;
 };
 
 /**
- * Every transaction the user owns, every instrument, and a price lookup.
- *
- * `core` never sees a database row: this is the one module that translates
- * between storage integers and `Money`/`Quantity`/`FxRate`.
- */
-/**
- * The price the owner actually traded at, as a price point: a buy or a sale's
- * unit price is what the instrument was worth that day. For a fund whose source
- * serves only its latest value, or a share whose source refuses us, these are
- * the only real historical prices there are, and they beat valuing a holding
- * at cost. A stored price for the same day wins.
- *
- * Skipped before a split of the same instrument: those prices are in pre-split
- * units, while the valuation restates held quantities into post-split ones.
+ * Prices the owner actually traded at, as price points: the only real history for a fund or share
+ * whose source has none, and better than valuing at cost. A stored price for the day wins.
+ * Skipped before a split of the same instrument (pre-split units).
  */
 // ponytail: pre-split trades dropped rather than adjusted by the split ratio;
 // adjust them if a split instrument's early history matters.
@@ -158,8 +128,7 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
           .orderBy(asc(transactions.tradeDate), asc(transactions.id))
           .all();
 
-  // Loaded before the transactions because a row's `unit_price` is denominated
-  // in its instrument's currency, not in the row's own (see below).
+  // Loaded first: a row's `unit_price` is in the instrument's currency, not the row's.
   const instrumentCurrencies = new Map(
     (
       await db
@@ -176,10 +145,7 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
     type: row.type,
     tradeDate: row.tradeDate,
     quantity: { scaled: BigInt(row.quantity) },
-    // `transactions.currency` is the cash side -- what the account was debited
-    // in -- while the unit price is in the security's own currency. A real
-    // Nordnet row proves they differ, and tagging the price with the cash
-    // currency states a SEK figure as euros.
+    // `transactions.currency` is the cash side; the unit price is in the security's own currency (a Nordnet row proves they differ).
     unitPrice:
       row.unitPrice === null
         ? null
@@ -217,8 +183,7 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
   const fxByCurrency = groupBy(fxRows, (row) => row.currency);
 
   const nextPriceDateAfter = (instrumentId: number, date: IsoDate): IsoDate | null =>
-    // Ordered by date, and groupBy preserves it, so the first row past `date`
-    // is the nearest one.
+    // groupBy preserves date order, so the first row past `date` is the nearest.
     pricesByInstrument.get(instrumentId)?.find((row) => row.date > date)?.date ?? null;
 
   const priceLookup: PriceLookup = {
@@ -232,9 +197,7 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
       if (currency === EUR) return asRate(100_000_000, EUR);
       const row = latestOnOrBefore(fxByCurrency.get(currency), date);
       if (!row) return null;
-      // Carrying a rate forward is right across a weekend and wrong across
-      // years: a 2010 rate converted a 2026 holding into a sound-looking wrong
-      // number. Past the bound the holding is reported unvaluable instead.
+      // A 2010 rate must not value a 2026 holding: past the bound it is reported unvaluable.
       return daysBetween(row.date, date) > MAX_FX_AGE_DAYS
         ? null
         : asRate(row.rateEur, row.currency);
@@ -275,88 +238,55 @@ export const loadPortfolio = async (db: Db, userId: string): Promise<Portfolio> 
   };
 };
 
-/**
- * How stale a rate may be before a valuation refuses it. A holiday weekend
- * reaches four days; ten leaves room for that and a missed refresh while still
- * catching what this exists for -- a rate years out of date, carried forward.
- */
+/** Max rate age before a valuation refuses it: covers a holiday weekend plus a missed refresh. */
 const MAX_FX_AGE_DAYS = 10;
 
 /** Whole days from `from` to `to`, both ISO dates. Negative when `to` precedes `from`. */
 const daysBetween = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
-export type HoldingView = {
+type HoldingView = {
   readonly instrumentId: number;
-  /** Null for a holding no registry carries -- see instruments.isin. */
   readonly isin: string | null;
   readonly name: string;
   readonly kind: Instrument["kind"];
   readonly currency: Currency;
   readonly priceSource: Instrument["priceSource"];
   readonly sourceKey: string;
-  /** "pending" while a registry lookup is owed, "attention" when it needs the owner. */
   readonly lookupStatus: "ok" | "pending" | "attention";
   readonly quantity: string;
-  /**
-   * Null exactly when `costBasisError` is set: a disposal with no matching
-   * earlier purchase makes the cost genuinely unknown, and `quantity` can then
-   * be negative, so a market value derived from it would be nonsense. The row
-   * still comes back with the quantity as-is and the error explaining the gap,
-   * rather than one bad position taking the whole response down.
-   */
+  /** Null exactly when `costBasisError` is set (an unmatched disposal): quantity can be negative, so a value from it would be nonsense. */
   readonly costEur: string | null;
-  /**
-   * Null together with `unrealisedEur`, exactly when `valuationError` is set: no
-   * price for `on`, or no fx rate for it. This used to fall back to a fabricated
-   * 0,00 EUR with no staleness badge -- a real price dated `on` and a missing
-   * rate rendered a confident, wrong loss.
-   */
+  /** Null with `unrealisedEur` exactly when `valuationError` is set (no price or no fx rate for `on`), never a fabricated 0. */
   readonly valueEur: string | null;
   readonly unrealisedEur: string | null;
-  /**
-   * Share of the portfolio. A ratio, so a number on the wire, computed here
-   * rather than from strings in the UI. Null and never 0 when the holding cannot
-   * be valued -- a different claim. The denominator counts only valued holdings,
-   * so weights sum to 1 across those instead of all shrinking when a feed breaks.
-   */
+  /** Share of the valued portfolio, as a number. Null (never 0) when unvaluable; the denominator counts valued holdings only. */
   readonly weight: number | null;
   readonly priceDate: IsoDate | null;
-  /**
-   * Whether the figure needs a staleness badge: the price is older than this
-   * instrument could freshly be, missing, or the holding is unvaluable for some
-   * other reason. The date comparison alone is not enough -- a same-day price
-   * row can still leave a holding unvaluable.
-   */
+  /** Needs a staleness badge: price older than it could be, missing, or unvaluable for any other reason. */
   readonly stale: boolean;
   readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
-  /** See `valueEur`'s doc. Finnish, user-facing, names the instrument and the date. */
+  /** See `valueEur`. User-facing; names the instrument and the date. */
   readonly valuationError: string | null;
 };
 
-/** Names the instrument by ISIN and name, never the internal id, and the date. */
 const explainUnmatchedDisposal = (instrument: Instrument, tradeDate: IsoDate): string =>
-  `Myyntiä ${instrument.name} (${instrument.isin}) päivältä ${tradeDate} ei voi käsitellä, ` +
-  `koska instrumentille ei ole kirjattu ostotapahtumaa ennen tätä myyntiä: tuo puuttuvat ` +
-  `ostotapahtumat tai poista myyntirivi.`;
+  `The sale of ${instrument.name} (${instrument.isin}) on ${tradeDate} cannot be processed, ` +
+  `because no purchase was recorded for the instrument before this sale: import the missing ` +
+  `purchases or delete the sale row.`;
 
-/** Why a holding could not be valued: no price for `on`, or no fx rate for it. */
 const explainValuationFailure = (
   instrument: Instrument,
   on: IsoDate,
   reason: "no-price" | "no-fx-rate",
 ): string =>
   reason === "no-price"
-    ? `Instrumentille ${instrument.name} (${instrument.isin}) ei ole hintaa päivälle ${on}, ` +
-      `joten markkina-arvoa ei voi laskea.`
-    : `Valuuttakurssia ${instrument.currency} ei löydy päivälle ${on}, joten instrumentin ` +
-      `${instrument.name} (${instrument.isin}) markkina-arvoa ei voi laskea.`;
+    ? `${instrument.name} (${instrument.isin}) has no price on ${on}, ` +
+      `so its market value cannot be computed.`
+    : `No exchange rate for ${instrument.currency} on ${on}, so the market value of ` +
+      `${instrument.name} (${instrument.isin}) cannot be computed.`;
 
-/**
- * Current holdings, valued as of `on`. Cost basis is resolved per instrument, so
- * one unmatched disposal marks only its own row unknown. Refusing the sale at
- * import time would be wrong: pages arrive newest first.
- */
+/** Holdings valued as of `on`. Cost basis is per instrument: an unmatched disposal marks only its own row (pages import newest first). */
 export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<HoldingView[]> => {
   const { txns, instruments: all, prices: lookup } = await loadPortfolio(db, userId);
   const byId = new Map(all.map((instrument) => [instrument.id, instrument]));
@@ -370,7 +300,6 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
   );
   const costs = costBasisPerInstrument(txns, on);
 
-  // Everything but `weight`, which needs the total across every other row.
   const rows = [...positionsAt(txns, on)].flatMap((entry) => {
     const [instrumentId, quantity] = entry;
     const instrument = byId.get(instrumentId);
@@ -380,7 +309,6 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
     const priceDate = lookup.priceDateOn(instrumentId, on);
     const rate = instrument.currency === EUR ? null : lookup.fxOn(instrument.currency, on);
 
-    // No zero fallback: a holding this cannot price reports null and says why.
     const nativeValueEur: Money | null =
       price === null
         ? null
@@ -404,12 +332,9 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
             message: explainUnmatchedDisposal(instrument, outcome.error.tradeDate),
           }
         : null;
-    // Both walk the same transactions, so an absent outcome is defensive only.
     const costEur = costBasisError ? null : outcome?.ok ? outcome.costEur : zeroMoney(EUR);
 
-    // One source of truth for "can this value be trusted": valueEur,
-    // unrealisedEur and weight all key off it, so the three stay in lockstep
-    // rather than three separate conditions drifting apart.
+    // valueEur, unrealisedEur and weight all key off one "can this be trusted" check.
     const valuedEur: Money | null = costBasisError === null ? nativeValueEur : null;
 
     return [
@@ -426,7 +351,6 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
     ];
   });
 
-  // The denominator: every holding that could be valued -- see weight's own doc.
   const totalValuedEur = rows.reduce(
     (sum, row) => (row.valuedEur === null ? sum : addMoney(sum, row.valuedEur)),
     zeroMoney(EUR),
@@ -449,7 +373,6 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
         row.costEur === null || row.valuedEur === null
           ? null
           : formatMoney(subMoney(row.valuedEur, row.costEur)),
-      // Guards 0/0: an undefined ratio must not surface as NaN or a fake 0.
       weight:
         row.valuedEur === null || totalValuedEur.minor === 0n
           ? null
@@ -464,44 +387,26 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
     .sort((a, b) => Number(b.valueEur ?? "0") - Number(a.valueEur ?? "0"));
 };
 
-/**
- * One account's cash, and the household totals, as the API reports them.
- *
- * Three figures rather than one: everything, what can be spent today, and what
- * is tied up in a fixed-term deposit until it matures. A single total would
- * claim a deposit locked until 2027 is money available now.
- */
-export type CashReport = {
+/** Cash per account plus totals: everything, spendable today, and locked in a fixed-term deposit until maturity. */
+type CashReport = {
   readonly rows: CashView[];
   readonly totalEur: string;
   readonly availableEur: string;
   readonly lockedEur: string;
 };
 
-/** One account's cash, as the API and the chat tools report it. */
 type CashView = {
   readonly accountId: number;
   readonly accountName: string;
   readonly currency: Currency;
   readonly amount: string;
-  /** Null when no fx rate is known for `on` -- the balance is real, its euro value is not. */
+  /** Null when no fx rate is known for `on`. */
   readonly valueEur: string | null;
-  /** True while a fixed-term deposit has not yet matured. */
   readonly locked: boolean;
-  /** The day a locked balance comes free, or null when the account records none. */
   readonly availableFrom: string | null;
 };
 
-/**
- * Uninvested cash per account and currency, in euros. It counts toward portfolio
- * value and allocation, never toward the returns: an account sitting on an
- * unspent deposit has not underperformed.
- */
-/**
- * Marks each balance by whether its account can be drawn on `on`. A deposit whose
- * terms nobody entered is locked with an unknown release date, which is the
- * honest reading and safer than treating it as spendable.
- */
+/** Marks each balance by whether its account can be drawn on `on`. A deposit with no entered terms counts as locked. */
 export const withAvailability = async (
   db: Db,
   userId: string,
@@ -555,7 +460,7 @@ export const cashFor = async (db: Db, userId: string, on: IsoDate): Promise<Cash
   return {
     rows: valued.map((balance) => ({
       accountId: balance.accountId,
-      accountName: names.get(balance.accountId) ?? `Tili ${balance.accountId}`,
+      accountName: names.get(balance.accountId) ?? `Account ${balance.accountId}`,
       currency: balance.currency,
       amount: formatMoney(balance.amount),
       valueEur: balance.valueEur === null ? null : formatMoney(balance.valueEur),

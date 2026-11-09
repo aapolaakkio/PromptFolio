@@ -38,20 +38,20 @@ export type DriftRowView = {
   readonly untargeted: boolean;
 };
 
-export type DriftView = {
+type DriftView = {
   readonly dimension: Dimension;
   readonly rows: readonly DriftRowView[];
   readonly totalEur: string;
   readonly incomplete: boolean;
 };
 
-export type DepositView = {
+type DepositView = {
   readonly key: string;
   readonly label: string;
   readonly amountEur: string;
 };
 
-export type TradeView = {
+type TradeView = {
   readonly key: string;
   readonly label: string;
   readonly side: "buy" | "sell";
@@ -60,7 +60,7 @@ export type TradeView = {
   readonly gainUnknown: boolean;
 };
 
-export type PlanView = {
+type PlanView = {
   readonly trades: readonly TradeView[];
   readonly tooSmall: readonly TradeView[];
   readonly totalRealisedGainEur: string;
@@ -68,7 +68,7 @@ export type PlanView = {
   readonly balanced: boolean;
 };
 
-export type FeeYearView = {
+type FeeYearView = {
   readonly year: number;
   readonly tradeFeesEur: string;
   readonly chargedFeesEur: string;
@@ -76,7 +76,6 @@ export type FeeYearView = {
   readonly withheldTaxEur: string;
 };
 
-/** A basis-point weight as the decimal string the wire carries. */
 const asPercent = (bp: number): string => (bp / 100).toFixed(2);
 
 export const targetsFor = async (
@@ -98,11 +97,7 @@ const storedTargets = async (db: Db, userId: string, dimension: Dimension): Prom
       .all()
   ).map((row) => ({ key: row.key, weightBp: row.weightBp }));
 
-/**
- * Replaces a dimension's targets in one transaction. Wholesale, never added to: a
- * set is a statement about the whole portfolio, and inserting into one leaves it
- * summing to something other than 100 %, refused only on the next read.
- */
+/** Replaces a dimension's targets in one transaction. Wholesale: inserting into a set leaves it not summing to 100 %, refused only on the next read. */
 export const saveTargets = async (
   db: Db,
   userId: string,
@@ -119,10 +114,7 @@ export const saveTargets = async (
     weightBp: target.weightBp,
   }));
 
-  // One batch, which D1 runs as a single transaction. That is the whole point
-  // here: a delete that lands without its inserts would leave the dimension
-  // with no targets at all. Chunked because a set of 25 targets already binds
-  // more variables than D1 allows in one statement.
+  // One batch (a single D1 transaction): a delete landing without its inserts would leave no targets. Chunked because 25 targets already bind more variables than one D1 statement allows.
   await db.batch([
     db
       .delete(allocationTargets)
@@ -132,7 +124,6 @@ export const saveTargets = async (
   return { ok: true };
 };
 
-/** What every read view needs: the allocation, the targets, and the drift between them. */
 const situation = async (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
   const { txns, cashTxns, instruments, prices } = await loadPortfolio(db, userId);
   const cash = await withAvailability(
@@ -192,19 +183,13 @@ export const depositPlanFor = async (
   }));
 };
 
-/** One holding's market value and cost, for attributing a slice-level sale. */
 type SliceHolding = {
   readonly instrumentId: number;
   readonly valueEur: Money;
   readonly costEur: Money | null;
 };
 
-/**
- * What each slice holds, valued and costed, keyed by slice.
- *
- * Built from the same `sliceKeyFor` the allocation itself uses, so the plan and
- * the drift table cannot disagree about what a slice contains.
- */
+/** What each slice holds, valued and costed, from the same `sliceKeyFor` as the allocation so the plan and drift table agree. */
 const holdingsBySlice = async (
   db: Db,
   userId: string,
@@ -247,12 +232,7 @@ export const rebalancePlanFor = async (
   const { report } = await situation(db, userId, dimension, on);
   const bySlice = await holdingsBySlice(db, userId, dimension, on);
 
-  /**
-   * What a slice-level sale would realise. A slice names no instrument, so the
-   * sale spreads across what it holds, largest first, each part realising its
-   * share of that holding's gain. Unknown rather than zero as soon as one cost
-   * basis is: a partial total shown as a whole one is what this view avoids.
-   */
+  /** What a slice-level sale would realise: spread across the holdings largest first, each realising its share of gain. Unknown (not zero) once any cost basis is, never a partial total shown as whole. */
   const gainOnSale = (key: string, amountEur: Money): Money | null => {
     const holdings = bySlice.get(key);
     if (holdings === undefined || holdings.length === 0) return null;
