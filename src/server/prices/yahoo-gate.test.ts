@@ -123,3 +123,26 @@ describe("gatedFetch", () => {
     expect(await yahooPausedUntil(db, now)).toBeNull();
   });
 });
+
+describe("who is asking", () => {
+  const seen = () => {
+    const agents: (string | null)[] = [];
+    const fetchImpl: FetchImpl = async (_input, init) => {
+      agents.push(new Headers(init?.headers).get("user-agent"));
+      return new Response("{}");
+    };
+    return { agents, fetchImpl };
+  };
+
+  it("names the app to Yahoo, which answers 429 to a client with no name", async () => {
+    const { agents, fetchImpl } = seen();
+    await gatedFetch(db, fetchImpl)(URL_, { headers: { accept: "application/json" } });
+    expect(agents).toEqual(["PromptFolio/1.0 (personal portfolio tracker)"]);
+  });
+
+  it("leaves other hosts' requests as they were", async () => {
+    const { agents, fetchImpl } = seen();
+    await gatedFetch(db, fetchImpl)("https://api.openfigi.com/v3/mapping");
+    expect(agents).toEqual([null]);
+  });
+});

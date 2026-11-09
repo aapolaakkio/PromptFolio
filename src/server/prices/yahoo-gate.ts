@@ -58,6 +58,9 @@ const isYahoo = (input: string | URL | Request): boolean => {
   }
 };
 
+/** Yahoo answers 429 to a client that does not say who it is (verified 2026-11-09). The app's own name, not a browser's. */
+const APP_USER_AGENT = "PromptFolio/1.0 (personal portfolio tracker)";
+
 /** Every Yahoo request goes through this. A 429 means wait: never retried, nothing sent while paused. */
 export const gatedFetch =
   (db: Db, fetchImpl: FetchImpl, now: () => number = Date.now): FetchImpl =>
@@ -67,7 +70,9 @@ export const gatedFetch =
     const pausedUntil = await yahooPausedUntil(db, now);
     if (pausedUntil !== null) throw new YahooPausedError(pausedUntil);
 
-    const res = await fetchImpl(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set("User-Agent", APP_USER_AGENT);
+    const res = await fetchImpl(input, { ...init, headers });
     if (res.status !== 429) {
       await writeGate(db, { pausedUntil: null, backoffMs: 0 });
       return res;
