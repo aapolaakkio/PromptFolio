@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { ChatClient, ModelReply, TurnParams } from "../chat/runner.ts";
-import { MAX_SUGGESTED_ROWS, suggestRows, type SuggestProblem } from "./suggest-rows.ts";
+import { MAX_SUGGESTED_ROWS, redacted, suggestRows, type SuggestProblem } from "./suggest-rows.ts";
 
 const scripted = (text: string): ChatClient & { asked: TurnParams[] } => {
   const asked: TurnParams[] = [];
@@ -352,5 +352,29 @@ describe("keys and privacy", () => {
     );
     expect(warn).toHaveBeenCalledWith("Row suggestions failed:", "Error");
     warn.mockRestore();
+  });
+});
+
+describe("redacted", () => {
+  test.each([
+    ["fi21 1234 5600 0007 85", "[IBAN]"],
+    ["FI21-1234-5600-0007-85", "[IBAN]"],
+    ["FI21.1234.5600.0007.85", "[IBAN]"],
+    ["FI2112345600000785", "[IBAN]"],
+    ["1234 5678 9012 3456", "[REF]"],
+    ["1234\u00a05678\u00a09012\u00a03456", "[REF]"],
+    ["123456-789", "[REF]"],
+  ])("%s is masked", (value, mask) => {
+    expect(redacted(`viite ${value} loppu`)).toBe(`viite ${mask} loppu`);
+  });
+
+  test.each([
+    "1 234 567,89",
+    "12.03.2026",
+    "2026-03-12 100,00",
+    "FI0009000681 100 kpl",
+    "-45,60 EUR",
+  ])("%s is left readable", (value) => {
+    expect(redacted(value)).toBe(value);
   });
 });

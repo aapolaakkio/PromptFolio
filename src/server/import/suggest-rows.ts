@@ -220,9 +220,18 @@ const checked = (kind: Kind, fields: Readonly<Record<string, string | null>>, ra
   return kept;
 };
 
+const IBAN_ANY_CASE =
+  /\b[A-Z]{2}\d{2}(?:[\s\u00a0.-]?[A-Z0-9]{4}){3,7}(?:[\s\u00a0.-]?[A-Z0-9]{1,4})?\b/gi;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** 9+ digits joined only by single spaces or hyphens: account, card and reference numbers. A decimal mark ends a run, and a date is kept. */
+const DIGIT_RUN = /\d{4}-\d{2}-\d{2}|(?<![A-Za-z\d])\d(?:[\s\u00a0-]?\d){8,}/g;
+
 /** What the model sees: account and reference numbers are not needed to read a row. */
 export const redacted = (text: string): string =>
-  text.replace(IBAN_TEXT, "[IBAN]").replace(LONG_NUMBER, "[REF]").slice(0, MAX_RAW_CHARS);
+  text
+    .replace(IBAN_ANY_CASE, "[IBAN]")
+    .replace(DIGIT_RUN, (run) => (ISO_DATE.test(run) ? run : "[REF]"))
+    .slice(0, MAX_RAW_CHARS);
 
 const MASKED_FIELDS = new Set(["amountEur", "feeEur", "quantityText"]);
 
