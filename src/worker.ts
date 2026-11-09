@@ -5,7 +5,7 @@ import { resolvePending } from "./server/instruments/resolve-pending.ts";
 import { refreshIntraday } from "./server/prices/intraday.ts";
 import { runScheduledRefresh } from "./server/prices/refresh.ts";
 
-const INTRADAY_CRON = "0 * * * 1-5";
+const INTRADAY_CRON = "0 0-17,19-23 * * 1-5";
 
 /** One step's failure is logged and never skips the next. */
 const attempt = async (label: string, step: () => Promise<void>): Promise<void> => {

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Imports add new instruments by themselves, listed holdings refresh every 15 minutes in market hours, and Yahoo is asked so rarely that it stops answering 429.
+**Goal:** Imports add new instruments by themselves, listed holdings refresh every hour in market hours, and Yahoo is asked so rarely that it stops answering 429.
 
 **Architecture:** Every Yahoo request goes through one D1-backed gate that pauses on a 429. Prices for many symbols come from one batch request. The import preview resolves unknown ISINs through a remembered lookup and the commit creates the instruments; anything the owner must decide still goes to the existing form.
 
@@ -15,7 +15,7 @@
 - Tests never reach the network: every fetch is injected (`fetchImpl`), the global one throws (`src/server/test-network-guard.ts`).
 - No getting around Yahoo's limits: no rotating or spoofed identities, no retry through a 429. A 429 means wait.
 - Back-off after a 429: `Retry-After` when present, otherwise start 15 minutes, double per consecutive 429, cap 6 hours; a successful request resets it.
-- Intraday cron `*/15 * * * 1-5`; the existing `0 18 * * 1-5` stays.
+- Intraday cron `0 0-17,19-23 * * 1-5` (hourly, skipping the evening run's 18:00 UTC); the existing `0 18 * * 1-5` stays.
 - Market hours (local, with time zone): Helsinki 10:00–18:30 `Europe/Helsinki`; Xetra 09:00–17:30 `Europe/Berlin`; Stockholm 09:00–17:30 `Europe/Stockholm`; NYSE/Nasdaq 09:30–16:00 `America/New_York`. Symbol suffix → exchange: `.HE` Helsinki, `.DE` Xetra, `.ST` Stockholm, no suffix US; any other suffix is treated as open during Xetra hours.
 - "Nothing found" lookups are retried after 7 days; "found" is kept for good.
 - Form cases (owner's decision): nothing found; only listing in another currency than the holding; a row without ISIN resolved by name search (OP funds resolved via their OP page are not a form case).
@@ -138,7 +138,7 @@
 - [ ] **Step 5: Run** — PASS; then `pnpm exec vitest run src/server/import`.
 - [ ] **Step 6: Commit** — `git commit -m "feat(import): add new instruments by themselves"`
 
-### Task 6: Market hours and the 15-minute refresh
+### Task 6: Market hours and the hourly refresh
 
 **Files:**
 
@@ -156,7 +156,7 @@
 
 - [ ] **Step 1: Write tests:** `isOpen` — `"Helsinki 18:29 local is open, 18:31 is not, in summer and in winter"` (`2026-07-01T15:29Z` open, `15:31Z` closed; `2026-01-15T16:29Z` open, `16:31Z` closed); `"Saturday is never open"`; `"a US symbol follows New York hours"`. `refreshIntraday` — `"asks once for every open, held listing"` (stub called once with both symbols); `"no open exchange, no request"`; `"an instrument nobody holds is not asked for"`; `"a paused gate makes no request and reports paused"`. `refresh.test.ts` — existing tests updated so Yahoo instruments are asked in one batch.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** `pnpm exec vitest run src/server/prices` — PASS.
-- [ ] **Step 5: Commit** — `git commit -m "feat(prices): listed holdings every 15 minutes in market hours, in one request"`
+- [ ] **Step 5: Commit** — `git commit -m "feat(prices): listed holdings every hour in market hours, in one request"`
 
 ### Task 7: Finishing pending lookups, and the schedule
 
@@ -171,11 +171,11 @@
 - Consumes: `rememberedLookup` (Task 4), `refreshIntraday` (Task 6), `runScheduledRefresh`
 - Produces:
   - `resolvePending(db: Db, fetchImpl?: FetchImpl): Promise<{ resolved: number; attention: number }>` — for each `lookupStatus: "pending"` instrument: `found` → set source, code, currency, `lookupStatus: "ok"`; `form` → `lookupStatus: "attention"`; still paused → leave pending. Only rows still `pending` are written (`where lookup_status = 'pending'`), so a Muokkaa edit in between wins.
-  - `worker.ts` `scheduled(event)`: `event.cron === "*/15 * * * 1-5"` → `refreshIntraday` then `resolvePending`; `"0 18 * * 1-5"` → `runScheduledRefresh` then `resolvePending`.
+  - `worker.ts` `scheduled(event)`: `event.cron === "0 0-17,19-23 * * 1-5"` → `refreshIntraday` then `resolvePending`; `"0 18 * * 1-5"` → `runScheduledRefresh` then `resolvePending`.
 
 - [ ] **Step 1: Write tests:** `"a pending instrument gets its source once Yahoo answers"`; `"a pending one that lands in a form case is marked for attention"`; `"an instrument edited in Muokkaa while pending is left alone"` (`updateInstrument` first → status `ok` → `resolvePending` changes nothing).
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement**; add `"*/15 * * * 1-5"` to `triggers.crons` in `wrangler.jsonc`.
-- [ ] **Step 4: Run** `pnpm exec vitest run src/server/instruments` — PASS; `pnpm exec tsc --noEmit` clean. Locally: `curl "http://localhost:3000/cdn-cgi/local/scheduled?cron=*/15+*+*+*+1-5"` and check the dev log shows one intraday run.
+- [ ] **Step 2: Run** — FAIL. **Step 3: Implement**; add `"0 0-17,19-23 * * 1-5"` to `triggers.crons` in `wrangler.jsonc`.
+- [ ] **Step 4: Run** `pnpm exec vitest run src/server/instruments` — PASS; `pnpm exec tsc --noEmit` clean. Locally: `curl "http://localhost:3000/cdn-cgi/local/scheduled?cron=0+0-17,19-23+*+*+1-5"` and check the dev log shows one intraday run.
 - [ ] **Step 5: Commit** — `git commit -m "feat(instruments): finish paused lookups on the schedule"`
 
 ### Task 8: Show what was chosen

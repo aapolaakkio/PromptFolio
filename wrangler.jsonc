@@ -11,7 +11,7 @@
   // exchanges close and the funds have published the day's value.
   // Hourly on weekdays: listed holdings' intraday prices (the run
   // itself skips hours when no exchange is open) and paused lookups.
-  "triggers": { "crons": ["0 18 * * 1-5", "0 * * * 1-5"] },
+  "triggers": { "crons": ["0 18 * * 1-5", "0 0-17,19-23 * * 1-5"] },
   "observability": { "enabled": true },
   // Only used to resolve the AI Gateway URL for Claude calls (AI_GATEWAY_ID).
   "ai": { "binding": "AI" },

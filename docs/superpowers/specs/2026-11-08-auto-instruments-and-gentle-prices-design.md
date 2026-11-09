@@ -31,7 +31,7 @@ asking far less often, not asking differently.
   currency are shown wherever a holding appears, so a USD listing chosen for a
   EUR holding stands out. The owner fixes it with the existing Muokkaa form.
 - **Fresh prices for traded holdings.** Listed shares and ETFs refresh every
-  15 minutes while their exchange is open. Funds keep their once-a-day NAV.
+  hour while their exchange is open. Funds keep their once-a-day NAV.
 - **No more 429s in normal use.** All listed holdings' prices come from one
   Yahoo request per run. A 429 pauses Yahoo use for a while instead of being
   retried.
@@ -42,8 +42,8 @@ asking far less often, not asking differently.
 
 - Paid data services. Researched 2026-11-08: free tiers (Twelve Data, Alpha
   Vantage, EODHD) are US-only or capped at 20-25 requests a day, so none gives
-  free 15-minute prices for Helsinki and Xetra. Yahoo stays the source.
-- Real-time or tick prices. 15 minutes is the target.
+  free intraday prices for Helsinki and Xetra. Yahoo stays the source.
+- Real-time or tick prices. Hourly is the target.
 - Exchange holiday calendars. A run on a holiday finds an unchanged price and
   costs one request.
 - Automating Nordnet fund page codes. Nordnet's ISIN search needs a login;
@@ -90,7 +90,8 @@ symbols for a new ISIN are checked in one request instead of eight.
 
 ### 3. When prices are fetched
 
-- **Every 15 minutes on weekdays** (Cron Trigger `*/15 * * * 1-5`): fetch, in one
+- **Every hour on weekdays** (Cron Trigger `0 0-17,19-23 * * 1-5`, skipping
+  18:00 UTC when the evening run fires): fetch, in one
   batch, every Yahoo-priced holding whose exchange is open right now. The
   exchange comes from the symbol's suffix: `.HE` Helsinki, `.DE` Xetra, `.ST`
   Stockholm and so on, and no suffix for the US. Opening hours are a small table
@@ -165,7 +166,7 @@ _(Designer's call.)_
 ## Constraints
 
 - Runs on Cloudflare Workers with D1, as today. Cron triggers are free on the
-  Workers plan in use; a 15-minute trigger is about 96 invocations a day, most
+  Workers plan in use; an hourly trigger is about 24 invocations a weekday, most
   of them making no request.
 - Tests never reach the network: every fetch is injected, as the project does
   now.
@@ -178,7 +179,8 @@ _(Designer's call.)_
   instrument, when the only listing is in another currency than the holding,
   or when a row without an ISIN was found by name search.
 - Mistakes are caught by showing the ticker and currency, not by asking.
-- Listed holdings every 15 minutes in market hours; funds daily.
+- Listed holdings every hour in market hours; funds daily. (Originally every
+  15 minutes; the owner changed it to hourly on 2026-11-09.)
 - A free API key would be acceptable, but research found none that fits; Yahoo
   stays, used far less often.
 

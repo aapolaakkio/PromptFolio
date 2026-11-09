@@ -226,8 +226,8 @@ export const writePrices = async (
     /**
      * Refuse an implausible point without counting it toward a re-baseline,
      * and leave any pending streak as it was. For the intraday run:
-     * `RE_BASELINE_CONFIRMATIONS` counts once-a-weekday readings, and a run
-     * every 15 minutes would confirm a bad quote served for 45 minutes.
+     * `RE_BASELINE_CONFIRMATIONS` counts once-a-weekday readings, and an
+     * hourly run would confirm a bad quote served for 3 hours.
      */
     readonly plausibleOnly?: boolean;
   } = {},

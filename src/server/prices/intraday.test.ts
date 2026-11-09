@@ -219,7 +219,7 @@ test("intraday runs never confirm a 10x jump; only the evening run advances the 
     .run();
   const { fetchImpl } = chartStub();
 
-  for (const minutes of [0, 15, 30]) {
+  for (const minutes of [0, 60, 120]) {
     const at = new Date(MIDDAY.getTime() + minutes * 60_000);
     expect(await refreshIntraday(db, at, fetchImpl, 0)).toEqual({
       asked: 1,
