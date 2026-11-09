@@ -8,6 +8,7 @@ import {
   valueCash,
   type ValuedCash,
 } from "../core/cash.ts";
+import { yearlyCostEur } from "../core/fund-costs.ts";
 import { positionsAt } from "../core/ledger.ts";
 import {
   addMoney,
@@ -27,7 +28,14 @@ import type { PriceLookup } from "../core/returns.ts";
 import { isPriceStale } from "../core/staleness.ts";
 import type { Instrument, IsoDate, Txn } from "../core/types.ts";
 import type { Db } from "./db/index.ts";
-import { accounts, fxRates, instruments, prices, transactions } from "./db/schema.ts";
+import {
+  accounts,
+  fxRates,
+  instrumentCosts,
+  instruments,
+  prices,
+  transactions,
+} from "./db/schema.ts";
 
 /** The one place money leaves the database: the stored currency is an unvalidated cast, so check it here. */
 const asMoney = (minor: number, currency: string): Money => ({
@@ -263,6 +271,10 @@ type HoldingView = {
   /** Share of the valued portfolio, as a number. Null (never 0) when unvaluable; the denominator counts valued holdings only. */
   readonly weight: number | null;
   readonly priceDate: IsoDate | null;
+  /** Ongoing yearly charge in basis points (20 is 0.20 %); null while unknown. */
+  readonly ongoingChargeBp: number | null;
+  /** `valueEur` x charge per year; null when either is unknown. */
+  readonly yearlyCostEur: string | null;
   /** Needs a staleness badge: price older than it could be, missing, or unvaluable for any other reason. */
   readonly stale: boolean;
   readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
@@ -286,6 +298,9 @@ const explainValuationFailure = (
     : `No exchange rate for ${instrument.currency} on ${on}, so the market value of ` +
       `${instrument.name} (${instrument.isin}) cannot be computed.`;
 
+const yearlyCostFor = (valueEur: Money | null, bp: number | null): string | null =>
+  valueEur === null || bp === null ? null : formatMoney(yearlyCostEur(valueEur, bp));
+
 /** Holdings valued as of `on`. Cost basis is per instrument: an unmatched disposal marks only its own row (pages import newest first). */
 export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<HoldingView[]> => {
   const { txns, instruments: all, prices: lookup } = await loadPortfolio(db, userId);
@@ -297,6 +312,12 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
         .from(instruments)
         .all()
     ).map((row) => [row.id, row.lookupStatus]),
+  );
+  const chargeById = new Map(
+    (await db.select().from(instrumentCosts).all()).map((row) => [
+      row.instrumentId,
+      row.ongoingChargeBp,
+    ]),
   );
   const costs = costBasisPerInstrument(txns, on);
 
@@ -377,6 +398,8 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
         row.valuedEur === null || totalValuedEur.minor === 0n
           ? null
           : Number(row.valuedEur.minor) / Number(totalValuedEur.minor),
+      ongoingChargeBp: chargeById.get(row.instrumentId) ?? null,
+      yearlyCostEur: yearlyCostFor(row.valuedEur, chargeById.get(row.instrumentId) ?? null),
       priceDate: row.priceDate,
       stale:
         row.valuationError !== null ||

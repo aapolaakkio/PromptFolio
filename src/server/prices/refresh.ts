@@ -5,6 +5,8 @@ import { createClient } from "../chat/runner.ts";
 import type { Db } from "../db/index.ts";
 import { instruments, prices, transactions } from "../db/schema.ts";
 import { backfillFxRates, refreshFxRates } from "../fx.ts";
+import { refreshCosts } from "../instruments/costs.ts";
+import { withModelTimeout } from "../instruments/find-page.ts";
 import { refreshPage, PAGE_SPACING_MS, type PageOutcome } from "./page.ts";
 import { logAttempt, recordPoints, type Priced } from "./record.ts";
 import { sourceFor } from "./registry.ts";
@@ -306,6 +308,11 @@ const clientOrNull = (): ChatClient | null => {
   }
 };
 
+const timedClientOrNull = (): ChatClient | null => {
+  const client = clientOrNull();
+  return client === null ? null : withModelTimeout(client);
+};
+
 /** The day's prices and rates (POST /api/cron/refresh). Each phase has its own try/catch so one outage cannot stop the rest. */
 export const runScheduledRefresh = async (db: Db): Promise<void> => {
   try {
@@ -321,6 +328,17 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     );
   } catch (cause) {
     console.error("Price refresh failed", cause);
+  }
+  try {
+    const costs = await refreshCosts(db, {
+      client: timedClientOrNull(),
+      fetchImpl: fetch,
+      now: Date.now(),
+    });
+    if (costs.asked > 0)
+      console.log(`Fund costs: ${costs.stored} of ${costs.asked} looked up saved`);
+  } catch (cause) {
+    console.error("Fund cost lookup failed", cause instanceof Error ? cause.name : "UnknownError");
   }
   try {
     const fxResult = await backfillFxRates(db);

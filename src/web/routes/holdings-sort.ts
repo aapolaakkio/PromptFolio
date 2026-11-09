@@ -20,6 +20,10 @@ export type Holding = {
   valueEur: string | null;
   unrealisedEur: string | null;
   weight: number | null;
+  /** Ongoing yearly charge in basis points; null while unknown. */
+  ongoingChargeBp: number | null;
+  /** `valueEur` x charge per year; null when either is unknown. */
+  yearlyCostEur: string | null;
   priceDate: string | null;
   stale: boolean;
   costBasisError: { tradeDate: string; message: string } | null;

@@ -20,6 +20,7 @@ const TOOL_LABELS = new Map<string, string>([
   ["get_transactions", "transactions"],
   ["get_instruments", "instruments"],
   ["get_cash", "cash"],
+  ["get_fund_costs", "fund costs"],
   ["get_spending", "spending"],
   ["get_uncategorised_spending", "uncategorised"],
   ["get_cash_flow", "cash flow"],

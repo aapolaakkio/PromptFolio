@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { instrumentLabel } from "./holdings-label.ts";
+import { chargeLabel, instrumentLabel } from "./holdings-label.ts";
 
 describe("instrumentLabel", () => {
   test("ISIN and ticker", () => {
@@ -56,4 +56,10 @@ describe("instrumentLabel", () => {
       }),
     ).toBe("FI4000567029 · www.nordnet.fi/rahastot/lista/x");
   });
+});
+
+test("chargeLabel shows two decimals, and a dash while unknown", () => {
+  expect(chargeLabel(20)).toBe("0.20%");
+  expect(chargeLabel(150)).toBe("1.50%");
+  expect(chargeLabel(null)).toBe("–");
 });

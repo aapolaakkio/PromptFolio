@@ -13,7 +13,8 @@ import { recurringPayments } from "../spending/recurring.ts";
 import { classifiedTransactions } from "../spending/transactions.ts";
 import { depositPlanFor } from "../rebalance.ts";
 import { reconciliationFor } from "../snapshots.ts";
-import { loadPortfolio } from "../valuation.ts";
+import { holdingsFor, loadPortfolio } from "../valuation.ts";
+import { sumYearlyCosts } from "../../core/fund-costs.ts";
 import {
   type ChatTool,
   type Db,
@@ -81,6 +82,32 @@ const Classified = z
 
 // Where money went and where it should go next. Split from `tools.ts` to keep both readable; same read-only contract.
 export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
+  {
+    name: "get_fund_costs",
+    description:
+      "What the funds and ETFs cost per year: each holding's ongoing charge (percent per year) " +
+      "and its yearly cost in euros, plus the total. Answers 'what do my funds cost me'. " +
+      "An unknown charge is null and adds nothing to the total -- do not guess one.",
+    schema: NoArgs,
+    run: async () => {
+      const rows = (await holdingsFor(db, userId, today())).filter(
+        (row) => row.kind === "fund" || row.kind === "etf",
+      );
+      return {
+        asOf: today(),
+        totalYearlyCostEur: sumYearlyCosts(rows),
+        holdings: rows.map((row) => ({
+          name: row.name,
+          isin: row.isin,
+          ongoingChargePercent:
+            row.ongoingChargeBp === null ? null : (row.ongoingChargeBp / 100).toFixed(2),
+          yearlyCostEur: row.yearlyCostEur,
+        })),
+        note: "The total counts only holdings with a known charge. Sums are already calculated.",
+      };
+    },
+  },
+
   {
     name: "get_cash_flow",
     description:

@@ -15,6 +15,8 @@ const row = (name: string, valueEur: string, unrealisedEur: string): Holding => 
   valueEur,
   unrealisedEur,
   weight: Number(valueEur) / 1000,
+  ongoingChargeBp: null,
+  yearlyCostEur: null,
   priceDate: "2025-06-02",
   stale: false,
   costBasisError: null,

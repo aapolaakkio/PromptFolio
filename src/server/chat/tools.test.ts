@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { db } from "../db/index.ts";
+import { instrumentCosts } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
 
 import { EUR } from "../../core/money.ts";
@@ -297,6 +298,40 @@ describe("scoping", () => {
     // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(mine, "get_instruments").run({})) as { instruments: unknown[] };
     expect(result.instruments).toHaveLength(1);
+  });
+});
+
+describe("get_fund_costs", () => {
+  test("lists each holding's charge and yearly cost, and the yearly total", async () => {
+    const { tools, instrumentId } = await seed();
+    await db
+      .insert(instrumentCosts)
+      .values({ instrumentId, ongoingChargeBp: 50, sourceUrl: null, checkedAt: 1, source: "ai" })
+      .run();
+    // SAFETY: the tool's literal has this shape.
+    const result = (await toolNamed(tools, "get_fund_costs").run({})) as {
+      totalYearlyCostEur: string;
+      holdings: Array<{
+        name: string;
+        ongoingChargePercent: string | null;
+        yearlyCostEur: string | null;
+      }>;
+    };
+    expect(result.holdings[0]).toMatchObject({
+      name: "Testirahasto",
+      ongoingChargePercent: "0.50",
+      yearlyCostEur: "0.60",
+    });
+    expect(result.totalYearlyCostEur).toBe("0.60");
+  });
+
+  test("an unknown fee is null, never zero", async () => {
+    const { tools } = await seed();
+    // SAFETY: the tool's literal has this shape.
+    const result = (await toolNamed(tools, "get_fund_costs").run({})) as {
+      holdings: Array<{ ongoingChargePercent: string | null }>;
+    };
+    expect(result.holdings[0]?.ongoingChargePercent).toBeNull();
   });
 });
 

@@ -18,3 +18,7 @@ export const instrumentLabel = (h: {
           : h.sourceKey;
   return [h.isin, code].filter((part) => part !== null).join(" · ");
 };
+
+/** "0.20%" for 20 basis points; "–" while the charge is unknown. */
+export const chargeLabel = (bp: number | null): string =>
+  bp === null ? "–" : `${(bp / 100).toFixed(2)}%`;

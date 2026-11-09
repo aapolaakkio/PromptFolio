@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eur, qty, share, formatDate } from "../lib/format.ts";
-import { instrumentLabel } from "./holdings-label.ts";
+import { sumYearlyCosts } from "../../core/fund-costs.ts";
+import { chargeLabel, instrumentLabel } from "./holdings-label.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
@@ -118,6 +119,9 @@ export const HoldingsPage = () => {
       <section className="mb-6">
         <HoldingsChart holdings={rows} />
       </section>
+      <p className="mb-2 text-sm text-muted">
+        Fund fees: {eur(sumYearlyCosts(rows))} per year (holdings with a known fee only)
+      </p>
       <table>
         <thead>
           <tr>
@@ -129,6 +133,7 @@ export const HoldingsPage = () => {
             {header("valueEur", "Market value")}
             {header("unrealisedEur", "Gain")}
             {header("weight", "Weight")}
+            <th className="num">Fee</th>
             <th>Price</th>
           </tr>
         </thead>
@@ -188,6 +193,12 @@ export const HoldingsPage = () => {
                 )}
               </td>
               <td className="num">
+                {chargeLabel(row.ongoingChargeBp)}
+                {row.yearlyCostEur !== null && (
+                  <div className="text-xs text-muted">{eur(row.yearlyCostEur)} / year</div>
+                )}
+              </td>
+              <td className="num">
                 <PriceCell priceDate={row.priceDate} stale={row.stale} />
                 <div>
                   <button
@@ -214,6 +225,11 @@ export const HoldingsPage = () => {
                   {editFor === row.instrumentId && (
                     <EditInstrumentForm
                       instrumentId={row.instrumentId}
+                      feeBp={
+                        row.kind === "fund" || row.kind === "etf"
+                          ? { value: row.ongoingChargeBp }
+                          : undefined
+                      }
                       onSaved={() => {
                         setEditFor(null);
                         void queryClient.invalidateQueries();

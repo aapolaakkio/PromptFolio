@@ -5,6 +5,8 @@ import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
 import type { InstrumentLookup } from "../../server/instruments/lookup.ts";
 import { rememberedLookup } from "../../server/instruments/lookup-cache.ts";
+import { parseChargePercent, setOwnCharge } from "../../server/instruments/costs.ts";
+import { HttpError } from "../../server/errors.ts";
 import { createClient } from "../../server/chat/runner.ts";
 import {
   addInstrument,
@@ -125,5 +127,20 @@ export const editInstrument = createServerFn({ method: "POST" })
       }
       const saved = await updatePageInstrument(db, data.id, data, pageDeps());
       return { price: saved.price };
+    }),
+  );
+
+/** The owner's own ongoing charge in percent ("0,20"); empty clears it so a lookup may fill it again. */
+export const setFundCharge = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(z.object({ id: z.number().int().positive(), percent: z.string().max(20) }))
+  .handler(({ data }) =>
+    readable(async () => {
+      const text = data.percent.trim();
+      const bp = text === "" ? null : parseChargePercent(text);
+      if (text !== "" && bp === null) {
+        throw new HttpError(400, "The fee must be a percentage from 0 to 5, for example 0.20");
+      }
+      await setOwnCharge(db, data.id, bp, Date.now());
     }),
   );

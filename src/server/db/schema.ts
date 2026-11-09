@@ -135,6 +135,17 @@ export const pageRecipes = sqliteTable("page_recipes", {
   askedAt: integer("asked_at"),
 });
 
+/** A fund's ongoing yearly charge in basis points; null while none is verified. A "user" row is never overwritten by a lookup. */
+export const instrumentCosts = sqliteTable("instrument_costs", {
+  instrumentId: integer("instrument_id")
+    .primaryKey()
+    .references(() => instruments.id, { onDelete: "cascade" }),
+  ongoingChargeBp: integer("ongoing_charge_bp"),
+  sourceUrl: text("source_url"),
+  checkedAt: integer("checked_at").notNull(),
+  source: text("source", { enum: ["ai", "user"] }).notNull(),
+});
+
 export const imports = sqliteTable("imports", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id")

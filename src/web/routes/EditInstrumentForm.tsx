@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { errorMessage } from "../lib/errors.ts";
-import { editInstrument, getInstruments } from "../server/instruments.ts";
+import { editInstrument, getInstruments, setFundCharge } from "../server/instruments.ts";
 import { type PriceSource, readPriceLine, SOURCES } from "./UnknownInstrumentForm.tsx";
 
 const isSource = (value: string): value is PriceSource => SOURCES.some((s) => s.id === value);
@@ -10,9 +10,12 @@ const isSource = (value: string): value is PriceSource => SOURCES.some((s) => s.
 /** Corrects currency, price source and source code; prefilled from the stored instrument. */
 export const EditInstrumentForm = ({
   instrumentId,
+  feeBp,
   onSaved,
 }: {
   readonly instrumentId: number;
+  /** Set for a fund or ETF: the fee field is shown, prefilled from this. */
+  readonly feeBp?: { readonly value: number | null };
   readonly onSaved: () => void;
 }) => {
   const instruments = useQuery({ queryKey: ["instruments"], queryFn: () => getInstruments() });
@@ -24,6 +27,7 @@ export const EditInstrumentForm = ({
       currency={stored.currency}
       priceSource={isSource(stored.priceSource) ? stored.priceSource : "manual"}
       sourceKey={stored.sourceKey}
+      feeBp={feeBp}
       onSaved={onSaved}
     />
   );
@@ -34,8 +38,11 @@ const Fields = (props: {
   readonly currency: string;
   readonly priceSource: PriceSource;
   readonly sourceKey: string;
+  readonly feeBp?: { readonly value: number | null };
   readonly onSaved: () => void;
 }) => {
+  const initialFee = props.feeBp?.value == null ? "" : (props.feeBp.value / 100).toFixed(2);
+  const [fee, setFee] = useState(initialFee);
   const [currency, setCurrency] = useState(props.currency);
   const [priceSource, setPriceSource] = useState<PriceSource>(props.priceSource);
   const [sourceKey, setSourceKey] = useState(props.sourceKey);
@@ -56,6 +63,9 @@ const Fields = (props: {
           sourceKey,
         },
       });
+      if (props.feeBp !== undefined && fee.trim() !== initialFee) {
+        await setFundCharge({ data: { id: props.instrumentId, percent: fee } });
+      }
       if (saved.price === null) props.onSaved();
       else setReadLine(readPriceLine(saved.price));
     } catch (cause) {
@@ -95,6 +105,12 @@ const Fields = (props: {
         Source code
         <input value={sourceKey} onChange={(e) => setSourceKey(e.target.value)} />
       </label>
+      {props.feeBp !== undefined && (
+        <label>
+          Yearly fee, % (empty to look it up again)
+          <input value={fee} inputMode="decimal" onChange={(e) => setFee(e.target.value)} />
+        </label>
+      )}
       {error !== null && (
         <p role="alert" className="text-loss">
           {error}
