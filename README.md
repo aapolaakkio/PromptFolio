@@ -398,7 +398,6 @@ src/core/      pure domain: money, ledger, cost basis, returns, allocation, cash
 src/server/    HTTP routes, SQLite access, importers, price sources, chat,
                spending, tax, rebalance
 src/web/       React frontend (TanStack Router, Query, Charts)
-docs/superpowers/specs/  the design documents and their amendments
 ```
 
 `src/core` never sees a database row, and `src/server/valuation.ts` is the one module that
@@ -408,7 +407,7 @@ translates between stored integers and the domain's `Money`/`Quantity`/`FxRate`.
 
 - **The tax report checks, it does not file.** No euro figure for tax owed (the 30 %/34 % bracket
   depends on capital income this app cannot see), no foreign dividend tax credit, no OmaVero
-  export. See the [phase 4 spec](docs/superpowers/specs/2026-08-29-tax-module-design.md) §2.
+  export.
 - **Dividend withholding is not in the ledger.** Both broker exports publish one combined
   "Kulut / Korot / Verot" column, so a dividend's stored amount is what arrived, and the taxable
   85 % is computed on that. Where the payer withheld tax, the real gross is higher — the report
