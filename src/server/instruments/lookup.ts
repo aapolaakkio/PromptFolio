@@ -100,6 +100,15 @@ export const lookupInstrument = async (
   quoteSpacingMs?: number,
 ): Promise<InstrumentLookup> => {
   try {
+    // OP's paste import carries no ISIN column, so the fund's own page is the
+    // only way to learn its ISIN. It is learned first, so a Yahoo pause after
+    // that still reports the ISIN rather than losing it.
+    if (isin === null) {
+      const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
+      if (discovered !== null) {
+        return await lookupInstrument(discovered.isin, name, currency, fetchImpl, quoteSpacingMs);
+      }
+    }
     return classify(await resolve(isin, name, currency, fetchImpl, quoteSpacingMs), currency);
   } catch (err) {
     if (err instanceof YahooPausedError) {
@@ -134,18 +143,11 @@ const resolve = async (
   fetchImpl: typeof fetch,
   quoteSpacingMs: number | undefined,
 ): Promise<Resolved> => {
-  // OP's paste import carries no ISIN column, so the fund's own page is the
-  // only way to learn its ISIN. Once that is known there is nothing special
-  // left about the holding: it goes through the ordinary path, which prices it
-  // from Yahoo when Yahoo has it (it does have OP's funds, under 0P... symbols)
-  // and only falls back to OP's page when it does not.
+  // An OP fund's ISIN was already learned from its page by now, so the
+  // ordinary path below prices it from Yahoo when Yahoo has it (it does have
+  // OP's funds, under 0P... symbols) and only falls back to OP's page when it
+  // does not.
   if (isin === null) {
-    // A fund resolves through OP's own page, which is where its ISIN comes
-    // from; with that in hand it takes the ordinary path.
-    const discovered = await settle(resolveOpSlug(name, null, fetchImpl));
-    if (discovered !== null) {
-      return await resolve(discovered.isin, name, currency, fetchImpl, quoteSpacingMs);
-    }
     // A share has no such page. Yahoo can still be searched by name, which
     // fills in everything except the ISIN -- no free source checked maps a
     // ticker or a name back to one, so that field stays typed by hand.

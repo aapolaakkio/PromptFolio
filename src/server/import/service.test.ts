@@ -714,6 +714,66 @@ describe("an import with an instrument nobody has added yet", () => {
     });
     expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
   });
+
+  test("an OP fund whose page gives its ISIN while Yahoo is paused commits, as pending", async () => {
+    const { userId } = await signUp(`imp-auto-op-paused-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId, "op");
+    const tag = crypto
+      .randomUUID()
+      .replace(/[^a-f]/g, "")
+      .slice(0, 8);
+    const fundName = `OP-TESTI${tag.toUpperCase()} INDEKSI A`;
+    const pageIsin = randomIsin();
+    const fundPage = (
+      await readText(`${import.meta.dirname}/../instruments/fixtures/op-fund-maailma.html`)
+    )
+      .replaceAll("OP-Maailma Indeksi", `OP-Testi${tag} Indeksi`)
+      .replaceAll("FI4000261128", pageIsin);
+    const text = (await opPasteText()).replaceAll("OP-MAAILMA INDEKSI A", fundName);
+    const keys = [lookupKey(null, fundName), pageIsin];
+    service._setLookupFetch(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes(`kaikki-rahastot/op-testi${tag}-indeksi`)) return new Response(fundPage);
+      if (url.includes("finance.yahoo.com")) return new Response("", { status: 429 });
+      return new Response("", { status: 404 });
+    });
+
+    try {
+      const previewed = await answer(() => service.previewPaste(userId, { text, accountId }));
+      expect(previewed.status).toBe(200);
+      // SAFETY: a 200 preview carries the draft, `added` included.
+      const body = previewed.body as {
+        sha256: string;
+        txns: DraftBody["txns"];
+        unknownIsins: DraftBody["unknownIsins"];
+        added: Array<{ isin: string; pending: boolean }>;
+      };
+      expect(body.added).toMatchObject([{ isin: pageIsin, pending: true }]);
+      expect(body.unknownIsins.map((u) => u.name)).not.toContain(fundName);
+
+      const fundRows = body.txns.filter((t) => t.isin === pageIsin);
+      expect(fundRows.length).toBeGreaterThan(0);
+      const committed = await answer(() =>
+        service.commitDraftBody(userId, {
+          accountId,
+          filename: "liite.txt",
+          sha256: body.sha256,
+          kind: "paste",
+          draft: { txns: fundRows, problems: [], unknownIsins: [] },
+        }),
+      );
+      expect(committed.status).toBe(200);
+      // SAFETY: a 200 commit answers with the import it wrote.
+      const result = committed.body as { importId: number; inserted: number };
+      expect(result.inserted).toBe(fundRows.length);
+      const fund = await db.select().from(instruments).where(eq(instruments.isin, pageIsin)).get();
+      expect(fund).toMatchObject({ priceSource: "manual", lookupStatus: "pending" });
+      const linked = await linkedRows(result.importId);
+      expect(linked.every((r) => r.instrumentId === fund?.id)).toBe(true);
+    } finally {
+      await db.delete(instrumentLookups).where(inArray(instrumentLookups.key, keys));
+    }
+  });
 });
 
 // --- POST /api/imports/:id/undo ---
