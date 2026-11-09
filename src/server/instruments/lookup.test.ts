@@ -749,7 +749,7 @@ describe("lookupInstrument, a page found by web search", () => {
       stubFetch(await misses()),
       0,
       {
-        find: finder(new Error("haku alhaalla")).find,
+        find: finder(new TypeError("fetch failed")).find,
         client: recipeClient(GOOD),
         referenceMinor: null,
       },
@@ -764,11 +764,38 @@ describe("lookupInstrument, a page found by web search", () => {
       0,
       {
         find: finder({ url: PAGE_URL, isin: FUND_ISIN }).find,
-        client: recipeClient(new Error("malli alhaalla")),
+        client: recipeClient(new TypeError("fetch failed")),
         referenceMinor: null,
       },
     );
     expect(modelDown).toMatchObject({ outcome: "pending", isin: FUND_ISIN });
+  });
+
+  test("a refusal from the finder or the model is nothing found, the form", async () => {
+    const refused = new Error("Malli kieltäytyi vastaamasta tähän pyyntöön");
+    const finderRefused = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      { find: finder(refused).find, client: recipeClient(GOOD), referenceMinor: null },
+    );
+    expect(finderRefused).toMatchObject({ outcome: "form", formReason: "nothing" });
+
+    const modelRefused = await lookupWithSpacing(
+      FUND_ISIN,
+      FUND_NAME,
+      EUR,
+      stubFetch(await misses()),
+      0,
+      {
+        find: finder({ url: PAGE_URL, isin: FUND_ISIN }).find,
+        client: recipeClient(refused),
+        referenceMinor: null,
+      },
+    );
+    expect(modelRefused).toMatchObject({ outcome: "form", formReason: "nothing" });
   });
 
   test("without `page` a miss is the form, as before", async () => {

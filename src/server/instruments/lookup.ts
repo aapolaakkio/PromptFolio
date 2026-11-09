@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Currency } from "../../core/money.ts";
 import type { ChatClient } from "../chat/runner.ts";
+import { isTransientFailure } from "../chat/transient.ts";
 import { fetchPage } from "../prices/page.ts";
 import { writePageRecipe } from "../prices/page-ask.ts";
 import type { PageRecipe } from "../prices/page-recipe.ts";
@@ -87,7 +88,7 @@ export type PageLookup = {
 /** What the finder answered, once: the page itself is kept so it is fetched once too. */
 type Hit = { readonly url: string; readonly isin: string | null; readonly html: string | null };
 
-/** The finder or the model threw: nothing is known yet, which is not "nothing found". */
+/** The finder or the model failed transiently: nothing is known yet, which is not "nothing found". */
 class PagePendingError extends Error {}
 
 type Resolved = Omit<InstrumentLookup, "outcome" | "formReason">;
@@ -203,6 +204,7 @@ const findPage = async (ask: Ask, page: PageLookup, isin: string | null): Promis
     found = await page.find({ isin, name: ask.name, currency: ask.currency });
   } catch (cause) {
     console.error(`Sivun haku arvopaperille ${isin ?? ask.name} epäonnistui`, cause);
+    if (!isTransientFailure(cause)) return null;
     throw new PagePendingError("Sivun haku epäonnistui", { cause });
   }
   if (found === null) return null;
@@ -242,6 +244,7 @@ const viaFoundPage = async (
     );
   } catch (cause) {
     console.error(`Sivun ${hit.url} kuvauksen kysyminen epäonnistui`, cause);
+    if (!isTransientFailure(cause)) return classify(resolved, ask.currency);
     throw new PagePendingError("Mallia ei tavoitettu", { cause });
   }
   if ("error" in written) return classify(resolved, ask.currency);
@@ -316,9 +319,6 @@ const resolve = async (
   }
 
   // Nothing Yahoo can price. A fund may still have its own provider page.
-  if (kind !== null && kind !== "fund") {
-    return { ...NOTHING, kind, name: figi?.name ?? null, isin };
-  }
   return { ...NOTHING, kind, name: figi?.name ?? null, isin };
 };
 

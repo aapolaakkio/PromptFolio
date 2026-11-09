@@ -6,6 +6,7 @@ import { resolvePending } from "./server/instruments/resolve-pending.ts";
 import { refreshIntraday } from "./server/prices/intraday.ts";
 import { runScheduledRefresh } from "./server/prices/refresh.ts";
 
+const EVENING_CRON = "0 18 * * 1-5";
 const INTRADAY_CRON = "0 0-17,19-23 * * 1-5";
 
 /** One step's failure is logged and never skips the next. */
@@ -39,7 +40,9 @@ export default {
       (async () => {
         await attempt("hinnat", prices);
         await attempt("haut", async () => {
-          await resolvePending(db, fetch, undefined, pageDeps() ?? undefined);
+          // The model is asked only once a day, on the evening run.
+          const deps = event.cron === EVENING_CRON ? pageDeps() : null;
+          await resolvePending(db, fetch, undefined, deps ?? undefined);
         });
       })(),
     );
