@@ -18,32 +18,19 @@ import { authed } from "./guard.ts";
 
 const IsoDate = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muodossa VVVV-KK-PP");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "The date must be in the format YYYY-MM-DD");
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/**
- * The range every history question takes, defaulting to "since the beginning".
- *
- * A backwards range is refused rather than silently answered with nothing. The
- * routes did this and it is worth keeping: an empty chart for a typo'd date
- * looks exactly like an empty chart for an empty portfolio.
- */
+/** The range every history question takes (default: since the beginning); a backwards range is refused, since an empty chart would look like an empty portfolio. */
 export const Range = z
   .object({ from: IsoDate.optional(), to: IsoDate.optional() })
   .refine((range) => (range.from ?? "") <= (range.to ?? "9999-12-31"), {
-    message: "'from' on oltava ennen tai sama kuin 'to'",
+    message: "'from' must be on or before 'to'",
     path: ["from"],
   });
 
-/**
- * Every holding on a date, valued.
- *
- * The same `holdingsFor` the route called; what has gone is the round trip
- * through a URL and back through a second copy of the shape on the client.
- * The page now gets the function's own return type, so a field renamed here is
- * a type error in the component rather than a zod failure at runtime.
- */
+/** Every holding on a date, valued; returns `holdingsFor`'s own type so a renamed field is a type error in the page. */
 export const getHoldings = createServerFn()
   .middleware([authed])
   .validator(z.object({ on: IsoDate.optional() }))

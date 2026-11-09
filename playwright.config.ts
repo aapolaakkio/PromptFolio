@@ -3,10 +3,6 @@ import { defineConfig, devices } from "@playwright/test";
 const PORT = 4173;
 const BASE_URL = `http://localhost:${PORT}`;
 
-// Its own database file, wiped and seeded by the global setup, so a run never
-// touches the real ledger in ./data.
-const DATABASE_PATH = "./e2e/.tmp/e2e.db";
-
 export default defineConfig({
   testDir: "./e2e",
   // One browser at a time: the app is a single-owner instance, and the
@@ -28,7 +24,6 @@ export default defineConfig({
     stdout: "pipe",
     stderr: "pipe",
     env: {
-      DATABASE_PATH,
       BASE_URL,
       BETTER_AUTH_SECRET: "e2e-secret-that-is-long-enough-to-be-accepted",
       ALLOW_SIGNUP: "true",

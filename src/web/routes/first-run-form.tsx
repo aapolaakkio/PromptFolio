@@ -1,37 +1,16 @@
-import { type FormEvent, useState } from "react";
+import { type SubmitEvent, useState } from "react";
+import { errorMessage } from "../lib/errors.ts";
 import { createFirstAccount } from "../server/setup.ts";
 import { signIn } from "../lib/auth-client.ts";
 
-export type FirstRunFormProps = {
+type FirstRunFormProps = {
   /** Called after the account is created AND the resulting sign-in succeeds. */
   readonly onCreated: () => void;
-  /**
-   * Called when the server refuses the creation because an account
-   * already exists (createFirstAccount refuses) -- the one outcome
-   * that means this form should never have been shown, most likely
-   * because someone else's request to the same endpoint won a race that
-   * started before this page's own status check resolved. The parent
-   * switches back to the normal sign-in form; it is still refused
-   * server-side regardless of what this component renders (see
-   * `src/server/setup.ts`'s `createFirstUser`), so nothing bad
-   * happens if a caller ignores this -- it only affects what the visitor
-   * sees next.
-   */
+  /** Called when the server refuses because an account already exists (likely a race); the parent shows sign-in. */
   readonly onAlreadySetUp: () => void;
 };
 
-/**
- * The instance's first-run account creation form -- shown by `login.tsx`
- * in place of the sign-in form only while getSetupState reports no
- * user exists yet. Posts to the same endpoint, which enforces "at most
- * one account, ever" server-side (see setup.ts's module comment for the
- * race reasoning); this form cannot bypass that by being reachable, only
- * by being shown -- the real guarantee lives on the server.
- *
- * After a successful creation this immediately signs the new owner in
- * with the same credentials, through the normal, already-tested
- * `signIn.email` flow, rather than trying to mint a session itself.
- */
+/** First-run account creation, shown by `login.tsx` while no user exists. The server enforces "one account, ever"; signs the owner in via `signIn.email` afterwards. */
 export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -40,12 +19,12 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (event: FormEvent) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
 
     if (password !== passwordConfirm) {
-      setError("Salasanat eivät täsmää");
+      setError("Passwords do not match");
       return;
     }
 
@@ -54,10 +33,9 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
       await createFirstAccount({ data: { name, email, password } });
     } catch (cause) {
       setBusy(false);
-      const message = cause instanceof Error ? cause.message : "Tilin luonti epäonnistui";
-      // The one outcome that is not an error to show: somebody else claimed
-      // the instance first, and this form should give way to signing in.
-      if (message.includes("jo luotu")) {
+      const message = errorMessage(cause, "Could not create the account");
+      // Not an error to show: somebody else claimed the instance first, so give way to sign-in.
+      if (message.includes("already been created")) {
         onAlreadySetUp();
         return;
       }
@@ -68,12 +46,8 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
     const { error: signInFailure } = await signIn.email({ email, password });
     setBusy(false);
     if (signInFailure) {
-      // The account now exists (the POST above succeeded), but the
-      // immediate sign-in call failed for some other reason -- surface
-      // that plainly rather than the generic sign-in error, since a
-      // visitor who just filled this exact form typed exactly this
-      // password moments ago.
-      setError("Tili luotiin, mutta automaattinen kirjautuminen epäonnistui. Kirjaudu sisään.");
+      // The account exists but the immediate sign-in failed; say so rather than the generic error.
+      setError("The account was created, but automatic sign-in failed. Please sign in.");
       onAlreadySetUp();
       return;
     }
@@ -85,11 +59,11 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
       <form className="card w-80" onSubmit={(event) => void submit(event)}>
         <h1>PromptFolio</h1>
         <p className="text-muted text-sm">
-          Tervetuloa. Tällä lomakkeella luodaan sovelluksen ensimmäinen ja ainoa tili sinulle
-          itsellesi — myöhemmät perheenjäsenten tilit lisätään erikseen.
+          Welcome. This form creates the app's first and only account, for yourself — accounts for
+          family members are added separately.
         </p>
         <label>
-          Nimi
+          Name
           <input
             type="text"
             value={name}
@@ -99,7 +73,7 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
           />
         </label>
         <label>
-          Sähköposti
+          Email
           <input
             type="email"
             value={email}
@@ -109,7 +83,7 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
           />
         </label>
         <label>
-          Salasana
+          Password
           <input
             type="password"
             value={password}
@@ -120,7 +94,7 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
           />
         </label>
         <label>
-          Vahvista salasana
+          Confirm password
           <input
             type="password"
             value={passwordConfirm}
@@ -136,7 +110,7 @@ export const FirstRunForm = ({ onCreated, onAlreadySetUp }: FirstRunFormProps) =
           </p>
         )}
         <button type="submit" disabled={busy} className="w-full">
-          {busy ? "Luodaan…" : "Luo tili"}
+          {busy ? "Creating…" : "Create account"}
         </button>
       </form>
     </main>

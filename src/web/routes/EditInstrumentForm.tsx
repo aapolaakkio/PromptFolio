@@ -1,16 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { errorMessage } from "../lib/errors.ts";
 import { editInstrument, getInstruments } from "../server/instruments.ts";
 import { type PriceSource, readPriceLine, SOURCES } from "./UnknownInstrumentForm.tsx";
 
 const isSource = (value: string): value is PriceSource => SOURCES.some((s) => s.id === value);
 
-/**
- * Corrects how a holding is priced: its currency, price source and source code.
- * Prefilled from the instrument as stored, so a correction changes only what
- * the owner touches.
- */
+/** Corrects currency, price source and source code; prefilled from the stored instrument. */
 export const EditInstrumentForm = ({
   instrumentId,
   onSaved,
@@ -20,7 +17,7 @@ export const EditInstrumentForm = ({
 }) => {
   const instruments = useQuery({ queryKey: ["instruments"], queryFn: () => getInstruments() });
   const stored = instruments.data?.find((instrument) => instrument.id === instrumentId);
-  if (stored === undefined) return <p className="text-xs text-muted">Ladataan…</p>;
+  if (stored === undefined) return <p className="text-xs text-muted">Loading…</p>;
   return (
     <Fields
       instrumentId={instrumentId}
@@ -46,7 +43,7 @@ const Fields = (props: {
   const [saving, setSaving] = useState(false);
   const [readLine, setReadLine] = useState<string | null>(null);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSaving(true);
@@ -62,7 +59,7 @@ const Fields = (props: {
       if (saved.price === null) props.onSaved();
       else setReadLine(readPriceLine(saved.price));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui");
+      setError(errorMessage(cause, "Could not save"));
     } finally {
       setSaving(false);
     }
@@ -71,16 +68,16 @@ const Fields = (props: {
   return (
     <form className="mt-2 grid gap-2 text-left text-xs" onSubmit={(event) => void submit(event)}>
       <label>
-        Valuutta
+        Currency
         <input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value)} />
       </label>
       {currency.trim().toUpperCase() !== props.currency && (
         <p className="text-muted">
-          Valuutan vaihto poistaa tallennetut hinnat; ne haetaan uudelleen.
+          Changing the currency deletes the stored prices; they are fetched again.
         </p>
       )}
       <label>
-        Hintalähde
+        Price source
         <select
           value={priceSource}
           onChange={(e) => {
@@ -95,7 +92,7 @@ const Fields = (props: {
         </select>
       </label>
       <label>
-        Lähdetunnus
+        Source code
         <input value={sourceKey} onChange={(e) => setSourceKey(e.target.value)} />
       </label>
       {error !== null && (
@@ -107,12 +104,12 @@ const Fields = (props: {
         <>
           <p role="status">{readLine}</p>
           <button type="button" onClick={props.onSaved}>
-            Valmis
+            Done
           </button>
         </>
       ) : (
         <button type="submit" disabled={saving}>
-          {saving ? "Tallennetaan…" : "Tallenna"}
+          {saving ? "Saving…" : "Save"}
         </button>
       )}
     </form>

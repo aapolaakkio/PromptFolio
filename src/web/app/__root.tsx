@@ -7,13 +7,7 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },
 });
 
-/**
- * The document itself, which index.html used to be.
- *
- * The QueryClient lives here rather than in main.tsx because Start owns the
- * mount now; one client for the app, created once at module scope, exactly as
- * before.
- */
+/** The document shell; the QueryClient lives here because Start owns the mount. */
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -24,7 +18,7 @@ export const Route = createRootRoute({
     links: [{ rel: "stylesheet", href: styles }],
   }),
   component: () => (
-    <html lang="fi">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>

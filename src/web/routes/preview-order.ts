@@ -1,8 +1,4 @@
-/**
- * Runs the first item alone, then the rest together. A new layout's first
- * file writes and stores the recipe; the others, previewed after it, reuse it
- * instead of each asking the model.
- */
+/** Runs the first item alone, then the rest together: the first file of a new layout stores the recipe the others reuse. */
 export const firstThenRest = async <T, R>(
   items: readonly T[],
   run: (item: T) => Promise<R>,

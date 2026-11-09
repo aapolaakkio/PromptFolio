@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "../lib/errors.ts";
 import { createAccount } from "../server/accounts.ts";
 import { z } from "zod";
 
@@ -12,43 +13,25 @@ import {
   type AccountType,
 } from "./account-type.ts";
 
-/**
- * Closing the "a fresh install cannot create its first account without
- * `curl`" gap (Phase 1 review): `POST /api/accounts` has existed and worked
- * since Task 9, but no screen ever called it -- `imports.tsx` only rendered
- * a `<select>` over accounts that already existed. This form is that
- * missing entry path, mirroring `UnknownInstrumentForm.tsx`'s own shape
- * (local state, one server call).
- *
- * **Deliberately create-only.** There is no update, no delete here, and
- * none should be added for symmetry: deleting an account cascades to every
- * transaction on it (`accounts` -> `transactions` is `onDelete: "cascade"`,
- * see db/schema.ts), and destroying an append-only, audit-relevant ledger
- * needs its own confirmation flow, not a button bolted on next to "create".
- * That is a recorded decision for this task, not an oversight.
- */
+/** Create-only: deleting an account cascades to its ledger, which needs its own confirmation flow. */
 const BROKERS = [
   { id: "nordnet", label: "Nordnet" },
   { id: "op", label: "OP" },
   { id: "spankki", label: "S-Pankki" },
   { id: "danske", label: "Danske" },
-  { id: "other", label: "Muu" },
+  { id: "other", label: "Other" },
 ] as const;
 
 const BROKER_VALUES = BROKERS.map((b) => b.id);
 type Broker = (typeof BROKER_VALUES)[number];
-/**
- * Narrows a `<select>`'s raw string value to `Broker` without a type
- * assertion -- every `<option>` this form renders is one of `BROKER_VALUES`,
- * matching `UnknownInstrumentForm.tsx`'s `isKind` idiom.
- */
+/** Narrows a `<select>`'s raw string value to `Broker` without a type assertion. */
 const isBroker = (value: string): value is Broker => BROKER_VALUES.some((b) => b === value);
 
 /** Only the fields this form actually reads out of POST /api/accounts's response. */
 const CreatedAccountSchema = z.object({ id: z.number(), name: z.string() });
 type CreatedAccount = z.infer<typeof CreatedAccountSchema>;
 
-export type CreateAccountFormProps = {
+type CreateAccountFormProps = {
   readonly onCreated: (account: CreatedAccount) => void;
 };
 
@@ -56,26 +39,19 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
   const [name, setName] = useState("");
   const [broker, setBroker] = useState<Broker>("nordnet");
   const [kind, setKind] = useState<AccountKind>("brokerage");
-  // Starts unset on purpose: an owner importing an export may not yet know
-  // which of their accounts it covers, and a guessed OST is worse than a blank
-  // one (see account-type.ts).
+  // Starts unset on purpose: a guessed OST is worse than a blank type (see account-type.ts).
   const [accountType, setAccountType] = useState<AccountType | "">("");
-  // Any ISO 4217 code is valid (spec §10a A1 -- the real portfolio holds
-  // both EUR and SEK), so this is a plain validated text input, not a
-  // closed EUR/USD dropdown -- mirrors UnknownInstrumentForm.tsx's currency
-  // field exactly.
   const [baseCurrency, setBaseCurrency] = useState("EUR");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     const chosenType = accountType === "" ? null : accountType;
     try {
-      // The type is omitted rather than sent as "": an unclassified account is
-      // stored as null, and the enum would refuse an empty string.
+      // Type omitted rather than "": unclassified is stored as null.
       const created = await createAccount({
         data:
           chosenType === null
@@ -93,7 +69,7 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
       setBaseCurrency("EUR");
       onCreated(created);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Tilin luonti epäonnistui");
+      setError(errorMessage(cause, "Could not create the account"));
     } finally {
       setSubmitting(false);
     }
@@ -102,17 +78,17 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
   return (
     <form className="card mt-3" onSubmit={submit}>
       <label>
-        Tilin nimi
+        Account name
         <input
           value={name}
           required
           maxLength={100}
-          placeholder="esim. Nordnet AOT"
+          placeholder="e.g. Nordnet AOT"
           onChange={(e) => setName(e.target.value)}
         />
       </label>
       <label>
-        Välittäjä
+        Broker
         <select
           value={broker}
           onChange={(e) => {
@@ -127,14 +103,13 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         </select>
       </label>
       <label>
-        Tilin tyyppi
+        Account kind
         <select
           value={kind}
           onChange={(e) => {
             if (!isAccountKind(e.target.value)) return;
             setKind(e.target.value);
-            // The other kind's types mean nothing here, so the choice is
-            // cleared rather than carried across and refused by the server.
+            // The other kind's types mean nothing here; clear the choice.
             setAccountType("");
           }}
         >
@@ -146,7 +121,7 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         </select>
       </label>
       <label>
-        Tilin laji
+        Account type
         <select
           value={accountType}
           onChange={(e) => {
@@ -162,13 +137,13 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         </select>
       </label>
       <label>
-        Perusvaluutta
+        Base currency
         <input
           value={baseCurrency}
           required
           maxLength={3}
           pattern="[A-Za-z]{3}"
-          title="3-kirjaiminen ISO 4217 -koodi, esim. EUR tai SEK"
+          title="3-letter ISO 4217 code, e.g. EUR or SEK"
           onChange={(e) => setBaseCurrency(e.target.value)}
         />
       </label>
@@ -178,7 +153,7 @@ export const CreateAccountForm = ({ onCreated }: CreateAccountFormProps) => {
         </p>
       )}
       <button type="submit" disabled={submitting || name.trim() === ""}>
-        {submitting ? "Luodaan…" : "Luo tili"}
+        {submitting ? "Creating…" : "Create account"}
       </button>
     </form>
   );

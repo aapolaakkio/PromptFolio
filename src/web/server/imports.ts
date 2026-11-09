@@ -3,8 +3,6 @@ import { z } from "zod";
 import {
   CommitDraftBody,
   commitDraftBody,
-  commitPaste,
-  commitUpload,
   listImports,
   PasteBody,
   previewPaste,
@@ -26,17 +24,7 @@ export const previewImport = createServerFn({ method: "POST" })
   .validator(upload)
   .handler(({ data, context }) => readable(() => previewUpload(context.userId, data)));
 
-export const commitImport = createServerFn({ method: "POST" })
-  .middleware([authed])
-  .validator(upload)
-  .handler(({ data, context }) => readable(() => commitUpload(context.userId, data)));
-
-/**
- * Commits the draft the review screen produced (edits included), rather than
- * re-reading the file. `imports.tsx` moves onto this in Task 11, replacing
- * `commitImport` and `commitOpPaste` above -- both of which stay as they are
- * until then.
- */
+/** Commits the draft the review screen produced (edits included) rather than re-reading the file. */
 export const commitImportDraft = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(CommitDraftBody)
@@ -46,11 +34,6 @@ export const previewOpPaste = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(PasteBody)
   .handler(({ data, context }) => readable(() => previewPaste(context.userId, data)));
-
-export const commitOpPaste = createServerFn({ method: "POST" })
-  .middleware([authed])
-  .validator(PasteBody)
-  .handler(({ data, context }) => readable(() => commitPaste(context.userId, data)));
 
 export const undoImport = createServerFn({ method: "POST" })
   .middleware([authed])

@@ -26,11 +26,7 @@ export const removeConversation = createServerFn({ method: "POST" })
   .validator(ConversationId)
   .handler(({ data, context }) => readable(() => deleteConversation(context.userId, data.id)));
 
-/**
- * Raw because the answer arrives token by token: the turn is an SSE stream, not
- * a value. A refusal still happens before the stream exists, so it stays a
- * status code the browser can read as JSON.
- */
+/** Raw because the answer is an SSE stream; a refusal happens before the stream, as a JSON status code. */
 export const askTurn = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(Ask)

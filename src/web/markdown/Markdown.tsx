@@ -20,10 +20,8 @@ const spans = (parts: readonly Inline[]): ReactNode[] =>
 
 const blockOf = (block: Block, key: number): ReactNode => {
   if (block.type === "heading") {
-    // Two levels down from the page's own: an answer's "# Yhteenveto" is a
-    // heading inside one message, not a rival to the page title.
-    // SAFETY: the parser only ever produces levels 1 to 3, so the tag is one of
-    // h3, h4 and h5 -- all three of them real elements.
+    // Two levels below the page heading: an answer's "# Summary" is not a rival to the page title.
+    // SAFETY: the parser only produces levels 1-3, so the tag is h3, h4 or h5.
     const Tag = `h${block.level + 2}` as "h3" | "h4" | "h5";
     return (
       <Tag key={key} className="text-base font-medium">
@@ -50,9 +48,7 @@ const blockOf = (block: Block, key: number): ReactNode => {
   }
   if (block.type === "table") {
     return (
-      // A table of figures is the one thing here that can be wider than the
-      // bubble holding it, so it scrolls inside it rather than stretching the
-      // page sideways.
+      // A table of figures can outgrow its bubble: scroll inside it, not the page.
       <div key={key} className="overflow-x-auto">
         <table>
           <thead>
@@ -78,13 +74,7 @@ const blockOf = (block: Block, key: number): ReactNode => {
   return <p key={key}>{spans(block.spans)}</p>;
 };
 
-/**
- * An assistant's answer, rendered from the Markdown it wrote.
- *
- * Elements all the way down: nothing here builds an HTML string, so an answer
- * quoting a payee's own text -- which came out of an imported statement and is
- * not something this app wrote -- cannot carry markup into the page.
- */
+/** An assistant answer rendered as elements, never an HTML string, so quoted statement text cannot carry markup. */
 export const Markdown = ({ text }: { readonly text: string }) => (
   <div className="grid gap-2">{parseMarkdown(text).map(blockOf)}</div>
 );

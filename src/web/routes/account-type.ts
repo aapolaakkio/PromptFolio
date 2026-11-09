@@ -1,35 +1,26 @@
 /**
- * What kind of account this is, and what kinds of that kind exist.
- *
- * The two sets never mix. A brokerage account's type decides how it is taxed --
- * inside an osakesäästötili nothing is taxed until withdrawal, and then only on
- * the gain proportion (spec 10c/C7) -- while a bank account's type decides
- * whether the money can be reached today. Offering them in one list would let
- * someone pick "osakesäästötili" for a current account, which means nothing.
- *
- * `null` is a real state for a brokerage account: one nobody has classified
- * yet. It is shown as such rather than defaulted to the ordinary case, because
- * phase 4 must refuse to report tax on an unconfirmed account instead of
- * assuming.
+ * Account kind and its types; the two sets never mix: a brokerage type decides taxation (inside an OST nothing is taxed until withdrawal),
+ * a bank type decides whether money is reachable today.
+ * `null` is a real brokerage state (unclassified): shown as such, and tax reporting must refuse it rather than assume.
  */
 export const ACCOUNT_KINDS = [
-  { id: "brokerage", label: "Arvopaperitili" },
-  { id: "bank", label: "Pankkitili" },
+  { id: "brokerage", label: "Brokerage account" },
+  { id: "bank", label: "Bank account" },
 ] as const;
 
 export type AccountKind = (typeof ACCOUNT_KINDS)[number]["id"];
 
 const BROKERAGE_TYPES = [
-  { id: "aot", label: "Arvo-osuustili (AOT)" },
-  { id: "ost", label: "Osakesäästötili (OST)" },
-  { id: "other", label: "Muu" },
+  { id: "aot", label: "Book-entry account (AOT)" },
+  { id: "ost", label: "Equity savings account (OST)" },
+  { id: "other", label: "Other" },
 ] as const;
 
 const BANK_TYPES = [
-  { id: "current", label: "Käyttötili" },
-  { id: "savings", label: "Säästötili" },
-  { id: "fixed_term", label: "Määräaikaistili" },
-  { id: "credit", label: "Luottokortti" },
+  { id: "current", label: "Current account" },
+  { id: "savings", label: "Savings account" },
+  { id: "fixed_term", label: "Fixed-term account" },
+  { id: "credit", label: "Credit card" },
 ] as const;
 
 export const ACCOUNT_TYPES = [...BROKERAGE_TYPES, ...BANK_TYPES];
@@ -46,7 +37,7 @@ export const isAccountKind = (value: string): value is AccountKind =>
 export const isAccountType = (value: string): value is AccountType =>
   ACCOUNT_TYPES.some((type) => type.id === value);
 
-export const UNSET_LABEL = "Ei valittu";
+export const UNSET_LABEL = "Not set";
 
 export const accountTypeLabel = (value: string | null): string =>
   ACCOUNT_TYPES.find((type) => type.id === value)?.label ?? UNSET_LABEL;

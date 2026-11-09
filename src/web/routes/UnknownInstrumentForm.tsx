@@ -1,42 +1,28 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
+import { errorMessage } from "../lib/errors.ts";
 import { formatMoney, money } from "../../core/money.ts";
 import type { FetchedPrice } from "../../server/prices/types.ts";
 import { createInstrument, lookUpInstrument } from "../server/instruments.ts";
 
-/** The three sources a price can come from, as the instrument store defines them. */
 export type PriceSource = "yahoo" | "page" | "manual";
 
-/**
- * Every source a person may choose. Yahoo prices listed shares and many funds
- * (under synthetic `0P...` symbols); a fund's own page is the way to price one
- * Yahoo does not, or will not serve.
- */
+/** Yahoo prices listed shares and many funds (`0P...` symbols); a fund page covers what Yahoo will not serve. */
 export const SOURCES = [
-  { id: "yahoo", label: "Yahoo (pörssinoteeratut ja rahastot)" },
-  { id: "page", label: "Hintasivu (osoite)" },
-  { id: "manual", label: "Syötän arvon itse" },
+  { id: "yahoo", label: "Yahoo (listed shares and funds)" },
+  { id: "page", label: "Price page (address)" },
+  { id: "manual", label: "I enter the price myself" },
 ] as const;
 
-/** What a page was read for on saving, shown so the person can see it was right. */
 export const readPriceLine = (price: FetchedPrice): string =>
-  `Luettu hinta: ${formatMoney(money(BigInt(price.closeMinor), price.currency))} ${price.currency} (${price.date})`;
+  `Price read: ${formatMoney(money(BigInt(price.closeMinor), price.currency))} ${price.currency} (${price.date})`;
 
 const ISIN_PATTERN = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
 
 const KIND_VALUES = ["stock", "etf", "fund"] as const;
 type Kind = (typeof KIND_VALUES)[number];
-/**
- * Narrows a `<select>`'s raw string value to `Kind` without a type
- * assertion: every `<option>` this form renders is one of `KIND_VALUES`, so
- * this only ever returns false for a value the DOM cannot actually produce
- * here -- matching `commit.ts`'s `isTxnType` idiom (`.some((candidate) =>
- * candidate === value)` needs no cast, unlike `.includes`, since comparing
- * two differently-typed strings with `===` is always allowed).
- */
 const isKind = (value: string): value is Kind => KIND_VALUES.some((k) => k === value);
 
-/** GET /api/instruments/lookup -- see src/server/instruments/lookup.ts. */
 const LookupSchema = z.object({
   kind: z.enum(KIND_VALUES).nullable(),
   name: z.string().nullable(),
@@ -52,22 +38,11 @@ type LookupState =
   | { readonly status: "resolved"; readonly result: Lookup }
   | { readonly status: "unresolved" };
 
-export type UnknownInstrumentFormProps = {
-  /**
-   * `null` for a broker whose export carries no ISIN at all -- OP's
-   * web-paste view (spec §10a A3). The instrument still needs a real ISIN
-   * to be registered (POST /api/instruments requires one), so this form
-   * asks the user to type it in rather than inventing one; when a real
-   * ISIN is already known (Nordnet), it is shown read-only instead.
-   */
+type UnknownInstrumentFormProps = {
+  /** null when the broker export carries no ISIN (OP web paste); the form then asks for one. */
   readonly isin: string | null;
   readonly name: string;
-  /**
-   * The currency of the imported rows this holding appeared in. It is the
-   * instruments own currency and is never taken from a price registry: one
-   * ISIN can trade on several venues in different currencies, so the brokers
-   * record of what was actually bought is the only authority here.
-   */
+  /** Currency of the imported rows, never from a price registry: one ISIN trades in several currencies. */
   readonly rowCurrency: string;
   readonly onResolved: () => void;
 };
@@ -81,30 +56,16 @@ export const UnknownInstrumentForm = ({
   const [isinInput, setIsinInput] = useState(isin ?? "");
   const [kind, setKind] = useState<Kind>("fund");
   const [lookup, setLookup] = useState<LookupState>({ status: "loading" });
-  // Any ISO 4217 code is valid (spec §10a A1 -- the real portfolio holds
-  // both EUR and SEK), so this is a plain validated text input, not a
-  // closed EUR/USD dropdown that would make a SEK holding unregisterable
-  // from this screen.
   const [currency, setCurrency] = useState(rowCurrency);
-  // The union the server function takes, rather than a string the POST body
-  // hoped was one of four values.
   const [priceSource, setPriceSource] = useState<PriceSource>("yahoo");
   const [sourceKey, setSourceKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [readLine, setReadLine] = useState<string | null>(null);
 
-  /**
-   * Fills the form from public registries once, on mount. Everything it sets
-   * stays editable: the lookup is a starting point the user confirms, never a
-   * decision made on their behalf. A failure is not surfaced as an error --
-   * an unresolved instrument simply leaves the empty form that existed before
-   * this lookup did.
-   */
+  /** Fills the form from public registries once on mount; a failed lookup leaves it empty. */
   useEffect(() => {
     let cancelled = false;
-    // rowCurrency decides which of a security's listings is the right price
-    // source, so it is part of the lookup rather than only a form default.
     lookUpInstrument({ data: { isin, name, currency: rowCurrency } })
       .then((result) => {
         if (cancelled) return;
@@ -127,13 +88,7 @@ export const UnknownInstrumentForm = ({
     };
   }, [isin, name, rowCurrency]);
 
-  /**
-   * Set when the registry's matched listing trades in a different currency
-   * than the holding does -- one ISIN, several venues (IE00B4L5Y983 is USD in
-   * London and EUR in Amsterdam). Advisory only: it means the pre-filled
-   * ticker may be the wrong listing, which is exactly the kind of thing a
-   * person should look at rather than a heuristic decide.
-   */
+  /** The matched listing trades in another currency than the holding (e.g. IE00B4L5Y983: USD London, EUR Amsterdam); the ticker may be the wrong listing. */
   const listingMismatch =
     lookup.status === "resolved" &&
     lookup.result.listingCurrency !== null &&
@@ -141,7 +96,7 @@ export const UnknownInstrumentForm = ({
       ? lookup.result.listingCurrency
       : null;
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
@@ -160,7 +115,7 @@ export const UnknownInstrumentForm = ({
       if (saved.price === null) onResolved();
       else setReadLine(readPriceLine(saved.price));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui");
+      setError(errorMessage(cause, "Could not save"));
     } finally {
       setSubmitting(false);
     }
@@ -170,25 +125,25 @@ export const UnknownInstrumentForm = ({
     <form className="card" onSubmit={submit}>
       <strong>{name || isin}</strong>
       {lookup.status === "loading" && (
-        <div className="text-xs text-muted">Haetaan tietoja rekistereistä…</div>
+        <div className="text-xs text-muted">Looking up registries…</div>
       )}
       {lookup.status === "resolved" && (
         <div className="text-xs text-muted">
-          Esitäytetty automaattisesti
-          {lookup.result.name !== null && <> · rekisterin nimi: {lookup.result.name}</>} · tarkista
-          ja tallenna.
+          Pre-filled automatically
+          {lookup.result.name !== null && <> · registry name: {lookup.result.name}</>} · check and
+          save.
         </div>
       )}
       {lookup.status === "unresolved" && (
         <div className="text-xs text-muted">
-          Rekistereistä ei löytynyt tietoja — täytä kentät itse.
+          Nothing found in the registries — fill in the fields yourself.
         </div>
       )}
       {listingMismatch !== null && (
         <p role="alert" className="text-xs text-loss">
-          Tästä arvopaperista ei löytynyt noteerausta valuutassa {currency.toUpperCase()} —
-          esitäytetty lähde on {listingMismatch}. Hinnat tulevat silloin eri pörssistä kuin omistus;
-          tarkista ennen tallennusta.
+          No listing in {currency.toUpperCase()} was found for this instrument — the pre-filled
+          source is {listingMismatch}. Prices would then come from a different exchange than the
+          holding; check before saving.
         </p>
       )}
       {isin !== null ? (
@@ -198,48 +153,45 @@ export const UnknownInstrumentForm = ({
           ISIN
           <input
             value={isinInput}
-            // Not required for a manual instrument: a delisted share, or a
-            // temporary line from a corporate action, has no ISIN any registry
-            // will give up, and requiring one made it impossible to register.
             required={priceSource !== "manual"}
             pattern={ISIN_PATTERN.source}
-            placeholder="esim. FI0009000681"
-            title="12 merkkiä: 2 kirjainta, 9 kirjainta/numeroa, 1 numero"
+            placeholder="e.g. FI0009000681"
+            title="12 characters: 2 letters, 9 letters/digits, 1 digit"
             onChange={(e) => setIsinInput(e.target.value)}
           />
           <div className="text-xs text-muted">
             {priceSource === "manual"
-              ? "Voit jättää tyhjäksi, jos arvopaperilla ei ole ISIN-tunnusta. Tunnistus tapahtuu silloin nimen perusteella."
-              : "Tällä arvopaperilla ei ole ISIN-tunnusta OP:n tuonnissa -- syötä se itse."}
+              ? "Leave empty if the instrument has no ISIN. It is then identified by name."
+              : "This instrument has no ISIN in the OP import -- enter it yourself."}
           </div>
         </label>
       )}
       <label>
-        Laji
+        Kind
         <select
           value={kind}
           onChange={(e) => {
             if (isKind(e.target.value)) setKind(e.target.value);
           }}
         >
-          <option value="stock">Osake</option>
+          <option value="stock">Share</option>
           <option value="etf">ETF</option>
-          <option value="fund">Rahasto</option>
+          <option value="fund">Fund</option>
         </select>
       </label>
       <label>
-        Valuutta
+        Currency
         <input
           value={currency}
           required
           maxLength={3}
           pattern="[A-Za-z]{3}"
-          title="3-kirjaiminen ISO 4217 -koodi, esim. EUR tai SEK"
+          title="3-letter ISO 4217 code, e.g. EUR or SEK"
           onChange={(e) => setCurrency(e.target.value)}
         />
       </label>
       <label>
-        Hintalähde
+        Price source
         <select
           value={priceSource}
           onChange={(e) => {
@@ -255,25 +207,23 @@ export const UnknownInstrumentForm = ({
         </select>
       </label>
       <label>
-        Lähdetunnus
+        Source code
         <input
           value={sourceKey}
-          // Not required for a manual instrument: a delisted share has no
-          // symbol to fetch it by, and demanding one made such a holding
-          // impossible to register at all.
+          // Not required for a manual instrument: a delisted share has no symbol.
           required={priceSource !== "manual"}
           onChange={(e) => setSourceKey(e.target.value)}
           placeholder={
             priceSource === "yahoo"
-              ? "esim. NOKIA.HE"
+              ? "e.g. NOKIA.HE"
               : priceSource === "page"
-                ? "https://www.example.fi/rahasto"
-                : "rahaston tunnus"
+                ? "https://www.example.com/fund"
+                : "fund code"
           }
         />
         {priceSource === "manual" && (
           <div className="text-xs text-muted">
-            Voit jättää tyhjäksi. Hinnat syötetään käsin Omistukset-sivulla.
+            Leave empty. Prices are entered by hand on the Holdings page.
           </div>
         )}
       </label>
@@ -288,12 +238,12 @@ export const UnknownInstrumentForm = ({
             {readLine}
           </p>
           <button type="button" onClick={onResolved}>
-            Valmis
+            Done
           </button>
         </>
       ) : (
         <button type="submit" disabled={submitting}>
-          {submitting ? "Tallennetaan…" : "Tallenna arvopaperi"}
+          {submitting ? "Saving…" : "Save instrument"}
         </button>
       )}
     </form>

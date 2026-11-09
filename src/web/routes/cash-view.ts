@@ -1,91 +1,60 @@
-/**
- * How a balance's reachability reads on screen.
- *
- * A deposit locked until a date says so with the date; one whose terms nobody
- * entered says that instead of implying it is spendable, because "we do not
- * know when this frees up" and "you can use it now" are different answers.
- */
+/** Reachability on screen: a locked deposit shows its date, unknown terms say so rather than imply spendable. */
 export const availabilityLabel = (row: {
   locked: boolean;
   availableFrom: string | null;
 }): string => {
-  if (!row.locked) return "Käytettävissä";
+  if (!row.locked) return "Available";
   return row.availableFrom === null
-    ? "Sidottu, eräpäivä ei tiedossa"
-    : `Sidottu ${row.availableFrom} asti`;
+    ? "Locked, maturity date unknown"
+    : `Locked until ${row.availableFrom}`;
 };
 
-/**
- * What the import did to the account's opening balance, and whether the ledger
- * now agrees with the statement.
- *
- * A difference that is not zero is worth saying loudly: it means this account
- * already held rows for the period, which is what happens when the same month
- * arrives twice in two formats.
- */
-/**
- * What the import did with the deposit's maturity date, when there was one.
- * Silent when nothing happened -- an account that already agreed with its
- * statement needs no sentence about it.
- */
+/** What the import did with the deposit's maturity date; null when nothing happened. */
 export const describeMaturity = (result: {
   maturityDate: string | null;
   maturityConflict: string | null;
 }): string | null => {
   if (result.maturityConflict !== null) {
-    return `Tiliote ilmoittaa eräpäiväksi ${result.maturityConflict}, tilille on kirjattu ${result.maturityDate}. Tarkista kumpi on oikea.`;
+    return `The bank statement gives ${result.maturityConflict} as the maturity date, but the account has ${result.maturityDate}. Check which one is right.`;
   }
-  return result.maturityDate === null ? null : `Eräpäivä ${result.maturityDate}.`;
+  return result.maturityDate === null ? null : `Maturity date ${result.maturityDate}.`;
 };
 
+/** What the import did to the opening balance and whether the ledger now agrees; a non-zero difference usually means a period imported twice. */
 export const describeReconciliation = (result: {
   differenceEur: string;
   openingBalanceWritten: boolean;
   openingBalanceDate: string;
 }): string => {
   const opening = result.openingBalanceWritten
-    ? `Alkusaldo kirjattiin ${result.openingBalanceDate}.`
-    : `Alkusaldo säilytettiin ennallaan (${result.openingBalanceDate}), koska aiempi tiliote ulottuu kauemmas.`;
+    ? `Opening balance recorded on ${result.openingBalanceDate}.`
+    : `Opening balance left unchanged (${result.openingBalanceDate}) because an earlier bank statement reaches further back.`;
   return result.differenceEur === "0.00"
-    ? `${opening} Saldo täsmää tiliotteen kanssa.`
-    : `${opening} HUOM: saldo eroaa tiliotteesta ${result.differenceEur} € — tilillä on todennäköisesti jo samat tapahtumat toisesta tiedostosta.`;
+    ? `${opening} The balance matches the bank statement.`
+    : `${opening} NOTE: the balance differs from the bank statement by €${result.differenceEur} — the account probably already has the same transactions from another file.`;
 };
 
 export const ENTRY_LABELS = new Map<string, string>([
-  ["OPENING_BALANCE", "Alkusaldo"],
-  ["DEPOSIT", "Talletus"],
-  ["WITHDRAWAL", "Nosto"],
-  ["INTEREST", "Korko"],
+  ["OPENING_BALANCE", "Opening balance"],
+  ["DEPOSIT", "Deposit"],
+  ["WITHDRAWAL", "Withdrawal"],
+  ["INTEREST", "Interest"],
 ]);
 
-/**
- * What an import actually did, in one sentence.
- *
- * Both numbers are always named, including a zero: "0 uutta, 5 jo tuotua" is
- * the answer that tells someone their re-import worked as intended, whereas a
- * bare "valmis" leaves them wondering whether it doubled anything.
- */
+/** What an import did in one sentence; both counts are named, zero included, so a re-import visibly did not double anything. */
 export const describeImport = (result: {
   inserted: number;
   skipped: number;
   enriched?: number;
   problems: readonly unknown[];
 }): string => {
-  const parts = [`${result.inserted} uutta tapahtumaa`, `${result.skipped} jo tuotua`];
-  // Worth saying: it is the reason to import the same period in both formats,
-  // and otherwise invisible -- the rows were already there.
-  if ((result.enriched ?? 0) > 0) parts.push(`${result.enriched} täydennettyä saajatietoa`);
-  if (result.problems.length > 0) parts.push(`${result.problems.length} riviä ei voitu lukea`);
+  const parts = [`${result.inserted} new transactions`, `${result.skipped} already imported`];
+  if ((result.enriched ?? 0) > 0) parts.push(`${result.enriched} payees filled in`);
+  if (result.problems.length > 0) parts.push(`${result.problems.length} rows could not be read`);
   return `${parts.join(", ")}.`;
 };
 
-/**
- * How a reconciliation came out.
- *
- * A zero difference is the good case and says so plainly: it means the imported
- * rows still add up to what the bank reports, which is the check this screen
- * exists to give.
- */
+/** A zero difference is the good case and says so: imported rows still add up to the bank. */
 export const describeBalance = (result: {
   statedEur: string;
   derivedFromRowsEur: string;
@@ -93,15 +62,15 @@ export const describeBalance = (result: {
   openingBalanceDate: string;
 }): string =>
   result.openingBalanceEur === "0.00"
-    ? `Täsmää: tapahtumat selittävät koko saldon ${result.statedEur} €.`
-    : `Alkusaldoksi kirjattiin ${result.openingBalanceEur} € (${result.openingBalanceDate}); ` +
-      `tapahtumat selittävät ${result.derivedFromRowsEur} €.`;
+    ? `Matches: the transactions explain the whole balance of €${result.statedEur}.`
+    : `Opening balance recorded as €${result.openingBalanceEur} (${result.openingBalanceDate}); ` +
+      `the transactions explain €${result.derivedFromRowsEur}.`;
 
 /** Why a row was left out of the spending figures, in the words the screen shows. */
 export const EXCLUDED_LABELS = {
-  income: "tuloa",
-  "internal-transfer": "oma siirto",
-  investment: "sijoitus",
-  "opening-balance": "alkusaldo",
-  "other-currency": "muu valuutta",
+  income: "income",
+  "internal-transfer": "own transfer",
+  investment: "investment",
+  "opening-balance": "opening balance",
+  "other-currency": "other currency",
 } as const;

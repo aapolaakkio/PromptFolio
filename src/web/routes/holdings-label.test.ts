@@ -21,7 +21,7 @@ describe("instrumentLabel", () => {
         priceSource: "manual",
         lookupStatus: "pending",
       }),
-    ).toBe("FI4000567029 · haetaan tunnusta");
+    ).toBe("FI4000567029 · looking up ticker");
   });
 
   test("a manual price shows no code", () => {
@@ -32,7 +32,7 @@ describe("instrumentLabel", () => {
         priceSource: "manual",
         lookupStatus: "ok",
       }),
-    ).toBe("FI4000233267 · oma hinta");
+    ).toBe("FI4000233267 · own price");
   });
 
   test("a holding without ISIN leaves it out", () => {

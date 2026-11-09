@@ -1,16 +1,5 @@
-/**
- * A horizontal bump: the S-shaped curve a Sankey's ribbons are drawn with.
- *
- * Each segment leaves its start horizontally and arrives horizontally, bending
- * in between, which is what makes a flow diagram readable -- a straight
- * diagonal between two stacked columns crosses its neighbours at angles the eye
- * has to untangle.
- *
- * Written out rather than pulled from `d3-shape`: it is one cubic per segment
- * with both control points on the midpoint's x, and the chart library takes a
- * plain `{ line, area }` pair.
- */
-export type Curve = {
+/** Horizontal bump: the S-curve of Sankey ribbons. Hand-written (one cubic per segment) because the chart library takes a plain `{ line, area }` pair. */
+type Curve = {
   readonly line: (points: readonly (readonly [number, number])[]) => string;
   readonly area: (
     top: readonly (readonly [number, number])[],
@@ -41,8 +30,7 @@ export const bumpX: Curve = {
   area: (top, bottom) => {
     const upper = bumpPath(top);
     if (upper === "") return "";
-    // The lower edge is walked back the way it came, so the ribbon closes on
-    // itself instead of crossing through its own middle.
+    // The lower edge is walked back so the ribbon closes on itself.
     const reversed = [...bottom].reverse();
     const lower = bumpPath(reversed);
     return `${upper}L${lower.slice(1)}Z`;

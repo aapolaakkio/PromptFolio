@@ -12,10 +12,7 @@ import { AuthenticatedLayout } from "../routes/root.tsx";
 import { SpendingPage } from "../routes/spending.tsx";
 import { TaxPage } from "../routes/tax.tsx";
 
-// The successor to route-tree.test.ts, which tested the same thing when the
-// tree was built in code: that every screen is reachable and points at the
-// component it claims to. A route file is one line of wiring, and a wrong line
-// here is a page that silently renders the wrong screen.
+// Every screen is reachable and points at its component; a wrong line is a page silently rendering the wrong screen.
 const routes = {
   "/_authenticated": [() => import("./_authenticated.tsx"), AuthenticatedLayout],
   "/_authenticated/": [() => import("./_authenticated/index.tsx"), DashboardPage],
@@ -40,8 +37,7 @@ describe("route files", () => {
   }
 
   test("login sits outside the authenticated layout", () => {
-    // The one route a signed-out visitor must reach. If it ever moves under
-    // /_authenticated, signing in becomes impossible without being signed in.
+    // Must stay outside /_authenticated, or signing in needs a sign-in.
     expect(Object.keys(routes)).toContain("/login");
     expect(Object.keys(routes).filter((path) => path.startsWith("/_authenticated"))).not.toContain(
       "/login",

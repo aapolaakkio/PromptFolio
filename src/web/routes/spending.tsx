@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { eur, fiDate } from "../lib/format.ts";
+import { errorMessage } from "../lib/errors.ts";
+import { eur, formatDate } from "../lib/format.ts";
 import {
   deleteSpendingRule,
   getSpendingRules,
@@ -26,15 +27,7 @@ const yearAgo = (): string => {
   return date.toISOString().slice(0, 10);
 };
 
-/**
- * Where the money went, and the rules that decide it.
- *
- * The figures are summed on the server, not here and not by the assistant: a
- * spending total someone acts on has to be arithmetic, not an estimate. What
- * this screen adds is the part a person has to judge -- which shop belongs in
- * which bucket -- and the share of spending no rule matched, so a total is
- * never quietly missing a third of the money.
- */
+/** Where the money went and the rules deciding it; sums come from the server. The screen adds the judgement of which shop belongs in which bucket. */
 export const SpendingPage = () => {
   const queryClient = useQueryClient();
   const [from, setFrom] = useState(yearAgo);
@@ -88,16 +81,16 @@ export const SpendingPage = () => {
   const removeRule = useMutation({
     mutationFn: (pattern: string) => deleteSpendingRule({ data: { pattern } }),
     onSuccess: refresh,
-    onError: (cause) =>
-      setError(cause instanceof Error ? cause.message : "Säännön poisto epäonnistui"),
+    onError: (cause) => setError(errorMessage(cause, "Could not delete the rule")),
   });
 
   return (
     <section className="grid gap-6">
       <div>
-        <h1>Kulutus</h1>
+        <h1>Spending</h1>
         <p className="max-w-prose text-muted">
-          Pankkitileiltä lähtenyt raha jaksolla. Sijoitusostot eivät ole kuluja eivätkä näy tässä.
+          Money that left the bank accounts in the period. Investment purchases are not spending and
+          do not appear here.
         </p>
       </div>
 
@@ -110,49 +103,47 @@ export const SpendingPage = () => {
       <div className="card grid gap-3">
         <div className="flex flex-wrap items-end gap-2">
           <label>
-            Alkaen
+            From
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
           </label>
           <label>
-            Asti
+            To
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
           </label>
           <label>
-            Ryhmittely
+            Group by
             <select
               value={groupBy}
               onChange={(event) =>
                 setGroupBy(event.target.value === "counterparty" ? "counterparty" : "category")
               }
             >
-              <option value="category">Luokittain</option>
-              <option value="counterparty">Saajittain</option>
+              <option value="category">By category</option>
+              <option value="counterparty">By payee</option>
             </select>
           </label>
         </div>
 
-        <h2 className="text-sm text-muted">Rahavirrat</h2>
+        <h2 className="text-sm text-muted">Cash flows</h2>
         {cashflow.data?.empty === false ? (
           <CashFlowChart nodes={cashflow.data.nodes} links={cashflow.data.links} />
         ) : (
-          <p className="text-muted">Ei rahavirtoja tällä jaksolla.</p>
+          <p className="text-muted">No cash flows in this period.</p>
         )}
         <p className="max-w-prose text-muted text-sm">
-          Omien tilien väliset siirrot on jätetty pois molemmilta puolilta: raha, jonka siirrät
-          käyttötililtä säästöön, ei ole tuloa eikä menoa. Sijoituksiin-haara on arvopaperitilien
-          talletukset. Viimeinen haara on jäännös, eli se osa jota muut eivät selitä.
+          Transfers between your own accounts are left out on both sides: money you move from a
+          current account to savings is neither income nor spending. The Investments branch is
+          deposits into brokerage accounts. The last branch is the remainder, the part the others do
+          not explain.
         </p>
 
-        <h2 className="mt-2 text-sm text-muted">Kuukausittain</h2>
+        <h2 className="mt-2 text-sm text-muted">By month</h2>
         <MonthlyFlowChart months={monthly.data?.months ?? []} />
 
-        {/* A trend needs something to trend across: over a single month the
-            area has nothing to connect and can only draw empty space. The
-            Sankey and the category table already say where that month's money
-            went. */}
+        {/* A trend needs more than one month to connect. */}
         {(monthly.data?.byCategory.months.length ?? 0) > 1 && (
           <>
-            <h2 className="mt-2 text-sm text-muted">Luokittain kuukausittain</h2>
+            <h2 className="mt-2 text-sm text-muted">By category by month</h2>
             <CategoryTrendChart
               months={monthly.data?.byCategory.months ?? []}
               categories={monthly.data?.byCategory.categories ?? []}
@@ -161,15 +152,15 @@ export const SpendingPage = () => {
         )}
 
         <h2 className="mt-2 text-sm text-muted">
-          {groupBy === "category" ? "Luokittain" : "Saajittain"}
+          {groupBy === "category" ? "By category" : "By payee"}
         </h2>
         <div className="max-h-128 overflow-auto rounded border border-line">
           <table>
             <thead className="sticky top-0 bg-surface">
               <tr>
-                <th>{groupBy === "category" ? "Luokka" : "Saaja"}</th>
-                <th className="text-right">Tapahtumia</th>
-                <th className="text-right">Yhteensä</th>
+                <th>{groupBy === "category" ? "Category" : "Payee"}</th>
+                <th className="text-right">Transactions</th>
+                <th className="text-right">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -183,7 +174,7 @@ export const SpendingPage = () => {
               {(spending.data?.groups ?? []).length === 0 && (
                 <tr>
                   <td colSpan={3} className="text-muted">
-                    Ei kuluja tällä jaksolla. Tuo tiliote Tuonnit-välilehdeltä.
+                    No spending in this period. Import a bank statement on the Imports page.
                   </td>
                 </tr>
               )}
@@ -193,35 +184,35 @@ export const SpendingPage = () => {
 
         {spending.data && (
           <p className="text-muted text-sm">
-            Yhteensä {eur(spending.data.totalEur)}.{" "}
+            Total {eur(spending.data.totalEur)}.{" "}
             {spending.data.uncategorisedShare > 0.05 &&
-              `Luokittelematta ${Math.round(spending.data.uncategorisedShare * 100)} % — nämä näkyvät luokassa Muu.`}
+              `${Math.round(spending.data.uncategorisedShare * 100)} % uncategorised — these appear under Other.`}
           </p>
         )}
       </div>
 
       <div className="card grid gap-3">
-        <h2>Luokittelemattomat</h2>
+        <h2>Uncategorised</h2>
         <p className="max-w-prose text-muted text-sm">
-          Maksut joihin mikään sääntö ei osu. Ne näkyvät luokassa Muu. Valitse luokka, niin sääntö
-          tallentuu ja koskee jatkossa myös uusia tapahtumia.
+          Payments that no rule matches. They appear under Other. Choose a category and the rule is
+          saved and also applies to new transactions from now on.
         </p>
         {unknown.data && unknown.data.merchants.length === 0 ? (
-          <p className="text-muted">Kaikki jakson maksut on luokiteltu.</p>
+          <p className="text-muted">Every payment in the period is categorised.</p>
         ) : (
           <>
             <p className="text-muted text-sm">
-              Yhteensä {eur(unknown.data?.totalEur ?? "0.00")} (
-              {unknown.data?.merchants.length ?? 0} saajaa)
+              Total {eur(unknown.data?.totalEur ?? "0.00")} ({unknown.data?.merchants.length ?? 0}{" "}
+              payees)
             </p>
             <div className="max-h-96 overflow-auto rounded border border-line">
               <table>
                 <thead className="sticky top-0 bg-surface">
                   <tr>
-                    <th>Saaja</th>
-                    <th className="text-right">Lkm</th>
-                    <th className="text-right">Yhteensä</th>
-                    <th>Luokittele</th>
+                    <th>Payee</th>
+                    <th className="text-right">Count</th>
+                    <th className="text-right">Total</th>
+                    <th>Categorise</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -239,10 +230,9 @@ export const SpendingPage = () => {
                             onError={setError}
                           />
                         ) : (
-                          // A rule on a bare label would file every payment of
-                          // that kind, not the one in front of the reader.
+                          // A rule on a bare label would file every payment of that kind.
                           <span className="text-muted text-sm">
-                            ei saajatietoa — tuo tiliote PDF-muodossa
+                            no payee details — import the bank statement as a PDF
                           </span>
                         )}
                       </td>
@@ -256,28 +246,25 @@ export const SpendingPage = () => {
       </div>
 
       <div className="card grid gap-3">
-        {/* The categorised totals above are summaries, and a summary nobody can
-            open is one they have to take on trust. This is the ledger behind
-            them, with the same exclusions shown as reasons on the row rather
-            than as rows that quietly are not there. */}
+        {/* The ledger behind the totals, with exclusions shown as reasons on the row. */}
         <button
           type="button"
           className="mt-4 text-sm underline"
           onClick={() => setShowLedger(!showLedger)}
         >
-          {showLedger ? "Piilota tapahtumat" : "Näytä kaikki tapahtumat ja luokat"}
+          {showLedger ? "Hide transactions" : "Show all transactions and categories"}
         </button>
 
         {showLedger && (
           <>
             <label className="mt-2 block text-sm">
-              Luokka{" "}
+              Category{" "}
               <select
                 value={onlyCategory}
                 onChange={(event) => setOnlyCategory(event.target.value)}
                 className="border border-line bg-surface px-2 py-1"
               >
-                <option value="">Kaikki</option>
+                <option value="">All</option>
                 {[...new Set((ledger.data?.transactions ?? []).map((row) => row.categoryLabel))]
                   .sort()
                   .map((label) => (
@@ -291,10 +278,10 @@ export const SpendingPage = () => {
               <table>
                 <thead className="sticky top-0 bg-surface">
                   <tr>
-                    <th>Päivä</th>
-                    <th>Teksti</th>
-                    <th>Luokka</th>
-                    <th className="text-right">Summa</th>
+                    <th>Date</th>
+                    <th>Text</th>
+                    <th>Category</th>
+                    <th className="text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -302,7 +289,7 @@ export const SpendingPage = () => {
                     .filter((row) => onlyCategory === "" || row.categoryLabel === onlyCategory)
                     .map((row) => (
                       <tr key={row.id}>
-                        <td>{fiDate(row.date)}</td>
+                        <td>{formatDate(row.date)}</td>
                         <td>
                           {row.text === "" ? <span className="text-muted">—</span> : row.text}
                         </td>
@@ -310,7 +297,7 @@ export const SpendingPage = () => {
                           {row.categoryLabel}
                           {row.excludedReason !== null && (
                             <span className="ml-2 text-muted text-xs">
-                              ei kulua: {EXCLUDED_LABELS[row.excludedReason]}
+                              not spending: {EXCLUDED_LABELS[row.excludedReason]}
                             </span>
                           )}
                         </td>
@@ -321,7 +308,7 @@ export const SpendingPage = () => {
               </table>
             </div>
             {ledger.data?.transactions.length === 0 && (
-              <p className="text-muted">Ei tapahtumia tällä jaksolla.</p>
+              <p className="text-muted">No transactions in this period.</p>
             )}
           </>
         )}
@@ -331,14 +318,15 @@ export const SpendingPage = () => {
           className="justify-self-start"
           onClick={() => setShowRules((v) => !v)}
         >
-          {showRules ? "Piilota luokittelusäännöt" : "Näytä luokittelusäännöt"}
+          {showRules ? "Hide categorisation rules" : "Show categorisation rules"}
         </button>
 
         {showRules && (
           <>
             <p className="max-w-prose text-muted text-sm">
-              Sääntö osuu maksun tekstiin osajonona, ja pisin osuma voittaa. Lähde kertoo kuka
-              päätti: valmis sääntö, avustajan arvaus tuonnin yhteydessä, vai sinä.
+              A rule matches as a substring of the payment text, and the longest match wins. The
+              source says who decided: a built-in rule, the assistant's guess during an import, or
+              you.
             </p>
             <AddRuleForm
               categories={rules.data?.categories ?? []}
@@ -349,9 +337,9 @@ export const SpendingPage = () => {
               <table>
                 <thead className="sticky top-0 bg-surface">
                   <tr>
-                    <th>Hakusana</th>
-                    <th>Luokka</th>
-                    <th>Lähde</th>
+                    <th>Pattern</th>
+                    <th>Category</th>
+                    <th>Source</th>
                     <th />
                   </tr>
                 </thead>
@@ -365,10 +353,10 @@ export const SpendingPage = () => {
                         <button
                           type="button"
                           className="text-sm"
-                          aria-label={`Poista sääntö ${rule.pattern}`}
+                          aria-label={`Delete rule ${rule.pattern}`}
                           onClick={() => removeRule.mutate(rule.pattern)}
                         >
-                          Poista
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -403,8 +391,7 @@ const AddRuleForm = ({
       setPattern("");
       onSaved();
     },
-    onError: (cause) =>
-      onError(cause instanceof Error ? cause.message : "Säännön tallennus epäonnistui"),
+    onError: (cause) => onError(errorMessage(cause, "Could not save the rule")),
   });
 
   const chosen = category === "" ? (categories[0]?.id ?? "") : category;
@@ -418,16 +405,16 @@ const AddRuleForm = ({
       }}
     >
       <label>
-        Hakusana
+        Pattern
         <input
           value={pattern}
           maxLength={60}
-          placeholder="esim. K-MARKET"
+          placeholder="e.g. K-MARKET"
           onChange={(event) => setPattern(event.target.value)}
         />
       </label>
       <label>
-        Luokka
+        Category
         <select value={chosen} onChange={(event) => setCategory(event.target.value)}>
           {categories.map((option) => (
             <option key={option.id} value={option.id}>
@@ -437,20 +424,13 @@ const AddRuleForm = ({
         </select>
       </label>
       <button type="submit" disabled={pattern.trim().length < 3 || save.isPending}>
-        {save.isPending ? "Tallennetaan…" : "Lisää sääntö"}
+        {save.isPending ? "Saving…" : "Add rule"}
       </button>
     </form>
   );
 };
 
-/**
- * Files one unmatched merchant under a category, as a rule.
- *
- * The whole name becomes the pattern rather than a guessed stem: it is what the
- * statement actually prints, and a shorter pattern the owner did not choose
- * could quietly catch payments they never looked at. Shortening it is then a
- * deliberate edit in the rules table.
- */
+/** Files one unmatched merchant under a category; the whole name is the pattern, since a guessed stem could catch unseen payments. */
 const ClassifyOne = ({
   merchant,
   categories,
@@ -466,22 +446,21 @@ const ClassifyOne = ({
     mutationFn: (category: string) =>
       saveSpendingRules({ data: { rules: [{ pattern: merchant, category }] } }),
     onSuccess: onSaved,
-    onError: (cause) =>
-      onError(cause instanceof Error ? cause.message : "Säännön tallennus epäonnistui"),
+    onError: (cause) => onError(errorMessage(cause, "Could not save the rule")),
   });
 
   return (
     <select
       value=""
       disabled={save.isPending}
-      aria-label={`Luokittele ${merchant}`}
+      aria-label={`Categorise ${merchant}`}
       onChange={(event) => {
         if (event.target.value !== "") save.mutate(event.target.value);
       }}
     >
-      <option value="">Valitse…</option>
+      <option value="">Choose…</option>
       {categories
-        .filter((category) => category.id !== "muu")
+        .filter((category) => category.id !== "other")
         .map((category) => (
           <option key={category.id} value={category.id}>
             {category.label}

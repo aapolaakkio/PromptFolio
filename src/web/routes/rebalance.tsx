@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { errorMessage } from "../lib/errors.ts";
 import type { Dimension } from "../../core/allocation.ts";
 import {
   getDepositPlan,
@@ -15,10 +16,10 @@ import type { DriftRowView, TargetView } from "../../server/rebalance.ts";
 import { targetTotal } from "./rebalance-view.ts";
 
 const DIMENSIONS = [
-  { value: "kind", label: "Lajeittain" },
-  { value: "currency", label: "Valuutoittain" },
-  { value: "account", label: "Tileittäin" },
-  { value: "instrument", label: "Kohteittain" },
+  { value: "kind", label: "By kind" },
+  { value: "currency", label: "By currency" },
+  { value: "account", label: "By account" },
+  { value: "instrument", label: "By instrument" },
 ] as const;
 
 const today = (): string => new Date().toISOString().slice(0, 10);
@@ -32,18 +33,9 @@ const Badge = ({ children, title }: { children: string; title?: string }) => (
   </span>
 );
 
-const pct = (value: string | null): string =>
-  value === null ? "—" : `${value.replace(".", ",")} %`;
+const pct = (value: string | null): string => (value === null ? "—" : `${value} %`);
 
-/**
- * The gap between the portfolio's shape and the shape its owner wants, and what
- * it would take to close it.
- *
- * Drift is arithmetic and always shown. A suggestion is advice, and always
- * states what it costs before it can be acted on -- which is why the sell view
- * is a deliberate disclosure rather than the default, and why every sale in it
- * carries the gain it would realise.
- */
+/** Portfolio shape versus the owner's target. Drift is arithmetic and always shown; selling is advice, so the sell view is a disclosure and each sale shows its realised gain. */
 const DriftTable = ({ rows }: { rows: readonly DriftRowView[] }) => {
   const targeted = rows.filter((row) => !row.untargeted);
   const untargeted = rows.filter((row) => row.untargeted);
@@ -53,11 +45,11 @@ const DriftTable = ({ rows }: { rows: readonly DriftRowView[] }) => {
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-line text-left text-muted">
-            <th className="py-2">Erä</th>
-            <th className="text-right">Tavoite</th>
-            <th className="text-right">Nyt</th>
-            <th className="text-right">Ero</th>
-            <th className="text-right">Siirrettävä</th>
+            <th className="py-2">Item</th>
+            <th className="text-right">Target</th>
+            <th className="text-right">Now</th>
+            <th className="text-right">Difference</th>
+            <th className="text-right">To move</th>
           </tr>
         </thead>
         <tbody>
@@ -69,7 +61,7 @@ const DriftTable = ({ rows }: { rows: readonly DriftRowView[] }) => {
               <td className="text-right">
                 {pct(row.driftPercent)}
                 {row.withinBand && (
-                  <Badge title="Ero on alle viisi prosenttiyksikköä.">tavoitteessa</Badge>
+                  <Badge title="The difference is under five percentage points.">on target</Badge>
                 )}
               </td>
               <td className="text-right">{row.driftEur === null ? "—" : eur(row.driftEur)}</td>
@@ -80,8 +72,8 @@ const DriftTable = ({ rows }: { rows: readonly DriftRowView[] }) => {
       {untargeted.length > 0 && (
         <p className="mt-2 text-sm text-muted">
           {/* Untargeted is not targeted at zero: only the second implies selling. */}
-          Ilman tavoitetta: {untargeted.map((row) => row.label).join(", ")}. Näille ei lasketa eroa
-          eikä ehdoteta kauppoja.
+          Without a target: {untargeted.map((row) => row.label).join(", ")}. No difference is
+          calculated and no trades are suggested for these.
         </p>
       )}
     </>
@@ -104,8 +96,7 @@ const TargetEditor = ({
   const [draft, setDraft] = useState<TargetView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Start from what is stored, falling back to every slice the portfolio holds
-  // so a first-time editor has rows to fill rather than an empty form.
+  // Stored targets, else every held slice so a first-time editor has rows.
   const targets =
     draft ??
     (stored.data !== undefined && stored.data.length > 0
@@ -122,15 +113,13 @@ const TargetEditor = ({
       setDraft(null);
       onSaved();
     },
-    // The server's own message says what is wrong -- what the set sums to, or
-    // which field it could not read. A blanket "tallennus epäonnistui" throws
-    // that away and leaves the owner guessing at their own arithmetic.
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tallennus epäonnistui"),
+    // The server's message says what is wrong (what the set sums to, or which field it could not read).
+    onError: (cause) => setError(errorMessage(cause, "Could not save")),
   });
 
   return (
     <section className="mt-6">
-      <h2 className="mb-2 text-lg font-semibold">Tavoitejakauma</h2>
+      <h2 className="mb-2 text-lg font-semibold">Target allocation</h2>
       <table className="w-full max-w-md border-collapse text-sm">
         <tbody>
           {targets.map((target, index) => (
@@ -140,7 +129,7 @@ const TargetEditor = ({
                 <input
                   value={target.weightPercent}
                   inputMode="decimal"
-                  aria-label={`${labelOf(target.key)} tavoite prosentteina`}
+                  aria-label={`${labelOf(target.key)} target in percent`}
                   className="w-24 border border-line bg-surface px-2 py-1 text-right"
                   onChange={(event) =>
                     setDraft(
@@ -157,10 +146,11 @@ const TargetEditor = ({
         </tbody>
       </table>
       <p className="mt-2 text-sm">
-        {/* Shown while typing: a set that does not sum to 100 % is refused, so
-            the reader should not have to submit to find that out. */}
-        Yhteensä {total.replace(".", ",")} %{" "}
-        {total !== "100.00" && <span className="text-muted">— tavoitteiden on oltava 100 %</span>}
+        {/* Shown while typing: a set that does not sum to 100 % is refused. */}
+        Total {total} %{" "}
+        {total !== "100.00" && (
+          <span className="text-muted">— the targets must add up to 100 %</span>
+        )}
       </p>
       <button
         type="button"
@@ -168,7 +158,7 @@ const TargetEditor = ({
         disabled={save.isPending || total !== "100.00"}
         onClick={() => save.mutate()}
       >
-        Tallenna tavoitteet
+        Save targets
       </button>
       {error !== null && <p className="mt-2 text-sm">{error}</p>}
     </section>
@@ -177,8 +167,6 @@ const TargetEditor = ({
 
 export const RebalancePage = () => {
   const queryClient = useQueryClient();
-  // The union rather than a string: the server function takes exactly these
-  // four, where the old URL took any text and failed later.
   const [dimension, setDimension] = useState<Dimension>("kind");
   const [deposit, setDeposit] = useState("");
   const [showSells, setShowSells] = useState(false);
@@ -201,19 +189,19 @@ export const RebalancePage = () => {
 
   return (
     <>
-      <h1>Tasapaino</h1>
+      <h1>Rebalance</h1>
       <p className="text-muted">
-        Ero tavoitteeseen on laskettu tapahtumistasi. Ehdotukset ovat laskelmia, eivät
-        sijoitusneuvoja — ja myynnin kohdalla kerrotaan aina mitä voittoa se realisoisi.
+        The difference from the target is calculated from your transactions. Suggestions are
+        calculations, not investment advice — and for a sale, the gain it would realise is always
+        shown.
       </p>
 
       <label className="mt-4 block">
-        Jaottelu{" "}
+        Group by{" "}
         <select
           value={dimension}
           onChange={(event) => {
-            // SAFETY: the options are rendered from DIMENSIONS, whose values
-            // are exactly the Dimension union.
+            // SAFETY: the options are rendered from DIMENSIONS, which are exactly the Dimension union.
             setDimension(event.target.value as Dimension);
           }}
           className="border border-line bg-surface px-2 py-1"
@@ -226,22 +214,21 @@ export const RebalancePage = () => {
         </select>
       </label>
 
-      {drift.isPending && <p>Ladataan…</p>}
+      {drift.isPending && <p>Loading…</p>}
       {drift.data !== undefined && (
         <>
           {drift.data.incomplete && (
             <p className="mt-4 text-sm text-muted">
-              {/* A weight is a share of a total, so one unpriceable holding makes
-                  every slice's euro figure wrong by an unknown amount. */}
-              Jollekin omistukselle ei ole hintaa, joten euromääräisiä eroja ei voi laskea.
-              Prosentit koskevat vain niitä eriä, jotka voitiin arvottaa.
+              {/* One unpriceable holding makes every slice's euro figure wrong by an unknown amount. */}
+              A holding has no price, so differences in euros cannot be calculated. The percentages
+              cover only the items that could be valued.
             </p>
           )}
 
           <section className="mt-6">
-            <h2 className="mb-2 text-lg font-semibold">Ero tavoitteeseen</h2>
+            <h2 className="mb-2 text-lg font-semibold">Difference from target</h2>
             <DriftTable rows={drift.data.rows} />
-            <p className="mt-2 text-sm text-muted">Salkun arvo {eur(drift.data.totalEur)}.</p>
+            <p className="mt-2 text-sm text-muted">Portfolio value {eur(drift.data.totalEur)}.</p>
           </section>
 
           <TargetEditor
@@ -255,12 +242,12 @@ export const RebalancePage = () => {
           />
 
           <section className="mt-8">
-            <h2 className="mb-2 text-lg font-semibold">Uusi sijoitus</h2>
+            <h2 className="mb-2 text-lg font-semibold">New investment</h2>
             <p className="text-sm text-muted">
-              Mihin seuraava sijoitus kannattaa laittaa. Ei myyntiä, ei realisoitunutta voittoa.
+              Where to put the next investment. No selling, no realised gain.
             </p>
             <label className="mt-2 block">
-              Summa{" "}
+              Amount{" "}
               <input
                 value={deposit}
                 inputMode="decimal"
@@ -271,7 +258,7 @@ export const RebalancePage = () => {
             </label>
             {depositPlan.data !== undefined &&
               (depositPlan.data.length === 0 ? (
-                <p className="mt-2 text-muted">Ei kohdetta — tavoitteet ovat jo täynnä.</p>
+                <p className="mt-2 text-muted">No destination — the targets are already full.</p>
               ) : (
                 <ul className="mt-2 text-sm">
                   {depositPlan.data.map((allocation) => (
@@ -284,46 +271,46 @@ export const RebalancePage = () => {
           </section>
 
           <section className="mt-8">
-            <h2 className="mb-2 text-lg font-semibold">Täysi tasapainotus</h2>
+            <h2 className="mb-2 text-lg font-semibold">Full rebalance</h2>
             {!showSells ? (
               <button
                 type="button"
                 className="border border-line px-3 py-1"
                 onClick={() => setShowSells(true)}
               >
-                Näytä myös myynnit
+                Also show sales
               </button>
             ) : plan.data === undefined ? (
-              <p>Ladataan…</p>
+              <p>Loading…</p>
             ) : plan.data.trades.length === 0 ? (
-              <p className="text-muted">Ei kauppoja — salkku on tavoitteessa.</p>
+              <p className="text-muted">No trades — the portfolio is on target.</p>
             ) : (
               <>
                 <p className="mb-2 text-sm">
-                  Myynnit realisoisivat voittoa yhteensä {eur(plan.data.totalRealisedGainEur)}
-                  {plan.data.gainIncomplete && " (osalle ei tiedetä hankintamenoa)"}. Tämä on
-                  voitto, ei vero.
+                  The sales would realise a total gain of {eur(plan.data.totalRealisedGainEur)}
+                  {plan.data.gainIncomplete && " (cost basis unknown for some)"}. This is gain, not
+                  tax.
                 </p>
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-line text-left text-muted">
-                      <th className="py-2">Erä</th>
-                      <th>Toimi</th>
-                      <th className="text-right">Summa</th>
-                      <th className="text-right">Realisoituva voitto</th>
+                      <th className="py-2">Item</th>
+                      <th>Action</th>
+                      <th className="text-right">Amount</th>
+                      <th className="text-right">Realised gain</th>
                     </tr>
                   </thead>
                   <tbody>
                     {plan.data.trades.map((trade) => (
                       <tr key={`${trade.key}-${trade.side}`} className="border-b border-line">
                         <td className="py-2">{trade.label}</td>
-                        <td>{trade.side === "buy" ? "Osta" : "Myy"}</td>
+                        <td>{trade.side === "buy" ? "Buy" : "Sell"}</td>
                         <td className="text-right">{eur(trade.amountEur)}</td>
                         <td className="text-right">
                           {trade.side === "buy"
                             ? "—"
                             : trade.gainUnknown
-                              ? "tuntematon"
+                              ? "unknown"
                               : eur(trade.realisedGainEur ?? "0")}
                         </td>
                       </tr>
@@ -333,7 +320,7 @@ export const RebalancePage = () => {
                 {plan.data.tooSmall.length > 0 && (
                   <p className="mt-2 text-sm text-muted">
                     {/* Listed rather than hidden: the owner may have a reason. */}
-                    Alle 50 € jääneet kaupat jätettiin pois:{" "}
+                    Trades under €50 were left out:{" "}
                     {plan.data.tooSmall
                       .map((trade) => `${trade.label} ${eur(trade.amountEur)}`)
                       .join(", ")}
@@ -347,20 +334,20 @@ export const RebalancePage = () => {
       )}
 
       <section className="mt-8">
-        <h2 className="mb-2 text-lg font-semibold">Kulut</h2>
+        <h2 className="mb-2 text-lg font-semibold">Fees</h2>
         {fees.data !== undefined && fees.data.length === 0 && (
-          <p className="text-muted">Ei kuluja.</p>
+          <p className="text-muted">No fees.</p>
         )}
         {fees.data !== undefined && fees.data.length > 0 && (
           <>
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-muted">
-                  <th className="py-2">Vuosi</th>
-                  <th className="text-right">Kaupankäyntikulut</th>
-                  <th className="text-right">Palvelumaksut</th>
-                  <th className="text-right">Yhteensä</th>
-                  <th className="text-right">Pidätetty vero</th>
+                  <th className="py-2">Year</th>
+                  <th className="text-right">Trading fees</th>
+                  <th className="text-right">Service charges</th>
+                  <th className="text-right">Total</th>
+                  <th className="text-right">Tax withheld</th>
                 </tr>
               </thead>
               <tbody>
@@ -376,8 +363,8 @@ export const RebalancePage = () => {
               </tbody>
             </table>
             <p className="mt-2 text-sm text-muted">
-              Osakesäästötililtä pidätetty pääomatulovero näkyy omana sarakkeenaan eikä sisälly
-              kuluihin: se on veroa voitosta, ei sijoittamisen kustannus.
+              Capital gains tax withheld on an equity savings account (OST) is its own column and
+              not part of the fees: it is tax on profit, not a cost of investing.
             </p>
           </>
         )}

@@ -1,12 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type SubmitEvent, useState } from "react";
 import { signIn } from "../lib/auth-client.ts";
 
-/**
- * The normal sign-in form -- unchanged behaviour, just extracted out of
- * `login.tsx` so that file can be the thin orchestrator deciding between
- * this and `FirstRunForm` (see login.tsx's own comment).
- */
+/** The sign-in form, extracted so `login.tsx` stays a thin orchestrator. */
 export const SignInForm = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -14,16 +10,15 @@ export const SignInForm = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (event: FormEvent) => {
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     const { error: failure } = await signIn.email({ email, password });
     setBusy(false);
-    // Deliberately non-specific: this message must not reveal whether the
-    // email address exists, only that the credentials were not accepted.
+    // Deliberately non-specific: must not reveal whether the email address exists.
     if (failure) {
-      setError("Kirjautuminen epäonnistui");
+      setError("Sign-in failed");
       return;
     }
     void navigate({ to: "/" });
@@ -34,7 +29,7 @@ export const SignInForm = () => {
       <form className="card w-80" onSubmit={(event) => void submit(event)}>
         <h1>PromptFolio</h1>
         <label>
-          Sähköposti
+          Email
           <input
             type="email"
             value={email}
@@ -44,7 +39,7 @@ export const SignInForm = () => {
           />
         </label>
         <label>
-          Salasana
+          Password
           <input
             type="password"
             value={password}
@@ -59,7 +54,7 @@ export const SignInForm = () => {
           </p>
         )}
         <button type="submit" disabled={busy} className="w-full">
-          {busy ? "Kirjaudutaan…" : "Kirjaudu"}
+          {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
     </main>

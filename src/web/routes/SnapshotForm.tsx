@@ -1,18 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { errorMessage } from "../lib/errors.ts";
 import { saveSnapshot } from "../server/snapshots.ts";
 import { getInstruments } from "../server/instruments.ts";
 
-/**
- * Records what a broker's statement says was held on a date. Typed in by hand
- * here; the PDF and photo paths (spec §5.2) produce exactly the same shape.
- *
- * Only the rows the user actually fills in are sent. A blank field means "the
- * statement does not mention this holding", which is a different claim from
- * "the statement says zero" -- and the reconciliation treats them differently,
- * so the form must not quietly turn one into the other.
- */
+/** Records a broker statement's holdings on a date by hand. Only filled rows are sent: blank means "not mentioned", not "zero", and reconciliation treats them differently. */
 export const SnapshotForm = ({
   accountId,
   onCreated,
@@ -52,7 +45,7 @@ export const SnapshotForm = ({
       onCreated(snapshot.id);
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : "Otteen tallennus epäonnistui");
+      setError(errorMessage(cause, "Could not save the statement"));
     },
   });
 
@@ -64,14 +57,14 @@ export const SnapshotForm = ({
         create.mutate();
       }}
     >
-      <h2>Lisää ote käsin</h2>
+      <h2>Add a statement by hand</h2>
       <p className="text-muted">
-        Syötä vain ne rivit, jotka otteella lukevat. Tyhjä kenttä tarkoittaa, ettei otteella mainita
-        kyseistä arvopaperia — se ei ole sama asia kuin nolla.
+        Enter only the rows the statement lists. A blank field means the statement does not mention
+        that instrument — which is not the same as zero.
       </p>
 
       <label className="mt-3 block">
-        Otteen päivä
+        Statement date
         <input type="date" value={asOf} required onChange={(e) => setAsOf(e.target.value)} />
       </label>
 
@@ -79,8 +72,8 @@ export const SnapshotForm = ({
         <table>
           <thead className="sticky top-0 bg-surface">
             <tr>
-              <th>Arvopaperi</th>
-              <th className="num">Määrä otteella</th>
+              <th>Instrument</th>
+              <th className="num">Quantity on statement</th>
             </tr>
           </thead>
           <tbody>
@@ -110,7 +103,7 @@ export const SnapshotForm = ({
       )}
 
       <button type="submit" className="mt-4" disabled={filled.length === 0 || create.isPending}>
-        {create.isPending ? "Tallennetaan…" : `Tallenna ote (${filled.length} riviä)`}
+        {create.isPending ? "Saving…" : `Save statement (${filled.length} rows)`}
       </button>
     </form>
   );

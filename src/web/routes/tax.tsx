@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
-import { eur, fiDate, qty } from "../lib/format.ts";
+import { eur, formatDate, qty } from "../lib/format.ts";
 import { methodLabel, type TaxYearView } from "./tax-view.ts";
 import { getTaxYear, getTaxYears } from "../server/tax.ts";
 
@@ -24,30 +24,22 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 
 const Empty = ({ children }: { children: string }) => <p className="text-muted">{children}</p>;
 
-/**
- * Realised gains, dividends and equity-savings-account withdrawals for one
- * year, computed from the ledger.
- *
- * This is a check against the pre-filled return, not a filing: Finnish brokers
- * report to Verohallinto already, so what a second derivation is worth is
- * disagreement. No euro figure for tax owed appears anywhere -- the 30/34 %
- * bracket depends on capital income this app cannot see.
- */
+/** Realised gains, dividends and equity-savings-account withdrawals for one year, as a check against the pre-filled return, not a filing. No tax-owed figure: the 30/34 % bracket depends on capital income this app cannot see. */
 const Disposals = ({ report }: { report: TaxYearView }) => {
-  if (report.disposals.length === 0) return <Empty>Ei luovutuksia tänä vuonna.</Empty>;
+  if (report.disposals.length === 0) return <Empty>No disposals this year.</Empty>;
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-line text-left text-muted">
-            <th className="py-2">Myyty</th>
-            <th>Instrumentti</th>
-            <th>Tili</th>
-            <th className="text-right">Määrä</th>
-            <th className="text-right">Myyntihinta</th>
-            <th className="text-right">Hankintameno</th>
-            <th className="text-right">Voitto/tappio</th>
+            <th className="py-2">Sold</th>
+            <th>Instrument</th>
+            <th>Account</th>
+            <th className="text-right">Quantity</th>
+            <th className="text-right">Sale price</th>
+            <th className="text-right">Cost basis</th>
+            <th className="text-right">Gain/loss</th>
           </tr>
         </thead>
         <tbody>
@@ -56,10 +48,12 @@ const Disposals = ({ report }: { report: TaxYearView }) => {
               key={`${row.isin}-${row.soldOn}-${row.acquiredOn}`}
               className="border-b border-line"
             >
-              <td className="py-2">{fiDate(row.soldOn)}</td>
+              <td className="py-2">{formatDate(row.soldOn)}</td>
               <td>
                 {row.instrument}
-                <span className="block text-xs text-muted">hankittu {fiDate(row.acquiredOn)}</span>
+                <span className="block text-xs text-muted">
+                  acquired {formatDate(row.acquiredOn)}
+                </span>
               </td>
               <td>{row.accountName}</td>
               <td className="text-right">{qty(row.quantity)}</td>
@@ -70,12 +64,11 @@ const Disposals = ({ report }: { report: TaxYearView }) => {
               </td>
               <td className="text-right">
                 {eur(row.gainEur)}
-                {/* The rejected method's figure, so the choice is visible
-                    rather than asserted. */}
+                {/* The rejected method's figure, so the choice is visible. */}
                 <span className="block text-xs text-muted">
                   {row.method === "deemed"
-                    ? `todellisella ${eur(row.actualGainEur)}`
-                    : `olettamalla ${eur(row.deemedGainEur)}`}
+                    ? `with actual cost ${eur(row.actualGainEur)}`
+                    : `with deemed cost ${eur(row.deemedGainEur)}`}
                 </span>
               </td>
             </tr>
@@ -86,13 +79,7 @@ const Disposals = ({ report }: { report: TaxYearView }) => {
   );
 };
 
-/**
- * The blocked row's own way out.
- *
- * The holding that blocks an old withdrawal has usually been sold since, so it
- * appears on no other screen -- telling the reader to record a price without
- * showing them where would name a form they cannot reach.
- */
+/** The blocked row's way out: its blocking holding has usually been sold, so the price form is offered here. */
 const FixPrice = ({
   instrument,
   on,
@@ -108,7 +95,7 @@ const FixPrice = ({
   if (!open) {
     return (
       <button type="button" className="text-xs underline" onClick={() => setOpen(true)}>
-        {label} {instrument.name} {fiDate(on)}
+        {label} {instrument.name} {formatDate(on)}
       </button>
     );
   }
@@ -126,7 +113,7 @@ const FixPrice = ({
 };
 
 const Ost = ({ report }: { report: TaxYearView }) => {
-  if (report.ost.length === 0) return <Empty>Ei osakesäästötilejä.</Empty>;
+  if (report.ost.length === 0) return <Empty>No equity savings accounts.</Empty>;
 
   return (
     <>
@@ -134,46 +121,43 @@ const Ost = ({ report }: { report: TaxYearView }) => {
         <div key={account.accountName} className="mb-6">
           <h3 className="font-medium">{account.accountName}</h3>
           <p className="text-sm text-muted">
-            {/* Not "what is on the account": this is what has been paid in over
-                the account's life, less the capital part of withdrawals, which
-                is the figure the 100 000 € cap is measured against. */}
-            Talletuksia yhteensä {eur(account.depositedEur)} (nostojen pääomaosuus vähennettynä),
-            joten tilaa on jäljellä {eur(account.capRemainingEur)}
+            {/* Not the balance: paid in over the account's life, less the capital part of
+                withdrawals -- the figure the €100,000 cap is measured against. */}
+            Total deposits {eur(account.depositedEur)} (less the capital part of withdrawals), so
+            {eur(account.capRemainingEur)} of room remains
             {account.incomplete && (
-              <Badge title="Ainakin yhden noston veronalaista osuutta ei voitu laskea, joten sen pääomaosuutta ei ole vähennetty talletuksista. Todellinen luku on tätä pienempi.">
-                epätäydellinen
+              <Badge title="The taxable part of at least one withdrawal could not be calculated, so its capital part has not been deducted from deposits. The real figure is lower.">
+                incomplete
               </Badge>
             )}
           </p>
           {account.withdrawals.length === 0 ? (
-            <Empty>Ei nostoja tänä vuonna.</Empty>
+            <Empty>No withdrawals this year.</Empty>
           ) : (
             <table className="mt-2 w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-muted">
-                  <th className="py-2">Nostettu</th>
-                  <th className="text-right">Määrä</th>
-                  <th className="text-right">Tilin arvo</th>
-                  <th className="text-right">Voitto</th>
-                  <th className="text-right">Veronalaista</th>
-                  <th className="text-right">Veroa pidätetty</th>
+                  <th className="py-2">Withdrawn</th>
+                  <th className="text-right">Amount</th>
+                  <th className="text-right">Account value</th>
+                  <th className="text-right">Profit</th>
+                  <th className="text-right">Taxable</th>
+                  <th className="text-right">Tax withheld</th>
                 </tr>
               </thead>
               <tbody>
                 {account.withdrawals.map((row) => (
                   <tr key={`${row.withdrawnOn}-${row.amountEur}`} className="border-b border-line">
-                    <td className="py-2">{fiDate(row.withdrawnOn)}</td>
+                    <td className="py-2">{formatDate(row.withdrawnOn)}</td>
                     <td className="text-right">{eur(row.amountEur)}</td>
                     <td className="text-right">
                       {row.valueEur === null ? "—" : eur(row.valueEur)}
-                      {/* A valuation resting on a carried-forward price is not
-                          the same claim as one priced on the day, and nothing
-                          in the figure itself shows the difference. */}
+                      {/* A valuation on a carried-forward price is not priced on the day. */}
                       {row.pricedFrom !== null && (
                         <Badge
-                          title={`Tilin arvo on laskettu hinnalla päivältä ${row.pricedFrom}, koska nostopäivälle ei ole hintaa. Luku tarkentuu kun kirjaat hinnan nostopäivälle.`}
+                          title={`The account value uses the price from ${row.pricedFrom}, because there is no price for the withdrawal date. The figure sharpens once you record a price for that date.`}
                         >
-                          {`hinta ${fiDate(row.pricedFrom)}`}
+                          {`price ${formatDate(row.pricedFrom)}`}
                         </Badge>
                       )}
                     </td>
@@ -183,13 +167,13 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                     <td className="text-right">
                       {row.taxableEur === null ? (
                         <>
-                          <Badge title={row.blockedBy ?? undefined}>ei laskettavissa</Badge>
+                          <Badge title={row.blockedBy ?? undefined}>cannot be calculated</Badge>
                           {row.priceInstrument !== null && (
                             <span className="mt-1 block">
                               <FixPrice
                                 instrument={row.priceInstrument}
                                 on={row.withdrawnOn}
-                                label="Kirjaa hinta:"
+                                label="Record price:"
                               />
                             </span>
                           )}
@@ -197,24 +181,20 @@ const Ost = ({ report }: { report: TaxYearView }) => {
                       ) : (
                         <>
                           {eur(row.taxableEur)}
-                          {/* A computed row can still rest on an old price, and
-                              then it is this figure that is wrong -- so the way
-                              to correct it belongs here too, not only on rows
-                              that failed outright. */}
+                          {/* A computed row can still rest on an old price, so offer the fix here too. */}
                           {row.pricedFrom !== null && row.priceInstrument !== null && (
                             <span className="mt-1 block">
                               <FixPrice
                                 instrument={row.priceInstrument}
                                 on={row.withdrawnOn}
-                                label="Tarkenna hinnalla:"
+                                label="Refine with a price:"
                               />
                             </span>
                           )}
                         </>
                       )}
                     </td>
-                    {/* The broker's own figure, beside ours. Two derivations
-                        that disagree is the point of computing this twice. */}
+                    {/* The broker's own figure, beside ours. */}
                     <td className="text-right">{eur(row.withheldEur)}</td>
                   </tr>
                 ))}
@@ -228,7 +208,7 @@ const Ost = ({ report }: { report: TaxYearView }) => {
 };
 
 const Dividends = ({ report }: { report: TaxYearView }) => {
-  if (report.dividends.length === 0) return <Empty>Ei osinkoja tänä vuonna.</Empty>;
+  if (report.dividends.length === 0) return <Empty>No dividends this year.</Empty>;
   const anyMissing = report.dividends.some((row) => !row.withholdingRecorded);
 
   return (
@@ -236,23 +216,23 @@ const Dividends = ({ report }: { report: TaxYearView }) => {
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-line text-left text-muted">
-            <th className="py-2">Maksettu</th>
-            <th>Instrumentti</th>
-            <th className="text-right">Brutto</th>
-            <th className="text-right">Ennakonpidätys</th>
-            <th className="text-right">Veronalaista 85 %</th>
+            <th className="py-2">Paid</th>
+            <th>Instrument</th>
+            <th className="text-right">Gross</th>
+            <th className="text-right">Withholding</th>
+            <th className="text-right">Taxable 85 %</th>
           </tr>
         </thead>
         <tbody>
           {report.dividends.map((row) => (
             <tr key={`${row.paidOn}-${row.instrument ?? ""}`} className="border-b border-line">
-              <td className="py-2">{fiDate(row.paidOn)}</td>
-              <td>{row.instrument ?? "Tuntematon"}</td>
+              <td className="py-2">{formatDate(row.paidOn)}</td>
+              <td>{row.instrument ?? "Unknown"}</td>
               <td className="text-right">
                 {eur(row.grossEur)}
                 {!row.withholdingRecorded && (
-                  <Badge title="Tiliotteessa ei ole erillistä ennakonpidätystä, joten tämä on tilille saapunut summa. Jos välittäjä pidätti veron, todellinen brutto on tätä suurempi.">
-                    netto?
+                  <Badge title="The bank statement has no separate withholding, so this is the amount that reached the account. If the broker withheld tax, the real gross is higher.">
+                    net?
                   </Badge>
                 )}
               </td>
@@ -264,9 +244,9 @@ const Dividends = ({ report }: { report: TaxYearView }) => {
       </table>
       {anyMissing && (
         <p className="mt-2 text-sm text-muted">
-          Kumpikaan välittäjä ei erittele osingon ennakonpidätystä tuonnissa, joten brutto on tässä
-          sama kuin tilille saapunut summa. Jos vero pidätettiin, veronalainen osuus on suurempi
-          kuin yllä.
+          Neither broker itemises dividend withholding in the import, so gross here equals the
+          amount that reached the account. If tax was withheld, the taxable part is larger than
+          shown above.
         </p>
       )}
     </>
@@ -283,27 +263,26 @@ export const TaxPage = () => {
 
   const report = useQuery({
     queryKey: ["tax", selected],
-    // `enabled` keeps this from running while `selected` is null; the ?? 0 is
-    // for the type, since the validator takes a year rather than a maybe-year.
+    // `enabled` keeps this from running while `selected` is null; ?? 0 only satisfies the type.
     queryFn: () => getTaxYear({ data: { year: selected ?? 0 } }),
     enabled: selected !== null,
   });
 
   return (
     <>
-      <h1>Verot</h1>
+      <h1>Tax</h1>
       <p className="text-muted">
-        Luvut on laskettu tapahtumistasi. Ne on tarkoitettu esitäytetyn veroilmoituksen
-        tarkistamiseen, ei sen korvaamiseen — eikä veron määrää lasketa, koska pääomatulon
-        veroprosentti riippuu myös tuloista, joita sovellus ei näe.
+        The figures are calculated from your transactions. They are meant for checking the
+        pre-filled tax return, not replacing it — and the amount of tax is not calculated, because
+        the capital income tax rate also depends on income this app cannot see.
       </p>
 
-      {years.isPending && <p>Ladataan…</p>}
-      {years.data?.length === 0 && <Empty>Ei verotettavia tapahtumia yhtenäkään vuonna.</Empty>}
+      {years.isPending && <p>Loading…</p>}
+      {years.data?.length === 0 && <Empty>No taxable events in any year.</Empty>}
 
       {years.data !== undefined && years.data.length > 0 && (
         <label className="mt-4 block">
-          Verovuosi{" "}
+          Tax year{" "}
           <select
             value={selected ?? ""}
             onChange={(event) => setYear(Number(event.target.value))}
@@ -320,25 +299,25 @@ export const TaxPage = () => {
 
       {report.data !== undefined && (
         <>
-          <Section title="Luovutukset">
+          <Section title="Disposals">
             {report.data.exempt && report.data.disposals.length > 0 && (
               <p className="mb-2 text-sm text-muted">
-                Vuoden myynnit yhteensä {eur(report.data.totalSalePriceEur)} — enintään 1 000 €,
-                joten voitot ovat verovapaita eivätkä tappiot vähennyskelpoisia.
+                Total sales for the year {eur(report.data.totalSalePriceEur)} — at most €1,000, so
+                gains are tax-free and losses are not deductible.
               </p>
             )}
             <Disposals report={report.data} />
             {!report.data.exempt && report.data.disposals.length > 0 && (
               <p className="mt-2 text-sm">
-                Voitot {eur(report.data.gainsEur)}, tappiot {eur(report.data.lossesEur)},
-                verotettava {eur(report.data.netEur)}.
+                Gains {eur(report.data.gainsEur)}, losses {eur(report.data.lossesEur)}, taxable{" "}
+                {eur(report.data.netEur)}.
                 {report.data.lossCarriedIn.length > 0 &&
-                  ` Aiemmilta vuosilta käytetty ${eur(report.data.lossesUsedEur)}.`}
+                  ` Used from earlier years: ${eur(report.data.lossesUsedEur)}.`}
               </p>
             )}
             {report.data.lossCarriedOut.length > 0 && (
               <p className="mt-1 text-sm text-muted">
-                Siirtyy seuraaville vuosille:{" "}
+                Carried forward to later years:{" "}
                 {report.data.lossCarriedOut
                   .map((loss) => `${loss.fromYear} ${eur(loss.amountEur)}`)
                   .join(", ")}
@@ -346,24 +325,24 @@ export const TaxPage = () => {
             )}
           </Section>
 
-          <Section title="Osingot">
+          <Section title="Dividends">
             <Dividends report={report.data} />
             {report.data.dividends.length > 0 && (
               <p className="mt-2 text-sm">
-                Veronalaista osinkotuloa yhteensä {eur(report.data.dividendTaxableEur)}.
+                Total taxable dividend income {eur(report.data.dividendTaxableEur)}.
               </p>
             )}
           </Section>
 
-          <Section title="Osakesäästötili">
+          <Section title="Equity savings account">
             <Ost report={report.data} />
           </Section>
 
           <p className="mt-8 text-xs text-muted">
-            Laskettu {report.data.source.transactions} tapahtumasta
+            Calculated from {report.data.source.transactions} transactions
             {report.data.source.earliest !== null &&
-              `, vanhin ${fiDate(report.data.source.earliest)}`}
-            . Jos tapahtumia puuttuu, luvut ovat vajaat — sitä mikään tarkistus ei voi havaita.
+              `, earliest ${formatDate(report.data.source.earliest)}`}
+            . If transactions are missing, the figures are incomplete — no check can detect that.
           </p>
         </>
       )}

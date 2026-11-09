@@ -3,12 +3,7 @@ import { z } from "zod";
 import type { ChatModel } from "../../server/chat/models.ts";
 import { askTurn } from "../server/chat.ts";
 
-/**
- * The server's chat events, validated at the boundary like every other
- * response this app reads. An unrecognised event is dropped rather than
- * rendered: the alternative is putting whatever arrived on screen next to real
- * portfolio figures.
- */
+/** Chat events validated at the boundary; an unrecognised event is dropped, not rendered next to real figures. */
 export const ChatEventSchema = z.union([
   z.object({ type: z.literal("conversation"), id: z.number().int().positive() }),
   z.object({ type: z.literal("tool"), name: z.string() }),
@@ -19,13 +14,7 @@ export const ChatEventSchema = z.union([
 
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
-/**
- * Splits a growing SSE buffer into whole events, returning what is left over.
- *
- * Kept separate from the reader because a chunk boundary can fall anywhere --
- * including mid-JSON -- and getting that wrong shows the user half a number.
- * Pure, so it can be tested without a DOM or a server.
- */
+/** Splits a growing SSE buffer into whole events and returns the remainder; a chunk can end mid-JSON. */
 export const takeEvents = (buffer: string) => {
   const parts = buffer.split("\n\n");
   const rest = parts.pop() ?? "";
@@ -42,9 +31,7 @@ export const takeEvents = (buffer: string) => {
 type AskBody = { message: string; conversationId?: number; model?: ChatModel };
 type Turn = (body: AskBody) => Promise<Response>;
 
-// `fetch` under the hood rather than `EventSource` because the question travels
-// in the request body -- EventSource can only GET, which would put a user's
-// question in a URL and from there into every access log.
+// `fetch`, not `EventSource`: the question travels in the body, not a URL and its access logs.
 export async function* askChat(
   body: AskBody,
   turn: Turn = (data) => askTurn({ data }),
@@ -52,13 +39,12 @@ export async function* askChat(
   const response = await turn(body);
 
   if (!response.ok || !response.body) {
-    // The server's own Finnish message when it sent one (a missing API key, a
-    // refused question); a generic line when the body is not ours to read.
+    // The server's own message when it sent one (a missing API key, a refused question).
     const failure: unknown = await response.json().catch(() => null);
     const parsed = z.object({ error: z.string() }).safeParse(failure);
     yield {
       type: "error",
-      message: parsed.success ? parsed.data.error : "Vastauksen haku epäonnistui",
+      message: parsed.success ? parsed.data.error : "Could not fetch the answer",
     };
     return;
   }

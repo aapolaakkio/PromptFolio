@@ -17,7 +17,7 @@ const record = (over: Partial<ImportRecord> = {}): ImportRecord => ({
   ...over,
 });
 
-test("every import kind has a non-empty Finnish label", () => {
+test("every import kind has a non-empty label", () => {
   const kinds: ImportRecord["kind"][] = ["csv_nordnet", "csv_op", "pdf", "vision", "manual"];
   for (const kind of kinds) {
     expect(IMPORT_KIND_LABELS[kind].length).toBeGreaterThan(0);
@@ -28,12 +28,12 @@ test("undo confirmation names the file and states exactly how many transactions 
   const message = undoConfirmMessage(record({ filename: "nordnet-2025.csv", inserted: 12 }));
   expect(message).toContain("nordnet-2025.csv");
   expect(message).toContain("12");
-  expect(message).toContain("tapahtumaa");
+  expect(message).toContain("transactions");
 });
 
 test("undo confirmation reflects a different import's own inserted count, not a stale one", () => {
   const message = undoConfirmMessage(record({ inserted: 0 }));
-  expect(message).toContain("0 tapahtumaa");
+  expect(message).toContain("0 transactions");
 });
 
 test("undoClickHandler's returned callback calls onUndo with exactly that row's record", () => {

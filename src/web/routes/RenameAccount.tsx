@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "../lib/errors.ts";
 import { editAccount } from "../server/accounts.ts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -11,13 +12,7 @@ import {
   type AccountType,
 } from "./account-type.ts";
 
-/**
- * Edits an account's name and its type. Not its broker or base currency: those
- * are facts the stored transactions were already interpreted under, so changing
- * either after rows exist would silently reinterpret them. The type is
- * different -- nothing has been interpreted under it yet, and it must stay
- * correctable, since a frozen wrong type is how a tax report goes wrong.
- */
+/** Edits name and type, not broker or currency (stored rows were interpreted under those); the type stays correctable since a wrong one breaks tax reports. */
 export const RenameAccount = ({
   accountId,
   currentName,
@@ -50,7 +45,7 @@ export const RenameAccount = ({
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : "Nimen muutos epäonnistui");
+      setError(errorMessage(cause, "Could not rename the account"));
     },
   });
 
@@ -65,7 +60,7 @@ export const RenameAccount = ({
           setOpen(true);
         }}
       >
-        Muokkaa tiliä
+        Edit account
       </button>
     );
   }
@@ -79,11 +74,11 @@ export const RenameAccount = ({
       }}
     >
       <label>
-        Tilin nimi
+        Account name
         <input value={name} required maxLength={100} onChange={(e) => setName(e.target.value)} />
       </label>
       <label>
-        Tilin laji
+        Account type
         <select
           value={accountType}
           onChange={(e) => {
@@ -99,10 +94,10 @@ export const RenameAccount = ({
         </select>
       </label>
       <button type="submit" className="text-sm" disabled={rename.isPending || name.trim() === ""}>
-        {rename.isPending ? "Tallennetaan…" : "Tallenna"}
+        {rename.isPending ? "Saving…" : "Save"}
       </button>
       <button type="button" className="text-sm" onClick={() => setOpen(false)}>
-        Peruuta
+        Cancel
       </button>
       {error && (
         <p role="alert" className="text-loss w-full text-sm">

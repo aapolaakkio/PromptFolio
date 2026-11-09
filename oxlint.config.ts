@@ -26,13 +26,10 @@ export default defineConfig({
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "error",
     "typescript/no-explicit-any": "error",
-    // The database is asynchronous, so a forgotten `await` is a query nobody
-    // waits for -- an ownership check that never refuses, a write that never
-    // lands. Neither shows up in `tsc`, which is why these are on.
+    // A forgotten `await` on the async DB is an ownership check that never refuses; `tsc` does not catch it.
     "typescript/no-floating-promises": "error",
-    // `attributes: false` allows `onSubmit={async () => ...}`, which is how
-    // React handlers are written; the checks that matter here are the ones
-    // left on -- a promise used as a condition is always truthy.
+    // `attributes: false` allows `onSubmit={async () => ...}`.
     "typescript/no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }],
+    "typescript/no-deprecated": "error",
   },
 });

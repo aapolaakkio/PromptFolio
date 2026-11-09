@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { eur, qty, share, fiDate } from "../lib/format.ts";
+import { eur, qty, share, formatDate } from "../lib/format.ts";
 import { instrumentLabel } from "./holdings-label.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
@@ -10,60 +10,37 @@ import { getHoldings } from "../server/portfolio.ts";
 import { refreshPricesNow } from "../server/prices.ts";
 
 const KIND_LABELS = {
-  stock: "Osake",
+  stock: "Share",
   etf: "ETF",
-  fund: "Rahasto",
-  cash: "Käteinen",
+  fund: "Fund",
+  cash: "Cash",
 } satisfies Record<Holding["kind"], string>;
 
-/**
- * The price/staleness column has to read correctly for two distinct real
- * cases (a plain "stale" boolean would blur them together):
- *  - priced, but later than it should be: `priceDate` is a real past date and
- *    `stale` is true. "Later than it should be" is not "not today" -- see
- *    `core/staleness.ts`: at the weekend nothing traded, and a fund's NAV
- *    publishes a weekday behind, so neither earns the badge.
- *  - never priced at all, or priced but not convertible to EUR (no fx rate
- *    for today): `priceDate` may be a real date or `null`, `stale` is
- *    always true, and the market-value/gain cells render "tuntematon"
- *    (see below) rather than any number -- the API never fabricates a
- *    0,00 € for a holding it cannot value.
- * Both states are conveyed through text ("vanha" / "ei hintaa"), not colour
- * alone, so the distinction survives for colour-blind users and in print.
- */
+/** Price column: stale (later than it should be) or never priced/not convertible (always stale; value cells say "unknown"). Conveyed through text, not colour alone. */
 const PriceCell = ({ priceDate, stale }: { priceDate: string | null; stale: boolean }) => {
   if (priceDate === null) {
     return (
       <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
-        ei hintaa
+        no price
       </span>
     );
   }
   return (
     <>
-      {fiDate(priceDate)}
+      {formatDate(priceDate)}
       {stale && (
         <span className="ml-2 rounded-full border border-line px-2 py-0.5 text-xs text-muted">
-          vanha
+          stale
         </span>
       )}
     </>
   );
 };
 
-/**
- * The third state alongside `PriceCell`'s "priced, but not today" and "never
- * priced": cost basis, market value and unrealised gain are not stale and not
- * zero, they are genuinely unknown -- a SELL on the ledger has no matching
- * earlier BUY (typically one page of a multi-page OP import pasted out of
- * order, with the purchase on a page not yet imported). Rendered the same way
- * as `PriceCell`'s badges (a short label, full explanation on hover/focus via
- * `title`) so all three "not a plain number" states read consistently rather
- * than one being an error-red banner and the others a quiet badge.
- */
+/** Cost basis, value and gain can be unknown (e.g. a SELL with no earlier BUY); shown as a badge with the explanation in `title`. */
 const UnknownCostCell = ({ message }: { message: string }) => (
   <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted" title={message}>
-    tuntematon
+    unknown
   </span>
 );
 
@@ -71,11 +48,7 @@ export const HoldingsPage = () => {
   const queryClient = useQueryClient();
   const [sortKey, setSortKey] = useState<SortKey>("valueEur");
   const [direction, setDirection] = useState<SortDirection>("desc");
-  // Which row (by instrumentId) currently shows its inline "enter a price"
-  // form -- closing the "manual price source has no way to enter a price"
-  // gap. Not restricted to instruments whose priceSource is "manual": a
-  // human correcting any instrument's stale/wrong stored price needs the
-  // exact same entry path, see RecordPriceForm.tsx's own doc comment.
+  // The row showing its inline price form; any instrument's stored price can be corrected.
   const [priceFormFor, setPriceFormFor] = useState<number | null>(null);
   /** Which row shows its "correct how this is priced" form. */
   const [editFor, setEditFor] = useState<number | null>(null);
@@ -102,17 +75,19 @@ export const HoldingsPage = () => {
   if (holdings.isError) {
     return (
       <p role="alert" className="text-loss">
-        Omistusten haku epäonnistui. Yritä päivittää sivu.
+        Could not load holdings. Try refreshing the page.
       </p>
     );
   }
-  if (holdings.isPending) return <p>Ladataan…</p>;
+  if (holdings.isPending) return <p>Loading…</p>;
 
   if (rows.length === 0) {
     return (
       <>
-        <h1>Omistukset</h1>
-        <p className="text-muted">Ei omistuksia. Aloita tuomalla CSV-tiedosto Tuonnit-sivulta.</p>
+        <h1>Holdings</h1>
+        <p className="text-muted">
+          No holdings. Start by importing a CSV file on the Imports page.
+        </p>
       </>
     );
   }
@@ -137,27 +112,24 @@ export const HoldingsPage = () => {
   return (
     <>
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1>Omistukset</h1>
+        <h1>Holdings</h1>
         <RefreshPricesButton />
       </div>
-      {/* Above the table, because the one question the table makes you work
-          for -- how much rides on a single position -- is answered by the
-          lengths at a glance. */}
       <section className="mb-6">
         <HoldingsChart holdings={rows} />
       </section>
       <table>
         <thead>
           <tr>
-            {header("name", "Arvopaperi", false)}
-            <th>Laji</th>
-            <th>Valuutta</th>
-            {header("quantity", "Määrä")}
-            {header("costEur", "Hankintameno")}
-            {header("valueEur", "Markkina-arvo")}
-            {header("unrealisedEur", "Tuotto")}
-            {header("weight", "Paino")}
-            <th>Hinta</th>
+            {header("name", "Instrument", false)}
+            <th>Kind</th>
+            <th>Currency</th>
+            {header("quantity", "Quantity")}
+            {header("costEur", "Cost basis")}
+            {header("valueEur", "Market value")}
+            {header("unrealisedEur", "Gain")}
+            {header("weight", "Weight")}
+            <th>Price</th>
           </tr>
         </thead>
         <tbody>
@@ -172,9 +144,7 @@ export const HoldingsPage = () => {
               <td className="num">{qty(row.quantity)}</td>
               <td className="num">
                 {row.costEur === null ? (
-                  // SAFETY: costEur/costBasisError are null together (see
-                  // Holding's own docs); the `?? ""` fallback only guards a
-                  // shape TypeScript itself cannot correlate across fields.
+                  // SAFETY: costEur/costBasisError are null together; `?? ""` only satisfies the types.
                   <UnknownCostCell message={row.costBasisError?.message ?? ""} />
                 ) : (
                   eur(row.costEur)
@@ -182,10 +152,7 @@ export const HoldingsPage = () => {
               </td>
               <td className="num">
                 {row.valueEur === null ? (
-                  // valueEur/unrealisedEur can be null for either of two independent
-                  // reasons (see Holding's own docs): an unmatched-disposal cost basis
-                  // (costBasisError) or a valuation failure -- no price or no fx rate
-                  // for today (valuationError). Whichever is set explains this cell.
+                  // Null from costBasisError or valuationError; whichever is set explains this cell.
                   <UnknownCostCell
                     message={row.costBasisError?.message ?? row.valuationError ?? ""}
                   />
@@ -212,8 +179,7 @@ export const HoldingsPage = () => {
               </td>
               <td className="num">
                 {row.weight === null ? (
-                  // weight is null in exactly the same cases valueEur is (see
-                  // Holding's own doc) -- the same explanation applies here.
+                  // weight is null exactly when valueEur is.
                   <UnknownCostCell
                     message={row.costBasisError?.message ?? row.valuationError ?? ""}
                   />
@@ -231,7 +197,7 @@ export const HoldingsPage = () => {
                       setPriceFormFor(priceFormFor === row.instrumentId ? null : row.instrumentId)
                     }
                   >
-                    {priceFormFor === row.instrumentId ? "Peruuta" : "Syötä hinta"}
+                    {priceFormFor === row.instrumentId ? "Cancel" : "Enter price"}
                   </button>
                   <button
                     type="button"
@@ -240,10 +206,10 @@ export const HoldingsPage = () => {
                       setEditFor(editFor === row.instrumentId ? null : row.instrumentId)
                     }
                   >
-                    {editFor === row.instrumentId ? "Sulje" : "Muokkaa"}
+                    {editFor === row.instrumentId ? "Close" : "Edit"}
                   </button>
                   {row.lookupStatus === "attention" && (
-                    <span className="ml-1 text-xs text-loss">Hintalähdettä ei löytynyt</span>
+                    <span className="ml-1 text-xs text-loss">No price source found</span>
                   )}
                   {editFor === row.instrumentId && (
                     <EditInstrumentForm
@@ -274,11 +240,7 @@ export const HoldingsPage = () => {
   );
 };
 
-/**
- * Runs the price refresh now. It fetches every instrument's latest price and
- * fills missing history, so it can take a while; everything priced is
- * refetched when it finishes.
- */
+/** Runs the price refresh now (latest prices and missing history; can take a while). */
 const RefreshPricesButton = () => {
   const queryClient = useQueryClient();
   const refresh = useMutation({
@@ -289,17 +251,17 @@ const RefreshPricesButton = () => {
     <div className="flex items-baseline gap-2">
       {refresh.isError && (
         <span role="alert" className="text-loss text-sm">
-          Hintojen päivitys epäonnistui
+          Price refresh failed
         </span>
       )}
-      {refresh.isSuccess && <span className="text-muted text-sm">Hinnat päivitetty</span>}
+      {refresh.isSuccess && <span className="text-muted text-sm">Prices refreshed</span>}
       <button
         type="button"
         className="text-sm"
         disabled={refresh.isPending}
         onClick={() => refresh.mutate()}
       >
-        {refresh.isPending ? "Päivitetään…" : "Päivitä hinnat"}
+        {refresh.isPending ? "Refreshing…" : "Refresh prices"}
       </button>
     </div>
   );

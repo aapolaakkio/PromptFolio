@@ -15,18 +15,16 @@ import {
 import { authed, readable } from "./guard.ts";
 
 const Dimension = z.enum(["kind", "currency", "account", "instrument"]);
-const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Päivämäärän on oltava muotoa YYYY-MM-DD");
+const IsoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "The date must be in the format YYYY-MM-DD");
 
 /** What every question on this screen is asked about: a slicing and a date. */
 const Slice = z.object({ by: Dimension.optional(), on: IsoDate.optional() });
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/**
- * A percentage on the wire as a decimal string, like every other quantity here,
- * converted to integer basis points at the boundary. More than two decimals is
- * refused rather than rounded -- see the route this replaced for why.
- */
+/** A percentage as a decimal string, converted to integer basis points; more than two decimals is refused, not rounded. */
 const toBasisPoints = (percent: string): number =>
   Math.round(Number(percent.replace(",", ".")) * (BASIS_POINTS / 100));
 
@@ -46,7 +44,7 @@ export const saveTargetAllocation = createServerFn({ method: "POST" })
           z
             .object({
               key: z.string().min(1).max(120),
-              weightPercent: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Osuus muodossa 12.34"),
+              weightPercent: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Share in the format 12.34"),
             })
             .strict(),
         )
@@ -64,8 +62,7 @@ export const saveTargetAllocation = createServerFn({ method: "POST" })
         weightBp: toBasisPoints(target.weightPercent),
       })),
     );
-    // Refused with the total it actually sums to, so the owner can see what is
-    // missing rather than being told only that it is wrong.
+    // Refused with the actual total so the owner sees what is missing.
     if (!result.ok) throw new Error(result.message);
     return { saved: data.targets.length };
   });
@@ -82,7 +79,7 @@ export const getDepositPlan = createServerFn()
   .middleware([authed])
   .validator(
     Slice.extend({
-      amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Summa muodossa 1234.56"),
+      amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Amount in the format 1234.56"),
     }),
   )
   .handler(({ data, context }) =>

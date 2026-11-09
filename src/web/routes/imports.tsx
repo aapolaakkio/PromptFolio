@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "../lib/errors.ts";
 import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -28,10 +29,7 @@ import { firstThenRest } from "./preview-order.ts";
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
 
-/**
- * One previewed input: the file it came from (none for the paste), what the
- * server read from it, and the rows as the owner has since edited them.
- */
+/** One previewed input: its file (none for a paste), what the server read, and the owner's edited rows. */
 type Previewed = {
   readonly name: string;
   readonly file: File | null;
@@ -67,12 +65,7 @@ const toEditable = (txn: DraftResponse["txns"][number]): EditableTxn => ({
   note: txn.note ?? "",
 });
 
-/**
- * Back to what the commit takes. Fields the table does not show (the resolved
- * instrument, the unit price, tax, the broker's own id, the broker's name for
- * an instrument not yet added) are carried from the
- * row the preview produced, so editing a summary column never drops them.
- */
+/** Back to what the commit takes. Fields the table does not show are carried over from the preview row. */
 const fromEditable = (
   row: EditableTxn,
   base: DraftResponse["txns"][number] | undefined,
@@ -97,10 +90,7 @@ const fromEditable = (
   instrumentName: base?.instrumentName,
 });
 
-/**
- * A line the reader could not turn into fields becomes a blank row carrying
- * its text, so the owner fills it in or removes it rather than losing it.
- */
+/** A line the reader could not parse becomes a blank row carrying its text, to fill in or remove. */
 const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn => ({
   line: problem.line,
   tradeDate: "",
@@ -113,10 +103,7 @@ const rowFromProblem = (problem: DraftResponse["problems"][number]): EditableTxn
   note: problem.rawLine ?? problem.message,
 });
 
-/**
- * A row skipped on purpose is reported, not offered for editing: the other leg
- * of its event already carries it, and filling it in would book it twice.
- */
+/** A row skipped on purpose is reported, not editable: the other leg of its event carries it. */
 const editableRows = (draft: DraftResponse): EditableTxn[] => [
   ...draft.txns.map(toEditable),
   ...draft.problems.filter((problem) => problem.ignored !== true).map(rowFromProblem),
@@ -135,10 +122,10 @@ const kindOf = (entry: Previewed): "csv" | "paste" | "pdf" => {
 };
 
 const TXN_COLUMNS: readonly Column<EditableTxn>[] = [
-  { key: "tradeDate", label: "Päivä", kind: "date" },
+  { key: "tradeDate", label: "Date", kind: "date" },
   {
     key: "type",
-    label: "Laji",
+    label: "Type",
     kind: "select",
     options: [
       "BUY",
@@ -153,23 +140,17 @@ const TXN_COLUMNS: readonly Column<EditableTxn>[] = [
     ].map((value) => ({ value, label: value })),
   },
   { key: "isin", label: "ISIN", kind: "text" },
-  { key: "quantityText", label: "Määrä", kind: "decimal", numeric: true },
-  { key: "amountEur", label: "Summa", kind: "decimal", numeric: true },
-  { key: "feeEur", label: "Kulut", kind: "decimal", numeric: true },
-  { key: "currency", label: "Valuutta", kind: "text" },
-  { key: "note", label: "Selite", kind: "text" },
+  { key: "quantityText", label: "Quantity", kind: "decimal", numeric: true },
+  { key: "amountEur", label: "Amount", kind: "decimal", numeric: true },
+  { key: "feeEur", label: "Fees", kind: "decimal", numeric: true },
+  { key: "currency", label: "Currency", kind: "text" },
+  { key: "note", label: "Note", kind: "text" },
 ];
 
-/**
- * What an import did, in one line.
- *
- * Enriched rows are named separately from skipped ones: a re-import that filled
- * in a field the ledger was missing did something, and reporting it as "ohitettu
- * kaksoiskappaleena" would tell the owner nothing happened when something did.
- */
+/** What an import did, in one line. Enriched rows are named apart from skipped duplicates. */
 const importSummary = (data: CommitResult): string => {
-  const base = `${data.inserted} tapahtumaa tuotu, ${data.skipped} ohitettu kaksoiskappaleena`;
-  return data.enriched > 0 ? `${base}, ${data.enriched} täydennetty.` : `${base}.`;
+  const base = `${data.inserted} transactions imported, ${data.skipped} skipped as duplicates`;
+  return data.enriched > 0 ? `${base}, ${data.enriched} enriched.` : `${base}.`;
 };
 
 export const ImportsPage = () => {
@@ -182,9 +163,7 @@ export const ImportsPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
   const [showCreateAccount, setShowCreateAccount] = useState(false);
-  // Which import an undo request is currently in flight for -- disables that one
-  // entry's button (see ImportHistory's own `undoingId` prop) without disabling the
-  // rest of the table.
+  // The import an undo is in flight for; disables only that entry's button.
   const [undoingId, setUndoingId] = useState<number | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
 
@@ -198,11 +177,7 @@ export const ImportsPage = () => {
     queryFn: () => getImports(),
   });
 
-  // Undo is destructive and irreversible from the user's own point of view (the
-  // ledger itself stays append-only server-side, but there is no UI path back to
-  // these exact rows once removed) -- `handleUndo` below always confirms with the
-  // user, stating plainly how many transactions will be removed
-  // (`undoConfirmMessage`), before this mutation ever runs.
+  // Irreversible from the user's side, so `handleUndo` always confirms first.
   const undo = useMutation({
     mutationFn: (importId: number) => undoImport({ data: { importId } }),
     onMutate: (importId) => {
@@ -211,17 +186,13 @@ export const ImportsPage = () => {
     },
     onSuccess: () => {
       setUndoingId(null);
-      // Refetches both the history (so the entry now shows "peruttu") and every
-      // holdings/allocation/returns query the removed transactions could have
-      // affected -- the same broad invalidation commit already does below.
+      // Refetches the history and every query the removed transactions could affect.
       void queryClient.invalidateQueries();
     },
     onError: (cause) => {
       setUndoingId(null);
-      // The server's own 409 message already names exactly why (a later sale
-      // depends on the units this import introduced, per commit.ts's undoImport) --
-      // shown verbatim rather than folded into a generic failure message.
-      setUndoError(cause instanceof Error ? cause.message : "Perumine epäonnistui");
+      // The server's 409 message says why (e.g. a later sale depends on these units); shown verbatim.
+      setUndoError(errorMessage(cause, "Undo failed"));
     },
   });
 
@@ -231,12 +202,7 @@ export const ImportsPage = () => {
   };
   const hasAccounts = (accounts.data?.length ?? 0) > 0;
   const selectedAccount = (accounts.data ?? []).find((a) => a.id === accountId);
-  // A brand-new install has zero accounts and, per spec §10 item 3, no way
-  // to reach account creation except `curl` -- the gap this form closes.
-  // The create form shows automatically once accounts have loaded and there
-  // are none, so a first-time user finds it without documentation; once at
-  // least one account exists, it stays tucked behind a toggle instead of
-  // permanently occupying screen space on every later visit.
+  // With no accounts the create form shows automatically; afterwards it sits behind a toggle.
   const showCreateAccountForm = showCreateAccount || (!accounts.isPending && !hasAccounts);
 
   const resetOutcome = () => {
@@ -253,8 +219,7 @@ export const ImportsPage = () => {
   const fileForm = (file: File): FormData => {
     const data = new FormData();
     data.set("file", file);
-    // SAFETY: the "Esikatsele" button below is disabled while `accountId` is
-    // null, so it is always set by the time a preview or commit runs.
+    // SAFETY: the "Preview" button is disabled while `accountId` is null.
     data.set("accountId", String(accountId));
     return data;
   };
@@ -272,13 +237,11 @@ export const ImportsPage = () => {
         return { name: file.name, file, draft, rows: editableRows(draft) };
       }),
     onSuccess: showPreviews,
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
+    onError: (cause) => setError(errorMessage(cause, "Preview failed")),
   });
 
-  // The pasted text travels from the <textarea> to this body untouched --
-  // never trimmed or whitespace-collapsed. A recipe reads tabs, separator
-  // lines and unit padding ("1,0453   kpl") as structure, so normalising any
-  // of them would change the layout it was written for.
+  // The pasted text is sent untouched, never trimmed or collapsed: a recipe reads tabs,
+  // separator lines and unit padding ("1,0453   kpl") as structure.
   const pasteBody = () => ({
     // SAFETY: same as fileForm -- the paste buttons are disabled whenever
     // `pasteText` is empty or `accountId` is null.
@@ -289,15 +252,14 @@ export const ImportsPage = () => {
   const previewPaste = useMutation({
     mutationFn: async () => {
       const draft = await previewOpPaste({ data: pasteBody() });
-      return [{ name: "Liite", file: null, draft, rows: editableRows(draft) }];
+      return [{ name: "Pasted text", file: null, draft, rows: editableRows(draft) }];
     },
     onSuccess: showPreviews,
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Esikatselu epäonnistui"),
+    onError: (cause) => setError(errorMessage(cause, "Preview failed")),
   });
 
-  // One input at a time, so each file stays its own import with its own undo.
-  // A failure stops the loop: the files before it are in, the failing one is
-  // named, and the rest stay in the preview for a retry.
+  // One input at a time, so each file is its own import with its own undo. A failure stops
+  // the loop: earlier files are in, the failing one is named, the rest stay for a retry.
   const commit = useMutation({
     mutationFn: async () => {
       for (const entry of previews ?? []) {
@@ -322,7 +284,7 @@ export const ImportsPage = () => {
           setPreviews((prev) => prev?.filter((p) => p !== entry) ?? null);
           setFiles((prev) => prev.filter((f) => f !== entry.file));
         } catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Tuonti epäonnistui";
+          const message = errorMessage(cause, "Import failed");
           throw new Error(`${entry.name}: ${message}`);
         }
       }
@@ -331,7 +293,7 @@ export const ImportsPage = () => {
       setPreviews(null);
       setError(null);
     },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Tuonti epäonnistui"),
+    onError: (cause) => setError(errorMessage(cause, "Import failed")),
     onSettled: () => void queryClient.invalidateQueries(),
   });
 
@@ -339,8 +301,7 @@ export const ImportsPage = () => {
 
   const drafts = (previews ?? []).map((p) => p.draft);
   const unknown = unknownAcross(drafts);
-  // The rows on screen are what will be imported, so the count and the
-  // can-commit rule read them rather than the draft the server first sent.
+  // The rows on screen are what will be imported, so the count and can-commit rule read them.
   const editedRows = (previews ?? []).reduce((sum, entry) => sum + entry.rows.length, 0);
   const unfinished = (previews ?? []).flatMap((entry) => unfinishedLines(entry.rows));
   const summary =
@@ -364,11 +325,11 @@ export const ImportsPage = () => {
 
   return (
     <>
-      <h1>Tuonnit</h1>
+      <h1>Imports</h1>
 
       <section className="card">
         <label>
-          Tili
+          Account
           <select
             value={accountId ?? ""}
             onChange={(e) => {
@@ -377,7 +338,7 @@ export const ImportsPage = () => {
             }}
           >
             <option value="" disabled>
-              Valitse tili
+              Choose an account
             </option>
             {(accounts.data ?? []).map((a) => (
               <option key={a.id} value={a.id}>
@@ -394,7 +355,7 @@ export const ImportsPage = () => {
               className="mt-3 text-sm"
               onClick={() => setShowCreateAccount((v) => !v)}
             >
-              {showCreateAccount ? "Peruuta" : "+ Uusi tili"}
+              {showCreateAccount ? "Cancel" : "+ New account"}
             </button>
             {selectedAccount && (
               <span className="mt-3 text-sm text-muted">
@@ -413,7 +374,7 @@ export const ImportsPage = () => {
         )}
         {!accounts.isPending && !hasAccounts && (
           <p className="mt-3 text-sm text-muted">
-            Ei vielä tilejä. Luo ensimmäinen tili alle aloittaaksesi tuonnin.
+            No accounts yet. Create your first account below to start importing.
           </p>
         )}
         {showCreateAccountForm && (
@@ -429,29 +390,28 @@ export const ImportsPage = () => {
       </section>
 
       {selectedAccount?.kind === "bank" ? (
-        // Statements go onto bank accounts and nowhere else, so choosing one
-        // switches this page to the statement import.
+        // Choosing a bank account switches this page to the bank statement import.
         <BankStatementImport key={selectedAccount.id} accountId={selectedAccount.id} />
       ) : (
         <>
           <div className="mt-4 flex gap-2">
             <button type="button" disabled={source === "file"} onClick={() => selectSource("file")}>
-              CSV-tiedosto
+              CSV file
             </button>
             <button
               type="button"
               disabled={source === "paste"}
               onClick={() => selectSource("paste")}
             >
-              Liitä teksti
+              Paste text
             </button>
           </div>
 
           {source === "file" ? (
             <section className="card mt-4">
               <label>
-                Välittäjän CSV- tai PDF-tiedostot (Nordnet, OP, muut välittäjät). Voit valita useita
-                tiedostoja kerralla.
+                Broker CSV or PDF files (Nordnet, OP, other brokers). You can select several files
+                at once.
                 <input
                   type="file"
                   accept=".csv,.pdf,text/csv,application/pdf"
@@ -467,13 +427,13 @@ export const ImportsPage = () => {
                 disabled={files.length === 0 || accountId === null || previewFile.isPending}
                 onClick={() => previewFile.mutate()}
               >
-                {previewFile.isPending ? "Luetaan…" : "Esikatsele"}
+                {previewFile.isPending ? "Reading…" : "Preview"}
               </button>
             </section>
           ) : (
             <section className="card mt-4">
               <label>
-                Välittäjän verkkopalvelun tapahtumataulukko (kopioi ja liitä sellaisenaan)
+                The transaction table from the broker's website (copy and paste it as is)
                 <textarea
                   rows={10}
                   className="font-mono text-xs"
@@ -489,7 +449,7 @@ export const ImportsPage = () => {
                 disabled={pasteText === "" || accountId === null || previewPaste.isPending}
                 onClick={() => previewPaste.mutate()}
               >
-                {previewPaste.isPending ? "Luetaan…" : "Esikatsele"}
+                {previewPaste.isPending ? "Reading…" : "Preview"}
               </button>
             </section>
           )}
@@ -520,9 +480,9 @@ export const ImportsPage = () => {
 
               {unknown.length > 0 && (
                 <section className="mt-4">
-                  <h2>Tuntemattomat arvopaperit</h2>
+                  <h2>Unknown instruments</h2>
                   <p className="text-muted">
-                    Lisää nämä ennen tuontia, jotta hinnat osataan hakea oikeasta lähteestä.
+                    Add these before importing, so prices are fetched from the right source.
                   </p>
                   <div className="mt-3 grid gap-4 md:grid-cols-2">
                     {unknown.map((u) => (
@@ -540,8 +500,8 @@ export const ImportsPage = () => {
 
               {unfinished.length > 0 && (
                 <p role="alert" className="mt-6 text-loss">
-                  {unfinished.length === 1 ? "Rivi" : "Rivit"} {unfinished.join(", ")}: päivä tai
-                  summa puuttuu. Täydennä tai poista ne ennen tuontia.
+                  {unfinished.length === 1 ? "Row" : "Rows"} {unfinished.join(", ")}: date or amount
+                  is missing. Complete or remove them before importing.
                 </p>
               )}
 
@@ -552,10 +512,10 @@ export const ImportsPage = () => {
                 onClick={() => commit.mutate()}
               >
                 {commit.isPending
-                  ? "Tuodaan…"
+                  ? "Importing…"
                   : previews.length > 1
-                    ? `Tuo ${previews.length} tiedostoa (${summary.good} tapahtumaa)`
-                    : `Tuo ${summary.good} tapahtumaa`}
+                    ? `Import ${previews.length} files (${summary.good} transactions)`
+                    : `Import ${summary.good} transactions`}
               </button>
             </>
           )}
@@ -563,7 +523,7 @@ export const ImportsPage = () => {
       )}
 
       <section className="card mt-6">
-        <h2>Tuontihistoria</h2>
+        <h2>Import history</h2>
         {undoError && (
           <p role="alert" className="mt-2 text-loss">
             {undoError}
@@ -571,10 +531,10 @@ export const ImportsPage = () => {
         )}
         {history.isError ? (
           <p role="alert" className="text-loss">
-            Tuontihistorian haku epäonnistui. Yritä päivittää sivu.
+            Could not load the import history. Try refreshing the page.
           </p>
         ) : history.isPending ? (
-          <p>Ladataan…</p>
+          <p>Loading…</p>
         ) : (
           <ImportHistory records={history.data} undoingId={undoingId} onUndo={handleUndo} />
         )}
@@ -595,18 +555,18 @@ const PreviewCard = ({
 }) => (
   <section className="card mt-6">
     <h2>
-      Esikatselu — {entry.name} ({entry.draft.broker})
+      Preview — {entry.name} ({entry.draft.broker})
     </h2>
     <p>
-      {entry.rows.length} tuotavaa riviä
-      {unknownCount > 0 && `, ${unknownCount} tuntematonta arvopaperia`}. Korjaa rivit tarvittaessa
-      ennen tuontia.
+      {entry.rows.length} rows to import
+      {unknownCount > 0 && `, ${unknownCount} unknown instruments`}. Correct the rows if needed
+      before importing.
     </p>
     {entry.draft.added.length > 0 && (
       <ul className="text-sm">
         {entry.draft.added.map((added) => (
           <li key={added.isin}>
-            Lisätään: {added.name} — {added.sourceKey ?? "haetaan tunnusta"} · {added.currency}
+            Adding: {added.name} — {added.sourceKey ?? "looking up ticker"} · {added.currency}
           </li>
         ))}
       </ul>
@@ -617,19 +577,13 @@ const PreviewCard = ({
           .filter((problem) => problem.ignored === true)
           .map((problem) => (
             <li key={problem.line}>
-              Ohitettu rivi {problem.line}: {problem.message}
+              Skipped row {problem.line}: {problem.message}
             </li>
           ))}
       </ul>
     )}
 
-    {/*
-        Every row, editable and scrollable, rather than the first 50 and a count
-        of what was hidden: this is the last screen before the rows enter the
-        ledger, so the rows a reviewer most needs to check are exactly the ones a
-        cut-off list hides. Lines the reader could not parse are here too, as
-        blank rows carrying their text.
-      */}
+    {/* Every row, never a cut-off list: this is the last screen before rows enter the ledger. */}
     <DraftTable
       rows={entry.rows}
       columns={TXN_COLUMNS}

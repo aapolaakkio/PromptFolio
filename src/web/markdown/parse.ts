@@ -1,21 +1,7 @@
 /**
- * Enough Markdown for what the assistant writes, and deliberately no more.
- *
- * The model answers in prose with lists and the occasional table of figures,
- * and until now every one of those arrived as a wall of asterisks and pipes.
- * This parses the shapes it actually emits -- headings, lists, tables, code,
- * bold, italic -- into a tree the renderer turns into React elements.
- *
- * It produces a tree rather than HTML on purpose. An answer can quote a payee's
- * own text, which came out of a bank statement and is not something this app
- * wrote; building HTML from it and injecting the string would make every
- * imported file a place to put markup. Elements cannot carry markup, so the
- * question never arises.
- *
- * What it leaves out, because the model does not write it and each one is a way
- * to be wrong: nested lists, images, footnotes, and links -- a link's text is
- * kept and its target dropped, since a clickable destination assembled from
- * statement text is a phishing surface with nothing on the other end of it.
+ * Enough Markdown for what the assistant writes: headings, lists, tables, code, bold, italic.
+ * Produces a tree, not HTML: answers can quote bank-statement text, and elements cannot carry markup.
+ * Left out on purpose: nested lists, images, footnotes; a link keeps its text and drops its target (phishing surface).
  */
 
 export type Inline = {
@@ -109,8 +95,7 @@ export const parseMarkdown = (source: string): Block[] => {
         body.push(lines[index] ?? "");
         index += 1;
       }
-      // A fence the model never closed still shows its contents, rather than
-      // swallowing the rest of the answer.
+      // An unclosed fence still shows its contents rather than swallowing the answer.
       index += 1;
       blocks.push({ type: "code", text: body.join("\n") });
       continue;

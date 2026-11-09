@@ -1,20 +1,8 @@
-/**
- * The focus behaviour a chart over time wants.
- *
- * `nearest-x` with an infinite reach, so the crosshair follows the pointer
- * across empty plot rather than dropping inspection between sparse points --
- * a value series with one point a day has plenty of empty vertical space, and
- * a tooltip that vanishes when the pointer strays off the line reads as broken.
- */
+/** `nearest-x` with infinite reach: the crosshair follows the pointer across empty plot between sparse points. */
 export const TIME_FOCUS = {
   focus: "nearest-x",
   maxFocusDistance: Number.POSITIVE_INFINITY,
 } as const;
 
-/**
- * The focus behaviour a chart of discrete things wants: one mark, its own
- * tooltip, and inspection cleared when the pointer leaves it. A finite reach is
- * the default, and the right one here -- hovering the gap between two bars
- * should show nothing, not the nearest bar.
- */
+/** One mark with its own tooltip, cleared when the pointer leaves; finite reach so the gap between bars shows nothing. */
 export const MARK_FOCUS = { focus: "nearest" } as const;

@@ -3,25 +3,19 @@ import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getReconciliation, getSnapshots, removeSnapshot } from "../server/snapshots.ts";
-import { fiDate, qty } from "../lib/format.ts";
+import { formatDate, qty } from "../lib/format.ts";
 import { AdjustRow } from "./AdjustRow.tsx";
 import { SnapshotForm } from "./SnapshotForm.tsx";
 import { SnapshotPaste } from "./SnapshotPaste.tsx";
 import { explain, needsAttention, type ReconcileRow } from "./reconcile-view.ts";
 
 const SOURCE_LABELS = new Map<string, string>([
-  ["pdf", "PDF-ote"],
-  ["vision", "Kuva"],
-  ["manual", "Syötetty käsin"],
+  ["pdf", "PDF statement"],
+  ["vision", "Image"],
+  ["manual", "Entered by hand"],
 ]);
 
-/**
- * Compares a broker's holdings statement against what the ledger derives for the
- * same day. Read-only on purpose: this screen reports differences and resolves
- * none of them. Turning a difference into an adjusting transaction is a separate,
- * deliberate act -- an adjustment has no broker record behind it, so it must
- * never happen as a side effect of looking at a statement.
- */
+/** Compares a broker statement with what the ledger derives for that day. Read-only: an adjusting transaction is a separate, deliberate act. */
 export const ReconcilePage = () => {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
@@ -58,15 +52,15 @@ export const ReconcilePage = () => {
 
   return (
     <section>
-      <h1>Täsmäytys</h1>
+      <h1>Reconcile</h1>
       <p className="text-muted">
-        Vertaa välittäjän otetta siihen, mitä kirjanpito johtaa samalle päivälle. Tämä näkymä ei
-        muuta mitään — ero on sinun ratkaistavasi.
+        Compares the broker's statement with what the ledger derives for the same day. This view
+        changes nothing — resolving a difference is up to you.
       </p>
 
       <div className="mt-4 flex flex-wrap gap-4">
         <label>
-          Tili
+          Account
           <select
             value={chosenAccount ?? ""}
             onChange={(e) => {
@@ -83,14 +77,15 @@ export const ReconcilePage = () => {
         </label>
 
         <label>
-          Ote
+          Statement
           <select
             value={chosenSnapshot ?? ""}
             onChange={(e) => setSnapshotId(Number(e.target.value))}
           >
             {(snapshots.data ?? []).map((snapshot) => (
               <option key={snapshot.id} value={snapshot.id}>
-                {fiDate(snapshot.asOf)} · {SOURCE_LABELS.get(snapshot.source) ?? snapshot.source}
+                {formatDate(snapshot.asOf)} ·{" "}
+                {SOURCE_LABELS.get(snapshot.source) ?? snapshot.source}
               </option>
             ))}
           </select>
@@ -102,32 +97,30 @@ export const ReconcilePage = () => {
             className="self-end"
             disabled={remove.isPending}
             onClick={() => {
-              // Deleting a statement leaves any adjustment it produced in place,
-              // so this is not a destructive act on the ledger -- said plainly
-              // rather than left to be discovered.
+              // Deleting a statement leaves its adjustments in place; the prompt says so.
               if (
                 globalThis.confirm(
-                  "Poistetaanko tämä ote? Sen perusteella tehdyt korjaukset jäävät voimaan.",
+                  "Delete this statement? Adjustments made from it stay in effect.",
                 )
               ) {
                 remove.mutate(chosenSnapshot);
               }
             }}
           >
-            Poista ote
+            Delete statement
           </button>
         )}
       </div>
 
       {snapshots.isSuccess && snapshots.data.length === 0 && (
         <p className="mt-6 text-muted">
-          Tälle tilille ei ole vielä yhtään otetta. Lisää ote, niin näet erot.
+          This account has no statements yet. Add one to see the differences.
         </p>
       )}
 
       {reconciliation.isError && (
         <p role="alert" className="text-loss mt-4">
-          Täsmäytystä ei voitu hakea.
+          Could not load the reconciliation.
         </p>
       )}
 
@@ -164,19 +157,19 @@ const Result = ({
     <>
       <p className="mt-6">
         {attention.length === 0
-          ? `Kaikki ${rows.length} riviä täsmäävät ${fiDate(asOf)}.`
-          : `${attention.length} / ${rows.length} riviä eroaa ${fiDate(asOf)}.`}
+          ? `All ${rows.length} rows match on ${formatDate(asOf)}.`
+          : `${attention.length} / ${rows.length} rows differ on ${formatDate(asOf)}.`}
       </p>
 
       <div className="mt-3 max-h-112 overflow-auto rounded border border-line">
         <table>
           <thead className="sticky top-0 bg-surface">
             <tr>
-              <th>Arvopaperi</th>
-              <th className="num">Kirjanpito</th>
-              <th className="num">Ote</th>
-              <th className="num">Ero</th>
-              <th>Selitys</th>
+              <th>Instrument</th>
+              <th className="num">Ledger</th>
+              <th className="num">Statement</th>
+              <th className="num">Difference</th>
+              <th>Explanation</th>
               <th />
             </tr>
           </thead>

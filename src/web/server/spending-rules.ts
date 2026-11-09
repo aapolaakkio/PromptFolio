@@ -14,12 +14,7 @@ export const getSpendingRules = createServerFn()
     categories: Object.entries(CATEGORY_LABELS).map(([id, label]) => ({ id, label })),
   }));
 
-/**
- * Stores rules the person wrote themselves.
- *
- * Marked `user`, which is what makes them the ones the assistant may never
- * overwrite -- see spending/rules.ts's ASSISTANT_MAY_CHANGE.
- */
+/** Stores user-written rules, marked `user` so the assistant never overwrites them (see spending/rules.ts ASSISTANT_MAY_CHANGE). */
 export const saveSpendingRules = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(
@@ -40,7 +35,7 @@ export const deleteSpendingRule = createServerFn({ method: "POST" })
   .validator(z.object({ pattern: z.string().min(1) }))
   .handler(async ({ data, context }) => {
     if (!(await removeRule(db, context.userId, data.pattern))) {
-      throw new Error("Sääntöä ei löydy");
+      throw new Error("Rule not found");
     }
     return { ok: true };
   });

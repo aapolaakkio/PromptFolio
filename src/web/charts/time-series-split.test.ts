@@ -13,7 +13,6 @@ describe("splitEstimated", () => {
   test("draws days valued at cost apart from days valued at real prices", () => {
     const { real, estimate } = splitEstimated(rows);
     expect(real.map((row) => row.value)).toEqual([130, 135]);
-    // The estimate carries on to the first real day, so the two lines meet.
     expect(estimate.map((row) => row.value)).toEqual([100, 100, 130]);
   });
 

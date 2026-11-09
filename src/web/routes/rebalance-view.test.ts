@@ -12,7 +12,7 @@ describe("targetTotal", () => {
     ).toBe("100.00");
   });
 
-  test("handles a decimal comma, which is what a Finnish keyboard produces", () => {
+  test("handles a decimal comma, which is what many European keyboards produce", () => {
     expect(
       targetTotal([
         { key: "a", weightPercent: "33,33" },

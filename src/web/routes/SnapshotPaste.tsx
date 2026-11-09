@@ -7,6 +7,7 @@ import {
   proposeSnapshotFromPdf,
   saveSnapshot,
 } from "../server/snapshots.ts";
+import { errorMessage } from "../lib/errors.ts";
 import { getInstruments } from "../server/instruments.ts";
 import { holdingsTotalCheck } from "./draft-edit.ts";
 import { type Column, DraftTable } from "./DraftTable.tsx";
@@ -23,21 +24,7 @@ type HoldingRow = {
 const isPdf = (file: File): boolean =>
   file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
-/**
- * Takes a broker's holdings -- a file, a pasted table, or a statement PDF --
- * and proposes the snapshot it describes.
- *
- * Three shapes arrive here and the server tells them apart: a CSV or
- * spreadsheet copy, which is tab-separated with a header row; a table copied
- * from a web page, which is one value per line; and a PDF, which the model
- * reads. The user should not have to know which kind they are holding.
- *
- * Nothing is stored until every row is pointed at an instrument. A statement
- * names its holdings the way the broker prints them, so an unmatched row is
- * ordinary on a first paste rather than an error -- and a row left unmatched
- * blocks the save instead of being dropped, since a statement missing a holding
- * reads as one the owner does not have.
- */
+/** Proposes a snapshot from a broker file, pasted table or PDF (the server tells them apart). Nothing is stored until every row matches an instrument: a dropped row would read as a holding the owner lacks. */
 export const SnapshotPaste = ({
   accountId,
   onCreated,
@@ -59,17 +46,12 @@ export const SnapshotPaste = ({
     queryFn: () => getInstruments(),
   });
 
-  // Three sources, one preview: a broker that exports a holdings file (Nordnet),
-  // one that does not (OP), where the table is copied off the page, and a
-  // downloaded statement PDF, which the model reads. A PDF carries its own date
-  // and its own printed total, so neither has to be typed in.
   const preview = useMutation({
     mutationFn: async () => {
       if (file !== null && isPdf(file)) {
         const form = new FormData();
         form.set("file", file);
-        const read = await proposeSnapshotFromPdf({ data: form });
-        return { ...read, statedTotalEur: read.statedTotalEur };
+        return await proposeSnapshotFromPdf({ data: form });
       }
       if (file !== null) {
         const form = new FormData();
@@ -97,7 +79,7 @@ export const SnapshotPaste = ({
       );
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : "Taulukon luku epäonnistui");
+      setError(errorMessage(cause, "Could not read the table"));
     },
   });
 
@@ -105,15 +87,15 @@ export const SnapshotPaste = ({
   const totalCheck = holdingsTotalCheck(rows, statedTotalEur);
 
   const columns: readonly Column<HoldingRow>[] = [
-    { key: "name", label: "Otteella", kind: "text" },
-    { key: "quantity", label: "Määrä", kind: "decimal", numeric: true },
-    { key: "marketValueEur", label: "Arvo", kind: "decimal", numeric: true },
+    { key: "name", label: "On statement", kind: "text" },
+    { key: "quantity", label: "Quantity", kind: "decimal", numeric: true },
+    { key: "marketValueEur", label: "Value", kind: "decimal", numeric: true },
     {
       key: "instrumentId",
-      label: "Arvopaperi täällä",
+      label: "Instrument here",
       kind: "select",
       options: [
-        { value: "", label: "— valitse —" },
+        { value: "", label: "— choose —" },
         ...(instruments.data ?? []).map((instrument) => ({
           value: String(instrument.id),
           label: instrument.name,
@@ -148,25 +130,25 @@ export const SnapshotPaste = ({
       onCreated(snapshot.id);
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : "Otteen tallennus epäonnistui");
+      setError(errorMessage(cause, "Could not save the statement"));
     },
   });
 
   return (
     <section className="card mt-6">
-      <h2>Liitä omistukset</h2>
+      <h2>Paste holdings</h2>
       <p className="text-muted">
-        Lataa välittäjän omistustiedosto tai liitä taulukko suoraan verkkosivulta. Yhdistä rivit
-        omiin arvopapereihisi ennen tallennusta; mitään ei tallenneta ennen sitä.
+        Upload the broker's holdings file or paste a table straight from its website. Match the rows
+        to your instruments before saving; nothing is saved before that.
       </p>
 
       <label className="mt-3 block">
-        Otteen päivä
+        Statement date
         <input type="date" value={asOf} required onChange={(e) => setAsOf(e.target.value)} />
       </label>
 
       <label className="mt-3 block">
-        Välittäjän tiedosto (CSV) tai omistusote (PDF)
+        Broker file (CSV) or holdings statement (PDF)
         <input
           type="file"
           accept=".csv,.pdf,text/csv,text/plain,application/pdf"
@@ -175,11 +157,11 @@ export const SnapshotPaste = ({
       </label>
 
       <label className="mt-3 block">
-        …tai liitä taulukko (esim. OP:n omistusnäkymä)
+        …or paste a table (e.g. OP's holdings view)
         <textarea
           value={text}
           rows={8}
-          placeholder="Liitä tähän"
+          placeholder="Paste here"
           onChange={(e) => setText(e.target.value)}
         />
       </label>
@@ -189,13 +171,13 @@ export const SnapshotPaste = ({
         className="mt-3"
         disabled={
           (file === null && text.trim() === "") ||
-          // A PDF carries its own date; everything else needs one typed in.
+          // A PDF carries its own date.
           (asOf === "" && !(file !== null && isPdf(file))) ||
           preview.isPending
         }
         onClick={() => preview.mutate()}
       >
-        {preview.isPending ? "Luetaan…" : file !== null ? "Lue tiedosto" : "Lue taulukko"}
+        {preview.isPending ? "Reading…" : file !== null ? "Read file" : "Read table"}
       </button>
 
       {error && (
@@ -208,15 +190,15 @@ export const SnapshotPaste = ({
         <>
           {preview.data.problems.length > 0 && (
             <p className="text-loss mt-3 text-sm">
-              {preview.data.problems.length} riviä ei voitu lukea; loput alla.
+              {preview.data.problems.length} rows could not be read; the rest are below.
             </p>
           )}
 
           {totalCheck !== null && (
             <p className={totalCheck.ok ? "text-gain mt-3 text-sm" : "text-loss mt-3 text-sm"}>
               {totalCheck.ok
-                ? `Rivit täsmäävät otteen kokonaisarvoon ${statedTotalEur} €.`
-                : `Rivit eivät täsmää otteen kokonaisarvoon: ero ${totalCheck.differenceEur} €.`}
+                ? `The rows match the statement total of €${statedTotalEur}.`
+                : `The rows do not match the statement total: difference €${totalCheck.differenceEur}.`}
             </p>
           )}
 
@@ -244,12 +226,12 @@ export const SnapshotPaste = ({
             onClick={() => save.mutate()}
           >
             {save.isPending
-              ? "Tallennetaan…"
+              ? "Saving…"
               : unmapped > 0
-                ? `Yhdistä vielä ${unmapped} riviä`
+                ? `Match ${unmapped} more rows`
                 : totalCheck?.ok === false
-                  ? "Korjaa rivit ennen tallennusta"
-                  : "Tallenna ote"}
+                  ? "Fix the rows before saving"
+                  : "Save statement"}
           </button>
         </>
       )}

@@ -1,17 +1,14 @@
 import { useState } from "react";
+import { errorMessage } from "../lib/errors.ts";
 import { savePrice } from "../server/prices.ts";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-export type RecordPriceFormProps = {
+type RecordPriceFormProps = {
   readonly instrumentId: number;
   /** The instrument's own quotation currency, for the field's label only -- never used in arithmetic here. */
   readonly currency: string;
-  /**
-   * The date to open on. Today, unless a caller knows the date it needs a price
-   * for -- the tax screen does, and typing it again from the row above is work
-   * the screen can do for the reader.
-   */
+  /** The date to open on: today unless the caller (the tax screen) needs another. */
   readonly defaultDate?: string;
   readonly onRecorded: () => void;
 };
@@ -27,7 +24,7 @@ export const RecordPriceForm = ({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
@@ -36,7 +33,7 @@ export const RecordPriceForm = ({
       setPrice("");
       onRecorded();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Hinnan tallennus epäonnistui");
+      setError(errorMessage(cause, "Could not save the price"));
     } finally {
       setSubmitting(false);
     }
@@ -45,7 +42,7 @@ export const RecordPriceForm = ({
   return (
     <form className="card mt-2" onSubmit={submit}>
       <label className="block text-xs">
-        Päivä
+        Date
         <input
           type="date"
           value={date}
@@ -55,12 +52,12 @@ export const RecordPriceForm = ({
         />
       </label>
       <label className="mt-2 block text-xs">
-        Hinta ({currency})
+        Price ({currency})
         <input
           value={price}
           required
           inputMode="decimal"
-          placeholder="esim. 12,34"
+          placeholder="e.g. 12.34"
           onChange={(e) => setPrice(e.target.value)}
         />
       </label>
@@ -70,7 +67,7 @@ export const RecordPriceForm = ({
         </p>
       )}
       <button type="submit" className="mt-2 text-xs" disabled={submitting || price.trim() === ""}>
-        {submitting ? "Tallennetaan…" : "Tallenna hinta"}
+        {submitting ? "Saving…" : "Save price"}
       </button>
     </form>
   );

@@ -9,7 +9,7 @@ import { eur } from "../lib/format.ts";
 import { MARK_FOCUS } from "./interactions.ts";
 
 /** Only what this chart draws, so it does not depend on the whole holdings row. */
-export type HoldingBar = {
+type HoldingBar = {
   readonly instrumentId: number;
   readonly name: string;
   readonly valueEur: string | null;
@@ -22,14 +22,7 @@ export type HoldingRow = {
   readonly gain: number | null;
 };
 
-/**
- * The holdings worth drawing, largest first.
- *
- * A holding that could not be valued is left out rather than drawn at zero: a
- * bar of no length says "this is worth nothing", which is a different and false
- * claim. The holdings table names every one of them with its own explanation,
- * so nothing disappears silently.
- */
+/** Holdings worth drawing, largest first; an unvalued one is left out (a zero bar would claim it is worth nothing) and the table explains it. */
 export const barsFor = (holdings: readonly HoldingBar[]): HoldingRow[] =>
   holdings
     .filter((holding) => holding.valueEur !== null)
@@ -46,17 +39,7 @@ export const holdingTip = (row: HoldingRow): string =>
     ? `${row.name}: ${eur(String(row.value))}`
     : `${row.name}: ${eur(String(row.value))} (${row.gain >= 0 ? "+" : ""}${eur(String(row.gain))})`;
 
-/**
- * Every holding as a bar, longest first, coloured by whether it is up or down.
- *
- * Answers the one question the holdings table makes you work for: how much of
- * the portfolio rides on a single position. A table sorted by value tells you
- * the order; only the lengths tell you that the top one is half of everything.
- *
- * Gain and loss are the app's own semantic colours rather than two series
- * hues -- this is polarity, not identity, and the two greens beside a red would
- * read as three unrelated categories.
- */
+/** Every holding as a bar, coloured up or down: shows how much rides on one position. Gain/loss use semantic colours (polarity, not identity). */
 export const HoldingsChart = ({ holdings }: { holdings: readonly HoldingBar[] }) => {
   const rows = useMemo(() => barsFor(holdings), [holdings]);
 
@@ -88,15 +71,14 @@ export const HoldingsChart = ({ holdings }: { holdings: readonly HoldingBar[] })
     [rows],
   );
 
-  if (rows.length === 0) return <p className="text-muted">Ei arvotettavia omistuksia.</p>;
+  if (rows.length === 0) return <p className="text-muted">No priced holdings.</p>;
 
   return (
-    // `height` sizes the chart itself: since @tanstack/react-charts 1.x the
-    // surrounding box's height is not measured, and the chart overflowed it.
+    // `height` sizes the chart: react-charts 1.x does not measure the surrounding box.
     <Chart
       definition={definition}
       height={Math.max(120, rows.length * 34)}
-      ariaLabel="Omistukset arvon mukaan"
+      ariaLabel="Holdings by value"
     />
   );
 };

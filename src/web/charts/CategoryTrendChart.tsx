@@ -12,39 +12,26 @@ import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 export type Category = { readonly key: string; readonly label: string };
 
-/**
- * `2026-03` as `3/26`, short enough that a year of them fits an axis.
- *
- * Used for tick labels only, never as the value a row is keyed by: two months
- * that happen to format alike would then collide into one position, and a
- * stacked chart rejects two values for the same position and series outright.
- */
+/** `2026-03` as `3/26`, for tick labels only: keying rows by it could collide two months. */
 export const shortMonth = (month: string): string => {
   const [year = "", number = ""] = month.split("-");
   return `${Number(number)}/${year.slice(2)}`;
 };
 
-/**
- * The rows a stacked area needs: one per category per month, zeros included.
- *
- * Categories past the eighth are folded into one "Muu" band rather than given
- * invented hues -- beyond eight, colour stops telling one series from another,
- * and a band nobody can identify is worse than an honest group.
- */
+/** Stacked-area rows: one per category per month, zeros included; categories past the eighth fold into "Other". */
 export const trendRows = (months: readonly CategoryMonth[], categories: readonly Category[]) => {
   const kept = categories.slice(0, SERIES_COUNT - 1);
   const rest = categories.slice(SERIES_COUNT - 1);
   const shown =
-    rest.length === 0 ? [...kept] : [...kept, { key: "muu", label: `Muu (${rest.length})` }];
+    rest.length === 0 ? [...kept] : [...kept, { key: "other", label: `Other (${rest.length})` }];
 
   const rows = months.flatMap((month) =>
     shown.map((category) => ({
-      // The ISO month, not its label: the axis formats it for display, and a
-      // display string is not an identity.
+      // The ISO month, not its label: a display string is not an identity.
       month: month.month,
       category: category.label,
       amount:
-        category.key === "muu"
+        category.key === "other"
           ? rest.reduce((sum, other) => sum + Number(month.byCategory[other.key] ?? "0"), 0)
           : Number(month.byCategory[category.key] ?? "0"),
     })),
@@ -52,14 +39,7 @@ export const trendRows = (months: readonly CategoryMonth[], categories: readonly
   return { rows, shown };
 };
 
-/**
- * Spending by category, month by month.
- *
- * The Sankey answers "where did this period's money go"; this answers "is
- * something growing", which no single period can say however well it is drawn.
- * Stacked rather than side by side, because the total matters as much as the
- * parts -- the top edge is the month's whole spending.
- */
+/** Spending by category per month, stacked so the top edge is the month total; answers "is something growing". */
 export const CategoryTrendChart = ({
   months,
   categories,
@@ -105,16 +85,17 @@ export const CategoryTrendChart = ({
     [rows, shown],
   );
 
-  if (rows.length === 0) return <p className="text-muted">Ei vielä dataa.</p>;
+  if (rows.length === 0) return <p className="text-muted">No data yet.</p>;
   if (months.length < 2) {
-    // An area over one month is a shape with nothing to connect. Said out loud
-    // rather than drawn as an empty plot, which reads as a broken chart.
-    return <p className="text-muted">Trendi näkyy, kun jaksossa on vähintään kaksi kuukautta.</p>;
+    // One month is nothing to connect; say so rather than draw an empty plot.
+    return (
+      <p className="text-muted">The trend appears once the period spans at least two months.</p>
+    );
   }
 
   return (
     <div className="h-72">
-      <Chart definition={definition} height={288} ariaLabel="Kulutus luokittain kuukausittain" />
+      <Chart definition={definition} height={288} ariaLabel="Spending by category by month" />
     </div>
   );
 };

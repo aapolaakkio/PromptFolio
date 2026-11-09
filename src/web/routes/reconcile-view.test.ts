@@ -14,22 +14,26 @@ const row = (over: Partial<ReconcileRow> = {}): ReconcileRow => ({
 });
 
 test("a matching row says so", () => {
-  expect(explain(row())).toBe("Täsmää");
+  expect(explain(row())).toBe("Matches");
 });
 
 test("a holding only the statement knows is called a missing import, not a miscount", () => {
   const message = explain(row({ presence: "snapshot-only", withinTolerance: false, delta: "3" }));
-  expect(message).toContain("Vain otteella");
+  expect(message).toContain("Only on the statement");
 });
 
 test("a holding only the ledger knows points at a missing sale", () => {
   const message = explain(row({ presence: "ledger-only", withinTolerance: false, delta: "-3" }));
-  expect(message).toContain("Vain kirjanpidossa");
+  expect(message).toContain("Only in the ledger");
 });
 
 test("a plain quantity difference says which way it runs", () => {
-  expect(explain(row({ withinTolerance: false, delta: "5.000000" }))).toContain("puuttuu osuuksia");
-  expect(explain(row({ withinTolerance: false, delta: "-5.000000" }))).toContain("liikaa osuuksia");
+  expect(explain(row({ withinTolerance: false, delta: "5.000000" }))).toContain(
+    "Units missing from the ledger",
+  );
+  expect(explain(row({ withinTolerance: false, delta: "-5.000000" }))).toContain(
+    "Too many units in the ledger",
+  );
 });
 
 test("attention list drops rounding and puts the largest difference first", () => {

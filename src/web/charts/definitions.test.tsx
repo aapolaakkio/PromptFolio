@@ -18,16 +18,7 @@ import {
   within,
 } from "./TimeSeriesChart.tsx";
 
-/**
- * Rendered, not merely built.
- *
- * `defineChart` accepts a malformed definition and the library throws when the
- * chart mounts: putting a colour scale among the positional ones shipped a
- * chart that typechecked, passed every test, and then rendered "Position
- * scales cannot use reserved ID" in the browser. Only rendering catches that,
- * so these mount each chart through `react-dom/server` -- the same technique
- * `session-gate.test.ts` already uses, with no DOM and no network.
- */
+/** Rendered via `react-dom/server`, not merely built: `defineChart` accepts a malformed definition and the library throws only on mount. */
 const renders = (element: React.ReactElement): string => renderToStaticMarkup(element);
 
 describe("AllocationChart", () => {
@@ -36,8 +27,8 @@ describe("AllocationChart", () => {
       renders(
         <AllocationChart
           slices={[
-            { key: "stock", label: "Osakkeet", valueEur: "6000.00", weight: 0.6 },
-            { key: "fund", label: "Rahastot", valueEur: "4000.00", weight: 0.4 },
+            { key: "stock", label: "Shares", valueEur: "6000.00", weight: 0.6 },
+            { key: "fund", label: "Funds", valueEur: "4000.00", weight: 0.4 },
           ]}
         />,
       ),
@@ -47,19 +38,17 @@ describe("AllocationChart", () => {
   test("renders more holdings than there are colours, by grouping the tail", () => {
     const many = Array.from({ length: 12 }, (_unused, index) => ({
       key: `k${index}`,
-      label: `Erä ${index}`,
+      label: `Item ${index}`,
       valueEur: "100.00",
       weight: 1 / 12,
     }));
     const html = renders(<AllocationChart slices={many} />);
 
-    // Colour stops carrying identity past eight, so the tail becomes one
-    // honestly-named group rather than four invented hues.
-    expect(html).toContain("Muu (5)");
+    expect(html).toContain("Other (5)");
   });
 
   test("says so when there is nothing held", () => {
-    expect(renders(<AllocationChart slices={[]} />)).toContain("Ei omistuksia");
+    expect(renders(<AllocationChart slices={[]} />)).toContain("No holdings");
   });
 });
 
@@ -78,7 +67,7 @@ describe("MonthlyFlowChart", () => {
   });
 
   test("says so when there is no data", () => {
-    expect(renders(<MonthlyFlowChart months={[]} />)).toContain("Ei vielä dataa");
+    expect(renders(<MonthlyFlowChart months={[]} />)).toContain("No data yet");
   });
 });
 
@@ -89,12 +78,12 @@ describe("TimeSeriesChart", () => {
       value: 1000 + index,
     }));
 
-    expect(() => renders(<TimeSeriesChart points={points} label="Arvo" />)).not.toThrow();
+    expect(() => renders(<TimeSeriesChart points={points} label="Value" />)).not.toThrow();
   });
 
   test("renders a series too short to bother zooming", () => {
     expect(() =>
-      renders(<TimeSeriesChart points={[{ date: "2026-01-01", value: 1000 }]} label="Arvo" />),
+      renders(<TimeSeriesChart points={[{ date: "2026-01-01", value: 1000 }]} label="Value" />),
     ).not.toThrow();
   });
 });
@@ -113,8 +102,6 @@ describe("presetWindow", () => {
   });
 
   test("counts back from the most recent point, not from today", () => {
-    // A ledger whose last price is months old would otherwise show an empty
-    // chart for every preset.
     expect(within(rows, presetWindow(rows, 12)).map((row) => row.value)).toEqual([300, 400]);
   });
 
@@ -123,8 +110,6 @@ describe("presetWindow", () => {
   });
 
   test("never starts before the first point there is", () => {
-    // The axis is pinned to this window, so a start before the data would draw
-    // empty plot at the left edge.
     expect(presetWindow(rows, 600).start).toBe(rows[0]!.at);
   });
 
@@ -135,14 +120,9 @@ describe("presetWindow", () => {
 
 describe("pointTip", () => {
   test("reads the semantic values, not the pixels they were painted at", () => {
-    // The bug it exists to prevent: `x`/`y` are screen coordinates, so a
-    // tooltip built from them shows a plausible date and a plausible euro
-    // figure, both wrong -- which is the worst way for a chart to be wrong.
-    // Built from the app's own formatter rather than a typed literal: the
-    // Finnish locale groups with a non-breaking space, which is invisible in a
-    // diff and makes a hand-typed expectation fail for the wrong reason.
+    // `x`/`y` are screen coordinates: a tooltip built from them shows a plausible but wrong date and amount.
     expect(pointTip({ xValue: Date.UTC(2026, 7, 30), yValue: 1234.5 })).toBe(
-      `30.8.2026: ${eur("1234.50")}`,
+      `30/08/2026: ${eur("1234.50")}`,
     );
   });
 });
@@ -151,8 +131,6 @@ describe("acceptedRange", () => {
   const range = { start: 10, end: 20 };
 
   test("ignores a preview, so the chart does not redraw under the drag", () => {
-    // Accepting previews re-filtered the data on every pointer move, which is
-    // what made the selection impossible to finish.
     expect(acceptedRange(range, "preview")).toBeUndefined();
   });
 
@@ -171,24 +149,22 @@ describe("acceptedRange", () => {
 
 describe("HoldingsChart", () => {
   const holdings = [
-    { instrumentId: 1, name: "Pieni", valueEur: "100.00", unrealisedEur: "-10.00" },
-    { instrumentId: 2, name: "Suuri", valueEur: "900.00", unrealisedEur: "50.00" },
-    { instrumentId: 3, name: "Hinnaton", valueEur: null, unrealisedEur: null },
+    { instrumentId: 1, name: "Small", valueEur: "100.00", unrealisedEur: "-10.00" },
+    { instrumentId: 2, name: "Large", valueEur: "900.00", unrealisedEur: "50.00" },
+    { instrumentId: 3, name: "Unpriced", valueEur: null, unrealisedEur: null },
   ];
 
   test("draws the largest holding first, so concentration is the first thing seen", () => {
-    expect(barsFor(holdings).map((row) => row.name)).toEqual(["Suuri", "Pieni"]);
+    expect(barsFor(holdings).map((row) => row.name)).toEqual(["Large", "Small"]);
   });
 
   test("leaves out a holding that could not be valued rather than drawing it at zero", () => {
-    // A bar of no length claims the holding is worth nothing, which is a
-    // different and false statement. The table names it with its own reason.
-    expect(barsFor(holdings).some((row) => row.name === "Hinnaton")).toBe(false);
+    expect(barsFor(holdings).some((row) => row.name === "Unpriced")).toBe(false);
   });
 
   test("a hovered bar says what it is worth and what of that is gain", () => {
-    expect(holdingTip({ name: "Suuri", value: 900, gain: 50 })).toContain("+");
-    expect(holdingTip({ name: "Tuntematon", value: 900, gain: null })).not.toContain("(");
+    expect(holdingTip({ name: "Large", value: 900, gain: 50 })).toContain("+");
+    expect(holdingTip({ name: "Unknown", value: 900, gain: null })).not.toContain("(");
   });
 
   test("renders", () => {
@@ -202,18 +178,18 @@ describe("HoldingsChart", () => {
           holdings={[{ instrumentId: 1, name: "X", valueEur: null, unrealisedEur: null }]}
         />,
       ),
-    ).toContain("Ei arvotettavia omistuksia");
+    ).toContain("No priced holdings");
   });
 });
 
 describe("CategoryTrendChart", () => {
   const months = [
-    { month: "2026-01", byCategory: { ruoka: "300.00", ravintolat: "100.00" } },
-    { month: "2026-02", byCategory: { ruoka: "350.00", ravintolat: "80.00" } },
+    { month: "2026-01", byCategory: { groceries: "300.00", restaurants: "100.00" } },
+    { month: "2026-02", byCategory: { groceries: "350.00", restaurants: "80.00" } },
   ];
   const categories = [
-    { key: "ruoka", label: "Ruoka" },
-    { key: "ravintolat", label: "Ravintolat" },
+    { key: "groceries", label: "Groceries" },
+    { key: "restaurants", label: "Restaurants" },
   ];
 
   test("draws one band per category per month", () => {
@@ -221,11 +197,9 @@ describe("CategoryTrendChart", () => {
   });
 
   test("folds the ninth category and beyond into one honest group", () => {
-    // Past eight, colour stops telling one series from another, and a band
-    // nobody can identify is worse than a group that says what it is.
     const many = Array.from({ length: 12 }, (_unused, index) => ({
       key: `k${index}`,
-      label: `Erä ${index}`,
+      label: `Item ${index}`,
     }));
     const { shown } = trendRows(
       [{ month: "2026-01", byCategory: Object.fromEntries(many.map((c) => [c.key, "10.00"])) }],
@@ -233,22 +207,21 @@ describe("CategoryTrendChart", () => {
     );
 
     expect(shown).toHaveLength(8);
-    expect(shown.at(-1)?.label).toBe("Muu (5)");
+    expect(shown.at(-1)?.label).toBe("Other (5)");
   });
 
   test("sums the folded categories rather than dropping them", () => {
     const many = Array.from({ length: 10 }, (_unused, index) => ({
       key: `k${index}`,
-      label: `Erä ${index}`,
+      label: `Item ${index}`,
     }));
     const { rows } = trendRows(
       [{ month: "2026-01", byCategory: Object.fromEntries(many.map((c) => [c.key, "10.00"])) }],
       many,
     );
 
-    // Three folded categories at 10,00 each: the group carries 30,00, so the
-    // stack's top edge is still the month's whole spending.
-    expect(rows.find((row) => row.category.startsWith("Muu"))?.amount).toBe(30);
+    // Three folded categories at 10.00 each: the group carries 30.00.
+    expect(rows.find((row) => row.category.startsWith("Other"))?.amount).toBe(30);
   });
 
   test("renders", () => {
@@ -258,16 +231,13 @@ describe("CategoryTrendChart", () => {
   });
 
   test("says so when there is nothing to show", () => {
-    expect(renders(<CategoryTrendChart months={[]} categories={[]} />)).toContain("Ei vielä dataa");
+    expect(renders(<CategoryTrendChart months={[]} categories={[]} />)).toContain("No data yet");
   });
 });
 
 describe("axis labels", () => {
   test("a tick reads as a date, never as the milliseconds behind it", () => {
-    // The x scale carries epoch milliseconds so elapsed time spaces the points
-    // and a span can be narrowed at all -- but nothing a reader sees is ever a
-    // millisecond count.
-    expect(asDate(Date.UTC(2026, 7, 30))).toBe("30.8.2026");
+    expect(asDate(Date.UTC(2026, 7, 30))).toBe("30/08/2026");
   });
 
   test("thousands are compacted, so a five-figure axis stays readable", () => {
@@ -276,24 +246,19 @@ describe("axis labels", () => {
   });
 
   test("a negative tick uses the same minus sign as the tables", () => {
-    // The Finnish locale writes a true minus (U+2212); everything else in the
-    // app normalises it, and an axis that disagreed with the table under it
-    // would look like two different apps.
     expect(compactEur(-12_400)).toBe("-12 k€");
   });
 });
 
 describe("a trend over a single month", () => {
   test("says why there is nothing to draw rather than drawing an empty plot", () => {
-    // An area needs two points to connect; one month renders as blank axes,
-    // which reads as a broken chart rather than as a short period.
     const html = renders(
       <CategoryTrendChart
-        months={[{ month: "2026-08", byCategory: { ruoka: "300.00" } }]}
-        categories={[{ key: "ruoka", label: "Ruoka" }]}
+        months={[{ month: "2026-08", byCategory: { groceries: "300.00" } }]}
+        categories={[{ key: "groceries", label: "Groceries" }]}
       />,
     );
 
-    expect(html).toContain("vähintään kaksi kuukautta");
+    expect(html).toContain("at least two months");
   });
 });

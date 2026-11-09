@@ -12,13 +12,13 @@ describe("takeEvents", () => {
   });
 
   test("drops an event shape the client does not know instead of rendering it", () => {
-    const { events } = takeEvents('data: {"type":"prophecy","text":"osta"}\n\n');
+    const { events } = takeEvents('data: {"type":"prophecy","text":"buy"}\n\n');
     expect(events).toEqual([]);
   });
 
   test("ignores keep-alive comments and blank frames", () => {
-    const { events } = takeEvents(': keep-alive\n\ndata: {"type":"answer","text":"120,00"}\n\n');
-    expect(events).toEqual([{ type: "answer", text: "120,00" }]);
+    const { events } = takeEvents(': keep-alive\n\ndata: {"type":"answer","text":"120.00"}\n\n');
+    expect(events).toEqual([{ type: "answer", text: "120.00" }]);
   });
 });
 
@@ -45,23 +45,26 @@ describe("askChat", () => {
         streamOf([
           'data: {"type":"conv',
           'ersation","id":7}\n\n',
-          'data: {"type":"answer","text":"120,00 EUR"}\n\n',
+          'data: {"type":"answer","text":"120.00 EUR"}\n\n',
         ]),
         { headers: { "content-type": "text/event-stream" } },
       );
 
     expect(await collect(askChat({ message: "moi" }, fetchStub))).toEqual([
       { type: "conversation", id: 7 },
-      { type: "answer", text: "120,00 EUR" },
+      { type: "answer", text: "120.00 EUR" },
     ]);
   });
 
   test("turns a refused request into one error event carrying the server's message", async () => {
     const fetchStub = async () =>
-      Response.json({ error: "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista" }, { status: 503 });
+      Response.json(
+        { error: "ANTHROPIC_API_KEY is missing from the server settings" },
+        { status: 503 },
+      );
 
     expect(await collect(askChat({ message: "moi" }, fetchStub))).toEqual([
-      { type: "error", message: "ANTHROPIC_API_KEY puuttuu palvelimen asetuksista" },
+      { type: "error", message: "ANTHROPIC_API_KEY is missing from the server settings" },
     ]);
   });
 
@@ -69,7 +72,7 @@ describe("askChat", () => {
     const fetchStub = async () => new Response("<html>502</html>", { status: 502 });
 
     expect(await collect(askChat({ message: "moi" }, fetchStub))).toEqual([
-      { type: "error", message: "Vastauksen haku epäonnistui" },
+      { type: "error", message: "Could not fetch the answer" },
     ]);
   });
 });

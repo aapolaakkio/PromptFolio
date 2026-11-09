@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { getAuth } from "../../../../server/auth.ts";
 
-// Better Auth owns every path under /api/auth: sign-up, sign-in, sign-out and
-// the session endpoint the pages read.
+// Better Auth owns every path under /api/auth.
 const handler = ({ request }: { request: Request }) => getAuth().handler(request);
 
 export const Route = createFileRoute("/api/auth/$")({

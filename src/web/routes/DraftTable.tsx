@@ -9,11 +9,7 @@ export type Column<T> = {
   readonly numeric?: boolean;
 };
 
-/**
- * An import preview as a table of inputs. Every cell edits its row in place,
- * a row can go, and a blank one can be added at the end. What the owner sees
- * is what will be committed; the server validates it again on the way in.
- */
+/** An import preview as editable inputs: rows can be removed or added; the server validates again. */
 export const DraftTable = <T extends { readonly line: number }>({
   rows,
   columns,
@@ -33,7 +29,7 @@ export const DraftTable = <T extends { readonly line: number }>({
       <table>
         <thead className="sticky top-0 bg-surface">
           <tr>
-            <th>Rivi</th>
+            <th>Row</th>
             {columns.map((column) => (
               <th key={column.key} className={column.numeric ? "num" : undefined}>
                 {column.label}
@@ -49,8 +45,7 @@ export const DraftTable = <T extends { readonly line: number }>({
               {columns.map((column) => {
                 const value = String(row[column.key] ?? "");
                 const set = (next: string) =>
-                  // SAFETY: every column edits a string field of T; `key` is
-                  // `keyof T`, and the value typed into an input is a string.
+                  // SAFETY: every column edits a string field of T; `key` is `keyof T`.
                   onChange(updateRow(rows, index, { [column.key]: next } as Partial<T>));
                 return (
                   <td key={column.key} className={column.numeric ? "num" : undefined}>
@@ -79,7 +74,7 @@ export const DraftTable = <T extends { readonly line: number }>({
                   className="text-sm"
                   onClick={() => onChange(removeRow(rows, index))}
                 >
-                  Poista
+                  Remove
                 </button>
                 {fieldErrors[row.line] !== undefined && (
                   <p role="alert" className="text-loss text-xs">
@@ -93,7 +88,7 @@ export const DraftTable = <T extends { readonly line: number }>({
       </table>
     </div>
     <button type="button" className="text-sm" onClick={() => onChange(appendRow(rows, blank()))}>
-      + Lisää rivi
+      + Add row
     </button>
   </div>
 );

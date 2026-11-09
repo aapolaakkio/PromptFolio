@@ -11,46 +11,34 @@ const isChatModel = (value: string): value is ChatModel =>
 
 type Turn = { readonly role: "user" | "assistant"; readonly content: string };
 
-/**
- * What each tool is called in the "Haettu:" line.
- *
- * Complete on purpose: a name with no entry here was shown to the reader raw,
- * as `get_uncategorised_spending`, which is the internal name of a thing they
- * never asked about in those words.
- */
+/** What each tool is called in the "Fetched:" line; a tool with no entry would show its raw name. */
 const TOOL_LABELS = new Map<string, string>([
-  ["get_holdings", "omistukset"],
-  ["get_allocation", "jakauma"],
-  ["get_returns", "tuotto"],
-  ["get_value_series", "arvon kehitys"],
-  ["get_transactions", "tapahtumat"],
-  ["get_instruments", "arvopaperit"],
-  ["get_cash", "käteinen"],
-  ["get_spending", "kulutus"],
-  ["get_uncategorised_spending", "luokittelemattomat"],
-  ["get_cash_flow", "rahavirta"],
-  ["get_spending_trend", "kulutuksen kehitys"],
-  ["get_transaction_class", "tapahtuman luokka"],
-  ["get_tax_year", "verovuosi"],
-  ["get_drift", "tavoite-ero"],
-  ["get_deposit_plan", "uuden rahan jako"],
-  ["calculate", "laskin"],
-  ["save_spending_rules", "sääntöjen tallennus"],
-  ["update_spending_rule", "säännön korjaus"],
-  ["remove_spending_rule", "säännön poisto"],
-  ["get_spending_rules", "säännöt"],
-  ["get_reconciliation", "täsmäytys"],
-  ["get_recurring_payments", "toistuvat maksut"],
-  ["get_net_worth_series", "varallisuuden kehitys"],
+  ["get_holdings", "holdings"],
+  ["get_allocation", "allocation"],
+  ["get_returns", "returns"],
+  ["get_value_series", "value over time"],
+  ["get_transactions", "transactions"],
+  ["get_instruments", "instruments"],
+  ["get_cash", "cash"],
+  ["get_spending", "spending"],
+  ["get_uncategorised_spending", "uncategorised"],
+  ["get_cash_flow", "cash flow"],
+  ["get_spending_trend", "spending trend"],
+  ["get_transaction_class", "transaction class"],
+  ["get_tax_year", "tax year"],
+  ["get_drift", "drift from target"],
+  ["get_deposit_plan", "deposit plan"],
+  ["calculate", "calculator"],
+  ["save_spending_rules", "saving rules"],
+  ["update_spending_rule", "rule update"],
+  ["remove_spending_rule", "rule removal"],
+  ["get_spending_rules", "rules"],
+  ["get_reconciliation", "reconciliation"],
+  ["get_recurring_payments", "recurring payments"],
+  ["get_net_worth_series", "net worth over time"],
 ]);
 
-/**
- * Asks questions about the portfolio. The assistant reads the same figures the
- * rest of the app shows and does no arithmetic of its own: every number it
- * states came back from one of the tools named under "Haettu:". That is what
- * makes the answers checkable against the other screens. The only thing it can
- * write is a classification rule, which shows up on Kulutus marked `ai`.
- */
+/** Asks about the portfolio. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It can only write a classification rule, shown on Spending as `ai`. */
 export const ChatPage = () => {
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -70,25 +58,17 @@ export const ChatPage = () => {
 
   const history = useQuery({
     queryKey: ["conversation", conversationId],
-    // Not while a turn is running. The server stores the question before the
-    // model starts, and the id of a new conversation arrives mid-stream -- so a
-    // fetch here would return that stored question while `pending` is still
-    // showing its own optimistic copy, and the first message of every new
-    // conversation appeared twice until the turn ended.
+    // Not mid-turn: a fetch would return the stored question while `pending` still shows its copy, doubling it.
     enabled: conversationId !== null && !busy,
     queryFn: () => getConversationMessages({ data: { id: conversationId ?? 0 } }),
   });
 
   const turns: Turn[] = [...(history.data ?? []), ...pending];
-  // The sidebar truncates to one line, so the only place the whole title exists
-  // is here. A conversation is titled after its first question, which is
-  // usually the one thing that says what the thread is about.
+  // The sidebar truncates titles to one line, so the whole title is shown here.
   const title =
     conversations.data?.find((conversation) => conversation.id === conversationId)?.title ?? null;
 
-  // A long answer used to push the question box off the bottom of the page. The
-  // transcript scrolls instead, and follows the newest turn -- otherwise a
-  // reply arriving below the fold reads as nothing having happened.
+  // The transcript scrolls and follows the newest turn, so a long answer cannot push the question box off the page.
   const transcript = useRef<HTMLOListElement>(null);
   useEffect(() => {
     transcript.current?.scrollTo({ top: transcript.current.scrollHeight });
@@ -101,9 +81,7 @@ export const ChatPage = () => {
     setError(null);
     setTools([]);
     setBusy(true);
-    // The question is shown immediately and the server's stored copy replaces it
-    // once the turn is over; a slow answer must never make it look like the
-    // question was lost.
+    // Shown immediately; the server's stored copy replaces it once the turn is over.
     setPending([{ role: "user", content: message }]);
 
     try {
@@ -145,7 +123,7 @@ export const ChatPage = () => {
     <section className="grid gap-6 md:grid-cols-[14rem_1fr]">
       <aside className="grid content-start gap-3">
         <button type="button" onClick={startNew}>
-          Uusi keskustelu
+          New conversation
         </button>
         <ul className="grid max-h-[60vh] content-start gap-0.5 overflow-y-auto">
           {(conversations.data ?? []).map((conversation) => (
@@ -170,7 +148,7 @@ export const ChatPage = () => {
               <button
                 type="button"
                 className="chat-remove"
-                aria-label={`Poista keskustelu ${conversation.title}`}
+                aria-label={`Delete conversation ${conversation.title}`}
                 onClick={() => void remove(conversation.id)}
               >
                 ×
@@ -182,19 +160,19 @@ export const ChatPage = () => {
 
       <div className="grid content-start gap-4">
         <div>
-          <h1>{title ?? "Avustaja"}</h1>
+          <h1>{title ?? "Assistant"}</h1>
           <p className="text-muted">
             {title === null
-              ? "Vastaa vain oman salkkusi luvuilla. Ei sijoitusneuvoja eikä ennusteita."
-              : "Avustaja — vastaa vain oman salkkusi luvuilla."}
+              ? "Answers only from your own portfolio figures. No investment advice or forecasts."
+              : "Assistant — answers only from your own portfolio figures."}
           </p>
         </div>
 
         <ol ref={transcript} className="grid max-h-[55vh] content-start gap-3 overflow-y-auto pr-1">
           {turns.length === 0 && (
             <li className="text-muted text-sm">
-              Kysy esimerkiksi mihin rahat kuluivat viime kuussa, tai pyydä luokittelemaan
-              tuntemattomat maksunsaajat.
+              Ask, for example, where the money went last month, or ask it to categorise unknown
+              payees.
             </li>
           )}
           {turns.map((turn, index) => (
@@ -219,8 +197,8 @@ export const ChatPage = () => {
         {busy && streaming === "" && (
           <p className="text-muted">
             {tools.length === 0
-              ? "Ajattelee…"
-              : `Haettu: ${tools.map((name) => TOOL_LABELS.get(name) ?? name).join(", ")}`}
+              ? "Thinking…"
+              : `Fetched: ${tools.map((name) => TOOL_LABELS.get(name) ?? name).join(", ")}`}
           </p>
         )}
         {error !== null && <p role="alert">{error}</p>}
@@ -236,15 +214,15 @@ export const ChatPage = () => {
             className="flex-1"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Esim. mikä on salkun arvo tänään?"
-            aria-label="Kysymys"
+            placeholder="E.g. what is the portfolio worth today?"
+            aria-label="Question"
           />
           <button type="submit" disabled={busy || draft.trim() === ""}>
-            Kysy
+            Ask
           </button>
         </form>
         <label className="mt-2 text-sm text-muted">
-          Malli
+          Model
           <select
             value={model}
             disabled={busy}

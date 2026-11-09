@@ -1,12 +1,6 @@
 import type { TargetView } from "../../server/rebalance.ts";
 
-/**
- * What the targets being edited add up to, in percent, as a decimal string.
- *
- * Computed on the typed text rather than on parsed numbers so the running total
- * shown while editing is the total of what is actually on screen -- including a
- * half-typed "6" that will become "60".
- */
+/** The target total in percent, computed on the typed text so it matches the screen (including a half-typed "6"). */
 export const targetTotal = (targets: readonly TargetView[]): string =>
   targets
     .reduce(

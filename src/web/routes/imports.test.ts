@@ -8,8 +8,7 @@ import {
   type DraftResponse,
 } from "./imports-draft.ts";
 
-// Test rows carry only the fields `summarise` reads; a typed factory keeps the
-// assertion out of the tests (anti-slop/require-safety-comment-for-type-assertion).
+// A typed factory keeps type assertions out of the tests.
 const txnStub = (line: number): DraftResponse["txns"][number] => ({
   line,
   accountId: 1,
@@ -93,7 +92,7 @@ test("a structural problem (rawLine set, raw empty) still counts as a problem, n
   const summary = summarise(
     draft({
       txns: [txnStub(2)],
-      problems: [{ line: 5, message: "OP-rivilohkosta puuttuu määrä", raw: {}, rawLine: "kaksi" }],
+      problems: [{ line: 5, message: "The OP row block has no quantity", raw: {}, rawLine: "two" }],
     }),
   );
   expect(summary).toMatchObject({ good: 1, problems: 1, unknown: 0 });
@@ -111,16 +110,13 @@ test("minorToEur keeps the sign for a negative (outflow) amount", () => {
   expect(minorToEur(-30002)).toBe("-300.02");
 });
 
-// A holding no registry carries has no ISIN at all (a delisted share, or the
-// temporary line a corporate action creates). The dashboard's own schemas
-// rejected that, which failed the whole page with a generic "could not load"
-// and made TanStack Query retry -- two /api/returns calls for one render.
+// A holding no registry carries has no ISIN; the dashboard schemas once rejected that and failed the whole page.
 test("the dashboard's excluded-instrument shape accepts a holding with no ISIN", () => {
   const schema = z.array(
     z.object({ instrumentId: z.number(), isin: z.string().nullable(), name: z.string() }),
   );
-  expect(schema.parse([{ instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" }])).toEqual([
-    { instrumentId: 27, isin: null, name: "ESIMERKKI OYJ/SH NV" },
+  expect(schema.parse([{ instrumentId: 27, isin: null, name: "EXAMPLE OYJ/SH NV" }])).toEqual([
+    { instrumentId: 27, isin: null, name: "EXAMPLE OYJ/SH NV" },
   ]);
 });
 

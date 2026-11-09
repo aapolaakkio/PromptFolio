@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { errorMessage } from "../lib/errors.ts";
 import { getAccounts } from "../server/accounts.ts";
 import { useState } from "react";
 
 import { recordAccountBalance } from "../server/bank-imports.ts";
-import { eur, fiDate } from "../lib/format.ts";
+import { eur, formatDate } from "../lib/format.ts";
 import { accountTypeLabel } from "./account-type.ts";
 import { availabilityLabel, describeBalance, ENTRY_LABELS } from "./cash-view.ts";
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
@@ -14,15 +15,7 @@ import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-e
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
-/**
- * Bank accounts: what they hold, what a statement adds to them, and where the
- * money went.
- *
- * Cash counts toward what the portfolio is worth and toward its allocation, and
- * never toward the return figures -- a bank account's spending is not portfolio
- * performance. That split is stated on the screen rather than left for someone
- * to infer from two numbers that disagree.
- */
+/** Bank accounts: holdings, statements, spending. Cash counts toward portfolio value and allocation but never toward returns; the screen says so. */
 export const CashPage = () => {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState<number | null>(null);
@@ -42,9 +35,7 @@ export const CashPage = () => {
   const entries = useQuery({
     queryKey: ["cash-entries", chosen],
     enabled: chosen !== null,
-    // `enabled` below keeps this from running while nothing is chosen; the
-    // ?? 0 satisfies the argument type, which is a number rather than a
-    // maybe-number.
+    // `enabled` below guards this; `?? 0` only satisfies the argument type.
     queryFn: () => getCashEntries({ data: { accountId: chosen ?? 0 } }),
   });
 
@@ -65,8 +56,7 @@ export const CashPage = () => {
       setBalance("");
       refresh();
     },
-    onError: (cause) =>
-      setError(cause instanceof Error ? cause.message : "Saldon tallennus epäonnistui"),
+    onError: (cause) => setError(errorMessage(cause, "Could not save the balance")),
   });
 
   const removeEntry = useMutation({
@@ -77,10 +67,11 @@ export const CashPage = () => {
   return (
     <section className="grid gap-8">
       <div>
-        <h1>Käteinen</h1>
+        <h1>Cash</h1>
         <p className="max-w-prose text-muted">
-          Pankkitilien saldot lasketaan tapahtumista. Käteinen on mukana salkun arvossa ja
-          jakaumassa, mutta ei tuottoluvuissa: ruokaostos ei ole sijoitustappio.
+          Bank account balances are calculated from transactions. Cash counts towards the portfolio
+          value and allocation, but not the return figures: a grocery purchase is not an investment
+          loss.
         </p>
       </div>
 
@@ -92,12 +83,12 @@ export const CashPage = () => {
 
       <div className="card">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-sm text-muted">Käteinen yhteensä</h2>
+          <h2 className="text-sm text-muted">Total cash</h2>
           <span className="text-2xl">{eur(cash.data?.totalEur ?? "0.00")}</span>
         </div>
         {cash.data && cash.data.lockedEur !== "0.00" && (
           <p className="text-muted text-sm">
-            Käytettävissä {eur(cash.data.availableEur)} · sidottuna määräaikaistalletuksissa{" "}
+            Available {eur(cash.data.availableEur)} · locked in fixed-term deposits{" "}
             {eur(cash.data.lockedEur)}
           </p>
         )}
@@ -105,11 +96,11 @@ export const CashPage = () => {
           <table>
             <thead className="sticky top-0 bg-surface">
               <tr>
-                <th>Tili</th>
-                <th>Valuutta</th>
-                <th className="text-right">Saldo</th>
+                <th>Account</th>
+                <th>Currency</th>
+                <th className="text-right">Balance</th>
                 <th className="text-right">EUR</th>
-                <th>Saatavuus</th>
+                <th>Availability</th>
               </tr>
             </thead>
             <tbody>
@@ -119,7 +110,7 @@ export const CashPage = () => {
                   <td>{row.currency}</td>
                   <td className="text-right">{row.amount}</td>
                   <td className="text-right">
-                    {row.valueEur === null ? "kurssi puuttuu" : eur(row.valueEur)}
+                    {row.valueEur === null ? "rate missing" : eur(row.valueEur)}
                   </td>
                   <td className={row.locked ? "text-muted" : ""}>{availabilityLabel(row)}</td>
                 </tr>
@@ -127,7 +118,8 @@ export const CashPage = () => {
               {(cash.data?.rows ?? []).length === 0 && (
                 <tr>
                   <td colSpan={5} className="text-muted">
-                    Ei käteistä. Luo pankkitili ja tuo tiliote tai kirjaa saldo käsin.
+                    No cash. Create a bank account and import a bank statement, or record a balance
+                    by hand.
                   </td>
                 </tr>
               )}
@@ -139,7 +131,7 @@ export const CashPage = () => {
       <div className="card grid gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <label>
-            Pankkitili
+            Bank account
             <select
               value={chosen ?? ""}
               onChange={(event) => setAccountId(Number(event.target.value))}
@@ -152,7 +144,7 @@ export const CashPage = () => {
             </select>
           </label>
           <button type="button" className="text-sm" onClick={() => setShowNewAccount((v) => !v)}>
-            {showNewAccount ? "Peruuta" : "+ Uusi pankkitili"}
+            {showNewAccount ? "Cancel" : "+ New bank account"}
           </button>
         </div>
 
@@ -168,7 +160,7 @@ export const CashPage = () => {
 
         {bankAccounts.length === 0 && (
           <p className="text-muted text-sm">
-            Ei vielä pankkitilejä. Luo tili ja valitse tyypiksi pankkitili.
+            No bank accounts yet. Create an account and choose bank account as its type.
           </p>
         )}
       </div>
@@ -176,11 +168,12 @@ export const CashPage = () => {
       {chosen !== null && (
         <>
           <div className="card grid gap-3">
-            <h2>Täsmäytä saldo</h2>
+            <h2>Reconcile balance</h2>
             <p className="max-w-prose text-muted text-sm">
-              Syötä tilin saldo tänään. Sovellus kirjaa erotuksen alkusaldoksi, koska tiliote ei
-              yleensä ulotu tilin avaamiseen asti. Kun ajat tämän myöhemmin uudelleen ja erotus on
-              nolla, tuodut tapahtumat täsmäävät edelleen pankin kanssa.
+              Enter the account balance today. The app records the difference as the opening
+              balance, because a bank statement usually does not reach back to when the account was
+              opened. If you run this again later and the difference is zero, the imported
+              transactions still match the bank.
             </p>
             <form
               className="flex flex-wrap items-end gap-2"
@@ -190,7 +183,7 @@ export const CashPage = () => {
               }}
             >
               <label>
-                Saldo tänään
+                Balance today
                 <input
                   value={balance}
                   inputMode="decimal"
@@ -199,16 +192,17 @@ export const CashPage = () => {
                 />
               </label>
               <button type="submit" disabled={balance.trim() === "" || reconcile.isPending}>
-                {reconcile.isPending ? "Tallennetaan…" : "Tallenna saldo"}
+                {reconcile.isPending ? "Saving…" : "Save balance"}
               </button>
             </form>
             {reconcile.data && <p>{describeBalance(reconcile.data)}</p>}
           </div>
 
           <div className="card grid gap-3">
-            <h2>Käsin kirjatut tapahtumat</h2>
+            <h2>Manual entries</h2>
             <p className="text-muted text-sm">
-              Tilille, jolta ei saa tiliotetta (esim. Ferratum), tapahtumat voi kirjata käsin.
+              For an account that has no bank statement (e.g. Ferratum), record transactions by
+              hand.
             </p>
             <ManualEntryForm accountId={chosen} onSaved={refresh} onError={setError} />
             <div className="max-h-96 overflow-auto rounded border border-line">
@@ -216,7 +210,7 @@ export const CashPage = () => {
                 <tbody>
                   {(entries.data?.entries ?? []).map((entry) => (
                     <tr key={entry.id}>
-                      <td>{fiDate(entry.tradeDate)}</td>
+                      <td>{formatDate(entry.tradeDate)}</td>
                       <td>{ENTRY_LABELS.get(entry.type) ?? entry.type}</td>
                       <td className="text-right">{entry.amount}</td>
                       <td>{entry.currency}</td>
@@ -225,10 +219,10 @@ export const CashPage = () => {
                         <button
                           type="button"
                           className="text-sm"
-                          aria-label={`Poista tapahtuma ${entry.tradeDate}`}
+                          aria-label={`Delete entry ${entry.tradeDate}`}
                           onClick={() => removeEntry.mutate(entry.id)}
                         >
-                          Poista
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -253,8 +247,7 @@ const ManualEntryForm = ({
   readonly onSaved: () => void;
   readonly onError: (message: string) => void;
 }) => {
-  // The four kinds the ledger stores, rather than a string: the schema takes
-  // exactly these, and the select can produce nothing else.
+  // The four kinds the ledger stores; the schema takes exactly these.
   const [type, setType] = useState<CashEntryType>("DEPOSIT");
   const [tradeDate, setTradeDate] = useState(today);
   const [amount, setAmount] = useState("");
@@ -262,9 +255,7 @@ const ManualEntryForm = ({
 
   const save = useMutation({
     mutationFn: () => {
-      // The note is left out entirely when empty rather than sent as "": the
-      // schema takes an optional string, and a blank one would store a note
-      // that says nothing.
+      // An empty note is omitted rather than sent as "".
       const entry = { accountId, type, tradeDate, amount: amount.replace(",", ".") };
       const trimmed = note.trim();
       return saveCashEntry({ data: trimmed === "" ? entry : { ...entry, note: trimmed } });
@@ -274,8 +265,7 @@ const ManualEntryForm = ({
       setNote("");
       onSaved();
     },
-    onError: (cause) =>
-      onError(cause instanceof Error ? cause.message : "Tapahtuman tallennus epäonnistui"),
+    onError: (cause) => onError(errorMessage(cause, "Could not save the entry")),
   });
 
   return (
@@ -287,7 +277,7 @@ const ManualEntryForm = ({
       }}
     >
       <label>
-        Laji
+        Type
         <select
           value={type}
           onChange={(event) => {
@@ -295,14 +285,14 @@ const ManualEntryForm = ({
             setType(event.target.value as CashEntryType);
           }}
         >
-          <option value="DEPOSIT">Talletus</option>
-          <option value="WITHDRAWAL">Nosto</option>
-          <option value="INTEREST">Korko</option>
-          <option value="OPENING_BALANCE">Alkusaldo</option>
+          <option value="DEPOSIT">Deposit</option>
+          <option value="WITHDRAWAL">Withdrawal</option>
+          <option value="INTEREST">Interest</option>
+          <option value="OPENING_BALANCE">Opening balance</option>
         </select>
       </label>
       <label>
-        Päivä
+        Date
         <input
           type="date"
           value={tradeDate}
@@ -310,7 +300,7 @@ const ManualEntryForm = ({
         />
       </label>
       <label>
-        Summa
+        Amount
         <input
           value={amount}
           inputMode="decimal"
@@ -319,11 +309,11 @@ const ManualEntryForm = ({
         />
       </label>
       <label>
-        Selite
+        Note
         <input value={note} maxLength={200} onChange={(event) => setNote(event.target.value)} />
       </label>
       <button type="submit" disabled={amount.trim() === "" || save.isPending}>
-        {save.isPending ? "Tallennetaan…" : "Kirjaa"}
+        {save.isPending ? "Saving…" : "Record"}
       </button>
     </form>
   );

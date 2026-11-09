@@ -36,9 +36,9 @@ test("handles negative unrealised gains", () => {
   expect(sortHoldings(rows, "unrealisedEur", "asc").map((r) => r.name)).toEqual(["A", "B"]);
 });
 
-test("sorts names with Finnish collation", () => {
-  const rows = [row("Ähtäri Oyj", "1.00", "0.00"), row("Aalto Oyj", "1.00", "0.00")];
-  expect(sortHoldings(rows, "name", "asc").map((r) => r.name)).toEqual(["Aalto Oyj", "Ähtäri Oyj"]);
+test("sorts names with locale-aware collation", () => {
+  const rows = [row("Émile SA", "1.00", "0.00"), row("Aalto SA", "1.00", "0.00")];
+  expect(sortHoldings(rows, "name", "asc").map((r) => r.name)).toEqual(["Aalto SA", "Émile SA"]);
 });
 
 test("sorting is stable and does not mutate the input array", () => {
@@ -55,7 +55,7 @@ test("a holding with an unknown cost basis (null costEur/valueEur/unrealisedEur)
       costEur: null,
       valueEur: null,
       unrealisedEur: null,
-      costBasisError: { tradeDate: "2025-01-01", message: "ei voi käsitellä" },
+      costBasisError: { tradeDate: "2025-01-01", message: "cannot be processed" },
     },
     row("B", "50.00", "0.00"),
   ];
@@ -82,7 +82,7 @@ test("sorts by weight, a number rather than a decimal string, like the money col
 
 test("a holding that cannot be valued (weight null) sorts as zero, not NaN, and does not mutate the input", () => {
   const rows: Holding[] = [
-    { ...row("A", "0.00", "0.00"), weight: null, valueEur: null, valuationError: "ei hintaa" },
+    { ...row("A", "0.00", "0.00"), weight: null, valueEur: null, valuationError: "no price" },
     { ...row("B", "50.00", "0.00"), weight: 0.5 },
   ];
   expect(sortHoldings(rows, "weight", "desc").map((r) => r.name)).toEqual(["B", "A"]);

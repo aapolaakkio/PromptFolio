@@ -3,8 +3,7 @@ import path from "node:path";
 const relative = (filenames: string[]): string =>
   filenames.map((file) => path.relative(process.cwd(), file)).join(" ");
 
-// The whole project, not the staged files: a type error is rarely in the file
-// that caused it, and `tsc` has no useful single-file mode under `paths`.
+// Whole project: a type error is rarely in the file that caused it.
 const typecheck = () => "tsc --noEmit";
 
 const lint = (filenames: string[]) => `oxlint --fix --fix-suggestions ${relative(filenames)}`;

@@ -21,13 +21,13 @@ describe("isAccountType", () => {
 
 describe("accountTypeLabel", () => {
   test("names each type in full, so OST is never mistaken for an ordinary account", () => {
-    expect(accountTypeLabel("aot")).toBe("Arvo-osuustili (AOT)");
-    expect(accountTypeLabel("ost")).toBe("Osakesäästötili (OST)");
+    expect(accountTypeLabel("aot")).toBe("Book-entry account (AOT)");
+    expect(accountTypeLabel("ost")).toBe("Equity savings account (OST)");
   });
 
   test("says an unclassified account is unclassified rather than guessing", () => {
     expect(accountTypeLabel(null)).toBe(UNSET_LABEL);
-    expect(accountTypeLabel("jotain muuta")).toBe(UNSET_LABEL);
+    expect(accountTypeLabel("something else")).toBe(UNSET_LABEL);
   });
 });
 
@@ -55,23 +55,20 @@ describe("isAccountKind", () => {
 
 describe("accountTypeLabel", () => {
   test("names a bank type too, now that both sets share one lookup", () => {
-    expect(accountTypeLabel("fixed_term")).toBe("Määräaikaistili");
-    expect(accountTypeLabel("current")).toBe("Käyttötili");
+    expect(accountTypeLabel("fixed_term")).toBe("Fixed-term account");
+    expect(accountTypeLabel("current")).toBe("Current account");
   });
 });
 
 test("the account schema accepts every type the app can offer", async () => {
-  // These were two lists that had to agree and did not: adding a credit card
-  // left the wire schema listing the older types, so /api/accounts returned an
-  // account zod rejected -- and every screen that reads accounts failed at
-  // once, showing "no bank accounts" rather than one odd row.
+  // The wire schema once listed older types than the account list, so every accounts screen failed.
   const { AccountSchema } = await import("./imports-draft.ts");
 
   for (const type of ACCOUNT_TYPES) {
     expect(() =>
       AccountSchema.parse({
         id: 1,
-        name: "Tili",
+        name: "Account",
         broker: "op",
         kind: type.id === "aot" || type.id === "ost" ? "brokerage" : "bank",
         accountType: type.id,

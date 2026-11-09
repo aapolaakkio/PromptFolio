@@ -5,11 +5,7 @@ import { db } from "../../server/db/index.ts";
 import { taxYearFor, taxYearsFor } from "../../server/tax.ts";
 import { authed, readable } from "./guard.ts";
 
-const Year = z
-  .number()
-  .int()
-  .min(1990, "Verovuosi on virheellinen")
-  .max(2100, "Verovuosi on virheellinen");
+const Year = z.number().int().min(1990, "Tax year is invalid").max(2100, "Tax year is invalid");
 
 /** One tax year: realised gains both permitted ways, dividends, OST withdrawals. */
 export const getTaxYear = createServerFn()

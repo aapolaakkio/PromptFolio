@@ -1,20 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { errorMessage } from "../lib/errors.ts";
 import { adjustSnapshot } from "../server/snapshots.ts";
 import type { ReconcileRow } from "./reconcile-view.ts";
 
-/**
- * Turns one accepted difference into a transaction. Deliberately per row and
- * never in bulk: an adjustment has no broker record behind it, so each one is a
- * separate decision rather than a single "fix everything" the user cannot
- * inspect afterwards.
- *
- * Adding units asks for the acquisition value and will not proceed without it.
- * The server refuses a missing cost too -- this is the same rule stated twice,
- * on purpose, because a zero cost basis reports a holding's entire value as
- * gain and nothing downstream would flag it.
- */
+/** Turns one accepted difference into a transaction, per row, never bulk: an adjustment has no broker record. Adding units requires the acquisition value (server enforces it too): a zero cost basis reports the whole value as gain. */
 export const AdjustRow = ({
   snapshotId,
   row,
@@ -47,14 +38,14 @@ export const AdjustRow = ({
       void queryClient.invalidateQueries({ queryKey: ["holdings"] });
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : "Korjaus epäonnistui");
+      setError(errorMessage(cause, "Adjustment failed"));
     },
   });
 
   if (!open) {
     return (
       <button type="button" className="text-sm" onClick={() => setOpen(true)}>
-        Korjaa
+        Adjust
       </button>
     );
   }
@@ -63,20 +54,20 @@ export const AdjustRow = ({
     <div className="flex flex-col gap-2">
       {adding && (
         <label className="text-xs">
-          Hankintameno (€)
+          Cost basis (€)
           <input
             value={costEur}
             inputMode="decimal"
             required
-            placeholder="esim. 500,00"
+            placeholder="e.g. 500.00"
             onChange={(e) => setCostEur(e.target.value)}
           />
         </label>
       )}
       <p className="text-xs text-muted">
         {adding
-          ? "Kirjataan saapuneet osuudet. Hankintamenoa ei arvata: ilman sitä myöhempi tuotto näyttäisi koko arvon voittona."
-          : "Kirjataan poistuneet osuudet ilman myyntituloa."}
+          ? "Records the units that arrived. The cost basis is not guessed: without it, later returns would show the whole value as profit."
+          : "Records the units that left, with no sale proceeds."}
       </p>
       {error && (
         <p role="alert" className="text-loss text-xs">
@@ -90,10 +81,10 @@ export const AdjustRow = ({
           disabled={adjust.isPending || (adding && costEur.trim() === "")}
           onClick={() => adjust.mutate()}
         >
-          {adjust.isPending ? "Kirjataan…" : "Vahvista korjaus"}
+          {adjust.isPending ? "Recording…" : "Confirm adjustment"}
         </button>
         <button type="button" className="text-sm" onClick={() => setOpen(false)}>
-          Peruuta
+          Cancel
         </button>
       </div>
     </div>

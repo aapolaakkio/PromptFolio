@@ -6,66 +6,35 @@ import { controlledSignal } from "@tanstack/charts/interaction/signal";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
-import { eur, fiDate } from "../lib/format.ts";
+import { eur, formatDate } from "../lib/format.ts";
 import { TIME_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
 
-export type SeriesPoint = {
+type SeriesPoint = {
   date: string;
   value: number;
-  /**
-   * What had been put into holdings by that day, when the caller has it. Drawn
-   * as a second line: the gap between the two is the return, and it is the one
-   * picture that makes a percentage feel like money -- a rising value line
-   * above a flat invested line is growth, the same line above an equally
-   * rising one is only deposits.
-   */
+  /** Cumulative amount put in by that day; the gap to the value line is the return. */
   invested?: number;
-  /**
-   * True when some holding had no price yet and was valued at what was paid
-   * for it. Such a day shows no market movement, only cost, and is drawn as
-   * its own line so it is never read as real value.
-   */
+  /** True when a holding had no price and was valued at cost; drawn as its own line so it is never read as market value. */
   estimated?: boolean;
-  /** Cash on bank and broker accounts that day, when the caller has it. */
   cash?: number;
 };
 
-/**
- * The x axis carries epoch milliseconds, but nothing a reader sees is ever one:
- * every tick, label and tooltip formats back to a Finnish date. The numbers exist
- * so elapsed time spaces the points, and because a categorical axis cannot be
- * narrowed to a range at all.
- */
+/** Epoch milliseconds, so elapsed time spaces the points and a range can be narrowed; never shown to a reader. */
 const asMillis = (iso: string): number => new Date(`${iso}T00:00:00Z`).getTime();
 const isoOf = (millis: number): string => new Date(millis).toISOString().slice(0, 10);
-export const asDate = (millis: number): string => fiDate(isoOf(millis));
+export const asDate = (millis: number): string => formatDate(isoOf(millis));
 
-/** Thousands as "12 k€", so a y axis of five-figure sums stays readable. */
-export const compactEur = (value: number): string => {
-  const rounded =
-    Math.abs(value) >= 1000
-      ? `${Math.round(value / 1000).toLocaleString("fi-FI")} k€`
-      : `${Math.round(value).toLocaleString("fi-FI")} €`;
-  // The Finnish locale writes a true minus (U+2212). Everything else in this
-  // app normalises it to the ASCII one (`format.ts`), and an axis that
-  // disagreed with the table under it would look like two different apps.
-  return rounded.replace(/−/g, "-");
-};
+export const compactEur = (value: number): string =>
+  Math.abs(value) >= 1000
+    ? `${Math.round(value / 1000).toLocaleString("en-GB")} k€`
+    : `${Math.round(value).toLocaleString("en-GB")} €`;
 
-/**
- * What a hovered point says. `xValue`/`yValue`, never `x`/`y`: those are pixel
- * coordinates, and reading them printed a position on screen as a date and a
- * euro amount -- plausible numbers wrong in both.
- */
+/** `xValue`/`yValue`, never `x`/`y`: those are pixel coordinates. */
 export const pointTip = (point: { xValue: unknown; yValue: unknown }): string =>
   `${asDate(Number(point.xValue))}: ${eur(String(point.yValue))}`;
 
-/**
- * What a brush change means, or undefined to ignore it. Only a committed range
- * counts: accepting previews redrew the chart under the drag, so a selection
- * could never settle. A click commits a zero-width range, which clears.
- */
+/** Only a committed range counts (previews redraw under the drag); a click commits zero width, which clears. */
 export const acceptedRange = (
   next: BrushRange<number>,
   type: "preview" | "commit" | "cancel",
@@ -74,15 +43,14 @@ export const acceptedRange = (
   return next.end > next.start ? next : null;
 };
 
-/** The ranges worth offering, as months back from the last point. */
 const RANGES = [
-  { label: "1 v", months: 12 },
-  { label: "3 v", months: 36 },
-  { label: "5 v", months: 60 },
-  { label: "Koko jakso", months: null },
+  { label: "1 y", months: 12 },
+  { label: "3 y", months: 36 },
+  { label: "5 y", months: 60 },
+  { label: "All time", months: null },
 ] as const;
 
-export type PlotRow = {
+type PlotRow = {
   at: number;
   value: number;
   invested: number | null;
@@ -90,23 +58,17 @@ export type PlotRow = {
   cash: number | null;
 };
 
-/** Every point, as the chart plots them. */
 export const plotRows = (points: readonly SeriesPoint[]): PlotRow[] =>
   points.map((point) => ({
     at: asMillis(point.date),
-    // The whole portfolio: holdings plus the cash beside them, which is also
-    // drawn on its own line.
+    // Holdings plus cash.
     value: point.value + (point.cash ?? 0),
     invested: point.invested ?? null,
     estimated: point.estimated === true,
     cash: point.cash ?? null,
   }));
 
-/**
- * The value line split in two: days valued from real prices, and days where
- * some holding was valued at cost. The estimate keeps the first real day too,
- * so the two lines meet rather than leaving a gap.
- */
+/** Value line split into real-price days and valued-at-cost days; the estimate keeps the first real day so the lines meet. */
 // ponytail: assumes the estimated days form one run (before the first price),
 // which is how missing history looks; a run in the middle would be bridged.
 export const splitEstimated = (rows: readonly PlotRow[]) => {
@@ -121,13 +83,7 @@ export const splitEstimated = (rows: readonly PlotRow[]) => {
   return { real, estimate };
 };
 
-/**
- * The span a preset button selects: `months` back from the most recent point,
- * or everything.
- *
- * Measured from the last point rather than from today, so a ledger whose last
- * price is a month old still shows something for "1 v".
- */
+/** Preset span: `months` back from the last point (not today), or everything. */
 export const presetWindow = (
   rows: readonly PlotRow[],
   months: number | null,
@@ -140,13 +96,11 @@ export const presetWindow = (
   return { start: Math.max(first, from.getTime()), end: last };
 };
 
-/** The rows inside a window, endpoints included. */
 export const within = (rows: readonly PlotRow[], window: BrushRange<number>): PlotRow[] =>
   rows.filter((row) => row.at >= window.start && row.at <= window.end);
 
 export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; label: string }) => {
   const [months, setMonths] = useState<number | null>(null);
-  /** A span dragged on the chart itself, which overrides whichever preset is lit. */
   const [zoom, setZoom] = useState<BrushRange<number> | null>(null);
 
   const all = useMemo(() => plotRows(points), [points]);
@@ -204,11 +158,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           crosshair({ x: { label: { format: asDate } }, y: false }),
         ],
         scales: {
-          // Pinned to the window rather than left to the data, so the brush and
-          // the axis always describe the same span. With the domain free, a
-          // second drag inside an already-narrowed chart mapped the pointer
-          // against one range while the axis showed another, and selecting
-          // anything became impossible.
+          // Pinned to the window so brush and axis describe the same span; a free domain made a second drag impossible.
           x: {
             scale: scaleLinear,
             domain: [window.start, window.end],
@@ -223,21 +173,16 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
         },
         controls: [
           brushX<number>({
-            // Always a zero-width span at the window's start, so nothing is
-            // painted until a drag begins and nothing lingers after one ends.
-            // The committed range is consumed into `zoom` immediately, and the
-            // narrowed chart is what says which span was chosen.
+            // Zero-width span at the window start: nothing paints until a drag; the committed range is consumed into `zoom`.
             range: controlledSignal({ start: window.start, end: window.start }, (next, context) => {
               const accepted = acceptedRange(next, context.reason.type);
               if (accepted !== undefined) setZoom(accepted);
             }),
             keyboard: false,
-            ariaLabel: "Valitse aikaväli",
+            ariaLabel: "Select a time range",
             format: asDate,
             selectionStyle: { fill: "var(--color-accent)", fillOpacity: 0.14, stroke: "none" },
-            // Invisible, but still a real grab target: the selection rectangle
-            // is the feedback a drag needs, and two handles parked on an idle
-            // plot are a control shouting for attention while doing nothing.
+            // Invisible but still a grab target; idle handles would shout for attention.
             handleStyle: { fillOpacity: 0 },
             handleSize: 6,
           }),
@@ -245,24 +190,20 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
         ...TIME_FOCUS,
         tooltip: { use: tooltip, format: pointTip },
       }),
-    // Deliberately not dependent on any drag-in-progress state: rebuilding the
-    // definition mid-drag destroys the gesture, which is why the first drag
-    // used to do nothing and only the second appeared to work.
+    // Must not depend on drag state: rebuilding the definition mid-drag destroys the gesture.
     [rows, window, split],
   );
 
-  /** A preset replaces a dragged span rather than compounding with it. */
   const show = (next: number | null): void => {
     setMonths(next);
     setZoom(null);
   };
 
-  if (points.length === 0) return <p className="text-muted">Ei vielä dataa.</p>;
+  if (points.length === 0) return <p className="text-muted">No data yet.</p>;
 
   return (
     <div>
-      {/* Above the chart, in one row: a control that sits on top of the plot
-          is unreadable over the line it is meant to control. */}
+      {/* Above the chart: a control over the plot is unreadable over its line. */}
       <div className="mb-2 flex gap-1 text-xs">
         {RANGES.map((range) => (
           <button
@@ -277,17 +218,15 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
             {range.label}
           </button>
         ))}
-        <span className="self-center text-muted">tai vedä kuvaajassa</span>
+        <span className="self-center text-muted">or drag on the chart</span>
         {rows.some((row) => row.invested !== null) && (
-          // Two series, so identity may not rest on colour: each line is
-          // named. Kept in this row rather than under the plot, where it
-          // collided with the axis the chart draws for itself.
+          // Two series, so each line is named rather than identified by colour alone.
           <span className="ml-auto flex items-center gap-3 self-center text-muted">
             <span className="flex items-center gap-1.5">
               <span className="h-0.5 w-4" style={{ background: colourFor(0) }} />
               {rows.some((row) => row.cash !== null && row.cash !== 0)
-                ? "Arvo (sis. käteinen)"
-                : "Arvo"}
+                ? "Value (incl. cash)"
+                : "Value"}
             </span>
             <span className="flex items-center gap-1.5">
               <span
@@ -296,17 +235,17 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
                   background: `repeating-linear-gradient(90deg, ${colourFor(1)} 0 4px, transparent 4px 7px)`,
                 }}
               />
-              Sijoitettu
+              Invested
             </span>
             {rows.some((row) => row.cash !== null && row.cash !== 0) && (
               <span className="flex items-center gap-1.5">
-                <span className="h-0.5 w-4" style={{ background: colourFor(2) }} /> Käteinen
+                <span className="h-0.5 w-4" style={{ background: colourFor(2) }} /> Cash
               </span>
             )}
             {split.estimate.length > 0 && (
               <span
                 className="flex items-center gap-1.5"
-                title="Päivinä ennen arvopaperin ensimmäistä hintaa arvo on hankintahinta, ei markkina-arvo."
+                title="On days before an instrument's first price, its value is the cost basis, not market value."
               >
                 <span
                   className="h-0.5 w-4"
@@ -315,7 +254,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
                       "repeating-linear-gradient(90deg, var(--color-muted) 0 2px, transparent 2px 5px)",
                   }}
                 />
-                Arvo hankintahinnalla
+                Valued at cost
               </span>
             )}
           </span>

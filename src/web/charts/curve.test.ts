@@ -4,8 +4,6 @@ import { bumpX } from "./curve.ts";
 
 describe("bumpX", () => {
   test("leaves and arrives horizontally, which is what makes a ribbon readable", () => {
-    // Control points share the segment's midpoint x and each end's own y, so
-    // the tangent at both ends is horizontal.
     expect(
       bumpX.line([
         [0, 0],
@@ -49,8 +47,6 @@ describe("bumpX", () => {
       ],
     );
 
-    // Starts at the top-left, ends closed; the lower edge is reversed so the
-    // outline does not cross through the middle of its own ribbon.
     expect(path.startsWith("M0,0")).toBe(true);
     expect(path.endsWith("Z")).toBe(true);
     expect(path).toContain("L100,10");

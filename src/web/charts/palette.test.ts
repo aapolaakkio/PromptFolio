@@ -13,8 +13,6 @@ test("the palette has enough distinct colours for a realistic portfolio", () => 
 });
 
 test("both themes define the same number of slots", () => {
-  // A chart asks for slot N and gets whichever theme is active; a missing slot
-  // in one theme would render an unstyled mark rather than a colour.
   expect(SERIES_DARK.length).toBe(SERIES_LIGHT.length);
 });
 
@@ -31,8 +29,7 @@ test("colours are referenced through the theme, so dark mode needs no branch", (
 });
 
 test("the stylesheet defines every slot this module promises, in both themes", async () => {
-  // The values live in CSS and the count lives here; this is what stops the two
-  // drifting apart and a chart asking for a variable nobody defined.
+  // Values live in CSS, the count here: stops the two drifting apart.
   const css = await readFileText("src/web/styles.css");
   for (let slot = 1; slot <= SERIES_COUNT; slot++) {
     expect(css.match(new RegExp(`--series-${slot}:`, "g"))?.length).toBe(2);
