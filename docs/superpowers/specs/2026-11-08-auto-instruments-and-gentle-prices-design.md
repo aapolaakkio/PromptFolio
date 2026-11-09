@@ -166,7 +166,7 @@ _(Designer's call.)_
 ## Constraints
 
 - Runs on Cloudflare Workers with D1, as today. Cron triggers are free on the
-  Workers plan in use; an hourly trigger is about 24 invocations a weekday, most
+  Workers plan in use; an hourly trigger is 23 invocations a weekday (18:00 UTC is left to the evening run), most
   of them making no request.
 - Tests never reach the network: every fetch is injected, as the project does
   now.

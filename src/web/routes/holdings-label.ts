@@ -1,9 +1,8 @@
-/** The line under a holding's name: where its price comes from, in what currency. */
+/** The line under a holding's name: where its price comes from. The Valuutta column shows the currency. */
 export const instrumentLabel = (h: {
   isin: string | null;
   sourceKey: string;
   priceSource: string;
-  currency: string;
   lookupStatus: "ok" | "pending" | "attention";
 }): string => {
   const code =
@@ -12,5 +11,5 @@ export const instrumentLabel = (h: {
       : h.priceSource === "manual"
         ? "oma hinta"
         : h.sourceKey;
-  return [h.isin, code, h.currency].filter((part) => part !== null).join(" · ");
+  return [h.isin, code].filter((part) => part !== null).join(" · ");
 };
