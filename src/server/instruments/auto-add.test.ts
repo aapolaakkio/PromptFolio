@@ -164,6 +164,28 @@ describe("resolveUnknown", () => {
     expect(resolved.unknownIsins).toEqual([]);
   });
 
+  test("an ISIN discovered by name is remembered under the ISIN too", async () => {
+    const isin = track(freshIsin());
+    const name = `OP-TESTI ${crypto.randomUUID()}`;
+    await remember(
+      lookupKey(null, name),
+      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+    );
+    const resolved = await resolveUnknown(
+      db,
+      draftOf([txn({ instrumentName: name })], [{ isin: null, name, currency: EUR }]),
+      noNetwork,
+    );
+
+    // The browser sends the row back without its name: the ISIN alone links it.
+    const withoutName = resolved.txns.map(({ instrumentName: _name, ...rest }) => rest);
+    const created = await createAdded(db, draftOf(withoutName, resolved.unknownIsins));
+
+    const [row] = await stored(isin);
+    expect(row).toMatchObject({ priceSource: "op_fund", sourceKey: "op-testi" });
+    expect(created.txns[0]?.instrumentId).toBe(row?.id);
+  });
+
   test("a lookup that fails outright leaves the instrument unknown", async () => {
     const isin = track(freshIsin());
     const unknown = [{ isin, name: "BROKEN", currency: EUR }];

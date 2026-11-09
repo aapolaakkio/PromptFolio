@@ -37,6 +37,8 @@ export type DraftResponse = {
     fxRateEur: number;
     externalId: string | null;
     note: string | null;
+    /** The broker's name for an instrument the import adds itself. */
+    instrumentName?: string | undefined;
   }>;
   problems: Array<{
     line: number;

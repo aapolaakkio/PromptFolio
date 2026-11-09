@@ -43,6 +43,22 @@ const readCached = async (db: Db, key: string, now: number): Promise<InstrumentL
   return readStoredLookup(row.result);
 };
 
+/** Remembers `result` under `key`, replacing whatever was there. */
+export const storeLookup = async (
+  db: Db,
+  key: string,
+  result: InstrumentLookup,
+  checkedAt: Date,
+): Promise<void> => {
+  await db
+    .insert(instrumentLookups)
+    .values({ key, outcome: result.outcome, result: JSON.stringify(result), checkedAt })
+    .onConflictDoUpdate({
+      target: instrumentLookups.key,
+      set: { outcome: result.outcome, result: JSON.stringify(result), checkedAt },
+    });
+};
+
 export const rememberedLookup = async (
   db: Db,
   isin: string | null,
@@ -63,13 +79,6 @@ export const rememberedLookup = async (
     gatedFetch(db, fetchImpl, now),
     quoteSpacingMs,
   );
-  const checkedAt = new Date(now());
-  await db
-    .insert(instrumentLookups)
-    .values({ key, outcome: result.outcome, result: JSON.stringify(result), checkedAt })
-    .onConflictDoUpdate({
-      target: instrumentLookups.key,
-      set: { outcome: result.outcome, result: JSON.stringify(result), checkedAt },
-    });
+  await storeLookup(db, key, result, new Date(now()));
   return result;
 };

@@ -68,7 +68,8 @@ const toEditable = (txn: DraftResponse["txns"][number]): EditableTxn => ({
 
 /**
  * Back to what the commit takes. Fields the table does not show (the resolved
- * instrument, the unit price, tax, the broker's own id) are carried from the
+ * instrument, the unit price, tax, the broker's own id, the broker's name for
+ * an instrument not yet added) are carried from the
  * row the preview produced, so editing a summary column never drops them.
  */
 const fromEditable = (
@@ -91,6 +92,8 @@ const fromEditable = (
   fxRateEur: row.currency === "EUR" ? EUR_RATE : 0,
   externalId: base?.externalId ?? null,
   note: row.note === "" ? null : row.note,
+  // Names an instrument added while Yahoo is paused; the commit reads it.
+  instrumentName: base?.instrumentName,
 });
 
 /**

@@ -5,7 +5,7 @@ import { instrumentLookups, instruments } from "../db/schema.ts";
 import type { AddedInstrument, Draft, DraftTxn } from "../import/map.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import type { InstrumentLookup } from "./lookup.ts";
-import { lookupKey, readStoredLookup, rememberedLookup } from "./lookup-cache.ts";
+import { lookupKey, readStoredLookup, rememberedLookup, storeLookup } from "./lookup-cache.ts";
 import { addInstrument } from "./store.ts";
 
 type Unknown = Draft["unknownIsins"][number];
@@ -63,7 +63,8 @@ const withDiscoveredIsin = (txn: DraftTxn, discovered: ReadonlyMap<string, strin
  * Looks up each instrument the draft could not resolve, once per instrument.
  * One that was found, or that is waiting on a paused Yahoo, moves to `added`;
  * one the owner must decide on stays in `unknownIsins` for the form. Writes
- * nothing but the lookup cache: instruments are created at commit.
+ * nothing but the lookup cache: instruments are created at commit. A lookup
+ * that discovered its ISIN from a name is remembered under that ISIN too.
  */
 export const resolveUnknown = async (
   db: Db,
@@ -81,12 +82,18 @@ export const resolveUnknown = async (
   const unknownIsins: Unknown[] = [];
   const discovered = new Map<string, string>();
   for (const entry of distinct.values()) {
-    const result = addable(entry, await lookUp(db, entry, fetchImpl, quoteSpacingMs));
-    if (result === null) {
+    const lookup = await lookUp(db, entry, fetchImpl, quoteSpacingMs);
+    const result = addable(entry, lookup);
+    if (lookup === null || result === null) {
       unknownIsins.push(entry);
       continue;
     }
-    if (entry.isin === null) discovered.set(entry.name, result.isin);
+    if (entry.isin === null) {
+      discovered.set(entry.name, result.isin);
+      // Also under the ISIN, so the commit finds it from the row alone: the
+      // browser need not send the broker's name back.
+      await storeLookup(db, result.isin, lookup, new Date());
+    }
     if (!added.some((a) => a.isin === result.isin)) added.push(result);
   }
 
