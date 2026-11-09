@@ -7,12 +7,22 @@ import {
   type YUnit,
 } from "./chart-schema.ts";
 import { forecastBand, resolveSeries, type ResolvedSeries } from "./chart-series.ts";
-import { applyTransform, transformedUnit } from "./chart-transform.ts";
+import {
+  applyTransform,
+  thin,
+  TRANSFORM_SUFFIX,
+  transformedUnit,
+  type Transform,
+} from "./chart-transform.ts";
 import { type ChartTool, type Db, today } from "./tool-types.ts";
 import type { TurnState } from "./turn-state.ts";
 
 const LOG_FALLBACK = "The log scale needs values above zero, so this chart uses a linear scale.";
 const STACK_LOG = "Stacked series are drawn on a linear scale.";
+const BOUNDS_WIDENED =
+  "The requested y-axis bounds would hide some values, so the chart shows the full range.";
+/** Sources whose points are amounts per month, which can be summed; the others are levels. */
+const FLOW_SOURCES: ReadonlySet<string> = new Set(["spending-by-month"]);
 
 type Shown = ResolvedSeries & { readonly axis: "left" | "right" };
 
@@ -37,13 +47,75 @@ const scaleOf = (
   band: ChartData["band"],
 ): Pick<ChartData, "yScale" | "notes"> => {
   if (spec.yScale !== "log") return { yScale: "linear", notes: [] };
-  if (spec.series.some((row) => row.stack !== undefined)) {
+  if (spec.kind === "stacked-bar" || spec.series.some((row) => row.stack !== undefined)) {
     return { yScale: "linear", notes: [STACK_LOG] };
   }
   const left = series.filter((row) => row.axis === "left").flatMap((row) => row.points);
   const positive =
     left.every((point) => point.y > 0) && (band?.points ?? []).every((point) => point.low > 0);
   return positive ? { yScale: "log", notes: [] } : { yScale: "linear", notes: [LOG_FALLBACK] };
+};
+
+/** Refusals that need no data: what a transform or band may apply to, and what may share an axis. */
+const checkRefs = (spec: ChartSpec): void => {
+  spec.series.forEach((ref, index) => {
+    if (ref.transform === "cumulative" && !FLOW_SOURCES.has(ref.source)) {
+      throw new Error(
+        `Series ${index + 1}: cumulative sums amounts per month, so it is only for spending-by-month; ${ref.source} is already a level`,
+      );
+    }
+  });
+  const categories = spec.series.filter((ref) => ref.source === "allocation").length;
+  if (categories > 0 && categories < spec.series.length) {
+    throw new Error("Allocation is by category, not time; chart it apart from time series");
+  }
+  if (spec.band !== undefined) {
+    if (spec.yUnit !== "EUR") throw new Error("A forecast band is in euros: use yUnit EUR");
+    if (spec.series.some((ref) => (ref.transform ?? "none") !== "none")) {
+      throw new Error(
+        "A band is drawn in plain euros, so it cannot share a chart with a transformed series",
+      );
+    }
+  }
+};
+
+const transformed = (
+  row: ResolvedSeries,
+  transform: Transform,
+  axis: "left" | "right" | undefined,
+) => {
+  const out = applyTransform(row.points, transform);
+  const label = `${row.label}${TRANSFORM_SUFFIX[out.applied]}`;
+  const series: Shown = {
+    label,
+    unit: transformedUnit(row.unit, out.applied),
+    points: thin(out.points),
+    axis: axis ?? "left",
+  };
+  return { series, note: out.note === null ? null : `${row.label} ${out.note}.` };
+};
+
+type Bounded = { readonly spec: ChartSpec; readonly note: string | null };
+
+/** Bounds may widen the y axis but never hide a value: bounds that would are dropped, with a note. */
+const withinBounds = (
+  spec: ChartSpec,
+  series: readonly Shown[],
+  band: ChartData["band"],
+): Bounded => {
+  if (spec.yMin === undefined && spec.yMax === undefined) return { spec, note: null };
+  const values = [
+    ...series.filter((row) => row.axis === "left").flatMap((row) => row.points.map((p) => p.y)),
+    ...(band?.points ?? []).flatMap((point) => [point.low, point.high]),
+  ];
+  const hidden = values.some(
+    (value) =>
+      (spec.yMin !== undefined && value < spec.yMin) ||
+      (spec.yMax !== undefined && value > spec.yMax),
+  );
+  return hidden
+    ? { spec: { ...spec, yMin: undefined, yMax: undefined }, note: BOUNDS_WIDENED }
+    : { spec, note: null };
 };
 
 export const buildChartTool = (db: Db, userId: string, turn: TurnState): ChartTool => ({
@@ -60,33 +132,30 @@ export const buildChartTool = (db: Db, userId: string, turn: TurnState): ChartTo
     "color (palette slot 1-8 or a hex like #e34948), width 1-6, dash solid|dashed|dotted, opacity 0.1-1, " +
     "fillOpacity 0-1, curve linear|smooth|step, points (markers), axis left|right (right for a second unit), " +
     "stack (series sharing an id stack), transform none|cumulative|percent-change-from-start|index-100 " +
-    "(the app computes it; percent change is in %, index-100 in index). " +
+    "(the app computes it; cumulative only for spending-by-month; percent change is in %, index-100 in index). " +
+    "yMin/yMax may widen the axis but never hide a value. Allocation cannot share a chart with time series. " +
     "Chart: title (≤120), subtitle, kind (default series kind: line|bar|area|stacked-bar), yUnit of the left axis " +
     "(EUR, %, count or index; must match its series), yScale linear|log, yMin, yMax, yFormat EUR|compact-EUR|%|number, " +
     "xLabel, yLabel (≤40), grid, legend top|bottom|none, height 200-520, band {scenarioId, holdingId?, label?, color?, fillOpacity?} " +
-    "(shades a scenario's low-high range), annotations (≤10): {type:y-line, y, label, axis?, color?}, " +
+    "(shades a scenario's low-high range; yUnit EUR, no transformed series), annotations (≤10): {type:y-line, y, label, axis?, color?}, " +
     "{type:x-line, x: YYYY-MM or YYYY-MM-DD, label, color?}, {type:x-range, from, to, label, color?} (labels ≤40), " +
     "note (≤300, shown as the assistant's note). You get back each series' first and last point, not the data. " +
     "At most ten charts per answer.",
   schema: ChartSpecSchema,
   chart: async (input) => {
-    const spec = ChartSpecSchema.parse(input);
+    const parsed = ChartSpecSchema.parse(input);
+    checkRefs(parsed);
     const on = today();
     const resolved = await Promise.all(
-      spec.series.map((ref) => resolveSeries(db, userId, turn, ref, spec.yUnit, on)),
+      parsed.series.map((ref) => resolveSeries(db, userId, turn, ref, parsed.yUnit, on)),
     );
-    const series: Shown[] = resolved.map((row, index) => {
-      const ref = spec.series[index];
-      const transform = ref?.transform ?? "none";
-      return {
-        label: row.label,
-        unit: transformedUnit(row.unit, transform),
-        points: applyTransform(row.points, transform),
-        axis: ref?.axis ?? "left",
-      };
-    });
-    checkUnits(series, spec.yUnit);
-    const band = spec.band === undefined ? undefined : forecastBand(turn, spec.band);
+    const shown = resolved.map((row, index) =>
+      transformed(row, parsed.series[index]?.transform ?? "none", parsed.series[index]?.axis),
+    );
+    const series = shown.map((row) => row.series);
+    checkUnits(series, parsed.yUnit);
+    const band = parsed.band === undefined ? undefined : forecastBand(turn, parsed.band);
+    const { spec, note: boundsNote } = withinBounds(parsed, series, band);
     const scale = scaleOf(spec, series, band);
     turn.claimChart();
     return ChatChartSchema.parse({
@@ -95,7 +164,12 @@ export const buildChartTool = (db: Db, userId: string, turn: TurnState): ChartTo
       data: {
         series: series.map((row) => ({ label: row.label, unit: row.unit, points: row.points })),
         band,
-        ...scale,
+        yScale: scale.yScale,
+        notes: [
+          ...shown.flatMap((row) => (row.note === null ? [] : [row.note])),
+          ...(boundsNote === null ? [] : [boundsNote]),
+          ...scale.notes,
+        ],
       },
     });
   },

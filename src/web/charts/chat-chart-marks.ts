@@ -2,18 +2,20 @@ import { areaY, dot, lineY, rect, ruleX, ruleY, text } from "@tanstack/charts";
 
 import type { ChatChart as ChatChartValue } from "../../server/chat/chart-schema.ts";
 import {
+  atText,
   chatChartRows,
   colourOf,
   DASH,
   formatFor,
-  positionOf,
+  logFloor,
+  NOTE_COLOUR,
+  NOTE_MARK,
   stackedRows,
   tipFormatFor,
-  xText,
 } from "./chat-chart-model.ts";
 import { bumpX, stepX } from "./curve.ts";
 
-const BAR_SLOT = 0.8;
+const BAR_FILL = 0.8;
 export const RIGHT = "yRight";
 type Axis = "y" | typeof RIGHT;
 const LEFT: Axis = "y";
@@ -26,6 +28,8 @@ export type Plot = {
   readonly x2: number;
   readonly y1: number;
   readonly y2: number;
+  /** The value again on estimated days only, for the dashed overlay; null elsewhere breaks the line. */
+  readonly ey: number | null;
   readonly tip: string;
   readonly label: string;
 };
@@ -41,7 +45,7 @@ const seriesKind = (chart: ChatChartValue, index: number) => {
 /** Everything the marks share, worked out once from the app's data and the model's styling. */
 export const layoutFor = (chart: ChatChartValue) => {
   const { spec, data } = chart;
-  const { xs, labels, rows } = chatChartRows(data);
+  const rows = chatChartRows(data);
   const log = data.yScale === "log";
   const rightUnit = data.series.find((_s, i) => spec.series[i]?.axis === "right")?.unit;
   const rightFormat = formatFor(undefined, rightUnit ?? spec.yUnit);
@@ -59,23 +63,32 @@ export const layoutFor = (chart: ChatChartValue) => {
       kinds.flatMap((kind, index) => (kind === "bar" ? [stackIds[index] ?? `own-${index}`] : [])),
     ),
   ];
+  const leftRaw = [
+    ...rows.rows.flatMap((series, index) =>
+      axisOf(index) === "left" ? series.map((r) => r.y) : [],
+    ),
+    ...(data.band?.points ?? []).map((point) => point.low),
+  ];
+  // A log axis has no zero: bars, areas and stacks start from this floor instead.
+  const floor = logFloor(leftRaw, spec.yMin);
+  const onLeft = (value: number): number => (log ? Math.log10(Math.max(value, floor)) : value);
   return {
     chart,
-    xs,
-    labels,
     rows,
     log,
+    floor,
+    onLeft,
     rightUnit,
     rightFormat,
     leftFormat: formatFor(spec.yFormat, spec.yUnit),
     kinds,
     axisOf,
     stackIds,
-    stacked: stackedRows(rows, stackIds),
+    stacked: stackedRows(rows.rows, stackIds),
     barGroups,
-    width: BAR_SLOT / Math.max(1, barGroups.length),
+    width: (rows.slot * BAR_FILL) / Math.max(1, barGroups.length),
     plotted: (value: number, index: number): number =>
-      log && axisOf(index) === "left" ? Math.log10(value) : value,
+      axisOf(index) === "left" ? onLeft(value) : value,
     tipFor: (index: number) =>
       axisOf(index) === "left" ? tipFormatFor(spec.yFormat, spec.yUnit) : rightFormat,
   };
@@ -83,96 +96,133 @@ export const layoutFor = (chart: ChatChartValue) => {
 
 export type Layout = ReturnType<typeof layoutFor>;
 
-const plotsFor = (layout: Layout, index: number, label: string): Plot[] => {
-  const { barGroups, stackIds, width, rows, xs, plotted, tipFor } = layout;
+/** One series' rows; the tooltip always names the app's own label, whatever the legend says. */
+export const plotsFor = (layout: Layout, index: number): Plot[] => {
+  const { barGroups, stackIds, width, rows, plotted, tipFor } = layout;
+  const appLabel = rows.labels[index] ?? "";
   const group = barGroups.indexOf(stackIds[index] ?? `own-${index}`);
+  const series = rows.rows[index] ?? [];
   return (layout.stacked[index] ?? []).map((row, at) => {
-    const raw = rows[index]?.[at]?.y ?? 0;
-    const x1 = row.at - BAR_SLOT / 2 + group * width;
+    const point = series[at];
+    const raw = point?.y ?? 0;
+    const x1 = row.at - (rows.slot * BAR_FILL) / 2 + group * width;
     return {
       at: row.at,
       x1,
       x2: x1 + width,
       y1: plotted(row.y1, index),
       y2: plotted(row.y2, index),
-      label,
-      tip: `${label} · ${xText(xs[row.at] ?? "")}: ${tipFor(index)(raw)}`,
+      ey: point?.estimated === true ? plotted(row.y2, index) : null,
+      label: appLabel,
+      tip: `${appLabel} · ${atText(rows, row.at)}: ${tipFor(index)(raw)}${point?.estimated === true ? " (estimated)" : ""}`,
     };
   });
 };
 
-/** One series as the mark its kind asks for, styled as the model asked. */
-export const seriesMark = (layout: Layout, index: number) => {
-  const { axisOf, kinds } = layout;
+const lineStyle = (layout: Layout, index: number) => {
   const style = layout.chart.spec.series[index];
-  const label = style?.label ?? layout.labels[index] ?? "";
+  return {
+    stroke: colourOf(style?.color, index),
+    strokeWidth: style?.width ?? 2,
+    strokeOpacity: style?.opacity ?? 1,
+  };
+};
+
+/** Estimated days (stale prices, holdings valued at cost) drawn dashed over the line, as on the dashboard. */
+const estimatedMarks = (layout: Layout, index: number, plots: readonly Plot[], yScale: Axis) =>
+  plots.some((row) => row.ey !== null) && layout.kinds[index] !== "bar"
+    ? [
+        lineY(plots, {
+          id: `series-${index}-estimated`,
+          yScale,
+          x: "at",
+          y: "ey",
+          ...lineStyle(layout, index),
+          strokeDasharray: DASH.dashed,
+        }),
+      ]
+    : [];
+
+/** One series as the mark its kind asks for, styled as the model asked. */
+export const seriesMarks = (layout: Layout, index: number) => {
+  const style = layout.chart.spec.series[index];
   const colour = colourOf(style?.color, index);
-  const plots = plotsFor(layout, index, label);
-  const yScale: Axis = axisOf(index) === "right" ? RIGHT : LEFT;
+  const plots = plotsFor(layout, index);
+  const yScale: Axis = layout.axisOf(index) === "right" ? RIGHT : LEFT;
   const common = { id: `series-${index}`, yScale };
-  const kind = kinds[index];
+  const kind = layout.kinds[index];
   const curve = kind === "step" ? stepX : CURVES[style?.curve ?? "linear"];
+  const extra = estimatedMarks(layout, index, plots, yScale);
   switch (kind) {
     case "area":
-      return areaY(plots, {
-        ...common,
-        x: "at",
-        y1: "y1",
-        y2: "y2",
-        fill: colour,
-        fillOpacity: style?.fillOpacity ?? 0.3,
-        stroke: colour,
-        strokeWidth: style?.width ?? 1.5,
-        curve,
-      });
+      return [
+        areaY(plots, {
+          ...common,
+          x: "at",
+          y1: "y1",
+          y2: "y2",
+          fill: colour,
+          fillOpacity: style?.fillOpacity ?? 0.3,
+          stroke: colour,
+          strokeWidth: style?.width ?? 1.5,
+          curve,
+        }),
+        ...extra,
+      ];
     case "scatter":
-      return dot(plots, {
-        ...common,
-        x: "at",
-        y: "y2",
-        r: (style?.width ?? 2) + 1,
-        fill: colour,
-        fillOpacity: style?.opacity ?? 0.9,
-      });
+      return [
+        dot(plots, {
+          ...common,
+          x: "at",
+          y: "y2",
+          r: (style?.width ?? 2) + 1,
+          fill: colour,
+          fillOpacity: style?.opacity ?? 0.9,
+        }),
+        ...extra,
+      ];
     case "bar":
-      return rect(plots, {
-        ...common,
-        x1: "x1",
-        x2: "x2",
-        y1: "y1",
-        y2: "y2",
-        fill: colour,
-        fillOpacity: style?.opacity ?? style?.fillOpacity ?? 0.85,
-      });
+      return [
+        rect(plots, {
+          ...common,
+          x1: "x1",
+          x2: "x2",
+          y1: "y1",
+          y2: "y2",
+          fill: colour,
+          fillOpacity: style?.opacity ?? style?.fillOpacity ?? 0.85,
+        }),
+      ];
     default:
-      return lineY(plots, {
-        ...common,
-        x: "at",
-        y: "y2",
-        stroke: colour,
-        strokeWidth: style?.width ?? 2,
-        strokeOpacity: style?.opacity ?? 1,
-        strokeDasharray: DASH[style?.dash ?? "solid"],
-        points: style?.points ?? false,
-        curve,
-      });
+      return [
+        lineY(plots, {
+          ...common,
+          x: "at",
+          y: "y2",
+          ...lineStyle(layout, index),
+          strokeDasharray: DASH[style?.dash ?? "solid"],
+          points: style?.points ?? false,
+          curve,
+        }),
+        ...extra,
+      ];
   }
 };
 
 /** The shaded low-high range of a forecast. */
 export const bandOf = (layout: Layout) => {
-  const { chart, xs, log, tipFor } = layout;
+  const { chart, rows, onLeft, tipFor } = layout;
   const { spec, data } = chart;
-  const position = new Map(xs.map((x, at) => [x, at]));
-  const label = spec.band?.label ?? data.band?.label ?? "";
+  const label = data.band?.label ?? "";
   const plots: Plot[] = (data.band?.points ?? []).map((point) => ({
-    at: position.get(point.x) ?? 0,
+    at: rows.atOf(point.x),
     x1: 0,
     x2: 0,
-    y1: log ? Math.log10(point.low) : point.low,
-    y2: log ? Math.log10(point.high) : point.high,
+    y1: onLeft(point.low),
+    y2: onLeft(point.high),
+    ey: null,
     label,
-    tip: `${label} · ${xText(point.x)}: ${tipFor(-1)(point.low)} – ${tipFor(-1)(point.high)}`,
+    tip: `${label} · ${atText(rows, rows.atOf(point.x))}: ${tipFor(-1)(point.low)} – ${tipFor(-1)(point.high)}`,
   }));
   const marks =
     data.band === undefined
@@ -191,9 +241,9 @@ export const bandOf = (layout: Layout) => {
   return { plots, marks };
 };
 
-/** The left axis' plotted range, with the model's yMin/yMax where they make sense on this scale. */
+/** The left axis always holds every value; the model's bounds may only widen it. Never a non-finite end. */
 export const extentOf = (layout: Layout, band: readonly Plot[]) => {
-  const { stacked, axisOf, plotted, log, chart } = layout;
+  const { stacked, axisOf, plotted, log, chart, onLeft } = layout;
   const values = [
     ...stacked.flatMap((series, index) =>
       axisOf(index) === "left"
@@ -201,80 +251,70 @@ export const extentOf = (layout: Layout, band: readonly Plot[]) => {
         : [],
     ),
     ...band.flatMap((row) => [row.y1, row.y2]),
-  ];
-  const lowest = Math.min(...values, ...(log ? [] : [0]));
-  const highest = Math.max(...values, lowest + 1);
+  ].filter(Number.isFinite);
+  const lowest = values.length === 0 ? 0 : Math.min(...values, ...(log ? [] : [0]));
+  const highest = values.length === 0 ? 1 : Math.max(...values, lowest + (log ? 0.1 : 1));
   const bound = (value: number | undefined) =>
-    value === undefined || (log && value <= 0) ? undefined : log ? Math.log10(value) : value;
+    value === undefined || (log && value <= 0) ? undefined : onLeft(value);
   const yMin = bound(chart.spec.yMin);
   const yMax = bound(chart.spec.yMax);
   const domain: readonly [number, number] | undefined =
-    yMin === undefined && yMax === undefined ? undefined : [yMin ?? lowest, yMax ?? highest];
-  return { domain, top: domain?.[1] ?? highest, bottom: domain?.[0] ?? lowest, bound };
+    yMin === undefined && yMax === undefined
+      ? undefined
+      : [Math.min(yMin ?? lowest, lowest), Math.max(yMax ?? highest, highest)];
+  return { domain, top: domain?.[1] ?? highest, bottom: domain?.[0] ?? lowest };
 };
 
-/** Lines and ranges the app places at validated values; their labels are the model's words. */
+const noteText = (id: string, rows: readonly Plot[], x: "at" | "x1", yScale: Axis, dy: number) =>
+  text(rows, {
+    id: `${id}-label`,
+    x,
+    y: "y2",
+    text: "label",
+    fill: NOTE_COLOUR,
+    fontSize: 11,
+    anchor: "start",
+    dx: 4,
+    dy,
+    yScale,
+  });
+
+/** Lines and ranges the app places at validated values; their labels are the model's words, muted and marked as notes. */
 export const annotationMarks = (layout: Layout, extent: ReturnType<typeof extentOf>) => {
-  const { xs, rightUnit } = layout;
-  const { top, bottom, bound } = extent;
+  const { rows, rightUnit, onLeft } = layout;
+  const { top, bottom } = extent;
   return (layout.chart.spec.annotations ?? []).flatMap((note, index) => {
     const colour = colourOf(note.color, 7);
     const id = `note-${index}`;
-    const at = (x: string) => positionOf(xs, x);
+    const label = `${NOTE_MARK} ${note.label}`;
+    const base = { x1: 0, x2: 0, ey: null, label, tip: label };
     switch (note.type) {
       case "y-line": {
-        const y = note.axis === "right" ? note.y : (bound(note.y) ?? note.y);
-        const yScale: Axis = note.axis === "right" && rightUnit !== undefined ? RIGHT : LEFT;
-        const row: Plot = { at: 0, x1: 0, x2: 0, y1: y, y2: y, label: note.label, tip: note.label };
+        // With no right-axis series the line belongs on the left scale, log included.
+        const onRight = note.axis === "right" && rightUnit !== undefined;
+        const y = onRight ? note.y : onLeft(note.y);
+        const yScale: Axis = onRight ? RIGHT : LEFT;
+        const row: Plot = { ...base, at: rows.first, y1: y, y2: y };
         return [
           ruleY([row], { id, y: "y2", stroke: colour, strokeDasharray: "4 3", yScale }),
-          text([row], {
-            id: `${id}-label`,
-            x: "at",
-            y: "y2",
-            text: "label",
-            fill: colour,
-            fontSize: 11,
-            anchor: "start",
-            dy: -4,
-            yScale,
-          }),
+          noteText(id, [row], "at", yScale, -4),
         ];
       }
       case "x-line": {
-        const row: Plot = {
-          at: at(note.x),
-          x1: 0,
-          x2: 0,
-          y1: top,
-          y2: top,
-          label: note.label,
-          tip: note.label,
-        };
+        const row: Plot = { ...base, at: rows.atOf(note.x), y1: top, y2: top };
         return [
           ruleX([row], { id, x: "at", stroke: colour, strokeDasharray: "4 3" }),
-          text([row], {
-            id: `${id}-label`,
-            x: "at",
-            y: "y2",
-            text: "label",
-            fill: colour,
-            fontSize: 11,
-            anchor: "start",
-            dx: 4,
-            dy: 12,
-          }),
+          noteText(id, [row], "at", LEFT, 12),
         ];
       }
       case "x-range": {
         const row: Plot = {
-          at: at(note.from),
-          x1: at(note.from),
-          x2: at(note.to),
+          ...base,
+          at: rows.atOf(note.from),
+          x1: rows.atOf(note.from),
+          x2: rows.atOf(note.to),
           y1: bottom,
           y2: top,
-          label: note.label,
-          tip: note.label,
         };
         return [
           rect([row], {
@@ -287,17 +327,7 @@ export const annotationMarks = (layout: Layout, extent: ReturnType<typeof extent
             fill: colour,
             fillOpacity: 0.12,
           }),
-          text([row], {
-            id: `${id}-label`,
-            x: "x1",
-            y: "y2",
-            text: "label",
-            fill: colour,
-            fontSize: 11,
-            anchor: "start",
-            dx: 4,
-            dy: 12,
-          }),
+          noteText(id, [row], "x1", LEFT, 12),
         ];
       }
     }

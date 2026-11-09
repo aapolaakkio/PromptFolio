@@ -153,11 +153,22 @@ export const ChartSpecSchema = z
     annotations: z.array(AnnotationSchema).max(MAX_ANNOTATIONS).optional(),
     note: z.string().trim().max(MAX_NOTE).optional(),
   })
-  .strict();
+  .strict()
+  .refine((spec) => spec.yMin === undefined || spec.yMax === undefined || spec.yMin < spec.yMax, {
+    message: "yMin must be below yMax",
+    path: ["yMin"],
+  });
 
 export type ChartSpec = z.infer<typeof ChartSpecSchema>;
 
-const Point = z.object({ x: z.string().min(1).max(200), y: z.number() }).strict();
+const Point = z
+  .object({
+    x: z.string().min(1).max(200),
+    y: z.number(),
+    /** A stale price or a holding valued at cost that day: drawn dashed, as on the dashboard. */
+    estimated: z.boolean().optional(),
+  })
+  .strict();
 
 /** Numbers the app computed for each reference, in the spec's order; labels and notes are app-built. */
 export const ChartDataSchema = z
@@ -187,7 +198,7 @@ export const ChartDataSchema = z
       .optional(),
     /** The scale actually drawn: a log scale falls back to linear when a value is not positive. */
     yScale: z.enum(["linear", "log"]),
-    notes: z.array(z.string().min(1).max(200)).max(5),
+    notes: z.array(z.string().min(1).max(300)).max(10),
   })
   .strict();
 
@@ -200,6 +211,13 @@ export const ChatChartSchema = z
 
 export type ChatChart = z.infer<typeof ChatChartSchema>;
 
+/** An old chart past the per-conversation cap: its spec stays, its numbers are dropped. */
+export const ExpiredChartSchema = z
+  .object({ chartId: z.string().min(1).max(64), spec: ChartSpecSchema, expired: z.literal(true) })
+  .strict();
+
+export const StoredChartSchema = z.union([ChatChartSchema, ExpiredChartSchema]);
+
 /** What the model is told about a chart it asked for: counts and end points, never the series. */
 export const chartSummary = (chart: ChatChart) => ({
   status: `Chart shown: ${chart.spec.title}`,
@@ -211,6 +229,8 @@ export const chartSummary = (chart: ChatChart) => ({
     label: series.label,
     unit: series.unit,
     points: series.points.length,
+    // Said out loud so an answer does not present an estimated stretch as market value.
+    estimatedPoints: series.points.filter((point) => point.estimated === true).length,
     first: series.points[0] ?? null,
     last: series.points.at(-1) ?? null,
   })),

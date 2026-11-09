@@ -16,7 +16,7 @@ import {
   StoredProposal,
   type Proposal,
 } from "../../server/chat/proposal-schema.ts";
-import { ChatChartSchema } from "../../server/chat/chart-schema.ts";
+import { StoredChartSchema } from "../../server/chat/chart-schema.ts";
 import { ChatChart } from "../charts/ChatChart.tsx";
 import { renderItems } from "./chat-order.ts";
 import { askChat } from "./chat-stream.ts";
@@ -284,10 +284,18 @@ export const ChatPage = () => {
             }
             const { turn } = item;
             if (turn.role === "chart") {
-              const chart = readStored(ChatChartSchema, turn.content);
-              return chart === null ? null : (
+              const chart = readStored(StoredChartSchema, turn.content);
+              if (chart === null) return null;
+              return (
                 <li key={`chart-${chart.chartId}`}>
-                  <ChatChart chart={chart} />
+                  {"expired" in chart ? (
+                    <div className="card max-w-[90%] grid gap-1 text-sm">
+                      <span className="font-semibold">{chart.spec.title}</span>
+                      <span className="text-muted">Chart expired — ask again.</span>
+                    </div>
+                  ) : (
+                    <ChatChart chart={chart} />
+                  )}
                 </li>
               );
             }

@@ -411,15 +411,113 @@ describe("show_chart", () => {
           },
           { source: "forecast", scenarioId: flat.scenarioId, path: "contributed", axis: "right" },
         ],
-        { yUnit: "index", band: { scenarioId: flat.scenarioId } },
+        { yUnit: "index" },
       ),
     );
-    expect(ok.data.series.map((row) => [row.unit, row.points.at(-1)?.y])).toEqual([
-      ["index", 220],
-      ["EUR", 1200],
+    expect(ok.data.series.map((row) => [row.label, row.unit, row.points.at(-1)?.y])).toEqual([
+      ["S1 expected, indexed to 100", "index", 220],
+      ["S1 new money put in", "EUR", 1200],
     ]);
-    expect(ok.data.band?.points).toHaveLength(13);
-    expect(ok.data.band?.points.at(-1)?.low).toBeLessThanOrEqual(2200);
+
+    const banded = await chart.chart(
+      spec([{ source: "forecast", scenarioId: flat.scenarioId, path: "expected" }], {
+        band: { scenarioId: flat.scenarioId },
+      }),
+    );
+    expect(banded.data.band?.points).toHaveLength(13);
+    expect(banded.data.band?.points.at(-1)?.low).toBeLessThanOrEqual(2200);
+  });
+
+  test("a band is refused unless the chart is in plain euros", async () => {
+    const { userId } = await holder();
+    const { run, chart } = toolsFor(userId);
+    const { scenarioId } = await summary(run, FLAT);
+    const expected = { source: "forecast" as const, scenarioId, path: "expected" as const };
+    await expect(
+      chart.chart(
+        spec([{ ...expected, transform: "index-100" }], { yUnit: "index", band: { scenarioId } }),
+      ),
+    ).rejects.toThrow(/yUnit EUR/);
+    await expect(
+      chart.chart(
+        spec([expected, { ...expected, transform: "index-100", axis: "right" }], {
+          band: { scenarioId },
+        }),
+      ),
+    ).rejects.toThrow(/transformed/);
+  });
+
+  test("cumulative is only for amounts per month, and summed before thinning", async () => {
+    const { userId } = await holder();
+    const { chart } = toolsFor(userId);
+    await expect(
+      chart.chart(spec([{ source: "value-series", range: "1y", transform: "cumulative" }])),
+    ).rejects.toThrow(/only for spending-by-month/);
+    const sums = await chart.chart(
+      spec([{ source: "spending-by-month", months: 2, transform: "cumulative" }]),
+    );
+    expect(sums.data.series[0]?.label).toBe("All spending, cumulative");
+  });
+
+  test("a change from a start of zero is shown as is, with a note", async () => {
+    const { chart } = toolsFor(await signUp());
+    const shown = await chart.chart(
+      spec([{ source: "value-series", range: "1y", transform: "percent-change-from-start" }], {
+        yUnit: "EUR",
+      }),
+    );
+    expect(shown.data.series[0]?.label).toBe("Portfolio value");
+    expect(shown.data.notes.join(" ")).toMatch(/at or below zero/);
+  });
+
+  test("y bounds may widen the axis but never hide a value", async () => {
+    const { userId } = await holder();
+    const { chart } = toolsFor(userId);
+    const value = { source: "value-series" as const, range: "1y" as const };
+    const wide = await chart.chart(spec([value], { yMin: 0, yMax: 5000 }));
+    expect([wide.spec.yMin, wide.spec.yMax, wide.data.notes]).toEqual([0, 5000, []]);
+    const clipped = await chart.chart(spec([value], { yMin: 0, yMax: 500 }));
+    expect([clipped.spec.yMin, clipped.spec.yMax]).toEqual([undefined, undefined]);
+    expect(clipped.data.notes.join(" ")).toMatch(/would hide some values/);
+    expect(ChartSpecSchema.safeParse(spec([value], { yMin: 5, yMax: 5 })).success).toBe(false);
+  });
+
+  test("allocation does not share an axis with time series", async () => {
+    const { userId } = await holder();
+    await expect(
+      toolsFor(userId).chart.chart(
+        spec([
+          { source: "value-series", range: "1y" },
+          { source: "allocation", dimension: "kind" },
+        ]),
+      ),
+    ).rejects.toThrow(/by category, not time/);
+  });
+
+  test("days valued at cost are marked and counted for the model", async () => {
+    const userId = await signUp();
+    const accountId = (
+      await openAccount(db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }))
+    ).id;
+    const instrumentId = await instrument("Unpriced fund");
+    const start = new Date(Date.now() - 20 * 86_400_000).toISOString().slice(0, 10);
+    const priced = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    await txn(accountId, {
+      instrumentId,
+      tradeDate: start,
+      quantity: 10_000_000,
+      amount: -1000_00,
+    });
+    await price(instrumentId, priced, 100_00);
+    await price(instrumentId, new Date().toISOString().slice(0, 10), 100_00);
+    const shown = await toolsFor(userId).chart.chart(
+      spec([{ source: "value-series", range: "3m" }]),
+    );
+    const points = shown.data.series[0]?.points ?? [];
+    expect(points.some((point) => point.estimated === true)).toBe(true);
+    expect(points.at(-1)?.estimated).toBe(false);
+    const { chartSummary } = await import("./chart-schema.ts");
+    expect(chartSummary(shown).series[0]?.estimatedPoints).toBeGreaterThan(0);
   });
 
   test("a log scale with a value at or below zero falls back to linear, with a note", async () => {
@@ -448,7 +546,7 @@ describe("show_chart", () => {
       chart.chart(
         spec([
           { source: "value-series", range: "1y" },
-          { source: "allocation", dimension: "kind", axis: "right" },
+          { source: "spending-by-month", months: 3, axis: "right" },
           {
             source: "holding-price",
             instrumentId,

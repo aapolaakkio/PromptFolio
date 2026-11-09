@@ -415,3 +415,54 @@ describe("charts in a conversation", () => {
     expect(await statusOf(() => chat.conversationMessages(stranger, first.id))).toBe(404);
   });
 });
+
+describe("stored chart cap", () => {
+  test("past twenty charts the oldest keep their spec and lose their numbers", async () => {
+    const userId = await signUp();
+    const { StoredChartSchema } = await import("./chart-schema.ts");
+    const call = (index: number) => ({
+      id: `c${index}`,
+      name: "show_chart",
+      arguments: JSON.stringify({
+        title: `Chart ${index}`,
+        kind: "bar",
+        yUnit: "%",
+        series: [{ source: "allocation", dimension: "kind" }],
+      }),
+    });
+    const sevenCharts = (): ChatClient => {
+      let round = 0;
+      return {
+        run: () => {
+          round += 1;
+          return Promise.resolve(
+            round === 1
+              ? { text: "", toolCalls: Array.from({ length: 7 }, (_unused, index) => call(index)) }
+              : assistantSaying("Shown."),
+          );
+        },
+      };
+    };
+    setChatClient(sevenCharts());
+    const id = await drainTurn(await turn(userId, { message: "Charts" }));
+    for (const _round of [1, 2]) {
+      setChatClient(sevenCharts());
+      await drainTurn(await turn(userId, { conversationId: id, message: "More" }));
+    }
+    const charts = (await chat.conversationMessages(userId, id))
+      .filter((row) => row.role === "chart")
+      .map((row) => StoredChartSchema.parse(JSON.parse(row.content)));
+    expect(charts).toHaveLength(21);
+    expect("expired" in (charts[0] ?? {})).toBe(true);
+    expect(charts[0]?.spec.title).toBe("Chart 0");
+    expect(charts.slice(1).every((chart) => "data" in chart)).toBe(true);
+  });
+});
+
+/** The conversation id from a turn's first event, reading the whole stream so the turn finishes. */
+const drainTurn = async (stream: ReadableStream<Uint8Array>): Promise<number> => {
+  const first = (await new Response(stream).text()).split("\n\n")[0] ?? "";
+  return z
+    .object({ type: z.literal("conversation"), id: z.number() })
+    .parse(JSON.parse(first.slice("data: ".length))).id;
+};

@@ -13,7 +13,7 @@ import {
   StoredProposal,
   type Proposal,
 } from "./proposal-schema.ts";
-import { ChatChartSchema } from "./chart-schema.ts";
+import { ChatChartSchema, StoredChartSchema } from "./chart-schema.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
@@ -103,8 +103,9 @@ const modelHistory = (rows: readonly Row[]) => {
       return [{ role: "user", content: `${APP_NOTE} ${text}` }];
     }
     if (row.role === "chart") {
-      const chart = readStored(ChatChartSchema, row.content);
+      const chart = readStored(StoredChartSchema, row.content);
       if (chart === null) return [];
+      if ("expired" in chart) return [];
       const labels = chart.data.series.map((series) => series.label).join("; ");
       return [{ role: "user", content: `${APP_NOTE} The assistant showed a chart of: ${labels}.` }];
     }
@@ -178,6 +179,29 @@ export const conversationMessages = async (userId: string, id: number) => {
 export const deleteConversation = async (userId: string, id: number): Promise<void> => {
   await ownedConversation(userId, id);
   await db.delete(conversations).where(eq(conversations.id, id)).run();
+};
+
+const MAX_STORED_CHARTS = 20;
+
+/** Past the cap the oldest charts keep their spec and lose their numbers, so a long thread stays small. */
+const expireOldCharts = async (conversationId: number): Promise<void> => {
+  const charts = await db
+    .select({ id: chatMessages.id, content: chatMessages.content })
+    .from(chatMessages)
+    .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.role, "chart")))
+    .orderBy(asc(chatMessages.id))
+    .all();
+  const old = charts.slice(0, Math.max(0, charts.length - MAX_STORED_CHARTS));
+  for (const row of old) {
+    const chart = readStored(ChatChartSchema, row.content);
+    if (chart === null) continue;
+    const expired = { chartId: chart.chartId, spec: chart.spec, expired: true };
+    await db
+      .update(chatMessages)
+      .set({ content: JSON.stringify(expired) })
+      .where(eq(chatMessages.id, row.id))
+      .run();
+  }
 };
 
 const sse = (event: ChatEvent): string => `data: ${JSON.stringify(event)}\n\n`;
@@ -255,6 +279,7 @@ export const startTurn = async (
                 content: JSON.stringify(ChatChartSchema.parse(chart)),
               })
               .run();
+            await expireOldCharts(conversation.id);
           }
           if (event.type === "answer") {
             await db

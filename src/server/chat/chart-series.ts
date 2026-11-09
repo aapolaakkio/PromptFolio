@@ -14,10 +14,11 @@ import {
   type YUnit,
 } from "./chart-schema.ts";
 import type { Db } from "./tool-types.ts";
+import { thin } from "./chart-transform.ts";
 import type { TurnState } from "./turn-state.ts";
 
 type Unit = YUnit;
-type Point = { readonly x: string; readonly y: number };
+type Point = { readonly x: string; readonly y: number; readonly estimated?: boolean };
 export type ResolvedSeries = {
   readonly label: string;
   readonly unit: Unit;
@@ -34,12 +35,6 @@ const monthsBefore = (on: IsoDate, months: number): IsoDate => {
 
 const rangeStart = (range: keyof typeof RANGE_MONTHS | "max", on: IsoDate): IsoDate | undefined =>
   range === "max" ? undefined : monthsBefore(on, RANGE_MONTHS[range]);
-
-/** Evenly thinned, keeping the last point, so the shape survives the cap. */
-const thin = <T>(points: readonly T[]): T[] => {
-  const step = Math.max(1, Math.ceil(points.length / MAX_CHART_POINTS));
-  return points.filter((_, index) => index % step === 0 || index === points.length - 1);
-};
 
 const PATH_LABEL = {
   expected: "expected",
@@ -99,7 +94,7 @@ const forecastSeries = (
   return {
     label: `${scenario.id} ${holding === undefined ? "" : `${holding.name} `}${PATH_LABEL[ref.path]}`,
     unit: "EUR",
-    points: thin(scenario.result.points).map((point) => ({ x: point.month, y: valueAt(point) })),
+    points: scenario.result.points.map((point) => ({ x: point.month, y: valueAt(point) })),
   };
 };
 
@@ -146,7 +141,7 @@ const spendingSeries = async (
   return {
     label: categoryId === undefined ? "All spending" : labelForCategory(categoryId),
     unit: "EUR",
-    points: thin(points),
+    points,
   };
 };
 
@@ -180,7 +175,7 @@ const priceSeries = async (
     const rate = portfolio.prices.fxOn(row.currency, row.date);
     return rate === null ? [] : [{ x: row.date, y: Number(formatMoney(toEur(money, rate))) }];
   });
-  return { label: `${instrument.name} price`, unit: "EUR", points: thin(inEur) };
+  return { label: `${instrument.name} price`, unit: "EUR", points: inEur };
 };
 
 /** One reference as app-computed numbers for the caller; ids are checked against the caller's own data. */
@@ -200,7 +195,11 @@ export const resolveSeries = async (
       return {
         label: "Portfolio value",
         unit: "EUR",
-        points: thin(series).map((point) => ({ x: point.date, y: Number(point.valueEur) })),
+        points: series.map((point) => ({
+          x: point.date,
+          y: Number(point.valueEur),
+          estimated: point.stale || point.costValued,
+        })),
       };
     }
     case "spending-by-month":

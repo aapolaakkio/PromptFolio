@@ -11,24 +11,74 @@ import { colourFor } from "./palette.ts";
 import { compactEur } from "./TimeSeriesChart.tsx";
 
 const TIME_X = /^\d{4}-\d{2}(-\d{2})?$/;
+const MONTH = /^\d{4}-\d{2}$/;
+const DAY_MS = 86_400_000;
 
-type At = { readonly at: number; readonly x: string; readonly y: number };
+/** A month sits at its first day, a day at its own: both on one real time line. */
+const millisOf = (x: string): number =>
+  Date.parse(MONTH.test(x) ? `${x}-01T00:00:00Z` : `${x}T00:00:00Z`);
 
-/** Every series on one shared x axis: dates and months sorted, category labels in the app's order. */
+type At = {
+  readonly at: number;
+  readonly x: string;
+  readonly y: number;
+  readonly estimated: boolean;
+};
+
+/**
+ * Every series on one shared x axis. Dates and months are placed in real time, so a year of days
+ * beside ten years of months takes a tenth of the width; category labels keep the app's order.
+ */
 export const chatChartRows = (data: ChartData) => {
-  const unique = [...new Set(data.series.flatMap((series) => series.points.map((p) => p.x)))];
-  const xs = unique.every((x) => TIME_X.test(x)) ? unique.toSorted() : unique;
+  const all = [
+    ...data.series.flatMap((series) => series.points.map((point) => point.x)),
+    ...(data.band?.points ?? []).map((point) => point.x),
+  ];
+  const unique = [...new Set(all)];
+  const time = unique.length > 0 && unique.every((x) => TIME_X.test(x));
+  const xs = time ? unique.toSorted() : unique;
   const index = new Map(xs.map((x, at) => [x, at]));
-  // Two references can resolve to the same label; the legend needs them apart.
+  const atOf = (x: string): number => (time ? millisOf(x) : (index.get(x) ?? 0));
+  // Two references can resolve to the same label; the tooltip and legend need them apart.
   const labels = data.series.map((series, at) => {
     const before = data.series.slice(0, at).filter((other) => other.label === series.label).length;
     return before === 0 ? series.label : `${series.label} (${before + 1})`;
   });
   const rows: At[][] = data.series.map((series) =>
-    series.points.map((point) => ({ at: index.get(point.x) ?? 0, x: point.x, y: point.y })),
+    series.points.map((point) => ({
+      at: atOf(point.x),
+      x: point.x,
+      y: point.y,
+      estimated: point.estimated === true,
+    })),
   );
-  return { xs, labels, rows, index };
+  const ats = xs.map(atOf);
+  const gaps = ats.slice(1).map((at, i) => at - (ats[i] ?? at));
+  // One bar slot: the narrowest gap between neighbours, a month when there is only one point.
+  const slot = time ? Math.min(...gaps.filter((gap) => gap > 0), 30 * DAY_MS) : 1;
+  const months = time && xs.every((x) => MONTH.test(x));
+  return { time, months, xs, labels, rows, atOf, slot, first: ats[0] ?? 0, last: ats.at(-1) ?? 1 };
 };
+
+export type ChartRows = ReturnType<typeof chatChartRows>;
+
+/** The text for a point on the x axis: a month, a day or a category. */
+export const atText = (rows: ChartRows, at: number): string => {
+  if (!rows.time) return rows.xs[Math.round(at)] ?? "";
+  const iso = new Date(at).toISOString();
+  return rows.months ? shortMonth(iso.slice(0, 7)) : formatDate(iso.slice(0, 10));
+};
+
+/** The floor a log axis draws from: yMin when it is positive, else half the smallest positive value. */
+export const logFloor = (values: readonly number[], yMin: number | undefined): number => {
+  if (yMin !== undefined && yMin > 0) return yMin;
+  const positive = values.filter((value) => value > 0);
+  return positive.length === 0 ? 1 : Math.min(...positive) / 2;
+};
+
+/** Annotation labels are the model's words: one muted colour for all, never a series colour. */
+export const NOTE_COLOUR = "var(--color-muted)";
+export const NOTE_MARK = "✎";
 
 /** Series sharing a stack id sit on the ones before them, x by x; a series without one starts at zero. */
 export const stackedRows = (
@@ -66,9 +116,6 @@ export const colourOf = (color: SeriesColor | undefined, index: number): string 
   return hex.success ? hex.data : colourFor(index);
 };
 
-export const xText = (x: string): string =>
-  /^\d{4}-\d{2}$/.test(x) ? shortMonth(x) : TIME_X.test(x) ? formatDate(x) : x;
-
 type Format = NonNullable<ChartSpec["yFormat"]>;
 
 const FORMATS = {
@@ -93,9 +140,3 @@ export const tipFormatFor = (format: Format | undefined, unit: ChartSpec["yUnit"
   (format ?? UNIT_FORMAT[unit]) === "compact-EUR" ? FORMATS.EUR : formatFor(format, unit);
 
 export const DASH = { solid: undefined, dashed: "6 4", dotted: "2 3" } as const;
-
-/** Where a date or month falls on the shared index axis: the first x at or after it. */
-export const positionOf = (xs: readonly string[], x: string): number => {
-  const found = xs.findIndex((candidate) => candidate >= x);
-  return found === -1 ? Math.max(0, xs.length - 1) : found;
-};
