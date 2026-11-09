@@ -4,6 +4,7 @@ import { parseCurrency } from "../../core/money.ts";
 import { readText } from "../files.ts";
 import {
   IDENTITY_WINDOW_CHARS,
+  MAX_PAGE_CHARS,
   judgePageRead,
   PageRecipeSchema,
   runPageRecipe,
@@ -162,4 +163,33 @@ test("a pattern missing the price or date group is rejected", () => {
   const noDate = { ...NORDNET, pattern: String.raw`(?<price>\d+)` };
   expect(PageRecipeSchema.safeParse(noDate).success).toBe(false);
   expect(PageRecipeSchema.safeParse(NORDNET).success).toBe(true);
+});
+
+test("a page over MAX_PAGE_CHARS reads nothing", () => {
+  const html = `NAV 1 EUR 2026-08-26${" ".repeat(MAX_PAGE_CHARS)}`;
+  const recipe: PageRecipe = {
+    ...NORDNET,
+    pattern: String.raw`NAV (?<price>\d+) (?<currency>[A-Z]{3}) (?<date>\d{4}-\d{2}-\d{2})`,
+  };
+  expect(runPageRecipe(html, recipe, "NAV", TODAY)).toEqual({
+    matches: 0,
+    price: null,
+    identityNear: false,
+  });
+});
+
+test("a pattern matching 3 times reports matches 2", () => {
+  const row = "NAV 1 EUR 2026-08-26 ";
+  const recipe: PageRecipe = {
+    ...NORDNET,
+    pattern: String.raw`NAV (?<price>\d+) (?<currency>[A-Z]{3}) (?<date>\d{4}-\d{2}-\d{2})`,
+  };
+  expect(runPageRecipe(row.repeat(3), recipe, "NAV", TODAY).matches).toBe(2);
+});
+
+test("the schema rejects two unbounded wildcards and accepts each fixture recipe", () => {
+  const bad = { ...NORDNET, pattern: String.raw`.*a.*(?<price>\d+)(?<date>x)` };
+  expect(PageRecipeSchema.safeParse(bad).success).toBe(false);
+  expect(PageRecipeSchema.safeParse(NORDNET).success).toBe(true);
+  expect(PageRecipeSchema.safeParse(OP).success).toBe(true);
 });

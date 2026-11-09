@@ -26,7 +26,7 @@ export type WriteOutcome = {
  */
 export const MAX_PLAUSIBLE_RATIO = 10;
 
-const isPlausibleMove = (previousMinor: number, nextMinor: number): boolean =>
+export const isPlausibleMove = (previousMinor: number, nextMinor: number): boolean =>
   nextMinor <= previousMinor * MAX_PLAUSIBLE_RATIO &&
   nextMinor * MAX_PLAUSIBLE_RATIO >= previousMinor;
 

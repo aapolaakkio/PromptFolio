@@ -4,13 +4,15 @@ import { parseCurrency, parseMoney, type Currency } from "../../core/money.ts";
 import { readDate } from "../import/recipe/date-format.ts";
 import type { Judged } from "../import/recipe/ask.ts";
 import { readDecimal } from "../import/recipe/money-format.ts";
-import { mayBacktrackForever } from "../import/recipe/pattern-safety.ts";
+import { hasManyWildcards, mayBacktrackForever } from "../import/recipe/pattern-safety.ts";
 import { MAX_PATTERN_LENGTH, MoneyFormatSchema } from "../import/recipe/types.ts";
 import type { FetchedPrice } from "./types.ts";
-import { MAX_PLAUSIBLE_RATIO } from "./write.ts";
+import { isPlausibleMove } from "./write.ts";
 
 export const IDENTITY_WINDOW_CHARS = 5_000;
 export const PAGE_MAX_AGE_DAYS = 10;
+/** Real Nordnet fund pages are about 1.8 MB; past this a page is not read at all. */
+export const MAX_PAGE_CHARS = 3_000_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -36,6 +38,9 @@ export const PageRecipeSchema = z
       .refine(compiles, { message: "Säännöllistä lauseketta ei voitu kääntää" })
       .refine((source) => !mayBacktrackForever(source), {
         message: "Säännöllinen lauseke voi jäädä jumiin (sisäkkäinen toisto)",
+      })
+      .refine((source) => !hasManyWildcards(source), {
+        message: "Lauseke sisältää liian monta rajoittamatonta .*-toistoa",
       })
       .refine((source) => groupNames(source).has("price") && groupNames(source).has("date"), {
         message: "Lausekkeen on nimettävä ryhmät price ja date",
@@ -104,9 +109,17 @@ export const runPageRecipe = (
   identity: string,
   today: string,
 ): PageRead => {
-  const matches = [...html.matchAll(new RegExp(recipe.pattern, "gu"))];
-  const first = matches[0];
-  if (first === undefined) return { matches: 0, price: null, identityNear: false };
+  const none: PageRead = { matches: 0, price: null, identityNear: false };
+  if (html.length > MAX_PAGE_CHARS) return none;
+
+  // ponytail: V8 regex is not time-boxed; a stuck run ends only at the Workers CPU limit. Move to RE2/wasm if this ever bites.
+  const regex = new RegExp(recipe.pattern, "gu");
+  const first = regex.exec(html);
+  if (first === null) return none;
+  // Two matches already refuse the page, so never scan further.
+  let matches = 1;
+  const second = regex.exec(html);
+  if (second !== null) matches = 2;
 
   const start = first.index;
   const near = html.slice(
@@ -114,7 +127,7 @@ export const runPageRecipe = (
     start + first[0].length + IDENTITY_WINDOW_CHARS,
   );
   return {
-    matches: matches.length,
+    matches,
     price: priceOf(first.groups ?? {}, recipe, today),
     identityNear: near.toLowerCase().includes(identity.toLowerCase()),
   };
@@ -122,10 +135,6 @@ export const runPageRecipe = (
 
 const daysBetween = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
-
-const plausible = (priceMinor: number, referenceMinor: number): boolean =>
-  priceMinor <= referenceMinor * MAX_PLAUSIBLE_RATIO &&
-  priceMinor * MAX_PLAUSIBLE_RATIO >= referenceMinor;
 
 /** The first acceptance rule the read breaks, in Finnish, or null. */
 const firstFailure = (read: PageRead, expect: PageExpect): string | null => {
@@ -147,7 +156,7 @@ const firstFailure = (read: PageRead, expect: PageExpect): string | null => {
     return `Päivä ${price.date} on liian vanha (yli ${PAGE_MAX_AGE_DAYS} päivää).`;
   }
   // ponytail: skipped when no reference exists, e.g. on the first read of a new fund.
-  if (expect.referenceMinor !== null && !plausible(price.closeMinor, expect.referenceMinor)) {
+  if (expect.referenceMinor !== null && !isPlausibleMove(expect.referenceMinor, price.closeMinor)) {
     return `Hinta ${price.closeMinor} on kohtuuton viitehintaan ${expect.referenceMinor} nähden.`;
   }
   return null;

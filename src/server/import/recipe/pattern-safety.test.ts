@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
-import { mayBacktrackForever } from "./pattern-safety.ts";
+import { hasManyWildcards, mayBacktrackForever } from "./pattern-safety.ts";
 
 /** The shapes the check has always refused. None of them may start passing. */
 const CLASSIC = [
@@ -53,5 +53,19 @@ describe("mayBacktrackForever", () => {
     String.raw`^(\d{6}\*+\d{4}|MF NRO|OSTOPVM)`,
   ])("accepts the honest pattern %s", (pattern) => {
     expect(mayBacktrackForever(pattern)).toBe(false);
+  });
+});
+
+describe("hasManyWildcards", () => {
+  test.each([String.raw`.*a.*b`, String.raw`[\s\S]*?x[^}]+y`, ".+a.*?"])("refuses %s", (p) => {
+    expect(hasManyWildcards(p)).toBe(true);
+  });
+  test.each([
+    String.raw`a.*b`,
+    String.raw`[^}]*?x\d+\.*`,
+    String.raw`[a.+]+x[.*]+`,
+    String.raw`\s*\S+`,
+  ])("allows %s", (p) => {
+    expect(hasManyWildcards(p)).toBe(false);
   });
 });

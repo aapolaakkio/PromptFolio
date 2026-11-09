@@ -221,3 +221,20 @@ function isAmbiguousBody(body: string, depth = 0): boolean {
  */
 export const mayBacktrackForever = (source: string): boolean =>
   groupsOf(source).some((group) => group.quantifier !== "" && isAmbiguousBody(group.body));
+
+/** Most unbounded wildcard repetitions (`.*`, `[\\s\\S]+`, `[^x]*?`) a page pattern may carry. */
+const MAX_WILDCARD_REPEATS = 1;
+
+/**
+ * True for a pattern with two or more unbounded wildcard repetitions: the
+ * shape whose run time grows with the product of their reach over a large page.
+ * Classes and escapes are folded away first so `[a.+]` and `\\.*` do not count.
+ */
+export const hasManyWildcards = (source: string): boolean => {
+  const folded = source
+    .replace(/\\[^sS]/g, "x")
+    .replace(/\[\\s\\S\]/g, "W")
+    .replace(/\[\^[^\]]*\]/g, "N")
+    .replace(/\[[^\]]*\]/g, "x");
+  return (folded.match(/[.WN][*+]/g) ?? []).length > MAX_WILDCARD_REPEATS;
+};
