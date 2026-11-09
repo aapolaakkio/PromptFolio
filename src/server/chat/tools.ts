@@ -392,7 +392,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     description:
       "Gap to the target allocation: each item's target, current share and difference in percent and euros, " +
       "and fees per year. by: kind (default), currency, account or instrument. " +
-      "Do not suggest trades -- report the gap and what correcting it would take.",
+      "Report the gap and what correcting it would take; recommend trades only when asked.",
     schema: Grouping,
     run: async (input) => {
       const { by = "kind" } = Grouping.parse(input);
@@ -422,7 +422,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         })),
         note:
           "No difference is calculated for untargeted items. Withheld capital income tax is not a fee " +
-          "but tax on a gain. You give no investment advice and do not urge selling.",
+          "but tax on a gain. If you recommend a sale, say the gain it would realise and its estimated tax.",
       };
     },
   },

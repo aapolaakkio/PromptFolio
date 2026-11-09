@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ChatChartSchema } from "../../server/chat/chart-schema.ts";
 import type { ChatModel } from "../../server/chat/models.ts";
 import { ProposalSchema } from "../../server/chat/proposal-schema.ts";
 import { askTurn } from "../server/chat.ts";
@@ -9,6 +10,7 @@ export const ChatEventSchema = z.union([
   z.object({ type: z.literal("conversation"), id: z.number().int().positive() }),
   z.object({ type: z.literal("tool"), name: z.string() }),
   z.object({ type: z.literal("proposal"), proposal: ProposalSchema }),
+  ChatChartSchema.extend({ type: z.literal("chart") }),
   z.object({ type: z.literal("delta"), text: z.string() }),
   z.object({ type: z.literal("answer"), text: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),

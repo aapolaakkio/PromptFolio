@@ -625,7 +625,7 @@ describe("get_drift", () => {
 
       expect(result.groupBy).toBe("kind");
       expect(result.rows.every((row) => row.untargeted)).toBe(true);
-      expect(result.note).toContain("You give no investment advice");
+      expect(result.note).toContain("estimated tax");
     })();
   });
 
@@ -754,8 +754,7 @@ describe("get_deposit_plan", () => {
 
     expect(result.allocations).toHaveLength(1);
     expect(result.allocations[0]?.amountEur).toBe("500.00");
-    // It may say where to buy, never what to sell.
-    expect(result.note).toContain("You give no investment advice");
+    expect(result.note).toContain("realises no gain");
   });
 
   test("rejects an amount that is not money", async () => {

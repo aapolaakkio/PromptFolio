@@ -241,8 +241,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
             ? "No target is set for this dimension, so the split cannot be calculated. " +
               "A target can be set on the Rebalance page."
             : "Shares are measured against a target calculated from the total value after " +
-              "the deposit. This realises no gain and causes no tax. " +
-              "You give no investment advice and do not suggest sales.",
+              "the deposit. This realises no gain and causes no tax.",
       };
     },
   },

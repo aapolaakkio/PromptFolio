@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import type { Dimension } from "../../core/allocation.ts";
 import type { IsoDate } from "../../core/types.ts";
+import type { ChartKind, ChatChart, SeriesRef } from "./chart-schema.ts";
+import type { ForecastOverrides } from "./forecast-overrides.ts";
 import type { Proposal } from "./proposal-schema.ts";
 
 export type { Db } from "../db/index.ts";
@@ -48,6 +50,20 @@ export type ToolArgs = {
   readonly sourceKey?: string;
   readonly mode?: "replace" | "add";
   readonly rows?: readonly { readonly instrumentId: number; readonly amountEur: string }[];
+  readonly title?: string;
+  readonly kind?: ChartKind;
+  readonly series?: readonly SeriesRef[];
+  readonly yUnit?: "EUR" | "%" | "count";
+  readonly months?: number;
+  readonly real?: boolean;
+  readonly holdingIds?: readonly number[];
+  readonly plan?: ForecastOverrides["plan"];
+  readonly monthlyTotalEur?: number;
+  readonly events?: ForecastOverrides["events"];
+  readonly shocks?: ForecastOverrides["shocks"];
+  readonly rates?: ForecastOverrides["rates"];
+  readonly targetEur?: number;
+  readonly byMonth?: number;
 };
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[];
@@ -73,4 +89,12 @@ export type ProposalTool = {
   readonly propose: (input: ToolArgs) => Promise<Proposal>;
 };
 
-export type AnyTool = ChatTool | ProposalTool;
+/** Resolves a chart spec into app-computed data; the runner streams it and tells the model only a summary. */
+export type ChartTool = {
+  readonly name: string;
+  readonly description: string;
+  readonly schema: z.ZodType<ToolArgs>;
+  readonly chart: (input: ToolArgs) => Promise<ChatChart>;
+};
+
+export type AnyTool = ChatTool | ProposalTool | ChartTool;

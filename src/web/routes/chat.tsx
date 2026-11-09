@@ -16,6 +16,9 @@ import {
   StoredProposal,
   type Proposal,
 } from "../../server/chat/proposal-schema.ts";
+import { ChatChartSchema } from "../../server/chat/chart-schema.ts";
+import { ChatChart } from "../charts/ChatChart.tsx";
+import { renderItems } from "./chat-order.ts";
 import { askChat } from "./chat-stream.ts";
 import { cardState, createDecider, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
@@ -24,7 +27,7 @@ const isChatModel = (value: string): value is ChatModel =>
   CHAT_MODELS.some((model) => model.id === value);
 
 type Turn = {
-  readonly role: "user" | "assistant" | "proposal" | "note";
+  readonly role: "user" | "assistant" | "proposal" | "note" | "chart";
   readonly content: string;
 };
 
@@ -69,6 +72,9 @@ const TOOL_LABELS = new Map<string, string>([
   ["propose_price_source", "price source proposal"],
   ["propose_monthly_plan", "monthly plan proposal"],
   ["get_monthly_plan", "monthly plan"],
+  ["run_forecast", "forecast"],
+  ["forecast_target", "forecast target"],
+  ["show_chart", "chart"],
 ]);
 
 /** Asks about the portfolio. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes only classification rules, shown on Spending as `ai`; any other change is a card the owner confirms. */
@@ -144,6 +150,13 @@ export const ChatPage = () => {
           setPending((previous) => [
             ...previous,
             { role: "proposal", content: JSON.stringify(trace) },
+          ]);
+        }
+        if (event.type === "chart") {
+          const chart = { chartId: event.chartId, spec: event.spec, data: event.data };
+          setPending((previous) => [
+            ...previous,
+            { role: "chart", content: JSON.stringify(chart) },
           ]);
         }
         if (event.type === "delta") setStreaming((previous) => previous + event.text);
@@ -237,7 +250,7 @@ export const ChatPage = () => {
           <h1>{title ?? "Assistant"}</h1>
           <p className="text-muted">
             {title === null
-              ? "Answers only from your own portfolio figures. No investment advice or forecasts."
+              ? "Answers from your own portfolio figures. Advice and forecasts are an AI's estimates."
               : "Assistant — answers only from your own portfolio figures."}
           </p>
         </div>
@@ -249,46 +262,55 @@ export const ChatPage = () => {
               payees.
             </li>
           )}
-          {turns.map((turn, index) => {
-            if (turn.role === "note") return null;
-            if (turn.role === "proposal") {
-              const card = readStored(StoredProposal, turn.content);
-              if (card === null) return null;
-              const { proposalId, title, facts } = card;
-              const streamed = live.get(proposalId);
+          {renderItems(
+            streaming === "" ? turns : [...turns, { role: "assistant", content: streaming }],
+          ).map((item) => {
+            if (item.kind === "user") {
               return (
-                <li key={`proposal-${proposalId}`}>
-                  <ProposalCard
-                    title={title}
-                    facts={facts}
-                    note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
-                    state={cardState(streamed, outcomes.get(proposalId))}
-                    outcome={outcomes.get(proposalId)}
-                    saving={saving.has(proposalId)}
-                    onConfirm={() => void decide(proposalId, true)}
-                    onDismiss={() => void decide(proposalId, false)}
-                  />
+                <li
+                  key={item.key}
+                  className="justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2"
+                >
+                  {item.content}
                 </li>
               );
             }
+            if (item.kind === "text") {
+              return (
+                <li key={item.key} className="max-w-[90%] rounded bg-surface px-3 py-2">
+                  <Markdown text={item.content} />
+                </li>
+              );
+            }
+            const { turn } = item;
+            if (turn.role === "chart") {
+              const chart = readStored(ChatChartSchema, turn.content);
+              return chart === null ? null : (
+                <li key={`chart-${chart.chartId}`}>
+                  <ChatChart chart={chart} />
+                </li>
+              );
+            }
+            if (turn.role !== "proposal") return null;
+            const card = readStored(StoredProposal, turn.content);
+            if (card === null) return null;
+            const { proposalId, title, facts } = card;
+            const streamed = live.get(proposalId);
             return (
-              <li
-                key={`${turn.role}-${index}`}
-                className={
-                  turn.role === "user"
-                    ? "justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2"
-                    : "max-w-[90%] rounded bg-surface px-3 py-2"
-                }
-              >
-                {turn.role === "user" ? turn.content : <Markdown text={turn.content} />}
+              <li key={`proposal-${proposalId}`}>
+                <ProposalCard
+                  title={title}
+                  facts={facts}
+                  note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
+                  state={cardState(streamed, outcomes.get(proposalId))}
+                  outcome={outcomes.get(proposalId)}
+                  saving={saving.has(proposalId)}
+                  onConfirm={() => void decide(proposalId, true)}
+                  onDismiss={() => void decide(proposalId, false)}
+                />
               </li>
             );
           })}
-          {streaming !== "" && (
-            <li className="max-w-[90%] rounded bg-surface px-3 py-2">
-              <Markdown text={streaming} />
-            </li>
-          )}
         </ol>
 
         {busy && streaming === "" && (

@@ -356,3 +356,62 @@ describe("proposals in a conversation", () => {
     );
   });
 });
+
+describe("charts in a conversation", () => {
+  const chartingClient = (): ChatClient => {
+    let round = 0;
+    return {
+      run: () => {
+        round += 1;
+        if (round === 1) {
+          return Promise.resolve({
+            text: "",
+            toolCalls: [
+              {
+                id: "c1",
+                name: "show_chart",
+                arguments: JSON.stringify({
+                  title: "Allocation",
+                  kind: "bar",
+                  yUnit: "%",
+                  series: [{ source: "allocation", dimension: "kind" }],
+                  note: "Plain words.",
+                }),
+              },
+            ],
+          });
+        }
+        return Promise.resolve(assistantSaying("Here it is."));
+      },
+    };
+  };
+
+  test("a stored chart reloads with the conversation, and another user cannot load it", async () => {
+    const userId = await signUp();
+    const stranger = await signUp();
+    const { ChatChartSchema } = await import("./chart-schema.ts");
+    setChatClient(chartingClient());
+    const body = await new Response(await turn(userId, { message: "Show my allocation" })).text();
+    const events = body
+      .split("\n\n")
+      .filter((chunk) => chunk.startsWith("data: "))
+      .map((chunk) => z.json().parse(JSON.parse(chunk.slice("data: ".length))));
+    const first = z.object({ type: z.literal("conversation"), id: z.number() }).parse(events[0]);
+    const streamed = events.find(
+      (event) =>
+        z
+          .object({ type: z.literal("chart") })
+          .loose()
+          .safeParse(event).success,
+    );
+    expect(streamed).toBeDefined();
+
+    const stored = await chat.conversationMessages(userId, first.id);
+    expect(stored.map((m) => m.role)).toEqual(["user", "chart", "assistant"]);
+    const chart = ChatChartSchema.parse(JSON.parse(stored[1]?.content ?? ""));
+    expect(chart.spec.note).toBe("Plain words.");
+    expect(streamed).toEqual({ type: "chart", ...chart });
+
+    expect(await statusOf(() => chat.conversationMessages(stranger, first.id))).toBe(404);
+  });
+});

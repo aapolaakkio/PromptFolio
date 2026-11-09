@@ -13,8 +13,12 @@ import {
   StoredProposal,
   type Proposal,
 } from "./proposal-schema.ts";
+import { ChatChartSchema } from "./chart-schema.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
+import { buildChartTool } from "./tools-chart.ts";
+import { buildForecastTools } from "./tools-forecast.ts";
+import { createTurnState } from "./turn-state.ts";
 
 export const Ask = z
   .object({
@@ -97,6 +101,12 @@ const modelHistory = (rows: readonly Row[]) => {
       if (proposal === null) return [];
       const text = `The assistant proposed "${proposal.summary}". It is not saved unless the owner confirms it.`;
       return [{ role: "user", content: `${APP_NOTE} ${text}` }];
+    }
+    if (row.role === "chart") {
+      const chart = readStored(ChatChartSchema, row.content);
+      if (chart === null) return [];
+      const labels = chart.data.series.map((series) => series.label).join("; ");
+      return [{ role: "user", content: `${APP_NOTE} The assistant showed a chart of: ${labels}.` }];
     }
     const outcome = readStored(StoredOutcome, row.content);
     const summary = outcome === null ? undefined : summaries.get(outcome.proposalId);
@@ -198,7 +208,14 @@ export const startTurn = async (
     .run();
 
   const history = modelHistory(await historyFor(conversation.id));
-  const tools = [...buildChatTools(db, userId), ...buildProposalTools(db, userId)];
+  // Scenarios and chart slots live for this turn only, so an id from another turn or user resolves to nothing.
+  const turnState = createTurnState();
+  const tools = [
+    ...buildChatTools(db, userId),
+    ...buildForecastTools(db, userId, turnState),
+    buildChartTool(db, userId, turnState),
+    ...buildProposalTools(db, userId),
+  ];
   const used: string[] = [];
 
   let open = true;
@@ -225,6 +242,17 @@ export const startTurn = async (
                 conversationId: conversation.id,
                 role: "proposal",
                 content: storedTrace(event.proposal),
+              })
+              .run();
+          }
+          if (event.type === "chart") {
+            const chart = { chartId: event.chartId, spec: event.spec, data: event.data };
+            await db
+              .insert(chatMessages)
+              .values({
+                conversationId: conversation.id,
+                role: "chart",
+                content: JSON.stringify(ChatChartSchema.parse(chart)),
               })
               .run();
           }
