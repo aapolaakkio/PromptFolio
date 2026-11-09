@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img" aria-label="PromptFolio: a self-hosted portfolio tracker you can talk to" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1510"/>
+      <stop offset="1" stop-color="#12261b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.22" cy="0" r="0.9">
+      <stop offset="0" stop-color="#85bb65" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#85bb65" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#85bb65" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#85bb65" stop-opacity="0.32"/>
+    </linearGradient>
+    <clipPath id="card"><rect x="640" y="56" width="504" height="308" rx="16"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="420" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="420" rx="24" fill="url(#glow)"/>
+
+  <!-- Banknote engraving: fine concentric rings behind the card. -->
+  <g fill="none" stroke="#85bb65" stroke-opacity="0.10" stroke-width="1">
+    <circle cx="1020" cy="420" r="120"/><circle cx="1020" cy="420" r="170"/><circle cx="1020" cy="420" r="220"/>
+    <circle cx="1020" cy="420" r="270"/><circle cx="1020" cy="420" r="320"/><circle cx="1020" cy="420" r="370"/>
+    <circle cx="1020" cy="420" r="420"/><circle cx="1020" cy="420" r="470"/>
+  </g>
+
+  <!-- Logo and name -->
+  <g transform="translate(72,84) scale(2.5)">
+    <rect x="1" y="1" width="30" height="30" rx="8" fill="#85bb65"/>
+    <g fill="none" stroke="#0b1a10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 11l5 5-5 5"/><path d="M15.5 21l4-4.5 3 2.5 4-8"/><circle cx="26.5" cy="11" r="1.6"/>
+    </g>
+  </g>
+  <text x="172" y="143" font-size="54" font-weight="700" fill="#e9f1e7" letter-spacing="-1.5">PromptFolio</text>
+
+  <text x="72" y="226" font-size="27" font-weight="600" fill="#e9f1e7">Your portfolio, one prompt away.</text>
+  <text x="72" y="264" font-size="18" fill="#93a69a">A self-hosted money tracker for Finnish banks and brokers,</text>
+  <text x="72" y="290" font-size="18" fill="#93a69a">with an assistant that reads, forecasts and fills in the forms.</text>
+
+  <g font-size="14" font-weight="600">
+    <rect x="72" y="322" width="118" height="34" rx="17" fill="#85bb65"/>
+    <text x="131" y="344" text-anchor="middle" fill="#0b1a10">Self-hosted</text>
+    <rect x="202" y="322" width="150" height="34" rx="17" fill="none" stroke="#2f4a39"/>
+    <text x="277" y="344" text-anchor="middle" fill="#c9d8c9">Cloudflare + D1</text>
+    <rect x="364" y="322" width="118" height="34" rx="17" fill="none" stroke="#2f4a39"/>
+    <text x="423" y="344" text-anchor="middle" fill="#c9d8c9">Claude API</text>
+  </g>
+
+  <!-- Product card: a forecast with its range, and the question that made it. -->
+  <rect x="640" y="56" width="504" height="308" rx="16" fill="#12201a" stroke="#233629"/>
+  <g clip-path="url(#card)">
+    <g stroke="#233629" stroke-width="1">
+      <path d="M664 300H1120M664 250H1120M664 200H1120M664 150H1120"/>
+    </g>
+    <path d="M664 290C760 282 860 262 940 232S1060 172 1120 128V250C1060 262 1000 270 940 276S760 290 664 290Z" fill="url(#band)"/>
+    <path d="M664 290C760 286 860 270 940 250S1060 212 1120 186" fill="none" stroke="#85bb65" stroke-width="3" stroke-linecap="round"/>
+    <path d="M664 290C720 289 780 286 840 280S1020 262 1120 246" fill="none" stroke="#5c7a66" stroke-width="2" stroke-dasharray="3 6" stroke-linecap="round"/>
+    <circle cx="1120" cy="186" r="6" fill="#85bb65" stroke="#12201a" stroke-width="3"/>
+  </g>
+  <g font-size="12" fill="#93a69a">
+    <text x="664" y="330">today</text>
+    <text x="1120" y="330" text-anchor="end">in 10 years</text>
+    <text x="664" y="92" font-size="13" font-weight="600" fill="#c9d8c9">Forecast</text>
+    <text x="1120" y="92" text-anchor="end">expected · rough range · paid in</text>
+  </g>
+
+  <!-- The prompt -->
+  <rect x="664" y="108" width="318" height="40" rx="12" fill="#0b1510" stroke="#233629"/>
+  <path d="M680 121l6 7-6 7" fill="none" stroke="#85bb65" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="698" y="133" font-size="15" fill="#e9f1e7">How much will I have in 10 years?</text>
+</svg>
