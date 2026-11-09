@@ -89,6 +89,7 @@ export const updateInstrument = async (db: Db, id: number, fix: InstrumentFix) =
       currency: fix.currency,
       priceSource: fix.priceSource,
       sourceKey: sourceKey === "" ? (existing.isin ?? existing.name) : sourceKey,
+      lookupStatus: "ok",
     })
     .where(eq(instruments.id, id))
     .returning()
