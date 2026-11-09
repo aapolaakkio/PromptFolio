@@ -20,6 +20,7 @@ import { calculate } from "./calculator.ts";
 import { fundingCashFlows, investedCashFlows } from "../../core/ledger.ts";
 import { formatMoney, formatQuantity, negateMoney } from "../../core/money.ts";
 import { twr, valueSeries, xirr } from "../../core/returns.ts";
+import { listPlan } from "../monthly-plan.ts";
 import { driftReportFor, feeReportFor } from "../rebalance.ts";
 import { taxYearFor, taxYearsFor } from "../tax.ts";
 import { cashFor, holdingsFor, loadPortfolio } from "../valuation.ts";
@@ -373,6 +374,17 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
             priceSource: i.priceSource,
           })),
       };
+    },
+  },
+  {
+    name: "get_monthly_plan",
+    description:
+      "The owner's monthly investment plan: one row per instrument with its sum in euros per month, and the total per month.",
+    schema: NoArgs,
+    run: async (input) => {
+      NoArgs.parse(input);
+      const { rows, totalEur } = await listPlan(db, userId);
+      return { totalEur, rows: rows.map((row) => ({ ...row })) };
     },
   },
   {

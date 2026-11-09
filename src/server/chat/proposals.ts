@@ -1,15 +1,26 @@
 import type { Dimension } from "../../core/allocation.ts";
-import { formatMoney, parseCurrency, parseMoney, type Currency } from "../../core/money.ts";
+import {
+  EUR,
+  addMoney,
+  formatMoney,
+  parseCurrency,
+  parseMoney,
+  zeroMoney,
+  type Currency,
+} from "../../core/money.ts";
 import { checkTargets } from "../../core/rebalance/targets.ts";
 import { assertAccountOwned, listAccounts } from "../accounts.ts";
 import {
   CashEntry,
   InstrumentEdit,
+  PlanInput,
   PriceInput,
   TargetAllocationInput,
   toBasisPoints,
 } from "../action-inputs.ts";
 import { HttpError } from "../errors.ts";
+import { listInstruments } from "../instruments/store.ts";
+import { listPlan } from "../monthly-plan.ts";
 import { driftReportFor } from "../rebalance.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { isPublicPageUrl } from "../prices/page.ts";
@@ -242,9 +253,62 @@ const proposePriceSource = async (db: Db, userId: string, raw: ToolArgs): Promis
   };
 };
 
+/** The registry is household-shared and a plan may start a new position, so any known id is allowed; its name comes from the registry, never from the model. */
+const proposePlan = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
+  const input = PlanInput.parse(raw);
+  const registry = new Map((await listInstruments(db)).map((item) => [item.id, item]));
+  const rows = input.rows.map((row) => {
+    const instrument = registry.get(row.instrumentId);
+    if (instrument === undefined) {
+      throw new Error(
+        `Instrument not found: ${row.instrumentId}. Ask the owner which one is meant`,
+      );
+    }
+    return {
+      name: instrumentLabel(instrument),
+      id: row.instrumentId,
+      amount: canonical(row.amountEur, EUR),
+    };
+  });
+  const current = (await listPlan(db, userId)).rows;
+  const listed = new Set(rows.map((row) => row.id));
+  const removed =
+    input.mode === "replace" ? current.filter((row) => !listed.has(row.instrumentId)) : [];
+  const kept = input.mode === "add" ? current.filter((row) => !listed.has(row.instrumentId)) : [];
+  const total = formatMoney(
+    [...rows.map((row) => row.amount), ...kept.map((row) => row.amountEur)]
+      .map((amount) => parseMoney(amount, EUR))
+      .reduce(addMoney, zeroMoney(EUR)),
+  );
+  const replacing = input.mode === "replace";
+  const removedNames = removed.map((row) => instrumentLabel(row));
+  const facts: Fact[] = [
+    ...rows.map((row): Fact => ({
+      kind: "money",
+      label: row.name,
+      amount: row.amount,
+      currency: EUR,
+    })),
+    ...(removedNames.length === 0 ? [] : [text("Removed from the plan", removedNames.join("; "))]),
+    { kind: "money", label: "Plan total per month", amount: total, currency: EUR },
+  ];
+  const lines = rows.map((row) => `${row.name} ${row.amount} ${EUR}`).join(", ");
+  return {
+    proposalId: newId(),
+    action: "monthly_plan",
+    title: replacing ? "Set the monthly plan" : "Add to the monthly plan",
+    facts,
+    summary:
+      `${replacing ? "Set the monthly plan to" : "Add to the monthly plan"}: ${lines}.` +
+      (removedNames.length === 0 ? "" : ` Removes: ${removedNames.join(", ")}.`) +
+      ` The plan then totals ${total} ${EUR} per month.`,
+    input,
+  };
+};
+
 const AWAITS = " Saves nothing: the owner sees a card and decides with Confirm or Dismiss.";
 
-/** The four owner actions the assistant may propose. Destructive ones (deleting imports, transactions, accounts) are deliberately absent. */
+/** The five owner actions the assistant may propose. Destructive ones (deleting imports, transactions, accounts) are deliberately absent. */
 export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
   {
     name: "propose_record_price",
@@ -283,5 +347,18 @@ export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
       AWAITS,
     schema: InstrumentEdit,
     propose: (input) => proposePriceSource(db, userId, input),
+  },
+  {
+    name: "propose_monthly_plan",
+    description:
+      "Proposes the owner's monthly investment plan from what the owner told you: rows of " +
+      "{instrumentId, amountEur} (1 to 30, one per instrument, amountEur a positive decimal " +
+      "string up to 1000000), and mode: replace (the plan becomes exactly these rows) or add " +
+      "(these rows are set, the others kept). Find every instrumentId with get_instruments or " +
+      "get_monthly_plan; never guess one. If a name is unknown or matches several instruments, " +
+      "ask the owner instead of proposing." +
+      AWAITS,
+    schema: PlanInput,
+    propose: (input) => proposePlan(db, userId, input),
   },
 ];

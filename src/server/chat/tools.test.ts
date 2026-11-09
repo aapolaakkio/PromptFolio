@@ -1039,3 +1039,15 @@ describe("get_net_worth_series", () => {
     expect(last?.totalEur).toBe("1520.00");
   });
 });
+
+describe("get_monthly_plan", () => {
+  test("returns the same rows and total as the plan page", async () => {
+    const { tools, userId, instrumentId } = await seed();
+    const { setPlanRow, listPlan } = await import("../monthly-plan.ts");
+    await setPlanRow(db, userId, { instrumentId, amountEur: "250" });
+    const result = await toolNamed(tools, "get_monthly_plan").run({});
+
+    expect(result).toEqual({ ...(await listPlan(db, userId)) });
+    expect(result).toMatchObject({ totalEur: "250.00" });
+  });
+});

@@ -14,6 +14,7 @@ const actions = (): ProposalActions => ({
   saveCashEntry: vi.fn(() => Promise.resolve()),
   saveTargetAllocation: vi.fn(() => Promise.resolve()),
   editInstrument: vi.fn(() => Promise.resolve()),
+  savePlan: vi.fn(() => Promise.resolve()),
 });
 
 const withdrawal: Proposal = {
@@ -48,6 +49,23 @@ describe("confirmProposal", () => {
       outcome: "failed",
       detail: "Account not found",
     });
+  });
+});
+
+describe("confirmProposal for the plan", () => {
+  test("runs the plan form's own save with the validated input", async () => {
+    const plan: Proposal = {
+      proposalId: "p-2",
+      action: "monthly_plan",
+      summary: "Invest 100.00 EUR per month in Acme Fund.",
+      title: "Set a monthly plan row",
+      facts: [],
+      input: { mode: "add", rows: [{ instrumentId: 4, amountEur: "100" }] },
+    };
+    const fns = actions();
+    expect(await confirmProposal(plan, fns)).toEqual({ outcome: "saved" });
+    expect(fns.savePlan).toHaveBeenCalledWith({ data: plan.input });
+    expect(fns.saveCashEntry).not.toHaveBeenCalled();
   });
 });
 

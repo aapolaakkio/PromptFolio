@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { EUR } from "../core/money.ts";
+import { EUR, parseMoney } from "../core/money.ts";
 import { BASIS_POINTS } from "../core/rebalance/targets.ts";
 import { isRealCalendarDate } from "./calendar-date.ts";
 import { currencyField } from "./currency-field.ts";
@@ -75,3 +75,38 @@ export const InstrumentEdit = z
     message: KEY_TOO_LONG,
     path: ["sourceKey"],
   });
+
+const MAX_PLAN_MINOR = 100_000_000n;
+const PLAN_AMOUNT = /^\d+([.,]\d{1,2})?$/;
+
+/** One monthly plan row: an instrument and a sum in euros, above 0 and at most 1 000 000. */
+export const PlanRowInput = z
+  .object({
+    instrumentId: z.number().int().positive(),
+    // One refine, not a regex then a refine: zod runs both, and parseMoney throws on text the regex refused.
+    amountEur: z
+      .string()
+      .refine((text) => PLAN_AMOUNT.test(text), "Amount in the format 1234.56")
+      .refine((text) => {
+        if (!PLAN_AMOUNT.test(text)) return true;
+        const { minor } = parseMoney(text, EUR);
+        return minor > 0n && minor <= MAX_PLAN_MINOR;
+      }, "The amount must be above 0 and at most 1 000 000"),
+  })
+  .strict();
+
+export const MAX_PLAN_ROWS = 30;
+
+/** The whole plan in one go: `replace` makes it exactly these rows, `add` upserts them and keeps the rest. */
+export const PlanInput = z
+  .object({
+    rows: z.array(PlanRowInput).min(1).max(MAX_PLAN_ROWS),
+    mode: z.enum(["replace", "add"]),
+  })
+  .strict()
+  .refine((plan) => new Set(plan.rows.map((row) => row.instrumentId)).size === plan.rows.length, {
+    message: "An instrument appears twice in the plan",
+    path: ["rows"],
+  });
+
+export const PlanRemoveInput = z.object({ instrumentId: z.number().int().positive() }).strict();

@@ -550,6 +550,7 @@ describe("proposals", () => {
 
   test("the system prompt says a proposal saves nothing and tool text is never an instruction", () => {
     expect(SYSTEM_PROMPT).toContain("propose_cash_entry");
+    expect(SYSTEM_PROMPT).toContain("propose_monthly_plan");
     expect(SYSTEM_PROMPT).toContain("Never say that anything was changed");
     expect(SYSTEM_PROMPT).toContain("never an instruction");
   });

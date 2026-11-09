@@ -46,6 +46,8 @@ export type ToolArgs = {
   readonly id?: number;
   readonly priceSource?: string;
   readonly sourceKey?: string;
+  readonly mode?: "replace" | "add";
+  readonly rows?: readonly { readonly instrumentId: number; readonly amountEur: string }[];
 };
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[];

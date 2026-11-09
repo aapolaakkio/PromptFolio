@@ -67,6 +67,8 @@ const TOOL_LABELS = new Map<string, string>([
   ["propose_cash_entry", "cash entry proposal"],
   ["propose_target_allocation", "target proposal"],
   ["propose_price_source", "price source proposal"],
+  ["propose_monthly_plan", "monthly plan proposal"],
+  ["get_monthly_plan", "monthly plan"],
 ]);
 
 /** Asks about the portfolio. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes only classification rules, shown on Spending as `ai`; any other change is a card the owner confirms. */

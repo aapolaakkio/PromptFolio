@@ -2,8 +2,8 @@ import type { Proposal } from "../../server/chat/proposal-schema.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { saveCashEntry } from "../server/cash-entries.ts";
 import { editInstrument } from "../server/instruments.ts";
+import { savePlan, saveTargetAllocation } from "../server/rebalance.ts";
 import { savePrice } from "../server/prices.ts";
-import { saveTargetAllocation } from "../server/rebalance.ts";
 
 type Input<A extends Proposal["action"]> = Extract<Proposal, { action: A }>["input"];
 
@@ -13,6 +13,7 @@ export type ProposalActions = {
   readonly saveCashEntry: (args: { data: Input<"cash_entry"> }) => Promise<void>;
   readonly saveTargetAllocation: (args: { data: Input<"target_allocation"> }) => Promise<void>;
   readonly editInstrument: (args: { data: Input<"price_source"> }) => Promise<void>;
+  readonly savePlan: (args: { data: Input<"monthly_plan"> }) => Promise<void>;
 };
 
 // Replies are dropped: the card needs only whether the save went through.
@@ -21,6 +22,9 @@ const formActions: ProposalActions = {
   saveCashEntry: async (args) => void (await saveCashEntry(args)),
   saveTargetAllocation: async (args) => void (await saveTargetAllocation(args)),
   editInstrument: async (args) => void (await editInstrument(args)),
+  savePlan: async (args) => {
+    await savePlan(args);
+  },
 };
 
 export type CardOutcome = {
@@ -38,6 +42,8 @@ const run = (proposal: Proposal, actions: ProposalActions): Promise<void> => {
       return actions.saveTargetAllocation({ data: proposal.input });
     case "price_source":
       return actions.editInstrument({ data: proposal.input });
+    case "monthly_plan":
+      return actions.savePlan({ data: proposal.input });
   }
 };
 

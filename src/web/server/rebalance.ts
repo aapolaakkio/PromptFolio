@@ -4,10 +4,14 @@ import { z } from "zod";
 import { EUR, parseMoney } from "../../core/money.ts";
 import {
   DimensionInput,
+  PlanInput,
+  PlanRemoveInput,
+  PlanRowInput,
   TargetAllocationInput,
   toBasisPoints,
 } from "../../server/action-inputs.ts";
 import { db } from "../../server/db/index.ts";
+import { listPlan, removePlanRow, setPlanRow, setPlanRows } from "../../server/monthly-plan.ts";
 import {
   depositPlanFor,
   driftReportFor,
@@ -91,3 +95,24 @@ export const getRebalancePlan = createServerFn()
 export const getFees = createServerFn()
   .middleware([authed])
   .handler(({ context }) => feeReportFor(db, context.userId));
+
+export const getMonthlyPlan = createServerFn()
+  .middleware([authed])
+  .handler(({ context }) => listPlan(db, context.userId));
+
+/** One row per instrument: saving again replaces the sum. */
+export const savePlanRow = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(PlanRowInput)
+  .handler(({ data, context }) => setPlanRow(db, context.userId, data));
+
+export const deletePlanRow = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(PlanRemoveInput)
+  .handler(({ data, context }) => removePlanRow(db, context.userId, data.instrumentId));
+
+/** The whole plan at once, from a chat card the owner confirmed; atomic. */
+export const savePlan = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(PlanInput)
+  .handler(({ data, context }) => setPlanRows(db, context.userId, data));

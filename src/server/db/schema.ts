@@ -368,6 +368,25 @@ export const allocationTargets = sqliteTable(
   (t) => [unique().on(t.userId, t.dimension, t.key)],
 );
 
+/** What the owner invests each month: one instrument, one sum in euro minor units. Typed by hand; the orders themselves run at the broker. */
+export const monthlyPlan = sqliteTable(
+  "monthly_plan",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    instrumentId: integer("instrument_id")
+      .notNull()
+      .references(() => instruments.id, { onDelete: "cascade" }),
+    amountMinor: integer("amount_minor").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [unique().on(t.userId, t.instrumentId)],
+);
+
 /** A layout the model already described, keyed by the shape of a document's opening lines. Per user: a recipe may quote a literal from the owner's own statement. */
 export const importRecipes = sqliteTable(
   "import_recipes",

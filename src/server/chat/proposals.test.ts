@@ -8,7 +8,7 @@ import type { ChatClient, ChatEvent, ModelReply, TurnParams } from "./runner.ts"
 import type { JsonValue } from "./tool-types.ts";
 
 type Args = {
-  readonly [key: string]: JsonValue | readonly { readonly [key: string]: string }[];
+  readonly [key: string]: JsonValue | readonly { readonly [key: string]: string | number }[];
 };
 
 // A proposal tool validates and describes; it never writes. These check the card's words come from the app.
@@ -356,5 +356,88 @@ describe("propose_price_source", () => {
 
     expect(proposals).toEqual([]);
     expect(JSON.parse(toolResult)).toEqual({ error: "Instrument not found" });
+  });
+});
+
+describe("propose_monthly_plan", () => {
+  const second = async (name: string) =>
+    (
+      await addInstrument(db, {
+        isin: randomIsin(),
+        ticker: null,
+        name,
+        kind: "etf",
+        currency: EUR,
+        priceSource: "manual",
+      })
+    ).id;
+  const planOf = async (userId: string) =>
+    (await db.select().from(schema.monthlyPlan).all()).filter((row) => row.userId === userId);
+
+  test("replace names the rows it removes and writes nothing before Confirm", async () => {
+    const { userId, instrumentId, isin } = await seed();
+    const old = await second("Old Fund");
+    const { setPlanRow } = await import("../monthly-plan.ts");
+    await setPlanRow(db, userId, { instrumentId: old, amountEur: "50" });
+    const { proposals, toolResult } = await propose(userId, "propose_monthly_plan", {
+      mode: "replace",
+      rows: [{ instrumentId, amountEur: "150,5" }],
+    });
+
+    expect(proposals[0]?.action).toBe("monthly_plan");
+    expect(proposals[0]?.title).toBe("Set the monthly plan");
+    expect(proposals[0]?.facts).toEqual([
+      { kind: "money", label: `Acme Fund (${isin})`, amount: "150.50", currency: "EUR" },
+      { kind: "text", label: "Removed from the plan", text: expect.stringContaining("Old Fund") },
+      { kind: "money", label: "Plan total per month", amount: "150.50", currency: "EUR" },
+    ]);
+    expect(JSON.parse(toolResult)).toMatchObject({ status: "awaiting_owner_confirmation" });
+    expect((await planOf(userId)).map((row) => row.instrumentId)).toEqual([old]);
+  });
+
+  test("add keeps the other rows in the total and removes none", async () => {
+    const { userId, instrumentId } = await seed();
+    const old = await second("Old Fund");
+    const { setPlanRow } = await import("../monthly-plan.ts");
+    await setPlanRow(db, userId, { instrumentId: old, amountEur: "50" });
+    const { proposals } = await propose(userId, "propose_monthly_plan", {
+      mode: "add",
+      rows: [{ instrumentId, amountEur: "100" }],
+    });
+
+    expect(proposals[0]?.title).toBe("Add to the monthly plan");
+    expect(proposals[0]?.facts.some((fact) => fact.label === "Removed from the plan")).toBe(false);
+    expect(proposals[0]?.facts.at(-1)).toMatchObject({ amount: "150.00" });
+  });
+
+  test("a duplicate instrument is refused", async () => {
+    const { userId, instrumentId } = await seed();
+    const { proposals } = await propose(userId, "propose_monthly_plan", {
+      mode: "add",
+      rows: [
+        { instrumentId, amountEur: "10" },
+        { instrumentId, amountEur: "20" },
+      ],
+    });
+    expect(proposals).toEqual([]);
+  });
+
+  test("an unknown id is refused", async () => {
+    const { userId } = await seed();
+    const { proposals, toolResult } = await propose(userId, "propose_monthly_plan", {
+      mode: "add",
+      rows: [{ instrumentId: 999_999_999, amountEur: "10" }],
+    });
+    expect(proposals).toEqual([]);
+    expect(toolResult).toContain("Instrument not found");
+  });
+
+  test.each(["0", "-5", "abc", "1000000.01"])("refuses amount %j", async (amountEur) => {
+    const { userId, instrumentId } = await seed();
+    const { proposals } = await propose(userId, "propose_monthly_plan", {
+      mode: "add",
+      rows: [{ instrumentId, amountEur }],
+    });
+    expect(proposals).toEqual([]);
   });
 });
