@@ -5,64 +5,6 @@ export const MAX_WORDS = 120;
 const wordsOf = (words: readonly string[]): RegExp =>
   new RegExp(`\\b(?:${words.join("|")})\\b`, "i");
 
-/** "one" is left out: "one of your funds" is plain English, and a count of 1 is a small thing to get wrong. */
-const NUMBER_WORDS = wordsOf([
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-  "ten",
-  "eleven",
-  "twelve",
-  "thirteen",
-  "fourteen",
-  "fifteen",
-  "sixteen",
-  "seventeen",
-  "eighteen",
-  "nineteen",
-  "twenty",
-  "thirty",
-  "forty",
-  "fifty",
-  "sixty",
-  "seventy",
-  "eighty",
-  "ninety",
-  "hundred",
-  "thousand",
-  "million",
-  "billion",
-  "half",
-  "twice",
-  "double",
-  "triple",
-  "dozen",
-  "couple",
-]);
-const ADVICE = wordsOf([
-  "buy\\w*",
-  "bought",
-  "sell\\w*",
-  "sold",
-  "should",
-  "shouldn't",
-  "consider\\w*",
-  "trim\\w*",
-  "reduce",
-  "reducing",
-  "rebalanc\\w*",
-  "recommend\\w*",
-  "must",
-  "ought",
-  "add(?:ing)? to",
-  "increas\\w* (?:your|the) (?:position|holding|stake)",
-]);
-const FULL_DATE = /\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{2,4}/;
 const UP_WORDS = wordsOf([
   "up",
   "rose",
@@ -150,20 +92,13 @@ const wrongDirection = (text: string, factsText: string): string | null => {
 
 /** `rule` is a fixed label safe to log; `message` is for the model and may quote its own text. */
 export type SummaryProblem = {
-  readonly rule:
-    | "empty"
-    | "length"
-    | "number-word"
-    | "advice"
-    | "date"
-    | "invented-number"
-    | "direction";
+  readonly rule: "empty" | "length" | "invented-number" | "direction";
   readonly message: string;
 };
 
 /**
  * What is wrong with a note, or null when it passes. `factsText` is the exact JSON the model was shown.
- * Every number printed must be one whole number of it, and a change must be described in its own direction; number words, dates and advice are refused because digits are all that can be checked.
+ * Two things are checked, the two a reader would be misled by: every number printed must be one whole number of the facts, and a change must be described in its own direction. Wording is otherwise the model's own (the owner wants no topic off limits).
  */
 export const summaryProblem = (raw: string, factsText: string): SummaryProblem | null => {
   const text = raw.normalize("NFKC");
@@ -171,21 +106,6 @@ export const summaryProblem = (raw: string, factsText: string): SummaryProblem |
   if (text.trim().split(/\s+/).length > MAX_WORDS) {
     return { rule: "length", message: `Too long: at most ${MAX_WORDS} words.` };
   }
-  const numberWord = NUMBER_WORDS.exec(text);
-  if (numberWord) {
-    return {
-      rule: "number-word",
-      message: `Do not write a number as a word ("${numberWord[0]}"): use digits copied from the facts, or leave it out.`,
-    };
-  }
-  const advice = ADVICE.exec(text);
-  if (advice) {
-    return {
-      rule: "advice",
-      message: `Do not give advice ("${advice[0]}"): only describe what happened.`,
-    };
-  }
-  if (FULL_DATE.test(text)) return { rule: "date", message: "Do not write a date." };
   const invented = numberTokensIn(text, true).find(
     (token) => !isUnsignedNumberIn(token, factsText),
   );

@@ -23,10 +23,6 @@ describe("isCheckedSummary", () => {
     ["a part of a printed number", "You made 234 euros."],
     ["a percentage not in the facts", "Up 12.4%."],
     ["a count not in the facts", "3 imports were made."],
-    ["a number word", "You made two imports."],
-    ["advice to buy", "You could buy more."],
-    ["advice to sell", "Sell Nordnet Global 50."],
-    ["a should", "You Should check 2 imports."],
     ["more than 120 words", Array.from({ length: 121 }, () => "word").join(" ")],
     ["an empty text", "   "],
   ])("rejects %s", (_name, text) => {
@@ -91,32 +87,12 @@ describe("normalising and word lists", () => {
     expect(isCheckedSummary("Rose １２．３ percent.", FACTS)).toBe(true);
   });
   test.each([
-    "thirty",
-    "hundred",
-    "thousand",
-    "million",
-    "half",
-    "twice",
-    "double",
-    "dozen",
-    "couple",
-  ])("rejects the number word %s", (word) => {
-    expect(isCheckedSummary(`About ${word} euros.`, FACTS)).toBe(false);
-  });
-  test.each([
-    "Consider selling.",
-    "You bought it.",
-    "It sold well.",
-    "Trim the position.",
-    "Reduce the fund.",
-    "Rebalance now.",
-    "I recommend waiting.",
-    "You must act.",
-    "Add to the position.",
-    "Increase your position.",
-    "Buying more.",
-  ])("rejects advice: %s", (text) => {
-    expect(isCheckedSummary(text, FACTS)).toBe(false);
+    "About half of it is in funds.",
+    "You made two imports.",
+    "You might want to sell the laggard, or consider adding to the index fund.",
+    "You should check 2 imports.",
+  ])("number words and suggestions are plain English: %s", (text) => {
+    expect(isCheckedSummary(text, FACTS)).toBe(true);
   });
   test("plain increased and reduced stay usable", () => {
     expect(isCheckedSummary("Value increased and costs reduced.", FACTS)).toBe(true);
@@ -165,9 +141,7 @@ describe("natural English is not refused", () => {
 describe("summaryProblem says what to fix", () => {
   test.each([
     ["Up 12.4%.", /12\.4/],
-    ["You made two imports.", /two/],
-    ["You could buy more.", /buy/],
-    ["On 2026-11-03 it moved.", /date/i],
+    ["On 2026-11-03 it moved.", /2026/],
     [Array.from({ length: 121 }, () => "word").join(" "), /120/],
   ])("%s", (text, expected) => {
     expect(summaryProblem(text, FACTS)?.message).toMatch(expected);

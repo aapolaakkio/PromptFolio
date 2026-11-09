@@ -5,10 +5,11 @@ import { CreateAccount, openAccount } from "../accounts.ts";
 import { db } from "../db/index.ts";
 import { imports, instruments, prices, transactions, user } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
+import { helsinkiToday, shiftDay } from "./helsinki.ts";
 
 export const DAY_MS = 86_400_000;
-export const daysAgo = (now: Date, days: number): string =>
-  new Date(now.getTime() - days * DAY_MS).toISOString().slice(0, 10);
+/** The Finnish calendar day, as the code under test counts: a UTC day is one behind for the first hours after Finnish midnight. */
+export const daysAgo = (now: Date, days: number): string => shiftDay(helsinkiToday(now), -days);
 
 export const newUser = async (): Promise<string> => {
   const id = crypto.randomUUID();
