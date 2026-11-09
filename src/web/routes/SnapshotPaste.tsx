@@ -27,14 +27,16 @@ const isPdf = (file: File): boolean =>
 /** Proposes a snapshot from a broker file, pasted table or PDF (the server tells them apart). Nothing is stored until every row matches an instrument: a dropped row would read as a holding the owner lacks. */
 export const SnapshotPaste = ({
   accountId,
+  initialFile = null,
   onCreated,
 }: {
   readonly accountId: number;
+  readonly initialFile?: File | null;
   readonly onCreated: (snapshotId: number) => void;
 }) => {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(initialFile);
   const [asOf, setAsOf] = useState("");
   const [rows, setRows] = useState<HoldingRow[]>([]);
   /** What a PDF statement printed as its own total, when it printed one. */

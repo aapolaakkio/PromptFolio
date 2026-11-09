@@ -23,6 +23,7 @@ import {
 import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
 import { BankStatementImport } from "./BankStatementImport.tsx";
+import { DocumentDrop } from "./DocumentDrop.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 import { firstThenRest } from "./preview-order.ts";
 import { pickSuggested } from "./draft-edit.ts";
@@ -341,9 +342,21 @@ export const ImportsPage = () => {
       (current) => current?.map((entry, at) => (at === index ? { ...entry, rows } : entry)) ?? null,
     );
 
+  // Broker files sorted by the drop box go through this page's own flow below.
+  const takeBrokerFiles = (id: number, dropped: readonly File[]) => {
+    setSource("file");
+    setAccountId(id);
+    setFiles([...dropped]);
+    resetOutcome();
+  };
+
   return (
     <>
       <h1>Imports</h1>
+
+      {hasAccounts && (
+        <DocumentDrop accounts={accounts.data ?? []} onBrokerFiles={takeBrokerFiles} />
+      )}
 
       <section className="card">
         <label>

@@ -37,9 +37,15 @@ const rowFromProblem = (problem: BankPreview["draft"]["problems"][number]): Bank
 });
 
 /** A bank account's statements, CSV or PDF: previewed, edited, then imported. */
-export const BankStatementImport = ({ accountId }: { readonly accountId: number }) => {
+export const BankStatementImport = ({
+  accountId,
+  initialFiles = [],
+}: {
+  readonly accountId: number;
+  readonly initialFiles?: readonly File[];
+}) => {
   const queryClient = useQueryClient();
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>([...initialFiles]);
   const [drafts, setDrafts] = useState<
     { name: string; preview: BankPreview; suggestedLines: ReadonlySet<number> }[]
   >([]);

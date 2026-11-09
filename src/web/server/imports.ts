@@ -10,6 +10,7 @@ import {
   undo,
   UndoInput,
 } from "../../server/import/service.ts";
+import { sortUploads } from "../../server/import/sort-service.ts";
 import { authed, readable } from "./guard.ts";
 
 // An upload travels as multipart; the fields inside are checked server-side.
@@ -39,3 +40,9 @@ export const undoImport = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(UndoInput)
   .handler(({ data, context }) => readable(() => undo(context.userId, data.importId)));
+
+/** Works out what each dropped file is and which account it belongs to; stores nothing. */
+export const sortImportFiles = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(upload)
+  .handler(({ data, context }) => readable(() => sortUploads(context.userId, data)));
