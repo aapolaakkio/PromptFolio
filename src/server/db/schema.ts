@@ -388,3 +388,20 @@ export const importRecipes = sqliteTable(
   },
   (t) => [unique().on(t.userId, t.fingerprint)],
 );
+
+/** One row per user and ISO week ("2026-W46"). `facts` is the JSON the note was written from; `text` is null while no checked note exists. `createdAt` is when it was last generated, which paces regeneration. */
+export const weeklySummaries = sqliteTable(
+  "weekly_summaries",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    week: text("week").notNull(),
+    facts: text("facts").notNull(),
+    text: text("text"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.week] })],
+);

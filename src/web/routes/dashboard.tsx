@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { eur, pct, formatDate } from "../lib/format.ts";
 import { TimeSeriesChart } from "../charts/TimeSeriesChart.tsx";
 import { AllocationChart } from "../charts/AllocationChart.tsx";
+import { WeeklySummary } from "./WeeklySummary.tsx";
 import { getAllocation, getReturns, getValueSeries } from "../server/portfolio.ts";
 
 const Stat = ({
@@ -63,6 +64,8 @@ export const DashboardPage = () => {
   return (
     <>
       <h1>Dashboard</h1>
+
+      <WeeklySummary />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Stat

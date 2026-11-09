@@ -120,6 +120,14 @@ const numbersIn = (raw: string): ReadonlyMap<string, ReadonlySet<boolean>> => {
   return found;
 };
 
+/** Each number the text prints, as printed (dates, ISINs and long references are not numbers). */
+export const numberTokensIn = (raw: string): string[] =>
+  [
+    ...blank(raw, [DATE_TEXT, DATE_WITHOUT_YEAR, IBAN_TEXT, ISIN_TEXT, LONG_NUMBER]).matchAll(
+      NUMBER_TOKENS,
+    ),
+  ].map((match) => match[0]);
+
 const isNegative = (value: string): boolean => /^[-\u2212]/.test(value.trim());
 
 const isNumberIn = (value: string, raw: string, signed = false): boolean => {
@@ -130,7 +138,7 @@ const isNumberIn = (value: string, raw: string, signed = false): boolean => {
 };
 
 const isSignedAmountIn = (value: string, raw: string): boolean => isNumberIn(value, raw, true);
-const isUnsignedNumberIn = (value: string, raw: string): boolean => {
+export const isUnsignedNumberIn = (value: string, raw: string): boolean => {
   const printed = numbersIn(raw);
   return readingsOf(value.trim().replace(/^[-+\u2212]/, "")).some((reading) =>
     printed.has(reading),
