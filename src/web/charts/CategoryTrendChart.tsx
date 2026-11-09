@@ -4,10 +4,12 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { scalePoint } from "@tanstack/charts/scales/point";
 import { tooltip } from "@tanstack/charts/tooltip";
+import { crosshair } from "@tanstack/charts/crosshair";
 import { Chart } from "@tanstack/react-charts";
 
 import type { CategoryMonth } from "../../server/spending/monthly.ts";
 import { eur } from "../lib/format.ts";
+import { GROUP_FOCUS } from "./interactions.ts";
 import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 export type Category = { readonly key: string; readonly label: string };
@@ -60,6 +62,7 @@ export const CategoryTrendChart = ({
             layout: stack(),
             fillOpacity: 0.85,
           }),
+          crosshair({ y: false }),
         ],
         scales: {
           x: {
@@ -79,7 +82,7 @@ export const CategoryTrendChart = ({
             .range(shown.map((_category, index) => colourFor(index))),
           legend: colorLegend({ label: "" }),
         },
-        focus: "group-x",
+        ...GROUP_FOCUS,
         tooltip,
       }),
     [rows, shown],

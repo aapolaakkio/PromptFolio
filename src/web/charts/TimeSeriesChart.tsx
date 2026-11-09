@@ -7,6 +7,7 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 import { eur, formatDate } from "../lib/format.ts";
+import { hoverThroughBrush } from "./hover-through.ts";
 import { TIME_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
 
@@ -260,7 +261,7 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
           </span>
         )}
       </div>
-      <div className="h-72">
+      <div className="h-72" onPointerMoveCapture={hoverThroughBrush}>
         <Chart definition={definition} height={288} ariaLabel={label} />
       </div>
     </div>

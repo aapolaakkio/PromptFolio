@@ -4,10 +4,11 @@ import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
+import { crosshair } from "@tanstack/charts/crosshair";
 import { Chart } from "@tanstack/react-charts";
 import { eur } from "../lib/format.ts";
 import { shortMonth } from "./CategoryTrendChart.tsx";
-import { MARK_FOCUS } from "./interactions.ts";
+import { GROUP_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
 
 type MonthlyPoint = { month: string; incomeEur: string; expensesEur: string };
@@ -32,6 +33,8 @@ const monthlyDefinition = (months: readonly MonthlyPoint[]) => {
         // A surface gap so paired bars read as two.
         inset: 1,
       }),
+      // The month under the pointer is shaded as one band, since a bar chart has no single x line.
+      crosshair({ x: { band: true }, y: false }),
     ],
     scales: {
       x: { scale: () => scaleBand<string>() },
@@ -50,7 +53,7 @@ const monthlyDefinition = (months: readonly MonthlyPoint[]) => {
       // Two series: identity must not rest on colour alone.
       legend: colorLegend({ label: "" }),
     },
-    ...MARK_FOCUS,
+    ...GROUP_FOCUS,
     tooltip,
   });
 };
