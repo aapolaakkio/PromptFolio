@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { qty } from "../lib/format.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { adjustSnapshot } from "../server/snapshots.ts";
+import { Modal } from "./Modal.tsx";
 import type { ReconcileRow } from "./reconcile-view.ts";
 
 /** Turns one accepted difference into a transaction, per row, never bulk: an adjustment has no broker record. Adding units requires the acquisition value (server enforces it too): a zero cost basis reports the whole value as gain. */
@@ -50,57 +51,61 @@ export const AdjustRow = ({
     },
   });
 
-  if (!open) {
-    return (
-      <button type="button" className="text-sm" onClick={() => setOpen(true)}>
-        Adjust
-      </button>
-    );
-  }
+  const trigger = (
+    <button type="button" className="text-sm" onClick={() => setOpen(true)}>
+      Adjust
+    </button>
+  );
+  if (!open) return trigger;
 
   return (
-    <div className="flex flex-col gap-2">
-      {adding && (
-        <label className="text-xs">
-          Cost basis (€)
-          <input
-            value={costEur}
-            inputMode="decimal"
-            required
-            placeholder="e.g. 500.00"
-            onChange={(e) => setCostEur(e.target.value)}
-          />
-        </label>
-      )}
-      {suggested && (
-        <p className="text-xs">
-          AI suggestion: book {qty(row.delta)} units {adding ? "in" : "out"}, dated on the
-          statement.
-        </p>
-      )}
-      <p className="text-xs text-muted">
-        {adding
-          ? "Records the units that arrived. The cost basis is not guessed: without it, later returns would show the whole value as profit."
-          : "Records the units that left, with no sale proceeds."}
-      </p>
-      {error && (
-        <p role="alert" className="text-loss text-xs">
-          {error}
-        </p>
-      )}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="text-sm"
-          disabled={adjust.isPending || (adding && costEur.trim() === "")}
-          onClick={() => adjust.mutate()}
-        >
-          {adjust.isPending ? "Recording…" : "Confirm adjustment"}
-        </button>
-        <button type="button" className="text-sm" onClick={() => setOpen(false)}>
-          Cancel
-        </button>
-      </div>
-    </div>
+    <>
+      {trigger}
+      <Modal title={`Adjust ${row.name}`} onClose={() => setOpen(false)}>
+        <div className="flex flex-col gap-2">
+          {adding && (
+            <label className="text-xs">
+              Cost basis (€)
+              <input
+                value={costEur}
+                inputMode="decimal"
+                required
+                placeholder="e.g. 500.00"
+                onChange={(e) => setCostEur(e.target.value)}
+              />
+            </label>
+          )}
+          {suggested && (
+            <p className="text-xs">
+              AI suggestion: book {qty(row.delta)} units {adding ? "in" : "out"}, dated on the
+              statement.
+            </p>
+          )}
+          <p className="text-xs text-muted">
+            {adding
+              ? "Records the units that arrived. The cost basis is not guessed: without it, later returns would show the whole value as profit."
+              : "Records the units that left, with no sale proceeds."}
+          </p>
+          {error && (
+            <p role="alert" className="text-loss text-xs">
+              {error}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="text-sm"
+              disabled={adjust.isPending || (adding && costEur.trim() === "")}
+              onClick={() => adjust.mutate()}
+            >
+              {adjust.isPending ? "Recording…" : "Confirm adjustment"}
+            </button>
+            <button type="button" className="quiet-button" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 };

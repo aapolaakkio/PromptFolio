@@ -7,6 +7,7 @@ import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
 import { EditInstrumentForm } from "./EditInstrumentForm.tsx";
+import { Modal } from "./Modal.tsx";
 import { getHoldings } from "../server/portfolio.ts";
 import { refreshPricesNow } from "../server/prices.ts";
 
@@ -84,9 +85,9 @@ export const HoldingsPage = () => {
   const queryClient = useQueryClient();
   const [sortKey, setSortKey] = useState<SortKey>("valueEur");
   const [direction, setDirection] = useState<SortDirection>("desc");
-  // The row showing its inline price form; any instrument's stored price can be corrected.
+  // The holding whose price form is open; any instrument's stored price can be corrected.
   const [priceFormFor, setPriceFormFor] = useState<number | null>(null);
-  /** Which row shows its "correct how this is priced" form. */
+  /** The holding whose "correct how this is priced" form is open. */
   const [editFor, setEditFor] = useState<number | null>(null);
 
   const holdings = useQuery({
@@ -98,6 +99,8 @@ export const HoldingsPage = () => {
     () => (holdings.data ? sortHoldings(holdings.data, sortKey, direction) : []),
     [holdings.data, sortKey, direction],
   );
+  const editing = rows.find((row) => row.instrumentId === editFor);
+  const pricing = rows.find((row) => row.instrumentId === priceFormFor);
 
   const toggle = (key: SortKey) => {
     if (key === sortKey) {
@@ -237,47 +240,19 @@ export const HoldingsPage = () => {
                   <button
                     type="button"
                     className="mt-1 text-xs"
-                    onClick={() =>
-                      setPriceFormFor(priceFormFor === row.instrumentId ? null : row.instrumentId)
-                    }
+                    onClick={() => setPriceFormFor(row.instrumentId)}
                   >
-                    {priceFormFor === row.instrumentId ? "Cancel" : "Enter price"}
+                    Enter price
                   </button>
                   <button
                     type="button"
                     className="mt-1 ml-1 text-xs"
-                    onClick={() =>
-                      setEditFor(editFor === row.instrumentId ? null : row.instrumentId)
-                    }
+                    onClick={() => setEditFor(row.instrumentId)}
                   >
-                    {editFor === row.instrumentId ? "Close" : "Edit"}
+                    Edit
                   </button>
                   {row.lookupStatus === "attention" && (
                     <span className="ml-1 text-xs text-loss">No price source found</span>
-                  )}
-                  {editFor === row.instrumentId && (
-                    <EditInstrumentForm
-                      instrumentId={row.instrumentId}
-                      feeBp={
-                        row.kind === "fund" || row.kind === "etf"
-                          ? { value: row.ongoingChargeBp }
-                          : undefined
-                      }
-                      onSaved={() => {
-                        setEditFor(null);
-                        void queryClient.invalidateQueries();
-                      }}
-                    />
-                  )}
-                  {priceFormFor === row.instrumentId && (
-                    <RecordPriceForm
-                      instrumentId={row.instrumentId}
-                      currency={row.currency}
-                      onRecorded={() => {
-                        setPriceFormFor(null);
-                        void queryClient.invalidateQueries({ queryKey: ["holdings"] });
-                      }}
-                    />
                   )}
                 </div>
               </td>
@@ -285,6 +260,36 @@ export const HoldingsPage = () => {
           ))}
         </tbody>
       </table>
+
+      {/* Over the page, not inside the row: an open form no longer pushes the table around. */}
+      {editing && (
+        <Modal title={`Edit ${editing.name}`} onClose={() => setEditFor(null)}>
+          <EditInstrumentForm
+            instrumentId={editing.instrumentId}
+            feeBp={
+              editing.kind === "fund" || editing.kind === "etf"
+                ? { value: editing.ongoingChargeBp }
+                : undefined
+            }
+            onSaved={() => {
+              setEditFor(null);
+              void queryClient.invalidateQueries();
+            }}
+          />
+        </Modal>
+      )}
+      {pricing && (
+        <Modal title={`Enter a price for ${pricing.name}`} onClose={() => setPriceFormFor(null)}>
+          <RecordPriceForm
+            instrumentId={pricing.instrumentId}
+            currency={pricing.currency}
+            onRecorded={() => {
+              setPriceFormFor(null);
+              void queryClient.invalidateQueries({ queryKey: ["holdings"] });
+            }}
+          />
+        </Modal>
+      )}
     </>
   );
 };

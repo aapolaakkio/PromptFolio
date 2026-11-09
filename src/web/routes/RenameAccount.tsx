@@ -11,6 +11,7 @@ import {
   type AccountKind,
   type AccountType,
 } from "./account-type.ts";
+import { Modal } from "./Modal.tsx";
 
 /** Edits name and type, not broker or currency (stored rows were interpreted under those); the type stays correctable since a wrong one breaks tax reports. */
 export const RenameAccount = ({
@@ -49,61 +50,75 @@ export const RenameAccount = ({
     },
   });
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        className="mt-3 text-sm"
-        onClick={() => {
-          setName(currentName);
-          setAccountType(toSelection(currentType));
-          setOpen(true);
-        }}
-      >
-        Edit account
-      </button>
-    );
-  }
-
-  return (
-    <form
-      className="mt-3 flex flex-wrap items-end gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        rename.mutate();
+  const trigger = (
+    <button
+      type="button"
+      className="mt-3 text-sm"
+      onClick={() => {
+        setName(currentName);
+        setAccountType(toSelection(currentType));
+        setError(null);
+        setOpen(true);
       }}
     >
-      <label>
-        Account name
-        <input value={name} required maxLength={100} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label>
-        Account type
-        <select
-          value={accountType}
-          onChange={(e) => {
-            setAccountType(isAccountType(e.target.value) ? e.target.value : "");
+      Edit account
+    </button>
+  );
+  if (!open) return trigger;
+
+  return (
+    <>
+      {trigger}
+      <Modal title={`Edit ${currentName}`} onClose={() => setOpen(false)}>
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            rename.mutate();
           }}
         >
-          <option value="">{UNSET_LABEL}</option>
-          {typesFor(kind).map((type) => (
-            <option key={type.id} value={type.id}>
-              {type.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button type="submit" className="text-sm" disabled={rename.isPending || name.trim() === ""}>
-        {rename.isPending ? "Saving…" : "Save"}
-      </button>
-      <button type="button" className="text-sm" onClick={() => setOpen(false)}>
-        Cancel
-      </button>
-      {error && (
-        <p role="alert" className="text-loss w-full text-sm">
-          {error}
-        </p>
-      )}
-    </form>
+          <label>
+            Account name
+            <input
+              value={name}
+              required
+              maxLength={100}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label>
+            Account type
+            <select
+              value={accountType}
+              onChange={(e) => {
+                setAccountType(isAccountType(e.target.value) ? e.target.value : "");
+              }}
+            >
+              <option value="">{UNSET_LABEL}</option>
+              {typesFor(kind).map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="text-sm"
+            disabled={rename.isPending || name.trim() === ""}
+          >
+            {rename.isPending ? "Saving…" : "Save"}
+          </button>
+          <button type="button" className="quiet-button" onClick={() => setOpen(false)}>
+            Cancel
+          </button>
+          {error && (
+            <p role="alert" className="text-loss w-full text-sm">
+              {error}
+            </p>
+          )}
+        </form>
+      </Modal>
+    </>
   );
 };

@@ -10,6 +10,7 @@ import { availabilityLabel, describeBalance, ENTRY_LABELS } from "./cash-view.ts
 import { CreateAccountForm } from "./CreateAccountForm.tsx";
 import { getCash } from "../server/portfolio.ts";
 import { deleteCashEntry, getCashEntries, saveCashEntry } from "../server/cash-entries.ts";
+import { Modal } from "./Modal.tsx";
 
 /** What a person can record by hand, as the ledger stores it. */
 type CashEntryType = "OPENING_BALANCE" | "DEPOSIT" | "WITHDRAWAL" | "INTEREST";
@@ -143,19 +144,21 @@ export const CashPage = () => {
               ))}
             </select>
           </label>
-          <button type="button" className="text-sm" onClick={() => setShowNewAccount((v) => !v)}>
-            {showNewAccount ? "Cancel" : "+ New bank account"}
+          <button type="button" className="text-sm" onClick={() => setShowNewAccount(true)}>
+            + New bank account
           </button>
         </div>
 
         {showNewAccount && (
-          <CreateAccountForm
-            onCreated={(account) => {
-              setShowNewAccount(false);
-              setAccountId(account.id);
-              void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-            }}
-          />
+          <Modal title="New bank account" onClose={() => setShowNewAccount(false)}>
+            <CreateAccountForm
+              onCreated={(account) => {
+                setShowNewAccount(false);
+                setAccountId(account.id);
+                void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+              }}
+            />
+          </Modal>
         )}
 
         {bankAccounts.length === 0 && (

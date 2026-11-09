@@ -30,6 +30,7 @@ import { DocumentDrop } from "./DocumentDrop.tsx";
 import { type Column, DraftTable } from "./DraftTable.tsx";
 import { firstThenRest } from "./preview-order.ts";
 import { clearEdited, pickSuggested } from "./draft-edit.ts";
+import { Modal } from "./Modal.tsx";
 
 /** Which upload path produced the previews, so resolving an unknown instrument re-previews the right one. */
 type Source = "file" | "paste";
@@ -219,6 +220,13 @@ export const ImportsPage = () => {
     setResults([]);
   };
 
+  const accountCreated = (created: { readonly id: number }) => {
+    setAccountId(created.id);
+    setShowCreateAccount(false);
+    resetOutcome();
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+  };
+
   const selectSource = (next: Source) => {
     setSource(next);
     resetOutcome();
@@ -382,9 +390,9 @@ export const ImportsPage = () => {
             <button
               type="button"
               className="mt-3 text-sm"
-              onClick={() => setShowCreateAccount((v) => !v)}
+              onClick={() => setShowCreateAccount(true)}
             >
-              {showCreateAccount ? "Cancel" : "+ New account"}
+              + New account
             </button>
             {selectedAccount && (
               <span className="mt-3 text-sm text-muted">
@@ -406,16 +414,15 @@ export const ImportsPage = () => {
             No accounts yet. Create your first account below to start importing.
           </p>
         )}
-        {showCreateAccountForm && (
-          <CreateAccountForm
-            onCreated={(created) => {
-              setAccountId(created.id);
-              setShowCreateAccount(false);
-              resetOutcome();
-              void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-            }}
-          />
-        )}
+        {/* The very first account's form is the page's main content; later ones open over it. */}
+        {showCreateAccountForm &&
+          (hasAccounts ? (
+            <Modal title="New account" onClose={() => setShowCreateAccount(false)}>
+              <CreateAccountForm onCreated={accountCreated} />
+            </Modal>
+          ) : (
+            <CreateAccountForm onCreated={accountCreated} />
+          ))}
       </section>
 
       {selectedAccount?.kind === "bank" ? (
