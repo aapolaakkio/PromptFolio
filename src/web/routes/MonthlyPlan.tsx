@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { errorMessage } from "../lib/errors.ts";
+import { FORECAST_QUERY_KEY } from "./Forecast.tsx";
 import { eur } from "../lib/format.ts";
 import { getInstruments } from "../server/instruments.ts";
 import { deletePlanRow, getMonthlyPlan, savePlanRow } from "../server/rebalance.ts";
@@ -21,13 +22,17 @@ export const MonthlyPlan = () => {
     mutationFn: (row: { instrumentId: number; amountEur: string }) => savePlanRow({ data: row }),
     onSuccess: () => {
       setError(null);
+      void queryClient.invalidateQueries({ queryKey: FORECAST_QUERY_KEY });
       return queryClient.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onError: (cause) => setError(errorMessage(cause, "Could not save")),
   });
   const remove = useMutation({
     mutationFn: (id: number) => deletePlanRow({ data: { instrumentId: id } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: FORECAST_QUERY_KEY });
+      return queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
     onError: (cause) => setError(errorMessage(cause, "Could not remove")),
   });
 

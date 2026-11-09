@@ -387,6 +387,21 @@ export const monthlyPlan = sqliteTable(
   (t) => [unique().on(t.userId, t.instrumentId)],
 );
 
+/** The owner's own expected yearly growth for an instrument, replacing the one measured from prices. */
+export const forecastRates = sqliteTable(
+  "forecast_rates",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    instrumentId: integer("instrument_id")
+      .notNull()
+      .references(() => instruments.id, { onDelete: "cascade" }),
+    rateBp: integer("rate_bp").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.instrumentId] })],
+);
+
 /** A layout the model already described, keyed by the shape of a document's opening lines. Per user: a recipe may quote a literal from the owner's own statement. */
 export const importRecipes = sqliteTable(
   "import_recipes",
