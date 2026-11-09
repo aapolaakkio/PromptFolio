@@ -300,11 +300,8 @@ test("the same slice can be targeted on two different dimensions", async () => {
 
   // "stock" as a kind and "stock" as an account name are different slices that
   // happen to share a key, so the index has to include the dimension.
-  expect(
-    async () =>
-      await db
-        .insert(allocationTargets)
-        .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })
-        .run(),
-  ).not.toThrow();
+  await db
+    .insert(allocationTargets)
+    .values({ userId: "two-dimensions", dimension: "account", key: "stock", weightBp: 10000 })
+    .run();
 });
