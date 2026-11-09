@@ -352,6 +352,145 @@ describe("show_chart", () => {
     await expect(chart.chart(one)).rejects.toThrow(/ten charts/);
   });
 
+  test("styles, transforms, a band and annotations: values still come from the app", async () => {
+    const { userId } = await holder();
+    const { run, chart } = toolsFor(userId);
+    const flat = await summary(run, { ...FLAT, monthlyTotalEur: 100 });
+    const shown = await chart
+      .chart(
+        spec(
+          [
+            {
+              source: "forecast",
+              scenarioId: flat.scenarioId,
+              path: "expected",
+              kind: "line",
+              label: "Expected",
+              color: "#2a78d6",
+              width: 3,
+              dash: "dashed",
+              curve: "smooth",
+              points: true,
+            },
+            {
+              source: "forecast",
+              scenarioId: flat.scenarioId,
+              path: "contributed",
+              kind: "bar",
+              color: 3,
+              axis: "right",
+              transform: "index-100",
+              stack: "money",
+            },
+          ],
+          {
+            subtitle: "Plan of 100 a month",
+            yScale: "linear",
+            yFormat: "compact-EUR",
+            legend: "bottom",
+            height: 360,
+            band: { scenarioId: flat.scenarioId, label: "Range" },
+            annotations: [{ type: "y-line", y: 2000, label: "Goal" }],
+          },
+        ),
+      )
+      .catch((cause: unknown) => cause);
+    // Contributed starts at 0, so index-100 is refused rather than drawn from a zero base.
+    expect(shown).toBeInstanceOf(Error);
+
+    const ok = await chart.chart(
+      spec(
+        [
+          {
+            source: "forecast",
+            scenarioId: flat.scenarioId,
+            path: "expected",
+            transform: "index-100",
+          },
+          { source: "forecast", scenarioId: flat.scenarioId, path: "contributed", axis: "right" },
+        ],
+        { yUnit: "index", band: { scenarioId: flat.scenarioId } },
+      ),
+    );
+    expect(ok.data.series.map((row) => [row.unit, row.points.at(-1)?.y])).toEqual([
+      ["index", 220],
+      ["EUR", 1200],
+    ]);
+    expect(ok.data.band?.points).toHaveLength(13);
+    expect(ok.data.band?.points.at(-1)?.low).toBeLessThanOrEqual(2200);
+  });
+
+  test("a log scale with a value at or below zero falls back to linear, with a note", async () => {
+    const stranger = await signUp();
+    const { chart } = toolsFor(stranger);
+    const shown = await chart.chart(
+      spec([{ source: "value-series", range: "1y" }], { yScale: "log" }),
+    );
+    expect(shown.data.yScale).toBe("linear");
+    expect(shown.data.notes.join(" ")).toMatch(/linear/);
+
+    const own = await holder();
+    const log = await toolsFor(own.userId).chart.chart(
+      spec([{ source: "holding-price", instrumentId: own.instrumentId, range: "max" }], {
+        yScale: "log",
+      }),
+    );
+    expect(log.data.yScale).toBe("log");
+    expect(log.data.notes).toEqual([]);
+  });
+
+  test("right-axis series share one unit; left-axis series match yUnit", async () => {
+    const { userId, instrumentId } = await holder();
+    const { chart } = toolsFor(userId);
+    await expect(
+      chart.chart(
+        spec([
+          { source: "value-series", range: "1y" },
+          { source: "allocation", dimension: "kind", axis: "right" },
+          {
+            source: "holding-price",
+            instrumentId,
+            range: "1y",
+            axis: "right",
+            transform: "index-100",
+          },
+        ]),
+      ),
+    ).rejects.toThrow(/right axis/);
+  });
+
+  test.each([
+    ["red; background:url(x)"],
+    ["var(--x)"],
+    ["javascript:alert(1)"],
+    ["#12"],
+    ["rgb(1,2,3)"],
+  ])("refuses the colour %s", (color) => {
+    const valid = spec([{ source: "value-series", range: "1y", color }]);
+    expect(ChartSpecSchema.safeParse(valid).success).toBe(false);
+    expect(
+      ChartSpecSchema.safeParse({
+        ...spec([{ source: "value-series", range: "1y" }]),
+        annotations: [{ type: "y-line", y: 1, label: "x", color }],
+      }).success,
+    ).toBe(false);
+  });
+
+  test("at most ten annotations, each label at most 40 characters", () => {
+    const base = spec([{ source: "value-series", range: "1y" }]);
+    const line = { type: "x-line", x: "2026-01", label: "Event" };
+    expect(ChartSpecSchema.safeParse({ ...base, annotations: Array(10).fill(line) }).success).toBe(
+      true,
+    );
+    expect(ChartSpecSchema.safeParse({ ...base, annotations: Array(11).fill(line) }).success).toBe(
+      false,
+    );
+    expect(
+      ChartSpecSchema.safeParse({ ...base, annotations: [{ ...line, label: "x".repeat(41) }] })
+        .success,
+    ).toBe(false);
+  });
+
   test("the spec has no place for data points and at most six series", () => {
     const valid = spec([{ source: "value-series", range: "1y" }]);
     expect(ChartSpecSchema.safeParse(valid).success).toBe(true);

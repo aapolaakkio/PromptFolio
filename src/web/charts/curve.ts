@@ -36,3 +36,22 @@ export const bumpX: Curve = {
     return `${upper}L${lower.slice(1)}Z`;
   },
 };
+
+/** Step after each point: the value holds until the next one. */
+const stepPath = (points: readonly (readonly [number, number])[]): string =>
+  points
+    .map(([x, y], index) => {
+      const previous = points[index - 1];
+      return previous === undefined ? `M${round(x)},${round(y)}` : `H${round(x)}V${round(y)}`;
+    })
+    .join("");
+
+export const stepX: Curve = {
+  line: stepPath,
+  area: (top, bottom) => {
+    const upper = stepPath(top);
+    if (upper === "") return "";
+    const lower = stepPath([...bottom].reverse());
+    return `${upper}L${lower.slice(1)}Z`;
+  },
+};

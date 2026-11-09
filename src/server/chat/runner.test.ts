@@ -570,9 +570,12 @@ describe("charts", () => {
       series: [
         {
           label: "Portfolio value",
+          unit: "EUR" as const,
           points: Array.from({ length: 50 }, (_unused, index) => ({ x: `d${index}`, y: index })),
         },
       ],
+      yScale: "linear" as const,
+      notes: [],
     },
   };
   const chartTool: ChartTool = {
@@ -594,9 +597,12 @@ describe("charts", () => {
       status: "Chart shown: Value",
       chartId: "c1",
       unit: "EUR",
+      scale: "linear",
+      notes: [],
       series: [
         {
           label: "Portfolio value",
+          unit: "EUR",
           points: 50,
           first: { x: "d0", y: 0 },
           last: { x: "d49", y: 49 },

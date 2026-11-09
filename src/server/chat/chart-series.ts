@@ -6,11 +6,17 @@ import { prices } from "../db/schema.ts";
 import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
 import { loadPortfolio } from "../valuation.ts";
 import { allocationView, monthlyView, valueSeriesView } from "../views/portfolio.ts";
-import { MAX_CHART_POINTS, type ChartSpec, type SeriesRef } from "./chart-schema.ts";
+import {
+  MAX_CHART_POINTS,
+  type ChartData,
+  type ChartSpec,
+  type SeriesRef,
+  type YUnit,
+} from "./chart-schema.ts";
 import type { Db } from "./tool-types.ts";
 import type { TurnState } from "./turn-state.ts";
 
-type Unit = ChartSpec["yUnit"];
+type Unit = YUnit;
 type Point = { readonly x: string; readonly y: number };
 export type ResolvedSeries = {
   readonly label: string;
@@ -42,23 +48,45 @@ const PATH_LABEL = {
   contributed: "money put in",
 } as const;
 
+/** A scenario of this turn and, optionally, one of its holdings; anything else is refused. */
+const scenarioFor = (turn: TurnState, scenarioId: string, holdingId: number | undefined) => {
+  const scenario = turn.scenario(scenarioId);
+  if (scenario === undefined) {
+    throw new Error(
+      `Unknown scenario: ${scenarioId}. Use a scenarioId run_forecast returned in this answer`,
+    );
+  }
+  const holding =
+    holdingId === undefined
+      ? undefined
+      : scenario.holdings.find((row) => row.instrumentId === holdingId);
+  if (holdingId !== undefined && holding === undefined) {
+    throw new Error(`Instrument ${holdingId} is not in scenario ${scenario.id}`);
+  }
+  return { scenario, holding };
+};
+
+/** The low-high range of one scenario, for shading. */
+export const forecastBand = (
+  turn: TurnState,
+  band: NonNullable<ChartSpec["band"]>,
+): NonNullable<ChartData["band"]> => {
+  const { scenario, holding } = scenarioFor(turn, band.scenarioId, band.holdingId);
+  const id = holding === undefined ? null : String(holding.instrumentId);
+  return {
+    label: `${scenario.id} ${holding === undefined ? "" : `${holding.name} `}range (10-90 %)`,
+    points: thin(scenario.result.points).map((point) => {
+      const range = id === null ? point.total : point.holdings.find((row) => row.id === id);
+      return { x: point.month, low: range?.low ?? 0, high: range?.high ?? 0 };
+    }),
+  };
+};
+
 const forecastSeries = (
   turn: TurnState,
   ref: Extract<SeriesRef, { source: "forecast" }>,
 ): ResolvedSeries => {
-  const scenario = turn.scenario(ref.scenarioId);
-  if (scenario === undefined) {
-    throw new Error(
-      `Unknown scenario: ${ref.scenarioId}. Use a scenarioId run_forecast returned in this answer`,
-    );
-  }
-  const holding =
-    ref.holdingId === undefined
-      ? undefined
-      : scenario.holdings.find((row) => row.instrumentId === ref.holdingId);
-  if (ref.holdingId !== undefined && holding === undefined) {
-    throw new Error(`Instrument ${ref.holdingId} is not in scenario ${scenario.id}`);
-  }
+  const { scenario, holding } = scenarioFor(turn, ref.scenarioId, ref.holdingId);
   if (holding !== undefined && ref.path === "contributed") {
     throw new Error("Money put in is for the whole portfolio only; leave out holdingId");
   }

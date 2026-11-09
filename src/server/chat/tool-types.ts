@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Dimension } from "../../core/allocation.ts";
 import type { IsoDate } from "../../core/types.ts";
-import type { ChartKind, ChatChart, SeriesRef } from "./chart-schema.ts";
+import type { ChartSpec, ChatChart } from "./chart-schema.ts";
 import type { ForecastOverrides } from "./forecast-overrides.ts";
 import type { Proposal } from "./proposal-schema.ts";
 
@@ -19,7 +19,7 @@ export const MAX_SERIES_POINTS = 60;
 export const DEFAULT_TXN_LIMIT = 25;
 
 // Each tool declares its own strict schema and re-parses; this type only avoids `unknown` in `run`.
-export type ToolArgs = {
+export type ToolArgs = Partial<ChartSpec> & {
   readonly on?: string;
   readonly from?: string;
   readonly to?: string;
@@ -50,10 +50,6 @@ export type ToolArgs = {
   readonly sourceKey?: string;
   readonly mode?: "replace" | "add";
   readonly rows?: readonly { readonly instrumentId: number; readonly amountEur: string }[];
-  readonly title?: string;
-  readonly kind?: ChartKind;
-  readonly series?: readonly SeriesRef[];
-  readonly yUnit?: "EUR" | "%" | "count";
   readonly months?: number;
   readonly real?: boolean;
   readonly holdingIds?: readonly number[];

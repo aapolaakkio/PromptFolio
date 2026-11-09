@@ -1,163 +1,121 @@
 import { useMemo } from "react";
-import { areaY, barY, colorLegend, defineChart, group, lineY, stack } from "@tanstack/charts";
+import { defineChart } from "@tanstack/charts";
 import { crosshair } from "@tanstack/charts/crosshair";
-import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
-import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
-import type { ChartData, ChatChart as ChatChartValue } from "../../server/chat/chart-schema.ts";
-import { eur, formatDate } from "../lib/format.ts";
-import { shortMonth } from "./CategoryTrendChart.tsx";
-import { MARK_FOCUS, TIME_FOCUS } from "./interactions.ts";
-import { colourFor } from "./palette.ts";
-import { compactEur } from "./TimeSeriesChart.tsx";
+import type { ChatChart as ChatChartValue } from "../../server/chat/chart-schema.ts";
+import { chatChartRows, colourOf, xText } from "./chat-chart-model.ts";
+import {
+  annotationMarks,
+  bandOf,
+  extentOf,
+  layoutFor,
+  RIGHT,
+  seriesMark,
+  type Plot,
+} from "./chat-chart-marks.ts";
+import { TIME_FOCUS } from "./interactions.ts";
 
-const TIME_X = /^\d{4}-\d{2}(-\d{2})?$/;
+const DEFAULT_HEIGHT = 288;
 const TICKS = 6;
 
-type Row = { readonly at: number; readonly x: string; readonly series: string; readonly y: number };
-
-/** Long rows on one shared x axis: dates and months sorted, category labels in the app's order. */
-export const chatChartRows = (data: ChartData) => {
-  const seen = data.series.flatMap((series) => series.points.map((point) => point.x));
-  const unique = [...new Set(seen)];
-  const xs = unique.every((x) => TIME_X.test(x)) ? unique.toSorted() : unique;
-  const index = new Map(xs.map((x, at) => [x, at]));
-  // Two references can resolve to the same label; the legend needs them apart.
-  const labels = data.series.map((series, at) => {
-    const before = data.series.slice(0, at).filter((other) => other.label === series.label).length;
-    return before === 0 ? series.label : `${series.label} (${before + 1})`;
-  });
-  const rows: Row[] = data.series.flatMap((series, at) =>
-    series.points.map((point) => ({
-      at: index.get(point.x) ?? 0,
-      x: point.x,
-      series: labels[at] ?? series.label,
-      y: point.y,
-    })),
-  );
-  return { xs, labels, rows };
-};
-
-const xText = (x: string): string =>
-  /^\d{4}-\d{2}$/.test(x) ? shortMonth(x) : TIME_X.test(x) ? formatDate(x) : x;
-
-const UNIT_FORMAT = {
-  EUR: { tick: compactEur, tip: (value: number) => eur(String(value)) },
-  "%": { tick: (value: number) => `${value} %`, tip: (value: number) => `${value.toFixed(2)} %` },
-  count: { tick: (value: number) => String(value), tip: (value: number) => String(value) },
-} as const;
-
-const sharedFor = (chart: ChatChartValue) => {
-  const { xs, labels, rows } = chatChartRows(chart.data);
-  const unit = UNIT_FORMAT[chart.spec.yUnit];
-  const labelAt = (at: number): string => {
-    const x = xs[Math.round(at)];
+const definitionFor = (chart: ChatChartValue) => {
+  const layout = layoutFor(chart);
+  const { spec } = chart;
+  const { xs, log, leftFormat, rightFormat, rightUnit } = layout;
+  const band = bandOf(layout);
+  const extent = extentOf(layout, band.plots);
+  const labelAt = (value: number): string => {
+    const x = xs[Math.round(value)];
     return x === undefined ? "" : xText(x);
   };
-  const color = {
-    scale: scaleOrdinal<string, string>()
-      .domain(labels)
-      .range(labels.map((_label, at) => colourFor(at))),
-    legend: colorLegend({ label: "" }),
-  };
-  const y = {
+  const hasBars = layout.barGroups.length > 0;
+  const leftTick = (value: number) => leftFormat(log ? 10 ** value : value);
+  const grid = spec.grid ?? true;
+  // Always declared so every mark binds one of two known scales; hidden when nothing uses it.
+  const right = {
+    channel: "y" as const,
+    side: "right" as const,
     scale: scaleLinear,
     nice: true,
-    grid: true,
-    axis: { ticks: { count: 5, format: unit.tick } },
+    axis: rightUnit === undefined ? (false as const) : { ticks: { count: 5, format: rightFormat } },
   };
-  // Bars key x by its label, lines by its index on the shared axis.
-  const tipWith =
-    (xLabel: (x: string) => string) =>
-    (point: { xValue: unknown; yValue: unknown }): string =>
-      `${xLabel(String(point.xValue))}: ${unit.tip(Number(point.yValue))}`;
-  return { xs, rows, labelAt, color, y, tipWith };
-};
-
-const barDefinition = (chart: ChatChartValue) => {
-  const { xs, rows, color, y, tipWith } = sharedFor(chart);
-  const tip = tipWith(xText);
-  const { kind } = chart.spec;
-  // Every nth label only: 400 bars cannot each carry one.
-  const step = Math.max(1, Math.ceil(xs.length / TICKS));
   return defineChart({
     marks: [
-      barY(rows, {
-        x: "x",
-        y: "y",
-        color: "series",
-        layout: kind === "bar" ? group() : stack(),
-        radius: 4,
-        inset: 1,
-      }),
+      ...band.marks,
+      ...annotationMarks(layout, extent),
+      ...chart.data.series.map((_series, index) => seriesMark(layout, index)),
+      crosshair({ x: { label: { format: labelAt } }, y: false }),
     ],
     scales: {
       x: {
-        scale: () => scaleBand<string>().domain(xs),
-        axis: {
-          ticks: {
-            format: (x: string) => (xs.indexOf(x) % step === 0 ? xText(x) : ""),
-          },
-        },
-      },
-      y,
-    },
-    color,
-    ...MARK_FOCUS,
-    tooltip: { use: tooltip, format: tip },
-  });
-};
-
-const lineDefinition = (chart: ChatChartValue) => {
-  const { xs, rows, labelAt, color, y, tipWith } = sharedFor(chart);
-  const tip = tipWith((x) => labelAt(Number(x)));
-  const { kind } = chart.spec;
-  const mark =
-    kind === "area"
-      ? areaY(rows, { x: "at", y: "y", color: "series", fillOpacity: 0.3 })
-      : lineY(rows, { x: "at", y: "y", color: "series", strokeWidth: 2 });
-  return defineChart({
-    marks: [mark, crosshair({ x: { label: { format: labelAt } }, y: false })],
-    scales: {
-      x: {
         scale: scaleLinear,
-        domain: [0, Math.max(1, xs.length - 1)],
-        axis: { ticks: { count: TICKS, format: labelAt } },
+        domain: hasBars ? [-0.5, Math.max(0.5, xs.length - 0.5)] : [0, Math.max(1, xs.length - 1)],
+        axis: { ticks: { count: TICKS, format: labelAt }, label: spec.xLabel },
       },
-      y,
+      y: {
+        scale: scaleLinear,
+        domain: extent.domain,
+        nice: extent.domain === undefined,
+        grid,
+        axis: { ticks: { count: 5, format: leftTick }, label: spec.yLabel },
+      },
+      [RIGHT]: right,
     },
-    color,
     ...TIME_FOCUS,
-    tooltip: { use: tooltip, format: tip },
+    tooltip: { use: tooltip, format: (point: { datum: Plot }) => point.datum.tip },
   });
 };
 
-/** A chart the assistant asked for: numbers the app computed; the title and note are the model's plain text. */
-const BarPlot = ({ chart }: { readonly chart: ChatChartValue }) => {
-  const definition = useMemo(() => barDefinition(chart), [chart]);
-  return <Chart definition={definition} height={288} ariaLabel={chart.spec.title} />;
+const Legend = ({ chart }: { readonly chart: ChatChartValue }) => {
+  const { labels } = chatChartRows(chart.data);
+  return (
+    <ul aria-label="Legend" className="flex flex-wrap gap-3 text-xs text-muted">
+      {labels.map((label, index) => (
+        <li key={`${label}-${index}`} className="flex items-center gap-1.5">
+          <span
+            className="inline-block h-2 w-4 rounded-sm"
+            style={{ background: colourOf(chart.spec.series[index]?.color, index) }}
+          />
+          {chart.spec.series[index]?.label ?? label}
+        </li>
+      ))}
+      {chart.data.band !== undefined && (
+        <li className="flex items-center gap-1.5">
+          <span
+            className="inline-block h-2 w-4 rounded-sm opacity-30"
+            style={{ background: colourOf(chart.spec.band?.color, 0) }}
+          />
+          {chart.spec.band?.label ?? chart.data.band.label}
+        </li>
+      )}
+    </ul>
+  );
 };
 
-const LinePlot = ({ chart }: { readonly chart: ChatChartValue }) => {
-  const definition = useMemo(() => lineDefinition(chart), [chart]);
-  return <Chart definition={definition} height={288} ariaLabel={chart.spec.title} />;
-};
-
+/** A chart the assistant asked for: every value is the app's; titles, labels and the note are the model's plain text. */
 export const ChatChart = ({ chart }: { readonly chart: ChatChartValue }) => {
-  const { title, note, kind } = chart.spec;
+  const definition = useMemo(() => definitionFor(chart), [chart]);
+  const { title, subtitle, note, legend = "top" } = chart.spec;
+  const height = chart.spec.height ?? DEFAULT_HEIGHT;
   return (
     <figure className="card max-w-[90%] grid gap-2 text-sm">
-      <figcaption className="font-semibold">{title}</figcaption>
-      <div className="h-72">
-        {kind === "bar" || kind === "stacked-bar" ? (
-          <BarPlot chart={chart} />
-        ) : (
-          <LinePlot chart={chart} />
-        )}
+      <figcaption className="grid">
+        <span className="font-semibold">{title}</span>
+        {subtitle !== undefined && <span className="text-muted">{subtitle}</span>}
+      </figcaption>
+      {legend === "top" && <Legend chart={chart} />}
+      <div style={{ height }}>
+        <Chart definition={definition} height={height} ariaLabel={title} />
       </div>
+      {legend === "bottom" && <Legend chart={chart} />}
+      {chart.data.notes.map((line) => (
+        <p key={line} className="text-xs text-muted">
+          {line}
+        </p>
+      ))}
       {note !== undefined && note !== "" && (
         <div className="border-t border-line pt-2">
           <p className="text-xs text-muted">Assistant's note</p>
