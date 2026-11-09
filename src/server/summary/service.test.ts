@@ -104,6 +104,45 @@ describe("getWeeklySummary", () => {
     expect(out.facts.changeExcludingDepositsEur).toBe("100.00");
   });
 
+  test("a missing text says when the next try is possible; a present text does not", async () => {
+    const userId = await newUser();
+    await seed(userId);
+    const missing = await getWeeklySummary(db, userId, {
+      now,
+      client: scripted(new Error("down")),
+    });
+    expect(missing.retryAt).toBe(now.getTime() + 3_600_000);
+
+    await setCreatedAt(userId, 2 * 3_600_000);
+    const present = await getWeeklySummary(db, userId, { now, client: scripted(GOOD) });
+    expect(present.retryAt).toBeNull();
+  });
+
+  test("a failed retry of a missing text still shows fresh facts and moves the next try", async () => {
+    const userId = await newUser();
+    await seed(userId);
+    const down = scripted(new Error("down"));
+    await getWeeklySummary(db, userId, { now, client: down });
+    await db
+      .update(weeklySummaries)
+      .set({
+        facts: JSON.stringify({
+          ...(await getWeeklySummary(db, userId, { now, client: down })).facts,
+          importsMade: 99,
+        }),
+      })
+      .where(eq(weeklySummaries.userId, userId))
+      .run();
+    await setCreatedAt(userId, 2 * 3_600_000);
+
+    const out = await getWeeklySummary(db, userId, { now, client: down });
+    expect(out.text).toBeNull();
+    expect(out.facts.importsMade).not.toBe(99);
+    expect(out.retryAt).toBe(now.getTime() + 3_600_000);
+    const again = await getWeeklySummary(db, userId, { now, client: down });
+    expect(again.facts.importsMade).not.toBe(99);
+  });
+
   test("a null text is retried only after an hour", async () => {
     const userId = await newUser();
     await seed(userId);

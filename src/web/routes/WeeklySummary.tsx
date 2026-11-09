@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { eur } from "../lib/format.ts";
+import { eur, formatDateTime } from "../lib/format.ts";
 import { getSummary } from "../server/summary.ts";
 
 type Facts = Awaited<ReturnType<typeof getSummary>>["facts"];
@@ -64,13 +64,29 @@ export const WeeklySummary = () => {
 
   // The note is a courtesy: it never blocks or breaks the dashboard.
   if (summary.isPending || summary.isError) return null;
-  const { text, facts, canRefresh } = summary.data;
+  const { text, facts, canRefresh, retryAt } = summary.data;
+  const tryAgain = retryAt !== null && retryAt <= Date.now();
 
   return (
     <section className="card mb-6" aria-label="This week">
       <h2>This week</h2>
       {text === null ? (
-        <p className="text-sm text-muted">Summary text unavailable — showing the facts.</p>
+        <p className="text-sm text-muted">
+          Summary text unavailable — showing the facts.{" "}
+          {tryAgain ? (
+            <button
+              type="button"
+              className="quiet-button p-0 text-accent"
+              disabled={summary.isFetching}
+              onClick={() => void summary.refetch()}
+            >
+              Try again
+            </button>
+          ) : (
+            retryAt !== null &&
+            `The next try is possible at ${formatDateTime(new Date(retryAt).toISOString())}.`
+          )}
+        </p>
       ) : (
         <p className="max-w-prose whitespace-pre-line">{text}</p>
       )}

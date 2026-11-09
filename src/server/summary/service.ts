@@ -21,6 +21,8 @@ export type WeeklySummary = {
   /** Null when the model was down or its text failed a check: the page shows the facts. */
   readonly text: string | null;
   readonly canRefresh: boolean;
+  /** When a missing text may be tried again (ms since epoch); null when there is a text. */
+  readonly retryAt: number | null;
 };
 
 /** ISO 8601 week of the Finnish calendar day, "2026-W46". */
@@ -68,6 +70,7 @@ const viewOf = (row: Row, now: Date): WeeklySummary | null => {
         facts,
         text: row.text,
         canRefresh: now.getTime() - row.createdAt.getTime() >= REFRESH_AFTER_MS,
+        retryAt: row.text === null ? row.createdAt.getTime() + RETRY_AFTER_MS : null,
       };
 };
 
@@ -112,16 +115,26 @@ export const getWeeklySummary = async (
       const current = await rowFor(db, userId, week);
       return (current && viewOf(current, now)) ?? { ...cached, canRefresh: false };
     }
+    const nextTry = now.getTime() + RETRY_AFTER_MS;
     const facts = await gatherFacts(db, userId, now);
     const text = await textFor(options.client, facts);
-    // A failed attempt must not replace a good note or the facts it was written from.
-    if (text === null) return { ...cached, canRefresh: false };
+    if (text === null) {
+      // A failed attempt must not replace a good note or the facts it was written from.
+      if (row.text !== null) return { ...cached, canRefresh: false };
+      // With no note to protect, the facts shown should at least be current.
+      await db
+        .update(weeklySummaries)
+        .set({ facts: JSON.stringify(facts) })
+        .where(key)
+        .run();
+      return { week, facts, text: null, canRefresh: false, retryAt: nextTry };
+    }
     await db
       .update(weeklySummaries)
       .set({ facts: JSON.stringify(facts), text })
       .where(key)
       .run();
-    return { week, facts, text, canRefresh: false };
+    return { week, facts, text, canRefresh: false, retryAt: null };
   }
 
   const facts = await gatherFacts(db, userId, now);
@@ -145,10 +158,24 @@ export const getWeeklySummary = async (
       .all();
     if (inserted.length === 0) {
       const current = await rowFor(db, userId, week);
-      return (current && viewOf(current, now)) ?? { week, facts, text: null, canRefresh: false };
+      return (
+        (current && viewOf(current, now)) ?? {
+          week,
+          facts,
+          text: null,
+          canRefresh: false,
+          retryAt: now.getTime() + RETRY_AFTER_MS,
+        }
+      );
     }
   }
   const text = await textFor(options.client, facts);
   if (text !== null) await db.update(weeklySummaries).set({ text }).where(key).run();
-  return { week, facts, text, canRefresh: false };
+  return {
+    week,
+    facts,
+    text,
+    canRefresh: false,
+    retryAt: text === null ? now.getTime() + RETRY_AFTER_MS : null,
+  };
 };
