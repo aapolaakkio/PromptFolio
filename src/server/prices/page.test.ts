@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { EUR } from "../../core/money.ts";
 import type { ChatClient, ModelReply } from "../chat/runner.ts";
 import { testDb } from "../db/test-db.ts";
 import { instruments, pageRecipes, priceFetchLog, prices } from "../db/schema.ts";
-import { refreshPage } from "./page.ts";
+import { fetchPage, isPublicPageUrl, PageGoneError, refreshPage } from "./page.ts";
 import type { PageRecipe } from "./page-recipe.ts";
+import { urlOf } from "./types.ts";
 
 type TestDb = Awaited<ReturnType<typeof testDb>>["db"];
 
@@ -294,4 +295,128 @@ test("no client: a broken recipe marks attention", async () => {
   const instrument = await seedPage(db, RECIPE);
   expect(await run(db, instrument, "<p>sivu muuttui</p>", null)).toBe("attention");
   expect(await statusOf(db, instrument.id)).toBe("attention");
+});
+
+describe("isPublicPageUrl", () => {
+  test.each([
+    "https://www.nordnet.fi/rahastot/suomi",
+    "https://example.com:443/default-port",
+    "https://sub.example.co.uk/a?b=c",
+  ])("accepts %s", (url) => {
+    expect(isPublicPageUrl(url)).toBe(true);
+  });
+
+  test.each([
+    "http://www.nordnet.fi/rahastot/suomi",
+    "ftp://example.com/x",
+    "https://example.com:8443/x",
+    "https://10.0.0.1/",
+    "https://127.0.0.1/",
+    "https://169.254.169.254/latest/meta-data",
+    "https://2130706433/",
+    "https://0x7f.1/",
+    "https://[::1]/",
+    "https://[fd00::1]/x",
+    "https://localhost/",
+    "https://localhost./",
+    "https://intranet/",
+    "https://printer.local/",
+    "https://db.internal/",
+    "https://app.localhost/",
+    "https://user:pass@example.com/",
+    "not a url",
+  ])("refuses %s", (url) => {
+    expect(isPublicPageUrl(url)).toBe(false);
+  });
+});
+
+describe("fetchPage", () => {
+  /** Answers per URL; records what was asked and with which redirect mode. */
+  const routed = (routes: Record<string, () => Response>) => {
+    const asked: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = urlOf(input);
+      asked.push({ url, redirect: init?.redirect });
+      const route = routes[url];
+      if (route === undefined) throw new Error(`unexpected request ${url}`);
+      return route();
+    };
+    return { asked, fetchImpl };
+  };
+  const redirect = (to: string) => () =>
+    new Response(null, { status: 302, headers: { location: to } });
+
+  test("refuses a private URL without making a request", async () => {
+    const { asked, fetchImpl } = routed({});
+    await expect(fetchPage("https://10.0.0.1/", fetchImpl)).rejects.toThrow();
+    expect(asked).toEqual([]);
+  });
+
+  test("a redirect to https://10.0.0.1/ is refused as a transient failure", async () => {
+    const { asked, fetchImpl } = routed({
+      "https://fund.example.com/a": redirect("https://10.0.0.1/"),
+    });
+    const failure = await fetchPage("https://fund.example.com/a", fetchImpl).catch((e) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(PageGoneError);
+    expect(asked.map((a) => a.url)).toEqual(["https://fund.example.com/a"]);
+  });
+
+  test("a redirect to another public https host is followed, manually", async () => {
+    const { asked, fetchImpl } = routed({
+      "https://fund.example.com/a": redirect("https://cdn.example.org/b"),
+      "https://cdn.example.org/b": () => new Response("<p>NAV</p>"),
+    });
+    expect(await fetchPage("https://fund.example.com/a", fetchImpl)).toBe("<p>NAV</p>");
+    expect(asked).toEqual([
+      { url: "https://fund.example.com/a", redirect: "manual" },
+      { url: "https://cdn.example.org/b", redirect: "manual" },
+    ]);
+  });
+
+  test("a relative redirect resolves against the page it came from", async () => {
+    const { fetchImpl } = routed({
+      "https://fund.example.com/a": redirect("/b"),
+      "https://fund.example.com/b": () => new Response("ok"),
+    });
+    expect(await fetchPage("https://fund.example.com/a", fetchImpl)).toBe("ok");
+  });
+
+  test("more than 3 redirects is a transient failure", async () => {
+    const { asked, fetchImpl } = routed({
+      "https://a.example.com/": redirect("https://b.example.com/"),
+      "https://b.example.com/": redirect("https://c.example.com/"),
+      "https://c.example.com/": redirect("https://d.example.com/"),
+      "https://d.example.com/": redirect("https://e.example.com/"),
+      "https://e.example.com/": () => new Response("too far"),
+    });
+    const failure = await fetchPage("https://a.example.com/", fetchImpl).catch((e) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(PageGoneError);
+    expect(asked).toHaveLength(4);
+  });
+});
+
+test("a stored private sourceKey is never fetched and marks attention", async () => {
+  const { db } = await testDb();
+  const seeded = await seedPage(db, RECIPE);
+  await db
+    .update(instruments)
+    .set({ sourceKey: "https://169.254.169.254/latest/meta-data" })
+    .where(eq(instruments.id, seeded.id))
+    .run();
+  let requests = 0;
+  const outcome = await refreshPage(db, await current(db, seeded.id), {
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response(page("12,34", "26.08.2026"));
+    },
+    client: noModel,
+    today: "2026-08-27",
+    now: NOW,
+  });
+
+  expect(outcome).toBe("attention");
+  expect(requests).toBe(0);
+  expect(await statusOf(db, seeded.id)).toBe("attention");
 });

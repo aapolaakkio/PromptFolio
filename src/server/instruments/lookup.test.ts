@@ -718,7 +718,7 @@ describe("lookupInstrument, a page found by web search", () => {
       EUR,
       stubFetch({
         ...(await misses()),
-        openfigi: { body: await fixture("figi-op-maailma.json") },
+        openfigi: { body: figiBody("NORDNET SUOMI INDEKSI", "Open-End Fund") },
         [`finance/search?q=${FUND_ISIN}`]: {
           body: JSON.stringify({ quotes: [{ symbol: "0P0000ABCD.F", quoteType: "MUTUALFUND" }] }),
         },
@@ -741,7 +741,10 @@ describe("lookupInstrument, a page found by web search", () => {
 
   test("an ISIN found on the page but unpriced by Yahoo reuses the page: one search, one fetch", async () => {
     const { asked, find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
-    const { urls, stub } = recording(await misses());
+    const { urls, stub } = recording({
+      ...(await misses()),
+      openfigi: { body: figiBody("NORDNET SUOMI INDEKSI", "Open-End Fund") },
+    });
     const result = await lookupWithSpacing(null, FUND_NAME, EUR, stub, 0, {
       find,
       client: recipeClient(GOOD),
@@ -751,6 +754,83 @@ describe("lookupInstrument, a page found by web search", () => {
     expect(result).toMatchObject({ outcome: "found", priceSource: "page", isin: FUND_ISIN });
     expect(asked).toHaveLength(1);
     expect(urls.filter((url) => url === PAGE_URL)).toHaveLength(1);
+  });
+
+  test("a page-claimed ISIN whose OpenFIGI name differs goes to the form", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const client = recipeClient(GOOD);
+    const { urls, stub } = recording({
+      ...(await misses()),
+      openfigi: { body: figiBody("SOME OTHER FUND SICAV", "Open-End Fund") },
+      [`finance/search?q=${FUND_ISIN}`]: {
+        body: JSON.stringify({ quotes: [{ symbol: "0P0000ABCD.F", quoteType: "MUTUALFUND" }] }),
+      },
+      "chart/0P0000ABCD.F": chart("EUR"),
+    });
+    const result = await lookupWithSpacing(null, FUND_NAME, EUR, stub, 0, {
+      find,
+      client,
+      referenceMinor: null,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "form",
+      formReason: "name",
+      priceSource: null,
+      sourceKey: null,
+      pageRecipe: null,
+    });
+    expect(urls.some((url) => url.includes("chart/"))).toBe(false);
+    expect(client.calls).toBe(0);
+  });
+
+  test("a page-claimed ISIN OpenFIGI gives no name for goes to the form", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const result = await lookupWithSpacing(null, FUND_NAME, EUR, stubFetch(await misses()), 0, {
+      find,
+      client: recipeClient(GOOD),
+      referenceMinor: null,
+    });
+
+    expect(result).toMatchObject({ outcome: "form", formReason: "name", priceSource: null });
+  });
+
+  test("a page-claimed ISIN whose OpenFIGI name agrees is priced by Yahoo", async () => {
+    const { find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const result = await lookupWithSpacing(
+      null,
+      "NORDNET SUOMI INDEKSI",
+      EUR,
+      stubFetch({
+        ...(await misses()),
+        openfigi: { body: figiBody("Nordnet Suomi Indeksi", "Open-End Fund") },
+        [`finance/search?q=${FUND_ISIN}`]: {
+          body: JSON.stringify({ quotes: [{ symbol: "0P0000ABCD.F", quoteType: "MUTUALFUND" }] }),
+        },
+        "chart/0P0000ABCD.F": chart("EUR"),
+      }),
+      0,
+      { find, client: recipeClient(GOOD), referenceMinor: null },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "found",
+      priceSource: "yahoo",
+      sourceKey: "0P0000ABCD.F",
+      isin: FUND_ISIN,
+    });
+  });
+
+  test("an ISIN-less row with no currency never asks the finder", async () => {
+    const { asked, find } = finder({ url: PAGE_URL, isin: FUND_ISIN });
+    const result = await lookupWithSpacing(null, FUND_NAME, null, stubFetch(await misses()), 0, {
+      find,
+      client: recipeClient(GOOD),
+      referenceMinor: null,
+    });
+
+    expect(asked).toEqual([]);
+    expect(result).toMatchObject({ outcome: "form", priceSource: null });
   });
 
   test("an ISIN the page does not contain is not used", async () => {

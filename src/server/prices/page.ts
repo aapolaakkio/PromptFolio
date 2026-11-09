@@ -82,9 +82,48 @@ const GONE_STATUSES = new Set([404, 410]);
 
 export class PageGoneError extends Error {}
 
-/** One plain GET of a price page; a 404 or 410 is a page gone, not a hiccup. */
-export const fetchPage = async (url: string, fetchImpl: FetchImpl): Promise<string> => {
-  const response = await fetchImpl(url);
+const PRIVATE_SUFFIXES = [".local", ".internal", ".localhost"];
+
+/**
+ * True for an address the app may fetch for a model or a stored recipe: an
+ * https page on a public-looking host name, on the default port. IP literals,
+ * `localhost`, single-label names and the private suffixes are refused, so a
+ * page URL from the web cannot point the Worker at something internal.
+ */
+export const isPublicPageUrl = (url: string): boolean => {
+  if (!URL.canParse(url)) return false;
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:" || parsed.port !== "") return false;
+  if (parsed.username !== "" || parsed.password !== "") return false;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
+  // URL normalises every IPv4 spelling (0x7f.1, 2130706433) to dotted decimal.
+  if (host.startsWith("[") || /^[\d.]+$/.test(host)) return false;
+  if (host === "localhost" || !host.includes(".")) return false;
+  return !PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));
+};
+
+const MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * One plain GET of a price page; a 404 or 410 is a page gone, not a hiccup.
+ * Redirects are followed by hand, at most MAX_REDIRECTS, and only to an
+ * address `isPublicPageUrl` accepts. Anything else fails as a transient error.
+ */
+export const fetchPage = async (
+  url: string,
+  fetchImpl: FetchImpl,
+  redirectsLeft: number = MAX_REDIRECTS,
+): Promise<string> => {
+  if (!isPublicPageUrl(url)) throw new Error("Sivun osoite ei ole julkinen https-osoite");
+  const response = await fetchImpl(url, { redirect: "manual" });
+  if (REDIRECT_STATUSES.has(response.status)) {
+    const location = response.headers.get("location");
+    if (location === null || redirectsLeft === 0 || !URL.canParse(location, url)) {
+      throw new Error("Sivu ohjasi eteenpäin liian monta kertaa tai ilman osoitetta");
+    }
+    return await fetchPage(new URL(location, url).toString(), fetchImpl, redirectsLeft - 1);
+  }
   if (GONE_STATUSES.has(response.status)) {
     throw new PageGoneError(`Sivu vastasi ${response.status}: osoite ei enää toimi`);
   }
@@ -105,6 +144,17 @@ export const refreshPage = async (
     readonly now: number;
   },
 ): Promise<PageOutcome> => {
+  if (!isPublicPageUrl(instrument.sourceKey)) {
+    await logAttempt(db, {
+      source: SOURCE,
+      instrumentId: instrument.id,
+      ok: false,
+      message: "Sivun osoite ei ole julkinen https-osoite, sitä ei haettu",
+    });
+    await setStatus(db, instrument, "attention");
+    return "attention";
+  }
+
   let html: string;
   try {
     html = await fetchPage(instrument.sourceKey, opts.fetchImpl);

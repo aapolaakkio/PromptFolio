@@ -150,12 +150,12 @@ const lookupWith = async (
     if (isin === null) {
       const discovered = await settle(resolveOpSlug(ask.name, null, ask.fetchImpl));
       if (discovered !== null) return await lookupWith(ask, discovered.isin, hit);
-      if (ask.page !== null && hit === undefined) {
+      if (ask.page !== null && ask.currency !== null && hit === undefined) {
         const found = await findPage(ask, ask.page, null);
         // The finder's ISIN is only a claim until the page itself shows it.
         const shown =
           found !== null && found.isin !== null && found.html?.includes(found.isin) === true;
-        if (shown) return await lookupWith(ask, found.isin, found);
+        if (shown) return await claimedIsin(ask, found.isin, found);
         return await resolveThenPage(ask, null, found === null ? null : { ...found, isin: null });
       }
     }
@@ -166,6 +166,21 @@ const lookupWith = async (
     }
     throw err;
   }
+};
+
+/**
+ * An ISIN a found page shows is still only the page's word: a page about a
+ * sister fund shows that fund's ISIN, and Yahoo would then price the wrong
+ * security without complaint. It is used only when OpenFIGI's name for it
+ * agrees with the row's; otherwise the owner looks.
+ */
+const claimedIsin = async (ask: Ask, isin: string, hit: Hit): Promise<InstrumentLookup> => {
+  // ponytail: OpenFIGI is asked again inside `resolve`; one extra request per claimed ISIN.
+  const figi = await settle(figiLookup(isin, ask.fetchImpl));
+  if (!namesAgree(ask.name, figi?.name ?? null)) {
+    return { ...NOTHING, name: figi?.name ?? null, outcome: "form", formReason: "name" };
+  }
+  return await lookupWith(ask, isin, hit);
 };
 
 /** OpenFIGI and Yahoo first; a found page only when they have nothing to price. */
