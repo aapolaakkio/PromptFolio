@@ -112,6 +112,32 @@ test("marks days valued from an older price as stale", () => {
   expect(series.map((p) => p.stale)).toEqual([false, true, true]);
 });
 
+test("a weekend valued from Friday's close is not stale; Monday without a new price is", () => {
+  const txns = [txn("BUY", "2025-01-03", { qty: "10", amount: "-1000,00" })];
+  const series = valueSeries(
+    txns,
+    [instrument],
+    lookup({ "2025-01-03": "100,00" }),
+    "2025-01-03",
+    "2025-01-06",
+  );
+  expect(series.map((p) => p.stale)).toEqual([false, false, false, true]);
+});
+
+test("a fund valued from the previous weekday's NAV is not stale", () => {
+  const fund: Instrument = { ...instrument, kind: "fund" };
+  const txns = [txn("BUY", "2025-01-02", { qty: "10", amount: "-1000,00" })];
+  const series = valueSeries(
+    txns,
+    [fund],
+    lookup({ "2025-01-02": "100,00" }),
+    "2025-01-02",
+    "2025-01-06",
+  );
+  // Thu NAV: fresh on Thu, Fri and the weekend; on Monday Friday's NAV could exist.
+  expect(series.map((p) => p.stale)).toEqual([false, false, false, false, true]);
+});
+
 test("values are zero before the first purchase", () => {
   const txns = [txn("BUY", "2025-01-03", { qty: "10", amount: "-1000,00" })];
   const series = valueSeries(

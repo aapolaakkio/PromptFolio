@@ -11,6 +11,7 @@ import {
 } from "./money.ts";
 import { costBasisAt } from "./costbasis.ts";
 import { investedCashFlows, positionsAt } from "./ledger.ts";
+import { isPriceStale } from "./staleness.ts";
 import type { CashFlow, Instrument, IsoDate, Txn } from "./types.ts";
 
 type ValuePoint = {
@@ -23,7 +24,7 @@ type ValuePoint = {
   readonly costValuedInstrumentIds: readonly number[];
 };
 
-/** `priceOn`/`fxOn` carry the last known value forward; stale means `priceDateOn(...) !== date`. */
+/** `priceOn`/`fxOn` carry the last known value forward; a day is stale when a price is older than `isPriceStale` allows. */
 // Function properties, not methods: callers pass `prices.fxOn` around unbound.
 export type PriceLookup = {
   priceOn: (instrumentId: number, date: IsoDate) => Money | null;
@@ -146,7 +147,9 @@ export const valueSeries = (
         value = addMoney(value, cost);
         continue;
       }
-      if (prices.priceDateOn(instrumentId, date) !== date) stale = true;
+      // Same rule as the holdings badge: a weekend's Friday close and a fund's previous-weekday NAV are current.
+      const priceDate = prices.priceDateOn(instrumentId, date);
+      if (isPriceStale({ kind: instrument.kind, priceDate, on: date })) stale = true;
       const native = mulMoney(price, asPricedQuantity(instrumentId, qty, date), "half-up");
       if (instrument.currency === EUR) {
         value = addMoney(value, native);
