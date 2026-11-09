@@ -8,7 +8,9 @@ import { decodeHoldingsFile } from "./recipe/holdings-recipe.ts";
 import {
   MAX_DROP_FILES,
   SAMPLE_LINES,
+  FAILED,
   sortDocuments,
+  unknownAll,
   type DocumentSample,
   type SortedDocument,
 } from "./sort-documents.ts";
@@ -20,25 +22,59 @@ export const _setSorterClient = (client: ChatClient | null): void => {
 };
 
 const TOO_LARGE = "File is too large (max 5 MB)";
+export const MAX_DROP_BYTES = 4 * MAX_UPLOAD_BYTES;
+const SAMPLE_PDF_PAGES = 2;
+const SAMPLE_TEXT_BYTES = 64 * 1024;
+const PROBE_CHARS = 1024;
+const MAX_JUNK_SHARE = 0.5;
 
-const firstLines = (text: string): string[] =>
-  text
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "")
-    .slice(0, SAMPLE_LINES);
+/** NUL bytes or mostly replacement characters: an image, archive or wrong encoding, nothing worth sending. */
+const looksBinary = (text: string): boolean => {
+  const head = text.slice(0, PROBE_CHARS);
+  if (head.includes("\u0000")) return true;
+  const junk = head.split("\uFFFD").length - 1;
+  return head.length > 0 && junk / head.length > MAX_JUNK_SHARE;
+};
 
-/** The text a model sees of one file; a file that cannot be read is sorted by its name alone. */
+/** The first non-empty lines, found without splitting the whole text. */
+const firstLines = (text: string): string[] => {
+  const lines: string[] = [];
+  let from = 0;
+  while (lines.length < SAMPLE_LINES && from < text.length) {
+    const end = text.indexOf("\n", from);
+    const stop = end === -1 ? text.length : end;
+    const line = text.slice(from, stop).replace(/\r$/, "");
+    if (line.trim() !== "") lines.push(line);
+    from = stop + 1;
+  }
+  return lines;
+};
+
+const textOf = async (file: File): Promise<string> => {
+  const head = await file.slice(0, 5).arrayBuffer();
+  if (isPdf(head)) {
+    const pages = await extractPages(await file.arrayBuffer(), SAMPLE_PDF_PAGES);
+    return pages.map((page) => page.text).join("\n");
+  }
+  return decodeHoldingsFile(new Uint8Array(await file.slice(0, SAMPLE_TEXT_BYTES).arrayBuffer()));
+};
+
+/** The text a model sees of one file; a file that cannot be read gives no lines, and so no guess. */
 const sampleOf = async (file: File): Promise<DocumentSample> => {
   if (file.size > MAX_UPLOAD_BYTES) return { name: file.name, lines: [] };
-  const bytes = await file.arrayBuffer();
   try {
-    const text = isPdf(bytes)
-      ? (await extractPages(bytes)).map((page) => page.text).join("\n")
-      : decodeHoldingsFile(new Uint8Array(bytes));
-    return { name: file.name, lines: firstLines(text) };
+    const text = await textOf(file);
+    return { name: file.name, lines: looksBinary(text) ? [] : firstLines(text) };
   } catch {
     return { name: file.name, lines: [] };
   }
+};
+
+/** One file at a time, so a drop of many large PDFs never holds them all in memory together. */
+const sampleAll = async (files: readonly File[]): Promise<DocumentSample[]> => {
+  const samples: DocumentSample[] = [];
+  for (const file of files) samples.push(await sampleOf(file));
+  return samples;
 };
 
 const modelClient = (): ChatClient | null => {
@@ -56,7 +92,14 @@ export const sortUploads = async (userId: string, form: FormData): Promise<Sorte
   if (files.length > MAX_DROP_FILES) {
     throw new HttpError(400, `Drop at most ${MAX_DROP_FILES} files at once`);
   }
-  const samples = await Promise.all(files.map(sampleOf));
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  if (total > MAX_DROP_BYTES) {
+    throw new HttpError(
+      400,
+      `The files together are larger than ${MAX_DROP_BYTES / 1024 / 1024} MB; drop fewer at once`,
+    );
+  }
+  const samples = await sampleAll(files);
   const owned = (await listAccounts(db, userId)).map(({ id, name, kind, broker, accountType }) => ({
     id,
     name,
@@ -66,14 +109,7 @@ export const sortUploads = async (userId: string, form: FormData): Promise<Sorte
   }));
   const client = modelClient();
   const sorted =
-    client === null
-      ? samples.map((sample) => ({
-          name: sample.name,
-          kind: "unknown" as const,
-          accountId: null,
-          reason: "Could not be sorted automatically",
-        }))
-      : await sortDocuments(client, owned, samples);
+    client === null ? unknownAll(samples, FAILED) : await sortDocuments(client, owned, samples);
   return sorted.map((entry, index) =>
     (files[index]?.size ?? 0) > MAX_UPLOAD_BYTES
       ? { ...entry, kind: "unknown", accountId: null, reason: TOO_LARGE }

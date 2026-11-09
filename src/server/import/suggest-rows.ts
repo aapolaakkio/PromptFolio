@@ -211,7 +211,7 @@ const checked = (kind: Kind, fields: Readonly<Record<string, string | null>>, ra
 };
 
 /** What the model sees: account and reference numbers are not needed to read a row. */
-const redacted = (text: string): string =>
+export const redacted = (text: string): string =>
   text.replace(IBAN_TEXT, "[IBAN]").replace(LONG_NUMBER, "[REF]").slice(0, MAX_RAW_CHARS);
 
 const MASKED_FIELDS = new Set(["amountEur", "feeEur", "quantityText"]);

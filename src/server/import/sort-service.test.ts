@@ -5,6 +5,7 @@ import type { ChatClient, TurnParams } from "../chat/runner.ts";
 import { db } from "../db/index.ts";
 import { HttpError } from "../errors.ts";
 import { MAX_DROP_FILES } from "./sort-documents.ts";
+import { MAX_UPLOAD_BYTES } from "./upload.ts";
 
 let service: typeof import("./sort-service.ts");
 let bank: typeof import("./bank-service.ts");
@@ -108,6 +109,52 @@ describe("sortUploads", () => {
     });
     const sorted = await service.sortUploads(owner, formOf("a.csv"));
     expect(sorted).toMatchObject([{ kind: "unknown", accountId: null }]);
+    service._setSorterClient(null);
+  });
+
+  test("refuses a drop whose files together exceed the total cap", async () => {
+    const owner = await signUp();
+    const form = new FormData();
+    for (const name of ["a.csv", "b.csv", "c.csv", "d.csv", "e.csv"]) {
+      form.append("file", new File([new Uint8Array(MAX_UPLOAD_BYTES)], name));
+    }
+    await expect(service.sortUploads(owner, form)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("20 MB"),
+    });
+  });
+
+  test("sends at most 60 lines of a long file", async () => {
+    const owner = await signUp();
+    const { client, asked } = scripted(() => JSON.stringify({ files: [] }));
+    service._setSorterClient(client);
+    const text = Array.from({ length: 5000 }, (_, i) => `row ${i};x`).join("\n");
+    const form = new FormData();
+    form.append("file", new File([text], "long.csv"));
+    await service.sortUploads(owner, form);
+    const sent = JSON.parse(asked[0]!.messages[1]!.content);
+    expect(sent.files[0].lines).toHaveLength(60);
+    service._setSorterClient(null);
+  });
+
+  test("a binary file sends no lines and stays unknown", async () => {
+    const owner = await signUp();
+    const mine = await openAccount(
+      db,
+      owner,
+      CreateAccount.parse({ name: "Bank", broker: "op", kind: "bank", accountType: "current" }),
+    );
+    const { client, asked } = scripted(() =>
+      JSON.stringify({
+        files: [{ index: 0, kind: "bank-statement", accountId: mine.id, reason: "name" }],
+      }),
+    );
+    service._setSorterClient(client);
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([0, 1, 2, 0, 255, 0, 7])], "tiliote.csv"));
+    const sorted = await service.sortUploads(owner, form);
+    expect(sorted).toMatchObject([{ kind: "unknown", accountId: null }]);
+    expect(asked).toHaveLength(0);
     service._setSorterClient(null);
   });
 });

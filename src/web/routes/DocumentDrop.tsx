@@ -79,6 +79,7 @@ export const DocumentDrop = ({
           type="file"
           accept=".csv,.pdf,.txt,text/csv,text/plain,application/pdf"
           multiple
+          disabled={sort.isPending}
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
             setEntries([]);
@@ -86,6 +87,9 @@ export const DocumentDrop = ({
           }}
         />
       </label>
+      <p className="text-muted mt-2 text-sm">
+        The first lines of each file are sent to the AI with account numbers masked.
+      </p>
       {sort.isPending && <p className="text-muted mt-2 text-sm">Sorting…</p>}
       {error && (
         <p role="alert" className="mt-2 text-loss">
