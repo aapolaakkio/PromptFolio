@@ -19,7 +19,7 @@ export const MAX_SERIES_POINTS = 60;
 export const DEFAULT_TXN_LIMIT = 25;
 
 // Each tool declares its own strict schema and re-parses; this type only avoids `unknown` in `run`.
-export type ToolArgs = Partial<ChartSpec> & {
+export type ToolArgs = Omit<Partial<ChartSpec>, "kind"> & {
   readonly on?: string;
   readonly from?: string;
   readonly to?: string;
@@ -49,7 +49,37 @@ export type ToolArgs = Partial<ChartSpec> & {
   readonly priceSource?: string;
   readonly sourceKey?: string;
   readonly mode?: "replace" | "add";
-  readonly rows?: readonly { readonly instrumentId: number; readonly amountEur: string }[];
+  readonly rows?: readonly {
+    readonly instrumentId: number;
+    readonly amountEur?: string;
+    readonly quantity?: string;
+    readonly nav?: string;
+    readonly marketValue?: string;
+  }[];
+  readonly name?: string;
+  readonly broker?: string;
+  readonly baseCurrency?: string;
+  readonly kind?: string;
+  readonly accountType?: string | null;
+  readonly maturityDate?: string | null;
+  readonly interestRate?: string | null;
+  readonly changes?: {
+    readonly name?: string;
+    readonly accountType?: string | null;
+    readonly maturityDate?: string | null;
+    readonly interestRate?: string | null;
+  };
+  readonly balance?: string;
+  readonly isin?: string;
+  readonly ticker?: string | null;
+  readonly percent?: string;
+  readonly ratePercent?: string;
+  readonly snapshotId?: number;
+  readonly asOf?: string;
+  readonly source?: string;
+  readonly statedTotalEur?: string | null;
+  readonly costEur?: string;
+  readonly importId?: number;
   readonly months?: number;
   readonly real?: boolean;
   readonly holdingIds?: readonly number[];
@@ -66,7 +96,7 @@ export type JsonValue = string | number | boolean | null | readonly JsonValue[];
 export type ToolResult = { readonly [key: string]: JsonValue | ToolResult | readonly ToolResult[] };
 
 /**
- * The tools the chat model may call. Only the three in `tools-rules.ts` write, and only classification.
+ * The tools the chat model may call. None writes: every change is a proposal card the owner confirms.
  * Each wraps the same `core` function the dashboard calls, and the user id comes from the session,
  * never the model. Results carry their date and staleness; money and quantities are decimal strings.
  */
@@ -77,8 +107,12 @@ export type ChatTool = {
   readonly run: (input: ToolArgs) => Promise<ToolResult>;
 };
 
+/** One area of the app the assistant may propose changes in; the system prompt lists each with its tools, so the list cannot drift from the registry. */
+export type ProposalArea = { readonly name: string; readonly sentence: string };
+
 /** Validates and describes an owner action; writes nothing. A refusal throws, and its message goes back to the model. */
 export type ProposalTool = {
+  readonly area: ProposalArea;
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodType<ToolArgs>;

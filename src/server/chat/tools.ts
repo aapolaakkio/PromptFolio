@@ -9,7 +9,7 @@ import {
   today,
 } from "./tool-types.ts";
 import { buildMoneyTools } from "./tools-money.ts";
-import { buildRuleTools } from "./tools-rules.ts";
+import { buildRecordTools } from "./tools-records.ts";
 
 import { allocateBy } from "../../core/allocation.ts";
 import { cashBalancesAt, valueCash } from "../../core/cash.ts";
@@ -471,5 +471,5 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
     },
   },
   ...buildMoneyTools(db, userId),
-  ...buildRuleTools(db, userId),
+  ...buildRecordTools(db, userId),
 ];

@@ -14,7 +14,7 @@ import {
   type TurnParams,
 } from "./runner.ts";
 import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
-import type { ChartTool } from "./tool-types.ts";
+import type { ChartTool, ProposalTool } from "./tool-types.ts";
 
 // The loop runs against a scripted model and a fake Messages API; the global fetch throws, so a regression reaching the real service fails here.
 
@@ -677,5 +677,47 @@ describe("tax and opinion wording", () => {
 
   test("annotation labels hold only numbers from tool results", () => {
     expect(SYSTEM_PROMPT).toContain("annotation label");
+  });
+});
+
+describe("what can be proposed", () => {
+  const proposalTool = (area: { name: string; sentence: string }, name: string): ProposalTool => ({
+    area,
+    name,
+    description: "test",
+    schema: z.object({}).strict(),
+    propose: () => Promise.reject(new Error("unused")),
+  });
+
+  test("is one line per area of the registry, with its tools, sent with the rules", async () => {
+    const accounts = { name: "Accounts", sentence: "create an account" };
+    const removals = { name: "Removals", sentence: "delete one cash entry" };
+    const seen: Seen = { requests: [] };
+    await drain(
+      runTurn(
+        scripted([says("ok")], seen),
+        [
+          proposalTool(accounts, "propose_create_account"),
+          proposalTool(removals, "propose_delete_cash_entry"),
+          proposalTool(accounts, "propose_edit_account"),
+        ],
+        [{ role: "user", content: "hi" }],
+      ),
+    );
+
+    expect(seen.requests[0]?.messages[1]).toEqual({
+      role: "system",
+      content:
+        "What you can propose, by area of the app:\n" +
+        "- Accounts: create an account (propose_create_account, propose_edit_account).\n" +
+        "- Removals: delete one cash entry (propose_delete_cash_entry).",
+    });
+  });
+
+  test("the prompt says where to go for what chat cannot do", () => {
+    expect(SYSTEM_PROMPT).toContain("Imports page");
+    expect(SYSTEM_PROMPT).toContain("pasted transaction text");
+    expect(SYSTEM_PROMPT).toContain("password");
+    expect(SYSTEM_PROMPT).toContain("deleting an account or the whole ledger");
   });
 });

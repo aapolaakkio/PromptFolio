@@ -1,29 +1,106 @@
-import type { Proposal } from "../../server/chat/proposal-schema.ts";
+import type { Proposal, ProposalAction } from "../../server/chat/proposal-schema.ts";
 import { errorMessage } from "../lib/errors.ts";
-import { saveCashEntry } from "../server/cash-entries.ts";
-import { editInstrument } from "../server/instruments.ts";
-import { savePlan, saveTargetAllocation } from "../server/rebalance.ts";
+import { createAccount, editAccount } from "../server/accounts.ts";
+import { recordAccountBalance } from "../server/bank-imports.ts";
+import { deleteCashEntry, saveCashEntry } from "../server/cash-entries.ts";
+import { removeConversation } from "../server/chat.ts";
+import { deleteForecastRate, saveForecastRate } from "../server/forecast.ts";
+import { undoImport } from "../server/imports.ts";
+import { createInstrument, editInstrument, setFundCharge } from "../server/instruments.ts";
+import { deletePlanRow, savePlan, saveTargetAllocation } from "../server/rebalance.ts";
 import { savePrice } from "../server/prices.ts";
+import { adjustSnapshot, removeSnapshot, saveSnapshot } from "../server/snapshots.ts";
+import {
+  changeSpendingRule,
+  deleteSpendingRule,
+  saveSpendingRules,
+} from "../server/spending-rules.ts";
 
-type Input<A extends Proposal["action"]> = Extract<Proposal, { action: A }>["input"];
+type Input<A extends ProposalAction> = Extract<Proposal, { action: A }>["input"];
 
-/** The forms' own server functions, so Confirm passes the same sign-in, ownership and validation. */
+/** Per action, the form's own server function, so Confirm passes the same sign-in, ownership and validation. */
 export type ProposalActions = {
-  readonly savePrice: (args: { data: Input<"record_price"> }) => Promise<void>;
-  readonly saveCashEntry: (args: { data: Input<"cash_entry"> }) => Promise<void>;
-  readonly saveTargetAllocation: (args: { data: Input<"target_allocation"> }) => Promise<void>;
-  readonly editInstrument: (args: { data: Input<"price_source"> }) => Promise<void>;
-  readonly savePlan: (args: { data: Input<"monthly_plan"> }) => Promise<void>;
+  readonly [A in ProposalAction]: (args: { data: Input<A> }) => Promise<void>;
 };
 
 // Replies are dropped: the card needs only whether the save went through.
 const formActions: ProposalActions = {
-  savePrice: async (args) => void (await savePrice(args)),
-  saveCashEntry: async (args) => void (await saveCashEntry(args)),
-  saveTargetAllocation: async (args) => void (await saveTargetAllocation(args)),
-  editInstrument: async (args) => void (await editInstrument(args)),
-  savePlan: async (args) => {
+  record_price: async (args) => {
+    await savePrice(args);
+  },
+  cash_entry: async (args) => {
+    await saveCashEntry(args);
+  },
+  target_allocation: async (args) => {
+    await saveTargetAllocation(args);
+  },
+  price_source: async (args) => {
+    await editInstrument(args);
+  },
+  monthly_plan: async (args) => {
     await savePlan(args);
+  },
+  create_account: async (args) => {
+    await createAccount(args);
+  },
+  edit_account: async (args) => {
+    await editAccount(args);
+  },
+  account_balance: async (args) => {
+    await recordAccountBalance(args);
+  },
+  create_instrument: async (args) => {
+    await createInstrument(args);
+  },
+  fund_fee: async (args) => {
+    await setFundCharge(args);
+  },
+  forecast_rate: async (args) => {
+    await saveForecastRate(args);
+  },
+  snapshot: async (args) => {
+    await saveSnapshot(args);
+  },
+  snapshot_adjust: async (args) => {
+    await adjustSnapshot(args);
+  },
+  // The form skips a pattern that already has a rule; a card must not say "Saved" for it.
+  spending_rules: async (args) => {
+    const { added } = await saveSpendingRules(args);
+    const saved = new Set(added.map((rule) => rule.pattern));
+    const skipped = args.data.rules.filter((rule) => !saved.has(rule.pattern.trim().toUpperCase()));
+    if (skipped.length > 0) {
+      throw new Error(
+        `Not saved: ${skipped.map((rule) => rule.pattern).join(", ")} already has a rule`,
+      );
+    }
+  },
+  spending_rule_category: async (args) => {
+    await changeSpendingRule(args);
+  },
+  delete_cash_entry: async (args) => {
+    await deleteCashEntry(args);
+  },
+  delete_plan_row: async (args) => {
+    await deletePlanRow(args);
+  },
+  delete_spending_rule: async (args) => {
+    await deleteSpendingRule(args);
+  },
+  remove_snapshot: async (args) => {
+    await removeSnapshot(args);
+  },
+  undo_import: async (args) => {
+    await undoImport(args);
+  },
+  remove_conversation: async (args) => {
+    await removeConversation(args);
+  },
+  clear_fund_fee: async (args) => {
+    await setFundCharge(args);
+  },
+  clear_forecast_rate: async (args) => {
+    await deleteForecastRate(args);
   },
 };
 
@@ -33,19 +110,26 @@ export type CardOutcome = {
 };
 
 const run = (proposal: Proposal, actions: ProposalActions): Promise<void> => {
-  switch (proposal.action) {
-    case "record_price":
-      return actions.savePrice({ data: proposal.input });
-    case "cash_entry":
-      return actions.saveCashEntry({ data: proposal.input });
-    case "target_allocation":
-      return actions.saveTargetAllocation({ data: proposal.input });
-    case "price_source":
-      return actions.editInstrument({ data: proposal.input });
-    case "monthly_plan":
-      return actions.savePlan({ data: proposal.input });
-  }
+  // SAFETY: `ProposalActions` keys each action to the function taking that action's input, and the union pairs `action` with its `input`.
+  const save = actions[proposal.action] as (args: { data: Proposal["input"] }) => Promise<void>;
+  return save({ data: proposal.input });
 };
+
+/** What a card's button says: a removal names itself, so it can never pass for an ordinary save. */
+export const confirmLabel = (action: ProposalAction): string => {
+  if (action === "undo_import") return "Undo import";
+  return DANGER_ACTIONS.has(action) ? "Delete" : "Confirm";
+};
+
+const DANGER_ACTIONS: ReadonlySet<ProposalAction> = new Set([
+  "delete_cash_entry",
+  "delete_plan_row",
+  "delete_spending_rule",
+  "remove_snapshot",
+  "remove_conversation",
+  "clear_fund_fee",
+  "clear_forecast_rate",
+]);
 
 export const confirmProposal = async (
   proposal: Proposal,

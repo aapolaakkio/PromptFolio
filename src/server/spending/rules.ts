@@ -91,13 +91,6 @@ export const addRules = async (
   return { added, rejected };
 };
 
-/** A rule the person wrote is a decision: the assistant may revise only its own work or a seed. */
-const ASSISTANT_MAY_CHANGE: ReadonlySet<string> = new Set(["seed", "ai"]);
-
-type RuleChange =
-  | { readonly ok: true; readonly pattern: string; readonly was: Category }
-  | { readonly ok: false; readonly reason: "no-such-rule" | "owned-by-user" };
-
 const storedRule = async (
   db: Db,
   userId: string,
@@ -114,39 +107,21 @@ const storedRule = async (
   )[0];
 };
 
-/** Re-points a rule at another category (adding never overwrites). Refuses a person's rule and marks the change as the assistant's. */
-export const recategoriseRule = async (
+/** Re-points one of this user's rules at another category, as the owner's own decision. Returns whether there was one. */
+export const setRuleCategory = async (
   db: Db,
   userId: string,
   pattern: string,
   category: Category,
-): Promise<RuleChange> => {
+): Promise<boolean> => {
   const target = pattern.trim().toUpperCase();
-  const existing = await storedRule(db, userId, target);
-  if (existing === undefined) return { ok: false, reason: "no-such-rule" };
-  if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
-
+  if ((await storedRule(db, userId, target)) === undefined) return false;
   await db
     .update(spendingRules)
-    .set({ category, source: "ai" })
+    .set({ category, source: "user" })
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
     .run();
-  // SAFETY: every stored category is written through `isCategory`.
-  return { ok: true, pattern: target, was: existing.category as Category };
-};
-
-export const retractRule = async (db: Db, userId: string, pattern: string): Promise<RuleChange> => {
-  const target = pattern.trim().toUpperCase();
-  const existing = await storedRule(db, userId, target);
-  if (existing === undefined) return { ok: false, reason: "no-such-rule" };
-  if (!ASSISTANT_MAY_CHANGE.has(existing.source)) return { ok: false, reason: "owned-by-user" };
-
-  await db
-    .delete(spendingRules)
-    .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
-    .run();
-  // SAFETY: as in `recategoriseRule`.
-  return { ok: true, pattern: target, was: existing.category as Category };
+  return true;
 };
 
 /** Deletes one rule of this user's. Returns whether there was one to delete. */

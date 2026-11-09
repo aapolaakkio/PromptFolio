@@ -6,67 +6,41 @@ import {
   parseCurrency,
   parseMoney,
   zeroMoney,
-  type Currency,
 } from "../../core/money.ts";
 import { checkTargets } from "../../core/rebalance/targets.ts";
-import { assertAccountOwned, listAccounts } from "../accounts.ts";
+import { listAccounts } from "../accounts.ts";
 import {
   CashEntry,
-  InstrumentEdit,
   PlanInput,
   PriceInput,
   TargetAllocationInput,
   toBasisPoints,
 } from "../action-inputs.ts";
-import { HttpError } from "../errors.ts";
 import { listInstruments } from "../instruments/store.ts";
 import { listPlan, planFingerprint } from "../monthly-plan.ts";
 import { driftReportFor } from "../rebalance.ts";
-import { loadPortfolio } from "../valuation.ts";
-import { isPublicPageUrl } from "../prices/page.ts";
+import {
+  AWAITS,
+  canonical,
+  instrumentLabel,
+  newId,
+  ownAccountLabel,
+  ownInstrument,
+  text,
+} from "./proposal-kit.ts";
 import type { Fact, Proposal } from "./proposal-schema.ts";
-import { type Db, type ProposalTool, type ToolArgs, today } from "./tool-types.ts";
-
-const newId = (): string => crypto.randomUUID();
-
-/** A validated amount as the canonical "1234.50" the card formats; refused rather than guessed. */
-const canonical = (amount: string, currency: Currency): string => {
-  try {
-    return formatMoney(parseMoney(amount, currency));
-  } catch {
-    throw new Error("The amount is not a valid decimal number");
-  }
-};
-
-const text = (label: string, value: string): Fact => ({ kind: "text", label, text: value });
-
-type Named = { readonly name: string; readonly isin: string | null };
-const instrumentLabel = (instrument: Named): string =>
-  instrument.isin === null ? instrument.name : `${instrument.name} (${instrument.isin})`;
-
-/** The household registry is shared, so a proposal may only name an instrument this user's own ledger references. */
-const ownInstrument = async (db: Db, userId: string, id: number) => {
-  const { txns, instruments } = await loadPortfolio(db, userId);
-  const instrument = instruments.find((candidate) => candidate.id === id);
-  if (instrument === undefined || !txns.some((txn) => txn.instrumentId === id)) {
-    throw new Error("Instrument not found");
-  }
-  return instrument;
-};
-
-/** The same check `addCashEntry` runs; its 404 text goes back to the model with the ids it may use. Named with its id, since two accounts may share a name. */
-const ownAccountLabel = async (db: Db, userId: string, accountId: number): Promise<string> => {
-  const accounts = await listAccounts(db, userId);
-  try {
-    await assertAccountOwned(userId, accountId);
-  } catch (cause) {
-    if (!(cause instanceof HttpError)) throw cause;
-    const known = accounts.map((account) => `${account.id} (${account.name})`).join(", ");
-    throw new Error(`${cause.message}. The owner's accounts: ${known || "none"}`);
-  }
-  const name = accounts.find((account) => account.id === accountId)?.name ?? "Account";
-  return `${name} (account #${accountId})`;
-};
+import { buildAccountProposals } from "./proposals-accounts.ts";
+import { buildDeletionProposals } from "./proposals-deletions.ts";
+import { buildInstrumentProposals } from "./proposals-instruments.ts";
+import { buildRuleProposals } from "./proposals-rules.ts";
+import { buildSnapshotProposals } from "./proposals-snapshots.ts";
+import {
+  type Db,
+  type ProposalArea,
+  type ProposalTool,
+  type ToolArgs,
+  today,
+} from "./tool-types.ts";
 
 const CASH = {
   DEPOSIT: {
@@ -190,69 +164,6 @@ const proposeTargets = async (db: Db, userId: string, raw: ToolArgs): Promise<Pr
   };
 };
 
-const TICKER = /^[A-Z0-9.^=-]{1,20}$/;
-
-/** The code the card shows, checked first: model text is never displayed unvalidated. */
-const shownCode = (priceSource: "yahoo" | "page" | "manual", key: string): string | null => {
-  switch (priceSource) {
-    case "page":
-      if (!isPublicPageUrl(key)) throw new Error("A page source needs a public https URL");
-      return new URL(key).href;
-    case "yahoo":
-      if (!TICKER.test(key)) {
-        throw new Error("A Yahoo ticker is upper-case letters, digits and . ^ = - only");
-      }
-      return key;
-    case "manual":
-      if (key !== "") throw new Error("A manual source takes no code; leave sourceKey empty");
-      return null;
-  }
-};
-
-const SOURCE_LABEL = { yahoo: "Yahoo Finance", page: "Web page", manual: "Manual prices" } as const;
-const SOURCE_WORDING = {
-  yahoo: "Yahoo Finance",
-  page: "a web page",
-  manual: "manual prices",
-} as const;
-
-// The page check is a model call and a fetch, so it runs only in the save the owner confirms.
-const proposePriceSource = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
-  const input = InstrumentEdit.parse(raw);
-  const instrument = await ownInstrument(db, userId, input.id);
-  const code = shownCode(input.priceSource, input.sourceKey.trim());
-  const name = instrumentLabel(instrument);
-  const changesCurrency = instrument.currency !== input.currency;
-  const isPage = input.priceSource === "page";
-  const facts: Fact[] = [
-    text("Instrument", name),
-    text("Source", SOURCE_LABEL[input.priceSource]),
-    ...(code === null ? [] : [{ kind: "code" as const, label: "Code", code }]),
-    text("Currency", input.currency),
-    ...(changesCurrency
-      ? [text("Stored prices", `Deleted: the currency changes from ${instrument.currency}`)]
-      : []),
-    ...(isPage ? [text("Check", "The page is read when you confirm")] : []),
-  ];
-  const summary = [
-    `Change the price source of ${name} to ${SOURCE_WORDING[input.priceSource]}`,
-    code === null ? "" : ` (${code})`,
-    `, quoted in ${input.currency}.`,
-    changesCurrency
-      ? ` The currency changes from ${instrument.currency}, so its stored prices are deleted.`
-      : "",
-    isPage ? " The page is checked when you confirm." : "",
-  ].join("");
-  return {
-    proposalId: newId(),
-    action: "price_source",
-    title: "Change the price source",
-    facts,
-    summary,
-    input,
-  };
-};
-
 /** The registry is household-shared and a plan may start a new position, so any known id is allowed; its name comes from the registry, never from the model. */
 const proposePlan = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = PlanInput.parse(raw);
@@ -310,11 +221,16 @@ const proposePlan = async (db: Db, userId: string, raw: ToolArgs): Promise<Propo
   };
 };
 
-const AWAITS = " Saves nothing: the owner sees a card and decides with Confirm or Dismiss.";
+const LEDGER: ProposalArea = {
+  name: "Ledger and plan",
+  sentence:
+    "record a manual price, a cash entry (deposit, withdrawal, interest or opening balance), " +
+    "the target allocation and the monthly plan",
+};
 
-/** The five owner actions the assistant may propose. Destructive ones (deleting imports, transactions, accounts) are deliberately absent. */
-export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
+const ledgerProposals = (db: Db, userId: string): ProposalTool[] => [
   {
+    area: LEDGER,
     name: "propose_record_price",
     description:
       "Proposes recording a manual price for one instrument on one date. instrumentId comes " +
@@ -324,16 +240,18 @@ export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
     propose: (input) => proposeRecordPrice(db, userId, input),
   },
   {
+    area: LEDGER,
     name: "propose_cash_entry",
     description:
       "Proposes a manual cash entry on one account: DEPOSIT, WITHDRAWAL, INTEREST or " +
-      "OPENING_BALANCE. accountId comes from get_cash; amount is a positive decimal string, " +
+      "OPENING_BALANCE. accountId comes from get_accounts; amount is a positive decimal string, " +
       "the direction comes only from type." +
       AWAITS,
     schema: CashEntry,
     propose: (input) => proposeCashEntry(db, userId, input),
   },
   {
+    area: LEDGER,
     name: "propose_target_allocation",
     description:
       "Proposes replacing the target allocation on one dimension. Each key comes from " +
@@ -343,16 +261,7 @@ export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
     propose: (input) => proposeTargets(db, userId, input),
   },
   {
-    name: "propose_price_source",
-    description:
-      "Proposes an instrument's price source: yahoo (sourceKey is the upper-case ticker), " +
-      "page (sourceKey is a public https URL) or manual (sourceKey empty), with its quotation currency. id comes from " +
-      "get_instruments. A changed currency deletes the stored prices." +
-      AWAITS,
-    schema: InstrumentEdit,
-    propose: (input) => proposePriceSource(db, userId, input),
-  },
-  {
+    area: LEDGER,
     name: "propose_monthly_plan",
     description:
       "Proposes the owner's monthly investment plan from what the owner told you: rows of " +
@@ -365,4 +274,22 @@ export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
     schema: PlanInput,
     propose: (input) => proposePlan(db, userId, input),
   },
+];
+
+/**
+ * Every owner action the assistant may propose, one area per file. Each validates with its form's own
+ * schema, resolves ids against the caller's data and writes nothing; Confirm runs the form's own server
+ * function. Not offered: file imports, sign-in and passwords, and deleting an account or the ledger.
+ */
+export const buildProposalTools = (
+  db: Db,
+  userId: string,
+  conversationId?: number,
+): ProposalTool[] => [
+  ...ledgerProposals(db, userId),
+  ...buildAccountProposals(db, userId),
+  ...buildInstrumentProposals(db, userId),
+  ...buildSnapshotProposals(db, userId),
+  ...buildRuleProposals(db, userId),
+  ...buildDeletionProposals(db, userId, conversationId),
 ];

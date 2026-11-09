@@ -17,7 +17,7 @@ type AccountType = z.infer<typeof CreateAccount>["accountType"];
 const rateBp = (text: string): number => Math.round(Number(text.replace(",", ".")) * 100);
 
 /** Terms are refused where meaningless rather than stored and ignored: a rate fits either savings kind, a maturity date only a fixed-term deposit. */
-const assertTermsMatchType = (
+export const assertTermsMatchType = (
   type: AccountType | null | undefined,
   body: { maturityDate?: string | null; interestRate?: string | null },
 ): void => {
@@ -30,7 +30,7 @@ const assertTermsMatchType = (
 };
 
 /** An account's type must belong to its kind. Refused, not corrected: "a savings account that is an equity savings account" has no obvious fix. */
-const assertTypeMatchesKind = (
+export const assertTypeMatchesKind = (
   kind: "brokerage" | "bank",
   type: AccountType | null | undefined,
 ): void => {

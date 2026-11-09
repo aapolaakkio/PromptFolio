@@ -30,3 +30,62 @@ test("lists the app's facts and keeps the assistant's note in its own labelled b
   const [beforeNote] = html.split("Note (written by the assistant)");
   expect(beforeNote).not.toContain("test card");
 });
+
+const deletion = (confirmLabel: string, permanent: boolean) =>
+  renderToStaticMarkup(
+    <ProposalCard
+      title="Delete a cash entry"
+      facts={[{ kind: "text", label: "Cash entry", text: "Deposit on 2026-11-03" }]}
+      note={undefined}
+      danger
+      permanent={permanent}
+      confirmLabel={confirmLabel}
+      state="open"
+      outcome={undefined}
+      saving={false}
+      onConfirm={noop}
+      onDismiss={noop}
+    />,
+  );
+
+test("a removal is a warning card whose button says Delete, never Confirm", () => {
+  const html = deletion("Delete", true);
+
+  expect(html).toContain("border-loss");
+  expect(html).not.toContain("border-line");
+  expect(html).toMatch(/text-loss[^>]*>⚠ Delete</);
+  expect(html).toContain("This removes data.");
+  expect(html).toContain("This cannot be undone.");
+  expect(html).toContain("danger-button");
+  expect(html).toContain(">Delete</button>");
+  expect(html).not.toContain(">Confirm</button>");
+  expect(html).not.toContain("Proposed change");
+});
+
+test("an undo names itself and does not claim to be permanent", () => {
+  const html = deletion("Undo import", false);
+
+  expect(html).toContain(">Undo import</button>");
+  expect(html).toContain("This removes data.");
+  expect(html).not.toContain("This cannot be undone.");
+});
+
+test("an ordinary card keeps its plain look and Confirm", () => {
+  const html = renderToStaticMarkup(
+    <ProposalCard
+      title="Record a deposit"
+      facts={[]}
+      note={undefined}
+      state="open"
+      outcome={undefined}
+      saving={false}
+      onConfirm={noop}
+      onDismiss={noop}
+    />,
+  );
+
+  expect(html).toContain("border-line");
+  expect(html).not.toContain("border-loss");
+  expect(html).toContain(">Confirm</button>");
+  expect(html).not.toContain("This removes data.");
+});

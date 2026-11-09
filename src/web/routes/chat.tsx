@@ -20,7 +20,7 @@ import { StoredChartSchema } from "../../server/chat/chart-schema.ts";
 import { ChatChart } from "../charts/ChatChart.tsx";
 import { renderItems } from "./chat-order.ts";
 import { askChat } from "./chat-stream.ts";
-import { cardState, createDecider, type CardOutcome } from "./proposal-actions.ts";
+import { cardState, confirmLabel, createDecider, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
 
 const isChatModel = (value: string): value is ChatModel =>
@@ -59,9 +59,6 @@ const TOOL_LABELS = new Map<string, string>([
   ["get_drift", "drift from target"],
   ["get_deposit_plan", "deposit plan"],
   ["calculate", "calculator"],
-  ["save_spending_rules", "saving rules"],
-  ["update_spending_rule", "rule update"],
-  ["remove_spending_rule", "rule removal"],
   ["get_spending_rules", "rules"],
   ["get_reconciliation", "reconciliation"],
   ["get_recurring_payments", "recurring payments"],
@@ -71,13 +68,36 @@ const TOOL_LABELS = new Map<string, string>([
   ["propose_target_allocation", "target proposal"],
   ["propose_price_source", "price source proposal"],
   ["propose_monthly_plan", "monthly plan proposal"],
+  ["propose_create_account", "account proposal"],
+  ["propose_edit_account", "account change proposal"],
+  ["propose_account_balance", "balance proposal"],
+  ["propose_create_instrument", "instrument proposal"],
+  ["propose_fund_fee", "fund fee proposal"],
+  ["propose_forecast_rate", "forecast rate proposal"],
+  ["propose_snapshot", "statement proposal"],
+  ["propose_snapshot_adjust", "adjustment proposal"],
+  ["propose_spending_rules", "rule proposal"],
+  ["propose_spending_rule_category", "rule change proposal"],
+  ["propose_delete_cash_entry", "deletion proposal"],
+  ["propose_delete_plan_row", "deletion proposal"],
+  ["propose_delete_spending_rule", "deletion proposal"],
+  ["propose_remove_snapshot", "deletion proposal"],
+  ["propose_undo_import", "undo proposal"],
+  ["propose_remove_conversation", "deletion proposal"],
+  ["propose_clear_fund_fee", "deletion proposal"],
+  ["propose_clear_forecast_rate", "deletion proposal"],
+  ["get_accounts", "accounts"],
+  ["get_cash_entries", "cash entries"],
+  ["get_snapshots", "holdings statements"],
+  ["get_imports", "imports"],
+  ["get_conversations", "conversations"],
   ["get_monthly_plan", "monthly plan"],
   ["run_forecast", "forecast"],
   ["forecast_target", "forecast target"],
   ["show_chart", "chart"],
 ]);
 
-/** Asks about the portfolio. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes only classification rules, shown on Spending as `ai`; any other change is a card the owner confirms. */
+/** Asks about the portfolio. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes nothing itself: every change is a card the owner confirms. */
 export const ChatPage = () => {
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -146,6 +166,7 @@ export const ChatPage = () => {
             summary: proposal.summary,
             title: proposal.title,
             facts: proposal.facts,
+            danger: proposal.danger,
           };
           setPending((previous) => [
             ...previous,
@@ -302,7 +323,7 @@ export const ChatPage = () => {
             if (turn.role !== "proposal") return null;
             const card = readStored(StoredProposal, turn.content);
             if (card === null) return null;
-            const { proposalId, title, facts } = card;
+            const { proposalId, title, facts, action, danger } = card;
             const streamed = live.get(proposalId);
             return (
               <li key={`proposal-${proposalId}`}>
@@ -310,6 +331,9 @@ export const ChatPage = () => {
                   title={title}
                   facts={facts}
                   note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
+                  danger={danger === true}
+                  permanent={action !== "undo_import"}
+                  confirmLabel={confirmLabel(action)}
                   state={cardState(streamed, outcomes.get(proposalId))}
                   outcome={outcomes.get(proposalId)}
                   saving={saving.has(proposalId)}

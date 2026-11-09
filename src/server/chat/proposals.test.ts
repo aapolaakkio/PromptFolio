@@ -1,119 +1,16 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
-import { EUR } from "../../core/money.ts";
-import { openAccount } from "../accounts.ts";
-import { CreateAccount } from "../action-inputs.ts";
 import { db } from "../db/index.ts";
+import { EUR } from "../../core/money.ts";
 import { addInstrument } from "../instruments/store.ts";
-import type { ChatClient, ChatEvent, ModelReply, TurnParams } from "./runner.ts";
-import type { JsonValue } from "./tool-types.ts";
-
-type Args = {
-  readonly [key: string]: JsonValue | readonly { readonly [key: string]: string | number }[];
-};
+import { propose, randomIsin, seed } from "./proposal-test-kit.ts";
 
 // A proposal tool validates and describes; it never writes. These check the card's words come from the app.
 
-type Proposals = typeof import("./proposals.ts");
-type Runner = typeof import("./runner.ts");
-type Schema = typeof import("../db/schema.ts");
-
-let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
-let buildProposalTools: Proposals["buildProposalTools"];
-let runTurn: Runner["runTurn"];
-let schema: Schema;
-
+let schema: typeof import("../db/schema.ts");
 beforeAll(async () => {
-  auth = (await import("../auth.ts")).getAuth();
-  buildProposalTools = (await import("./proposals.ts")).buildProposalTools;
-  runTurn = (await import("./runner.ts")).runTurn;
   schema = await import("../db/schema.ts");
 });
-
-const signUp = async (): Promise<string> => {
-  const response = await auth.handler(
-    new Request("http://localhost/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Test User",
-        email: `proposal-${crypto.randomUUID()}@example.com`,
-        password: "correct horse battery staple",
-      }),
-    }),
-  );
-  if (response.status !== 200) throw new Error(`sign-up failed with status ${response.status}`);
-  // SAFETY: a 200 from POST /sign-up/email carries `{ user: { id } }`.
-  const body = (await response.json()) as { user: { id: string } };
-  return body.user.id;
-};
-
-const randomIsin = (): string =>
-  `FI${crypto.randomUUID().replace(/-/g, "").toUpperCase().slice(0, 9)}0`;
-
-const seed = async () => {
-  const userId = await signUp();
-  const accountId = (
-    await openAccount(db, userId, CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }))
-  ).id;
-  const instrument = await addInstrument(db, {
-    isin: randomIsin(),
-    ticker: null,
-    name: "Acme Fund",
-    kind: "fund",
-    currency: EUR,
-    priceSource: "manual",
-  });
-  await db
-    .insert(schema.transactions)
-    .values({
-      accountId,
-      instrumentId: instrument.id,
-      type: "BUY",
-      tradeDate: "2026-01-02",
-      quantity: 10_000_000,
-      unitPrice: 1000,
-      amount: -10_000,
-      fee: 0,
-      tax: 0,
-      currency: EUR,
-      fxRateEur: 100_000_000,
-      contentHash: crypto.randomUUID(),
-    })
-    .run();
-  return { userId, accountId, instrumentId: instrument.id, isin: instrument.isin ?? "" };
-};
-
-const scripted = (replies: ModelReply[], seen: TurnParams[] = []): ChatClient => ({
-  run: (params) => {
-    seen.push(params);
-    const reply = replies[seen.length - 1];
-    if (reply === undefined) throw new Error("scripted model ran out of replies");
-    return Promise.resolve(reply);
-  },
-});
-
-const calling = (name: string, args: Args, text = ""): ModelReply => ({
-  text,
-  toolCalls: [{ id: "call_1", name, arguments: JSON.stringify(args) }],
-});
-
-/** One turn where the model calls one proposal tool; returns the events and what the tool told the model. */
-const propose = async (userId: string, name: string, args: Args, prose = "") => {
-  const seen: TurnParams[] = [];
-  const events: ChatEvent[] = [];
-  const client = scripted([calling(name, args, prose), { text: prose, toolCalls: [] }], seen);
-  for await (const event of runTurn(client, buildProposalTools(db, userId), [
-    { role: "user", content: "Please do it" },
-  ])) {
-    events.push(event);
-  }
-  const toolMessage = seen[1]?.messages.find((message) => message.role === "tool");
-  return {
-    proposals: events.flatMap((event) => (event.type === "proposal" ? [event.proposal] : [])),
-    toolResult: toolMessage?.content ?? "",
-  };
-};
 
 const ledgerRows = async (accountId: number) =>
   (await db.select().from(schema.transactions).all()).filter((row) => row.accountId === accountId)

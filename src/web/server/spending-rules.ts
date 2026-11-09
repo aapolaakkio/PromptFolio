@@ -1,8 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
-import { SpendingRuleRemove, SpendingRulesSave } from "../../server/action-inputs.ts";
+import {
+  SpendingRuleChange,
+  SpendingRuleRemove,
+  SpendingRulesSave,
+} from "../../server/action-inputs.ts";
 
 import { CATEGORY_LABELS } from "../../server/spending/categories.ts";
-import { addRules, removeRule, rulesFor } from "../../server/spending/rules.ts";
+import {
+  addRules,
+  isCategory,
+  removeRule,
+  rulesFor,
+  setRuleCategory,
+} from "../../server/spending/rules.ts";
 import { db } from "../../server/db/index.ts";
 import { authed } from "./guard.ts";
 
@@ -26,6 +36,18 @@ export const deleteSpendingRule = createServerFn({ method: "POST" })
   .validator(SpendingRuleRemove)
   .handler(async ({ data, context }) => {
     if (!(await removeRule(db, context.userId, data.pattern))) {
+      throw new Error("Rule not found");
+    }
+    return { ok: true };
+  });
+
+/** Moves one rule to another category; the owner's decision, so it becomes theirs. */
+export const changeSpendingRule = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(SpendingRuleChange)
+  .handler(async ({ data, context }) => {
+    if (!isCategory(data.category)) throw new Error("Unknown category");
+    if (!(await setRuleCategory(db, context.userId, data.pattern, data.category))) {
       throw new Error("Rule not found");
     }
     return { ok: true };

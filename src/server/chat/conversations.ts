@@ -121,6 +121,7 @@ const storedTrace = (proposal: Proposal): string =>
     summary: proposal.summary,
     title: proposal.title,
     facts: proposal.facts,
+    danger: proposal.danger,
   });
 
 /** Records what the owner did with a card, once; the next turn's model reads it as an app note. */
@@ -236,7 +237,7 @@ export const startTurn = async (
     ...buildChatTools(db, userId),
     ...buildForecastTools(db, userId, turnState),
     buildChartTool(db, userId, turnState),
-    ...buildProposalTools(db, userId),
+    ...buildProposalTools(db, userId, conversation.id),
   ];
   const used: string[] = [];
 

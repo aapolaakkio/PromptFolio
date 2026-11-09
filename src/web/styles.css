@@ -110,6 +110,11 @@
   @apply bg-transparent text-muted px-2 py-1 text-sm font-normal hover:text-ink;
 }
 
+/* The button that removes data on a warning card: the loss colour, so it never reads as an ordinary save. */
+@utility danger-button {
+  @apply bg-loss text-on-accent;
+}
+
 /* Undoes the base button styling for sort headers inside a table. */
 @utility header-button {
   @apply bg-transparent text-inherit p-0 font-medium;
