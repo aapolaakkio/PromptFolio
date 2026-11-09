@@ -25,7 +25,14 @@ const overrides = {
           toMonth: Month.optional(),
           yearlyIncrease: z.number().min(-0.5).max(1).optional(),
         })
-        .strict(),
+        .strict()
+        .refine(
+          (row) =>
+            row.fromMonth === undefined ||
+            row.toMonth === undefined ||
+            row.toMonth >= row.fromMonth,
+          { message: "toMonth must not be before fromMonth", path: ["toMonth"] },
+        ),
     )
     .max(MAX_ROWS)
     .optional(),
@@ -72,7 +79,12 @@ export const ForecastTargetInput = z
   .object({
     ...overrides,
     targetEur: z.number().positive().max(MAX_OVERRIDE_EUR),
-    byMonth: Month.optional(),
+    byMonth: z
+      .number()
+      .int()
+      .min(1, `byMonth must be between 1 and ${MAX_FORECAST_MONTHS}`)
+      .max(MAX_FORECAST_MONTHS, `byMonth must be between 1 and ${MAX_FORECAST_MONTHS}`)
+      .optional(),
   })
   .strict()
   .refine(onePlanChange, ONE_PLAN_CHANGE);

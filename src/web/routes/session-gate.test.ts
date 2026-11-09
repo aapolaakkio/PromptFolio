@@ -50,5 +50,7 @@ test("resolved with a session renders the nav, sign-out button and the routed pa
   expect(html).toContain("Sign out");
   expect(html).toContain("Holdings");
   expect(html).toContain("Imports");
+  // Forecast sits right after Rebalance in the nav.
+  expect(html).toMatch(/>Rebalance<\/a><a[^>]*href="\/forecast"[^>]*>Forecast<\/a>/);
   expect(html).toContain("PROTECTED_PAGE_MARKER");
 });

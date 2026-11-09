@@ -37,6 +37,9 @@ export const SessionGate = ({ isPending, hasSession, onSignOut }: SessionGatePro
           <Link to="/rebalance" className="text-muted no-underline hover:text-ink">
             Rebalance
           </Link>
+          <Link to="/forecast" className="text-muted no-underline hover:text-ink">
+            Forecast
+          </Link>
           <Link to="/tax" className="text-muted no-underline hover:text-ink">
             Tax
           </Link>

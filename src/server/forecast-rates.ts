@@ -22,6 +22,8 @@ const DEFAULT_VOLATILITY = 0.18;
 const FULL_WEIGHT_YEARS = 10;
 const MIN_YEARS = 1;
 const CAGR_LIMIT = 0.5;
+// The scenario schema caps volatility at 2; a returned scenario must re-validate.
+const MAX_VOLATILITY = 2;
 const DAY_MS = 86_400_000;
 const DAYS_PER_YEAR = 365.25;
 const BP_PER_UNIT = 10_000;
@@ -55,22 +57,32 @@ const defaultsFor = (kind: InstrumentKind) =>
     ? { rate: 0, volatility: 0 }
     : { rate: DEFAULT_RATE, volatility: DEFAULT_VOLATILITY };
 
-/** CAGR over the last ≤10 years and volatility, blended with the kind's default by min(years / 10, 1). */
+/** From the last close on or before ten years back (or the first close), to the last close. */
+const windowOf = (closes: readonly Close[], last: Close): readonly Close[] => {
+  const cutoff = tenYearsBefore(last.date);
+  const startAt = closes.findLastIndex((row) => row.date <= cutoff);
+  return closes.slice(Math.max(0, startAt));
+};
+
+/** CAGR and volatility over the window, blended with the kind's default by min(window years / 10, 1). */
 const measuredRate = (kind: InstrumentKind, closes: readonly Close[]): ForecastRate => {
   const fallback = defaultsFor(kind);
-  const first = closes[0];
   const last = closes[closes.length - 1];
-  const years = first && last ? yearsBetween(first.date, last.date) : 0;
-  if (kind === "cash" || !first || !last || years < MIN_YEARS) {
+  const window = last === undefined ? [] : windowOf(closes, last);
+  const start = window[0];
+  const years = start && last ? yearsBetween(start.date, last.date) : 0;
+  const cagr =
+    start && last && years > 0 ? (last.close / start.close) ** (1 / years) - 1 : Number.NaN;
+  if (kind === "cash" || years < MIN_YEARS || !Number.isFinite(cagr)) {
     return { ...fallback, basis: "default", yearsOfHistory: years };
   }
-  const window = closes.filter((row) => row.date >= tenYearsBefore(last.date));
-  const start = window[0] ?? first;
-  const span = yearsBetween(start.date, last.date);
-  const cagr = (last.close / start.close) ** (1 / span) - 1;
   const own = Math.min(CAGR_LIMIT, Math.max(-CAGR_LIMIT, cagr));
   const weight = Math.min(years / FULL_WEIGHT_YEARS, 1);
-  const ownVolatility = volatilityOf(window) ?? fallback.volatility;
+  const measured = volatilityOf(window);
+  const ownVolatility =
+    measured === null || !Number.isFinite(measured)
+      ? fallback.volatility
+      : Math.min(MAX_VOLATILITY, measured);
   return {
     rate: weight * own + (1 - weight) * fallback.rate,
     volatility: weight * ownVolatility + (1 - weight) * fallback.volatility,

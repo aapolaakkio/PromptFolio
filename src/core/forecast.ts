@@ -61,8 +61,8 @@ export type ForecastPoint = {
   readonly month: string;
   readonly total: ForecastBand;
   readonly holdings: readonly (ForecastBand & { readonly id: string })[];
-  /** Money put in since the start (contributions and events, net), in the same euros as the values. */
-  readonly contributedEur: number;
+  /** Money put in after today (contributions and events, net), each payment in the euros of its own month's chosen unit. */
+  readonly newMoneyEur: number;
 };
 
 export type ForecastShortfall = {
@@ -73,6 +73,8 @@ export type ForecastShortfall = {
 
 export type ForecastResult = {
   readonly points: readonly ForecastPoint[];
+  /** Today's holdings, the money already in at month 0. */
+  readonly startValueEur: number;
   /** Withdrawals capped because the holding ran out. */
   readonly shortfalls: readonly ForecastShortfall[];
   readonly real: boolean;
@@ -197,15 +199,17 @@ const applyEvent = (
 
 type Run = { readonly points: ForecastPoint[]; readonly shortfalls: ForecastShortfall[] };
 
+const deflatorAt = (scenario: ForecastScenario, month: number): number =>
+  (scenario.real ?? true) ? (1 + (scenario.inflation ?? DEFAULT_INFLATION)) ** (month / 12) : 1;
+
 const pointAt = (
   scenario: ForecastScenario,
   books: ReadonlyMap<string, Book>,
   month: number,
-  contributed: number,
+  newMoney: number,
   withBands: boolean,
 ): ForecastPoint => {
-  const deflator =
-    (scenario.real ?? true) ? (1 + (scenario.inflation ?? DEFAULT_INFLATION)) ** (month / 12) : 1;
+  const deflator = deflatorAt(scenario, month);
   const raw = scenario.holdings.map((holding) => {
     // SAFETY: every holding has a book, built from the same list.
     const book = books.get(holding.id) as Book;
@@ -225,10 +229,11 @@ const pointAt = (
       expected: cents(row.expected / deflator),
       high: cents(row.high / deflator),
     })),
-    contributedEur: cents(contributed / deflator),
+    newMoneyEur: cents(newMoney),
   };
 };
 
+/** One month, in this order: growth, then shocks, then contributions (paid at month end), then events. */
 const stepMonth = (scenario: ForecastScenario, books: ReadonlyMap<string, Book>, month: number) => {
   scenario.holdings.forEach((holding) => {
     // SAFETY: every holding has a book, built from the same list.
@@ -271,12 +276,13 @@ const simulate = (scenario: ForecastScenario, withBands: boolean): Run => {
   );
   const points = [pointAt(scenario, books, 0, 0, withBands)];
   const shortfalls: ForecastShortfall[] = [];
-  let contributed = 0;
+  let newMoney = 0;
   for (let month = 1; month <= scenario.months; month += 1) {
     const step = stepMonth(scenario, books, month);
-    contributed += step.paid;
+    // Each payment in its own month's euros, not the horizon's.
+    newMoney += step.paid / deflatorAt(scenario, month);
     shortfalls.push(...step.shortfalls);
-    points.push(pointAt(scenario, books, month, contributed, withBands));
+    points.push(pointAt(scenario, books, month, newMoney, withBands));
   }
   return { points, shortfalls };
 };
@@ -284,6 +290,7 @@ const simulate = (scenario: ForecastScenario, withBands: boolean): Run => {
 /** Month by month, per holding and in total: expected path and a 10–90 % band. */
 export const forecast = (scenario: ForecastScenario): ForecastResult => ({
   ...simulate(scenario, true),
+  startValueEur: cents(scenario.holdings.reduce((sum, holding) => sum + holding.valueEur, 0)),
   real: scenario.real ?? true,
   inflation: scenario.inflation ?? DEFAULT_INFLATION,
 });
@@ -325,6 +332,9 @@ export const monthlyNeeded = (
   targetEur: number,
   byMonth: number,
 ): MonthlyNeeded | null => {
+  if (!Number.isInteger(byMonth) || byMonth < 1 || byMonth > MAX_FORECAST_MONTHS) {
+    throw new RangeError(`byMonth must be between 1 and ${MAX_FORECAST_MONTHS}`);
+  }
   const existing = scenario.contributions ?? [];
   const targets =
     existing.length > 0

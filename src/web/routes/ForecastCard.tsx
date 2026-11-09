@@ -6,6 +6,7 @@ import { ForecastChart } from "../charts/ForecastChart.tsx";
 import { errorMessage } from "../lib/errors.ts";
 import { eur, share } from "../lib/format.ts";
 import { deleteForecastRate, getForecast, saveForecastRate } from "../server/forecast.ts";
+import { currencyNote, paidInText } from "./forecast-view.ts";
 
 export const FORECAST_QUERY_KEY = ["forecast"];
 
@@ -88,7 +89,7 @@ const RateCell = ({
 };
 
 /** Where the portfolio may be in 1–20 years, from past prices and the monthly plan. */
-export const Forecast = () => {
+export const ForecastCard = () => {
   const [years, setYears] = useState<(typeof HORIZONS)[number]>(10);
   const [real, setReal] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -142,10 +143,13 @@ export const Forecast = () => {
             {real &&
               ` Amounts are in today's euros at ${share(data.result.inflation)} inflation a year.`}
           </p>
+          {currencyNote(data.holdings) !== null && (
+            <p className="mt-1 text-sm text-muted">{currencyNote(data.holdings)}</p>
+          )}
           <p className="mt-2 font-semibold">
             In {years} {years === 1 ? "year" : "years"}: {eur(String(end.total.expected))} (
-            {eur(String(end.total.low))} – {eur(String(end.total.high))}), of which you put in{" "}
-            {eur(String(end.contributedEur))}.
+            {eur(String(end.total.low))} – {eur(String(end.total.high))}),{" "}
+            {paidInText(data.result.startValueEur, end.newMoneyEur)}.
           </p>
           <table className="mt-3 text-sm">
             <thead>

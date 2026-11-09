@@ -182,6 +182,7 @@ const NOTE =
   "wider than the likely spread. real: true means today's euros (inflation removed). Rate basis: " +
   "history = measured from stored prices, blend = short history blended with a default, default = " +
   "a default for the instrument kind, user = the owner's own rate, chat-override = changed in this question. " +
+  "startValueEur is today's holdings; newMoneyEur is money paid in after today. " +
   "State the rates and their basis, real or nominal, the months and the monthly plan.";
 
 const summaryOf = (scenarioId: string, built: Built, result: ForecastResult): ToolResult => {
@@ -194,7 +195,8 @@ const summaryOf = (scenarioId: string, built: Built, result: ForecastResult): To
       lowEur: eur(last?.total.low ?? 0),
       highEur: eur(last?.total.high ?? 0),
     },
-    contributedEur: eur(last?.contributedEur ?? 0),
+    startValueEur: eur(result.startValueEur),
+    newMoneyEur: eur(last?.newMoneyEur ?? 0),
     holdings: built.holdings.map((row) => {
       const end = last?.holdings.find((holding) => holding.id === String(row.instrumentId));
       return {

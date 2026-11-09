@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './app/login'
 import { Route as AuthenticatedIndexRouteImport } from './app/_authenticated/index'
 import { Route as AuthenticatedCashRouteImport } from './app/_authenticated/cash'
 import { Route as AuthenticatedChatRouteImport } from './app/_authenticated/chat'
+import { Route as AuthenticatedForecastRouteImport } from './app/_authenticated/forecast'
 import { Route as AuthenticatedHoldingsRouteImport } from './app/_authenticated/holdings'
 import { Route as AuthenticatedImportsRouteImport } from './app/_authenticated/imports'
 import { Route as AuthenticatedRebalanceRouteImport } from './app/_authenticated/rebalance'
@@ -45,6 +46,11 @@ const AuthenticatedCashRoute = AuthenticatedCashRouteImport.update({
 const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
   id: '/chat',
   path: '/chat',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedForecastRoute = AuthenticatedForecastRouteImport.update({
+  id: '/forecast',
+  path: '/forecast',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedHoldingsRoute = AuthenticatedHoldingsRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/cash': typeof AuthenticatedCashRoute
   '/chat': typeof AuthenticatedChatRoute
+  '/forecast': typeof AuthenticatedForecastRoute
   '/holdings': typeof AuthenticatedHoldingsRoute
   '/imports': typeof AuthenticatedImportsRoute
   '/rebalance': typeof AuthenticatedRebalanceRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/cash': typeof AuthenticatedCashRoute
   '/chat': typeof AuthenticatedChatRoute
+  '/forecast': typeof AuthenticatedForecastRoute
   '/holdings': typeof AuthenticatedHoldingsRoute
   '/imports': typeof AuthenticatedImportsRoute
   '/rebalance': typeof AuthenticatedRebalanceRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authenticated/cash': typeof AuthenticatedCashRoute
   '/_authenticated/chat': typeof AuthenticatedChatRoute
+  '/_authenticated/forecast': typeof AuthenticatedForecastRoute
   '/_authenticated/holdings': typeof AuthenticatedHoldingsRoute
   '/_authenticated/imports': typeof AuthenticatedImportsRoute
   '/_authenticated/rebalance': typeof AuthenticatedRebalanceRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/cash'
     | '/chat'
+    | '/forecast'
     | '/holdings'
     | '/imports'
     | '/rebalance'
@@ -152,6 +162,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/cash'
     | '/chat'
+    | '/forecast'
     | '/holdings'
     | '/imports'
     | '/rebalance'
@@ -167,6 +178,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authenticated/cash'
     | '/_authenticated/chat'
+    | '/_authenticated/forecast'
     | '/_authenticated/holdings'
     | '/_authenticated/imports'
     | '/_authenticated/rebalance'
@@ -220,6 +232,13 @@ declare module '@tanstack/react-router' {
       path: '/chat'
       fullPath: '/chat'
       preLoaderRoute: typeof AuthenticatedChatRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/forecast': {
+      id: '/_authenticated/forecast'
+      path: '/forecast'
+      fullPath: '/forecast'
+      preLoaderRoute: typeof AuthenticatedForecastRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/holdings': {
@@ -284,6 +303,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedCashRoute: typeof AuthenticatedCashRoute
   AuthenticatedChatRoute: typeof AuthenticatedChatRoute
+  AuthenticatedForecastRoute: typeof AuthenticatedForecastRoute
   AuthenticatedHoldingsRoute: typeof AuthenticatedHoldingsRoute
   AuthenticatedImportsRoute: typeof AuthenticatedImportsRoute
   AuthenticatedRebalanceRoute: typeof AuthenticatedRebalanceRoute
@@ -296,6 +316,7 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedCashRoute: AuthenticatedCashRoute,
   AuthenticatedChatRoute: AuthenticatedChatRoute,
+  AuthenticatedForecastRoute: AuthenticatedForecastRoute,
   AuthenticatedHoldingsRoute: AuthenticatedHoldingsRoute,
   AuthenticatedImportsRoute: AuthenticatedImportsRoute,
   AuthenticatedRebalanceRoute: AuthenticatedRebalanceRoute,

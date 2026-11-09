@@ -110,7 +110,8 @@ const FLAT = { months: 12, real: false, rates: [{ instrumentId: "all" as const, 
 const Summary = z.object({
   scenarioId: z.string(),
   end: z.object({ expectedEur: z.string(), lowEur: z.string(), highEur: z.string() }),
-  contributedEur: z.string(),
+  startValueEur: z.string(),
+  newMoneyEur: z.string(),
   assumptions: z
     .object({ months: z.number(), real: z.boolean(), monthlyPlanTotalEur: z.string() })
     .loose(),
@@ -133,7 +134,8 @@ describe("run_forecast", () => {
     const flat = await summary(run, FLAT);
     expect(flat.scenarioId).toMatch(/^S\d+$/);
     expect(flat.end.expectedEur).toBe("1000.00");
-    expect(flat.contributedEur).toBe("0.00");
+    expect(flat.startValueEur).toBe("1000.00");
+    expect(flat.newMoneyEur).toBe("0.00");
     expect(flat.assumptions).toMatchObject({ months: 12, real: false });
     expect(flat.holdings).toEqual([
       expect.objectContaining({ instrumentId, ratePercent: "0.00", basis: "chat-override" }),
@@ -145,7 +147,7 @@ describe("run_forecast", () => {
     const { run } = toolsFor(userId);
     const total = await summary(run, { ...FLAT, monthlyTotalEur: 100 });
     expect(total.end.expectedEur).toBe("2200.00");
-    expect(total.contributedEur).toBe("1200.00");
+    expect(total.newMoneyEur).toBe("1200.00");
     expect(total.assumptions.monthlyPlanTotalEur).toBe("100.00");
 
     const event = await summary(run, { ...FLAT, events: [{ month: 6, amountEur: 500 }] });
@@ -509,5 +511,19 @@ describe("show_chart", () => {
     ).toBe(false);
     expect(ChartSpecSchema.safeParse({ ...valid, title: "x".repeat(121) }).success).toBe(false);
     expect(ChartSpecSchema.safeParse({ ...valid, note: "x".repeat(301) }).success).toBe(false);
+  });
+});
+
+describe("ForecastTargetInput", () => {
+  test("refuses byMonth outside 1…600 and a plan row ending before it starts, saying why", () => {
+    const messages = (input: Partial<z.input<typeof ForecastTargetInput>>) =>
+      ForecastTargetInput.safeParse({ targetEur: 1000, ...input }).error?.issues.map(
+        (issue) => issue.message,
+      );
+    expect(messages({ byMonth: 0 })).toContain("byMonth must be between 1 and 600");
+    expect(messages({ byMonth: 601 })).toContain("byMonth must be between 1 and 600");
+    expect(
+      messages({ plan: [{ instrumentId: 1, monthlyEur: 10, fromMonth: 6, toMonth: 2 }] }),
+    ).toContain("toMonth must not be before fromMonth");
   });
 });

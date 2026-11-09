@@ -28,7 +28,17 @@ export const ForecastRateRemoveInput = z
   .object({ instrumentId: z.number().int().positive() })
   .strict();
 
-const Month = z.number().int().min(0).max(MAX_FORECAST_MONTHS);
+const MONTH_RANGE = `between 1 and ${MAX_FORECAST_MONTHS} (month 0 is today)`;
+const Month = z
+  .number()
+  .int()
+  .min(1, `A month must be ${MONTH_RANGE}`)
+  .max(MAX_FORECAST_MONTHS, `A month must be ${MONTH_RANGE}`);
+const EventMonth = z
+  .number()
+  .int()
+  .min(1, `An event's month must be ${MONTH_RANGE}`)
+  .max(MAX_FORECAST_MONTHS, `An event's month must be ${MONTH_RANGE}`);
 const Eur = z.number().min(-MAX_EUR).max(MAX_EUR);
 const Rate = z.number().min(-0.99).max(1);
 const Volatility = z.number().min(0).max(2);
@@ -74,11 +84,18 @@ export const ForecastScenarioInput = z
           .object({
             holdingId: z.string().min(1).max(120),
             monthlyEur: Eur.min(0),
-            fromMonth: Month.min(1).optional(),
-            toMonth: Month.min(1).optional(),
+            fromMonth: Month.optional(),
+            toMonth: Month.optional(),
             yearlyIncrease: z.number().min(-0.5).max(1).optional(),
           })
-          .strict(),
+          .strict()
+          .refine(
+            (row) =>
+              row.fromMonth === undefined ||
+              row.toMonth === undefined ||
+              row.toMonth >= row.fromMonth,
+            { message: "toMonth must not be before fromMonth", path: ["toMonth"] },
+          ),
       )
       .max(MAX_ROWS)
       .default([]),
@@ -86,7 +103,7 @@ export const ForecastScenarioInput = z
       .array(
         z
           .object({
-            month: Month.min(1),
+            month: EventMonth,
             holdingId: z.string().min(1).max(120).nullable(),
             amountEur: Eur,
           })
@@ -98,7 +115,7 @@ export const ForecastScenarioInput = z
       .array(
         z
           .object({
-            month: Month.min(1),
+            month: Month,
             holdingId: z.string().min(1).max(120).nullable(),
             change: z.number().min(-1).max(10),
           })

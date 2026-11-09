@@ -13,8 +13,6 @@ import {
 } from "../server/rebalance.ts";
 import { eur } from "../lib/format.ts";
 import type { DriftRowView, TargetView } from "../../server/rebalance.ts";
-import { Forecast } from "./Forecast.tsx";
-import { MonthlyPlan } from "./MonthlyPlan.tsx";
 import { targetTotal } from "./rebalance-view.ts";
 
 const DIMENSIONS = [
@@ -334,10 +332,6 @@ export const RebalancePage = () => {
           </section>
         </>
       )}
-
-      <MonthlyPlan />
-
-      <Forecast />
 
       <section className="mt-8">
         <h2 className="mb-2 text-lg font-semibold">Fees</h2>

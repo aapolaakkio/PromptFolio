@@ -14,6 +14,8 @@ export type ForecastHoldingView = {
   readonly instrumentId: number;
   readonly name: string;
   readonly kind: InstrumentKind;
+  /** The currency its growth is measured in; exchange-rate moves are not forecast. */
+  readonly currency: string;
   readonly valueEur: number;
   readonly monthlyEur: number;
   readonly rate: number;
@@ -34,6 +36,7 @@ type Candidate = {
   readonly instrumentId: number;
   readonly name: string;
   readonly kind: InstrumentKind;
+  readonly currency: string;
   readonly valueEur: number;
 };
 
@@ -50,6 +53,7 @@ const candidatesFor = async (db: Db, userId: string, on: string, planIds: readon
             instrumentId: row.instrumentId,
             name: row.name,
             kind: row.kind,
+            currency: row.currency,
             valueEur: Number(row.valueEur),
           },
         ],
@@ -61,11 +65,22 @@ const candidatesFor = async (db: Db, userId: string, on: string, planIds: readon
       ? []
       : (
           await db
-            .select({ id: instruments.id, name: instruments.name, kind: instruments.kind })
+            .select({
+              id: instruments.id,
+              name: instruments.name,
+              kind: instruments.kind,
+              currency: instruments.currency,
+            })
             .from(instruments)
             .where(inArray(instruments.id, unheld))
             .all()
-        ).map((row) => ({ instrumentId: row.id, name: row.name, kind: row.kind, valueEur: 0 }));
+        ).map((row) => ({
+          instrumentId: row.id,
+          name: row.name,
+          kind: row.kind,
+          currency: row.currency,
+          valueEur: 0,
+        }));
   const unvalued = held.filter((row) => row.valueEur === null).map((row) => row.name);
   return { candidates: [...valued, ...planned], unvalued };
 };

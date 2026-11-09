@@ -45,7 +45,7 @@ const PATH_LABEL = {
   expected: "expected",
   low: "low (10 %)",
   high: "high (90 %)",
-  contributed: "money put in",
+  contributed: "new money put in",
 } as const;
 
 /** A scenario of this turn and, optionally, one of its holdings; anything else is refused. */
@@ -88,11 +88,11 @@ const forecastSeries = (
 ): ResolvedSeries => {
   const { scenario, holding } = scenarioFor(turn, ref.scenarioId, ref.holdingId);
   if (holding !== undefined && ref.path === "contributed") {
-    throw new Error("Money put in is for the whole portfolio only; leave out holdingId");
+    throw new Error("New money put in is for the whole portfolio only; leave out holdingId");
   }
   const id = holding === undefined ? null : String(holding.instrumentId);
   const valueAt = (point: (typeof scenario.result.points)[number]): number => {
-    if (ref.path === "contributed") return point.contributedEur;
+    if (ref.path === "contributed") return point.newMoneyEur;
     const band = id === null ? point.total : point.holdings.find((row) => row.id === id);
     return band?.[ref.path] ?? 0;
   };

@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { CashPage } from "../routes/cash.tsx";
 import { ChatPage } from "../routes/chat.tsx";
 import { DashboardPage } from "../routes/dashboard.tsx";
+import { ForecastPage } from "../routes/forecast.tsx";
 import { HoldingsPage } from "../routes/holdings.tsx";
 import { ImportsPage } from "../routes/imports.tsx";
 import { LoginPage } from "../routes/login.tsx";
@@ -24,6 +25,7 @@ const routes = {
   "/_authenticated/spending": [() => import("./_authenticated/spending.tsx"), SpendingPage],
   "/_authenticated/tax": [() => import("./_authenticated/tax.tsx"), TaxPage],
   "/_authenticated/rebalance": [() => import("./_authenticated/rebalance.tsx"), RebalancePage],
+  "/_authenticated/forecast": [() => import("./_authenticated/forecast.tsx"), ForecastPage],
   "/login": [() => import("./login.tsx"), LoginPage],
 } as const;
 

@@ -48,7 +48,33 @@ describe("forecast", () => {
       }),
     );
     expect(end.total.expected).toBe(3612);
-    expect(end.contributedEur).toBe(3612);
+    expect(end.newMoneyEur).toBe(3612);
+  });
+
+  test("new money is deflated at each payment's own month; today's value is kept apart", () => {
+    const result = forecast(
+      nominal({
+        real: true,
+        inflation: 0.02,
+        holdings: [holding({ valueEur: 0, rate: 0 }), holding({ id: "b", valueEur: 250, rate: 0 })],
+        contributions: [{ holdingId: "a", monthlyEur: 100 }],
+      }),
+    );
+    const end = result.points[120];
+    expect(result.startValueEur).toBe(250);
+    expect(end?.holdings[0]?.expected).toBe(9844.18);
+    expect(end?.newMoneyEur).toBe(10_877.56);
+  });
+
+  test("within a month: growth first, contributions at month end", () => {
+    const end = last(
+      nominal({
+        months: 12,
+        holdings: [holding({ valueEur: 0 })],
+        contributions: [{ holdingId: "a", monthlyEur: 100 }],
+      }),
+    );
+    expect(end.total.expected).toBe(1232.65);
   });
 
   test("6 % a year for 10 years on 10 000 is 17 908.48 nominal", () => {
@@ -230,6 +256,11 @@ describe("solvers", () => {
     expect(
       Math.abs((needed.rows[0]?.extraMonthlyEur ?? 0) - 3 * (needed.rows[1]?.extraMonthlyEur ?? 0)),
     ).toBeLessThan(0.05);
+  });
+
+  test("monthlyNeeded refuses a byMonth outside 1…600", () => {
+    expect(() => monthlyNeeded(nominal(), 5000, 0)).toThrow("byMonth must be between 1 and 600");
+    expect(() => monthlyNeeded(nominal(), 5000, 601)).toThrow("byMonth must be between 1 and 600");
   });
 
   test("monthlyNeeded is 0 when the target is already reached", () => {

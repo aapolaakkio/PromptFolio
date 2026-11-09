@@ -81,7 +81,8 @@ describe("forecast rates", () => {
     expect(rate?.basis).toBe("history");
     expect(rate?.rate).toBeCloseTo(0.08, 3);
     expect(rate?.volatility).toBeCloseTo(0, 3);
-    expect(rate?.yearsOfHistory).toBeCloseTo(12, 1);
+    // The window's own span: the CAGR, weight and label share it.
+    expect(rate?.yearsOfHistory).toBeCloseTo(10, 1);
   });
 
   test("2 years blends 20 % own with 80 % default", async () => {
@@ -109,6 +110,65 @@ describe("forecast rates", () => {
     );
     const weight = 730 / 365.25 / 10;
     expect(rate?.rate).toBeCloseTo(weight * 0.5 + (1 - weight) * 0.06, 6);
+  });
+
+  /** Closes on given dates, for windows the monthly seeder cannot shape. */
+  const seedAt = async (instrumentId: number, rows: readonly [string, number][]) => {
+    await db
+      .insert(prices)
+      .values(
+        rows.map(([date, close]) => ({
+          instrumentId,
+          date,
+          close,
+          currency: EUR,
+          source: "manual",
+          fetchedAt: new Date(),
+        })),
+      )
+      .run();
+  };
+
+  test("the window starts at the last close on or before ten years back", async () => {
+    const userId = await signUp();
+    const id = await instrument();
+    await seedAt(id, [
+      ["2012-01-02", 100],
+      ["2024-01-02", 100],
+    ]);
+    const rate = (await rates.ratesFor(db, userId, [{ instrumentId: id, kind: "etf" }], ON)).get(
+      id,
+    );
+    expect(rate?.basis).toBe("history");
+    expect(rate?.rate).toBe(0);
+    expect(rate?.yearsOfHistory).toBeCloseTo(12, 1);
+  });
+
+  test("a late close inside the window does not shorten the span", async () => {
+    const userId = await signUp();
+    const id = await instrument();
+    await seedAt(id, [
+      ["2012-01-02", 100],
+      ["2023-11-01", 100],
+      ["2024-01-02", 110],
+    ]);
+    const rate = (await rates.ratesFor(db, userId, [{ instrumentId: id, kind: "etf" }], ON)).get(
+      id,
+    );
+    const years = 4383 / 365.25;
+    expect(rate?.basis).toBe("history");
+    expect(rate?.rate).toBeCloseTo(1.1 ** (1 / years) - 1, 6);
+    expect(rate?.yearsOfHistory).toBeCloseTo(years, 6);
+  });
+
+  test("measured volatility is clamped to 2 so the scenario re-validates", async () => {
+    const userId = await signUp();
+    const id = await instrument();
+    await seedMonthly(id, 125, (k) => (k % 2 === 0 ? 1_000_000 : 1_000));
+    const rate = (await rates.ratesFor(db, userId, [{ instrumentId: id, kind: "stock" }], ON)).get(
+      id,
+    );
+    expect(rate?.volatility).toBe(2);
   });
 
   test("under a year of history is the default", async () => {

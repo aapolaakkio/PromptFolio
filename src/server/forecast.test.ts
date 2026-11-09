@@ -1,8 +1,11 @@
 import { beforeAll, describe, expect, test } from "vitest";
 
+import type { z } from "zod";
+
 import { EUR } from "../core/money.ts";
 import { db } from "./db/index.ts";
 import { accounts, instruments, prices, transactions } from "./db/schema.ts";
+import { ForecastScenarioInput } from "./forecast-inputs.ts";
 
 let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let service: typeof import("./forecast.ts");
@@ -113,9 +116,11 @@ describe("forecastFor", () => {
       ["Mine", 1000, 0, "user"],
       ["Planned", 0, 100, "user"],
     ]);
+    expect(out.holdings.map((row) => row.currency)).toEqual(["EUR", "EUR"]);
     expect(out.scenario.startDate).toBe("2026-11");
     expect(out.result.points[12]?.total.expected).toBe(2200);
-    expect(out.result.points[12]?.contributedEur).toBe(1200);
+    expect(out.result.points[12]?.newMoneyEur).toBe(1200);
+    expect(out.result.startValueEur).toBe(1000);
   });
 
   test("selected instruments narrow the scenario", async () => {
@@ -170,8 +175,26 @@ describe("ForecastScenarioInput", () => {
     ["a bad month", { startDate: "2026-13" }],
     ["a shock below −100 %", { shocks: [{ month: 1, holdingId: null, change: -1.5 }] }],
     ["no holdings", { holdings: [] }],
+    [
+      "toMonth before fromMonth",
+      { contributions: [{ holdingId: "a", monthlyEur: 1, fromMonth: 5, toMonth: 4 }] },
+    ],
+    ["an event at month 0", { events: [{ month: 0, holdingId: "a", amountEur: 1 }] }],
   ])("refuses %s", async (_name, change) => {
     const { ForecastScenarioInput } = await import("./forecast-inputs.ts");
     expect(ForecastScenarioInput.safeParse({ ...base, ...change }).success).toBe(false);
+  });
+
+  test("each refusal says what is wrong", () => {
+    const message = (change: Partial<z.input<typeof ForecastScenarioInput>>) =>
+      ForecastScenarioInput.safeParse({ ...base, ...change }).error?.issues.map(
+        (issue) => issue.message,
+      );
+    expect(
+      message({ contributions: [{ holdingId: "a", monthlyEur: 1, fromMonth: 5, toMonth: 4 }] }),
+    ).toContain("toMonth must not be before fromMonth");
+    expect(message({ events: [{ month: 0, holdingId: "a", amountEur: 1 }] })).toContain(
+      "An event's month must be between 1 and 600 (month 0 is today)",
+    );
   });
 });

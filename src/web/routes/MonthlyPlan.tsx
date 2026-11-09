@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { errorMessage } from "../lib/errors.ts";
-import { FORECAST_QUERY_KEY } from "./Forecast.tsx";
+import { FORECAST_QUERY_KEY } from "./ForecastCard.tsx";
 import { eur } from "../lib/format.ts";
 import { getInstruments } from "../server/instruments.ts";
 import { deletePlanRow, getMonthlyPlan, savePlanRow } from "../server/rebalance.ts";
