@@ -80,8 +80,7 @@ describe("cashBalancesAt", () => {
     );
     expect(spent).toEqual([]);
 
-    // The account records cash (there is a deposit), so an overdraft is a fact
-    // about the account rather than a gap in the export.
+    // The account records cash, so an overdraft is real, not an export gap.
     const overdrawn = cashBalancesAt(
       [txn("DEPOSIT", 1, "100.00"), txn("BUY", 1, "-250.00")],
       "2026-06-01",
@@ -90,9 +89,7 @@ describe("cashBalancesAt", () => {
   });
 
   test("ignores a transfer's amount, which is carried cost basis rather than cash", () => {
-    // A real tender offer: the shares arrive with the acquisition value the
-    // broker stated, so the original cost rides across to the new instrument.
-    // No money moved, and counting it charged a real account 42,60 EUR.
+    // A tender offer: the stated acquisition value rides across; no money moved.
     const balances = cashBalancesAt(
       [
         txn("DEPOSIT", 1, "1000.00"),
@@ -130,15 +127,14 @@ describe("cashBalancesAt", () => {
   });
 
   test("ignores an account whose export records no cash at all", () => {
-    // OP's transaction view: purchases with no deposit behind them. Summing its
-    // rows would report the negative of everything ever bought as a balance.
+    // OP's view: purchases with no deposits; summing would report minus everything bought.
     const opOnly = cashBalancesAt(
       [txn("BUY", 7, "-1000.00"), txn("BUY", 7, "-500.00")],
       "2026-06-01",
     );
     expect(opOnly).toEqual([]);
 
-    // ...while an account that does record cash is unaffected by its neighbour.
+    // An account that records cash is unaffected by its neighbour.
     const mixed = cashBalancesAt(
       [txn("BUY", 7, "-1000.00"), txn("DEPOSIT", 1, "300.00")],
       "2026-06-01",
@@ -162,7 +158,6 @@ describe("valueCash", () => {
     );
 
     expect(formatMoney(valued[0]!.valueEur!)).toBe("1000.00");
-    // 5000 SEK at 0,087 EUR/SEK.
     expect(formatMoney(valued[1]!.valueEur!)).toBe("435.00");
   });
 
@@ -224,8 +219,7 @@ describe("available and locked cash", () => {
   });
 
   test("treats a balance with no availability stated as spendable", () => {
-    // Every account but a deposit is reachable, so the flag is optional and its
-    // absence must not quietly lock money away.
+    // The flag is optional; absence must not lock money away.
     const plain = [
       {
         accountId: 1,

@@ -1,41 +1,29 @@
 import { addMoney, money, toEur, zeroMoney, EUR, type Money } from "../money.ts";
 import type { Txn } from "../types.ts";
 
-export type FeeYear = {
+type FeeYear = {
   readonly year: number;
-  /** Commission charged on a trade, carried on the transaction itself. */
   readonly tradeFeesEur: Money;
-  /** The broker's own charges: a savings plan's service fee, custody. */
+  /** Broker charges: savings-plan service fee, custody. */
   readonly chargedFeesEur: Money;
   readonly totalEur: Money;
-  /** Capital income tax withheld. Excluded from the totals above -- see below. */
+  /** Capital income tax withheld; excluded from the totals above. */
   readonly withheldTaxEur: Money;
 };
 
-/** The magnitude of an amount in euros, whichever way it was signed. */
+/** Absolute amount in euros. */
 const magnitudeEur = (txn: Txn): Money => {
   const minor = txn.amount.minor < 0n ? -txn.amount.minor : txn.amount.minor;
   return toEur(money(minor, txn.amount.currency), txn.fxRateEur, "half-up");
 };
 
 /**
- * What investing has cost, per year.
- *
- * **Capital income tax withheld on an equity savings account is not a fee.**
- * The broker books it as one -- `import/fixtures/broker-mappings.ts` maps `PÄÄOMATULOVERO OST`
- * to `FEE` deliberately, because the money leaves permanently without reaching
- * the investor and calling it a withdrawal would tell the money-weighted return
- * it was money taken out and enjoyed. For a report on the cost of investing it
- * is neither: it is tax on a gain the owner made.
- *
- * In a real ledger those rows are most of the `FEE` total in the years they
- * appear, so counting them would overstate fees by more than half and make fee
- * drag meaningless. They are reported separately instead, under their own name,
- * because the figure is worth seeing -- just not as a fee.
+ * What investing cost per year. Tax withheld on an OST is booked as `FEE` by the importer
+ * (the broker's capital-income-tax row, so it is not a withdrawal in returns) but is tax, not a cost: counting it
+ * would more than double fees, so it is reported separately.
  */
 export const feesByYear = (args: {
   readonly txns: readonly Txn[];
-  /** Accounts whose `FEE` rows are withheld tax rather than a charge. */
   readonly ostAccountIds: ReadonlySet<number>;
 }): readonly FeeYear[] => {
   const byYear = new Map<number, { trade: Money; charged: Money; withheld: Money }>();

@@ -87,8 +87,6 @@ test("refuses to convert with a rate for the wrong currency", () => {
   expect(() => toEur(usd, { scaled: 1n, currency: EUR })).toThrow(/currency/i);
 });
 
-// --- Additional coverage beyond the brief's verbatim tests ---
-
 test("negates money", () => {
   expect(formatMoney(negateMoney(parseMoney("1,23", EUR)))).toBe("-1.23");
   expect(formatMoney(negateMoney(parseMoney("-1,23", EUR)))).toBe("1.23");
@@ -127,14 +125,13 @@ test("floor rounding on negative amounts rounds toward negative infinity", () =>
   expect(formatMoney(divMoney(money(-4n, EUR), 2n, "floor"))).toBe("-0.02");
 });
 
-// --- Currency: any ISO 4217 code, not a closed EUR|USD union (§10a A1) ---
+// --- Currency: any ISO 4217 code ---
 
 test("parseCurrency accepts any three-letter uppercase ISO 4217 shape, including SEK", () => {
   expect(parseCurrency("EUR")).toBe(EUR);
   expect(parseCurrency("SEK")).toBe(SEK);
   expect(parseCurrency("USD")).toBe(USD);
-  // A code the real portfolio has never held is still accepted: nothing in
-  // this codebase's type system may special-case a two-member union.
+  // A never-held code is still accepted.
   expect(parseCurrency("GBP")).toBe(parseCurrency("GBP"));
 });
 

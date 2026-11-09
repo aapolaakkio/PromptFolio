@@ -29,9 +29,7 @@ const only = (d: Disposal, ostAccountIds: ReadonlySet<number> = new Set()) =>
 
 describe("the deemed acquisition cost", () => {
   test("is taken when it beats the actual cost", () => {
-    // Bought for 100 €, sold for 1 000 € after eleven years: the real gain is
-    // 900 €, but 40 % of the sale price may be deducted instead, making it
-    // 600 €. Reporting only the actual figure overstates the tax by a third.
+    // Bought 100 €, sold 1 000 € after eleven years: gain 900 €, or 600 € with the 40 % deemed cost.
     const row = only(
       disposal({
         acquiredOn: "2014-01-10",
@@ -74,8 +72,7 @@ describe("the deemed acquisition cost", () => {
   });
 
   test("never enlarges a loss", () => {
-    // An alternative acquisition cost, not a way to claim a bigger loss than
-    // was suffered: 20 % of 50 € would report a 40 € "gain" on a 50 € loss.
+    // 20 % of 50 € would report a 40 € gain on a 50 € loss.
     const row = only(
       disposal({
         acquiredOn: "2024-01-10",
@@ -92,10 +89,7 @@ describe("the deemed acquisition cost", () => {
 
 describe("the two methods' bases", () => {
   test("differ by the sale fee", () => {
-    // Under the actual-cost method the selling fee is deductible, so the net
-    // proceeds are right. Under the deemed method it is not separately
-    // deductible, and the percentage applies to the gross sale price. Using one
-    // base for both quietly favours the wrong method.
+    // Actual-cost deducts the fee (net proceeds); deemed applies to the gross sale price.
     const row = only(
       disposal({
         acquiredOn: "2024-01-10",
@@ -116,8 +110,7 @@ describe("the two methods' bases", () => {
 
 describe("an equity savings account", () => {
   test("has no taxable disposals, because tax there falls on withdrawal", () => {
-    // Counting the sale as well as the withdrawal would tax the same money
-    // twice -- the failure the phase 1 spec's C7 predicted.
+    // Counting the sale and the withdrawal would tax the same money twice.
     expect(
       taxableDisposals({
         disposals: [

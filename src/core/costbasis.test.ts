@@ -49,12 +49,7 @@ const txn = (
   fxRateEur: parseFxRate(o.rate ?? "1", o.currency ?? EUR),
 });
 
-// `amount` is the fee-inclusive total cash that moved (see `Txn.amount`'s doc
-// in core/types.ts) -- it is what both real brokers report (OP's `Yhteensä`,
-// Nordnet's `Summa`), and the cash views rely on it being the true cash
-// movement. `fee` is carried alongside purely for reporting and must
-// never be added to (or subtracted from) `amount` again here -- doing so was
-// exactly C2: a real broker fee got double-counted into cost basis/proceeds.
+// `amount` is fee-inclusive cash (the broker's total column); `fee` is reporting only and must not be applied again.
 test("a single buy's cost basis is its fee-inclusive amount, unadjusted by fee", () => {
   const { open, disposals } = buildLots([
     txn("BUY", "2025-01-10", { qty: "10", amount: "-1003,00", fee: "3,00" }),
@@ -117,9 +112,7 @@ test("selling more units than held is a domain error", () => {
 });
 
 test("costBasisPerInstrument isolates one instrument's UnmatchedDisposalError from another instrument's own cost basis", () => {
-  // Instrument 7 (this file's `txn()` default) has a perfectly ordinary buy.
-  // Instrument 8 has a SELL with no matching prior BUY at all -- e.g. one page
-  // of a multi-page OP import pasted out of order.
+  // Instrument 7 has an ordinary buy; 8 has a SELL with no prior BUY (pages imported out of order).
   const ok = txn("BUY", "2025-01-10", { qty: "10", amount: "-1000,00" });
   const broken = { ...txn("SELL", "2025-01-05", { qty: "5", amount: "500,00" }), instrumentId: 8 };
 
@@ -158,12 +151,8 @@ test("cost basis at a date sums the open lots", () => {
   expect(formatMoney(costBasisAt(txns, "2025-12-31").get(7)!)).toBe("1800.00");
 });
 
-// --- Additional coverage beyond the brief's verbatim tests ---
-
 test("a sale spanning three lots prorates proceeds without rounding drift", () => {
-  // 1.00 EUR of proceeds split three ways is 0.333... per unit: a naive per-chunk
-  // proportional rounding (half-up to 0.33 each) would total 0.99, not 1.00. The final
-  // chunk must absorb the remainder so the disposals' proceeds always sum to the whole.
+  // Per-chunk half-up would total 0.99 for 1.00 split three ways; the final chunk must absorb the remainder.
   const { disposals } = buildLots([
     txn("BUY", "2025-01-01", { qty: "1", amount: "-1,00" }),
     txn("BUY", "2025-01-02", { qty: "1", amount: "-1,00" }),
@@ -207,9 +196,7 @@ test("a BUY (or TRANSFER_IN) with a non-negative amount is a domain error", () =
 });
 
 test("a split with an uneven ratio gives the remainder to the last lot", () => {
-  // 1:2 rescaled to a total of 10 puts the boundary at 10/3, which has no exact
-  // 6-decimal representation (3.333333...): the first lot's floor-rounded share and the
-  // last lot's exact-remainder share must still add up to exactly 10.
+  // 10/3 has no exact 6-decimal form: the floor-rounded share and the exact-remainder share must still sum to 10.
   const { open } = buildLots([
     txn("BUY", "2025-01-10", { qty: "1", amount: "-100,00" }),
     txn("BUY", "2025-01-11", { qty: "2", amount: "-200,00" }),
@@ -221,16 +208,13 @@ test("a split with an uneven ratio gives the remainder to the last lot", () => {
   expect(open.map((l) => formatMoney(l.costEur))).toEqual(["100.00", "200.00"]);
 });
 
-// A share swap moves a holding between two instruments with no cash: the
-// arriving leg's amount is zero, so without carrying the basis across, the new
-// holding would be priced at nothing and report its whole value as gain.
+// A share swap moves no cash: the basis must carry across or the new holding reports its whole value as gain.
 test("a share swap carries the departing leg's cost basis to the arriving one", () => {
   const bought = {
     ...txn("BUY", "2019-11-03", { qty: "900", amount: "-27.00" }),
     instrumentId: 1,
   };
-  // OP prints the arriving leg above the departing one, so the ledger sees it
-  // first by id -- the ordering inside buildLots is what fixes that.
+  // OP prints the arriving leg first; buildLots ordering fixes that.
   const arrived = {
     ...txn("TRANSFER_IN", "2019-11-24", { qty: "900", amount: "0" }),
     instrumentId: 2,
@@ -244,7 +228,6 @@ test("a share swap carries the departing leg's cost basis to the arriving one", 
   const received = open.filter((lot) => lot.instrumentId === 2);
   expect(received).toHaveLength(1);
   expect(formatMoney(received[0]!.costEur)).toBe("27.00");
-  // The line the shares left keeps nothing.
   expect(open.filter((lot) => lot.instrumentId === 1)).toEqual([]);
 });
 
@@ -254,7 +237,7 @@ test("a transfer in that states its own cost keeps it, rather than claiming a ca
     ...txn("TRANSFER_OUT", "2023-06-01", { qty: "10", amount: "0" }),
     instrumentId: 1,
   };
-  // Nordnet states Hankinta-arvo on the arriving row; that figure wins.
+  // Nordnet states the acquisition cost on the arriving row; that figure wins.
   const arrived = {
     ...txn("TRANSFER_IN", "2023-06-01", { qty: "4", amount: "-32.72" }),
     instrumentId: 2,
@@ -272,11 +255,7 @@ test("a transfer in on a date with no matching transfer out gets no invented cos
   expect(formatMoney(buildLots([arrived]).open[0]!.costEur)).toBe("0.00");
 });
 
-// vero.fi states the matching rule as "The FIFO principle must always be
-// applied to the sale of shares from securities accounts: First In - First
-// Out" *within one account*. Lots were previously pooled by instrument alone,
-// which is a different rule that happens to agree whenever an instrument is
-// held in only one account.
+// vero.fi: FIFO applies within one account, so lots must not pool by instrument alone.
 test("FIFO is per account: disposing from one account does not consume another account's lots", () => {
   const { disposals } = buildLots([
     txn("BUY", "2025-01-10", { qty: "10", amount: "-100,00", accountId: 1 }),
@@ -285,8 +264,7 @@ test("FIFO is per account: disposing from one account does not consume another a
   ]);
 
   expect(disposals).toHaveLength(1);
-  // Pooling would take account 1's cheaper lot first and report a 500,00 gain
-  // against an account that never held it.
+  // Pooling would take account 1's cheaper lot and report a 500,00 gain against an account that never held it.
   expect(formatMoney(disposals[0]!.costEur)).toBe("500.00");
   expect(formatMoney(disposals[0]!.gainEur)).toBe("100.00");
   expect(disposals[0]!.accountId).toBe(2);
@@ -301,11 +279,9 @@ test("each account keeps its own open lots, while the instrument's total still s
   expect(
     buildLots(txns)
       .open.map((lot) => lot.accountId)
-      // Numeric, not the default string order, which would put 10 before 2.
       .sort((a, b) => a - b),
   ).toEqual([1, 2]);
-  // A position spans accounts even though tax does not, so the holdings view's
-  // per-instrument total must not change with this split.
+  // Per-instrument totals must not change with the account split.
   expect(formatMoney(costBasisAt(txns, "2025-12-31").get(7) ?? zeroMoney(EUR))).toBe("600.00");
 });
 
@@ -315,8 +291,7 @@ test("a disposal carries its share of the sale fee, which the deemed-cost base n
     txn("SELL", "2025-06-01", { qty: "10", amount: "590,00", fee: "10,00" }),
   ]);
 
-  // `amount` is already net of the fee, so the gross sale price -- the base the
-  // hankintameno-olettama is a percentage of -- is `amount + fee`.
+  // The deemed acquisition cost is a percentage of the gross price, `amount + fee`.
   expect(formatMoney(disposals[0]!.proceedsEur)).toBe("590.00");
   expect(formatMoney(disposals[0]!.feeEur)).toBe("10.00");
 });
@@ -330,17 +305,11 @@ test("a fee is split across the lots a sale consumes, and the parts sum to the w
 
   expect(disposals).toHaveLength(2);
   const total = disposals.reduce((sum, d) => addMoney(sum, d.feeEur), zeroMoney(EUR));
-  // 10,01 does not halve evenly: the last lot absorbs the remainder rather
-  // than the split quietly losing a cent.
+  // 10,01 does not halve evenly: the last lot absorbs the remainder.
   expect(formatMoney(total)).toBe("10.01");
 });
 
-// A swap does not restart ownership. Merging the arriving position into one lot
-// lost each lot's acquisition date -- which sets the deemed-acquisition-cost
-// percentage -- and the per-lot cost that FIFO consumes on a later partial
-// sale. A real fractional cash-out days after a swap took its cost pro-rata
-// across the whole position instead of from the oldest lot, leaving every
-// remaining share's basis short of what the broker reported.
+// A swap keeps each lot's acquisition date (sets the deemed-cost percentage) and cost (consumed by later partial sales).
 test("a share swap carries the departing lots, keeping their acquisition dates", () => {
   const { open } = buildLots([
     txn("BUY", "2020-12-07", { qty: "6", amount: "-60,00", instrumentId: 1 }),
@@ -351,7 +320,6 @@ test("a share swap carries the departing lots, keeping their acquisition dates",
 
   expect(open).toHaveLength(2);
   expect(open.map((lot) => lot.acquiredOn)).toEqual(["2020-12-07", "2021-05-05"]);
-  // Halved units, unchanged cost: the shares changed form, not value.
   expect(open.map((lot) => formatQuantity(lot.quantity))).toEqual(["3.000000", "3.000000"]);
   expect(open.map((lot) => formatMoney(lot.costEur))).toEqual(["60.00", "120.00"]);
 });
@@ -365,22 +333,17 @@ test("a sale after a swap consumes the oldest carried lot first, not the positio
     txn("SELL", "2023-10-10", { qty: "3", amount: "50,00", instrumentId: 2 }),
   ]);
 
-  // The swap's own legs are disposals too (that is how cost basis follows the
-  // shares), so only the sale's own row is read here.
+  // The swap's own legs are disposals too; read only the sale's row.
   const sold = disposals.filter((disposal) => disposal.soldOn === "2023-10-10");
 
-  // FIFO takes the whole 2020 lot at 60,00. Pro rata across a merged position
-  // would have taken 90,00 -- half of the 180,00 total -- and left the
-  // remaining shares 30,00 short.
+  // FIFO takes the whole 2020 lot at 60,00; pro rata over a merged position would take 90,00.
   expect(sold).toHaveLength(1);
   expect(formatMoney(sold[0]!.costEur)).toBe("60.00");
   expect(sold[0]!.acquiredOn).toBe("2020-12-07");
 });
 
 test("an arriving leg that states a value the departing leg did not give up is taken at its word", () => {
-  // Same total means the same swap, described twice; a different total
-  // describes something else, and the stated figure is the only evidence for
-  // what.
+  // A different stated total is not a plain swap, and is taken at its word.
   const { open } = buildLots([
     txn("BUY", "2020-12-07", { qty: "6", amount: "-60,00", instrumentId: 1 }),
     txn("TRANSFER_OUT", "2023-10-04", { qty: "6", amount: "0", instrumentId: 1 }),

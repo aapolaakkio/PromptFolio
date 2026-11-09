@@ -33,8 +33,7 @@ describe("taxableDividends", () => {
   test("makes 85 % of the gross taxable capital income", () => {
     const [row] = rows([dividend({ paidOn: "2025-04-07", amount: "74,50", tax: "25,50" })]);
 
-    // The cash that arrived is net of the 25,5 % the payer withheld; the gross
-    // is what the company paid, and the 85 % applies to that.
+    // Cash is net of the 25,5 % withheld; the 85 % applies to the gross.
     expect(formatMoney(row!.grossEur)).toBe("100.00");
     expect(formatMoney(row!.withheldEur)).toBe("25.50");
     expect(formatMoney(row!.taxableEur)).toBe("85.00");
@@ -42,10 +41,7 @@ describe("taxableDividends", () => {
   });
 
   test("says so when the ledger holds no withholding, rather than inventing one", () => {
-    // Both broker exports publish one combined "Kulut / Korot / Verot" column,
-    // so no dividend in a real ledger records what was withheld. Recovering a
-    // gross by dividing by 0.745 would be right for a Finnish listed share and
-    // wrong for every foreign one.
+    // No dividend records withholding (combined column); grossing up by 0.745 would be wrong for foreign shares.
     const [row] = rows([dividend({ paidOn: "2025-04-07", amount: "74,50" })]);
 
     expect(row!.withholdingRecorded).toBe(false);

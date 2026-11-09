@@ -83,15 +83,12 @@ describe("the small-sales exemption", () => {
     const year = yearOf(2025, [sold("2025-06-01", { proceeds: "1000,01", cost: "100,00" })]);
 
     expect(year.exempt).toBe(false);
-    // Not 900,01: the lot was held under ten years, so the 20 % deemed cost
-    // (200,00) beats the actual 100,00 and the reported gain is the smaller
-    // one the taxpayer is entitled to claim.
+    // Not 900,01: held under ten years, the 20 % deemed cost (200,00) beats the actual 100,00.
     expect(formatMoney(year.netEur)).toBe("800.01");
   });
 
   test("drops the year's losses too, since they are not deductible either", () => {
-    // Reporting the exemption without this would overstate the carry-forward:
-    // a year that owes nothing also gives nothing to later years.
+    // A year that owes nothing gives nothing to later years.
     const year = yearOf(2025, [sold("2025-06-01", { proceeds: "400,00", cost: "900,00" })]);
 
     expect(year.exempt).toBe(true);
@@ -119,7 +116,6 @@ describe("losses", () => {
 
     expect(year.lossCarriedIn).toHaveLength(1);
     expect(formatMoney(year.lossCarriedIn[0]!.amountEur)).toBe("1000.00");
-    // The 2020 loss wipes out the 2025 gain exactly.
     expect(formatMoney(year.netEur)).toBe("0.00");
   });
 
@@ -133,8 +129,7 @@ describe("losses", () => {
   });
 
   test("are not reused once an intervening year has absorbed them", () => {
-    // A carried loss consumed in 2023 must not reappear in 2025 -- the bug
-    // that makes a carry-forward look inexhaustible.
+    // A carried loss consumed in 2023 must not reappear in 2025.
     const year = yearOf(2025, [
       sold("2022-06-01", { proceeds: "2000,00", cost: "3000,00" }),
       sold("2023-06-01", { proceeds: "5000,00", cost: "4000,00" }),
@@ -148,9 +143,7 @@ describe("losses", () => {
 
 describe("what is not a disposal", () => {
   test("a transfer between the owner's own accounts", () => {
-    // buildLots records a TRANSFER_OUT as a disposal so cost basis follows the
-    // shares. Moving one's own shares is not a sale, and counting it would
-    // report a gain nobody realised.
+    // buildLots records TRANSFER_OUT as a disposal; moving own shares is not a sale.
     const year = taxYear({
       ...base,
       year: 2025,

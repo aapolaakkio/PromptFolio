@@ -8,12 +8,12 @@ import { ostReport } from "./ost.ts";
 import { LOSS_CARRY_YEARS, SMALL_SALE_LIMIT_EUR } from "./rates.ts";
 
 /** A loss from an earlier year, still deductible. */
-export type CarriedLoss = { readonly fromYear: number; readonly amountEur: Money };
+type CarriedLoss = { readonly fromYear: number; readonly amountEur: Money };
 
 export type TaxYear = {
   readonly year: number;
   readonly disposals: readonly TaxableDisposal[];
-  /** Gross sale prices for the year -- what the 1 000 € exemption is measured against. */
+  /** Gross sale prices; the 1 000 € exemption is measured on these. */
   readonly totalSalePriceEur: Money;
   readonly exempt: boolean;
   readonly gainsEur: Money;
@@ -33,15 +33,8 @@ const sum = (amounts: readonly Money[]): Money =>
   amounts.reduce((total, amount) => addMoney(total, amount), zeroMoney(EUR));
 
 /**
- * A disposal is taxable only if a SELL produced it. `buildLots` also records a
- * TRANSFER_OUT as a disposal, correctly, so cost basis follows the shares to
- * the receiving account -- but moving one's own shares is not a sale, and a
- * taxable set that included transfers would report gains nobody realised.
- *
- * Matched on account, instrument and date, which is what a disposal carries.
- * A transfer and a sale of the same instrument from the same account on the
- * same day would be indistinguishable here; the SELL wins, which is the safe
- * direction -- reporting a real sale beats silently dropping one.
+ * Keeps disposals a SELL produced (`buildLots` also records TRANSFER_OUT, not a sale). Matched on
+ * account, instrument and date; a same-day transfer and sale are indistinguishable and the sale wins.
  */
 const soldOnly = (disposals: readonly Disposal[], txns: readonly Txn[]): Disposal[] => {
   const sold = new Set(
@@ -64,17 +57,13 @@ const resultFor = (
     ostAccountIds,
   });
   const totalSalePriceEur = sum(rows.map((row) => row.grossProceedsEur));
-  // "Sold for a total of EUR 1,000 at maximum" -- measured on the sale prices,
-  // not on the gains.
   const exempt = totalSalePriceEur.minor <= SMALL_SALE_LIMIT_EUR.minor;
   const gains = rows.filter((row) => row.gainEur.minor > 0n).map((row) => row.gainEur);
   const losses = rows
     .filter((row) => row.gainEur.minor < 0n)
     .map((row) => negateMoney(row.gainEur));
 
-  // The exemption cuts both ways: under the threshold the gains are exempt and
-  // the losses are correspondingly not deductible. Reporting one without the
-  // other would overstate what carries forward.
+  // Under the threshold gains are exempt and losses non-deductible.
   return {
     rows,
     totalSalePriceEur,
@@ -94,8 +83,7 @@ export const taxYear = (args: {
   const { year, txns, disposals, ostAccountIds } = args;
   const current = resultFor(disposals, txns, ostAccountIds, year);
 
-  // Losses from the previous five years, oldest first, each already net of the
-  // gains of its own year and of every year since.
+  // Prior years' losses, oldest first, net of the gains of their own year and every year since.
   const carried: CarriedLoss[] = [];
   for (let from = year - LOSS_CARRY_YEARS; from < year; from++) {
     const past = resultFor(disposals, txns, ostAccountIds, from);
@@ -109,8 +97,7 @@ export const taxYear = (args: {
     if (unused.minor > 0n) carried.push({ fromYear: from, amountEur: unused });
   }
 
-  // This year's own losses first, then the carried ones oldest first: a loss
-  // that expires soonest is worth using first.
+  // Own losses first, then carried ones oldest first (soonest to expire).
   let remainingGains = subMoney(current.gainsEur, current.lossesEur);
   const carriedOut: CarriedLoss[] = [];
   let lossesUsed =

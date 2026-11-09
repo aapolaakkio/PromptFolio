@@ -8,7 +8,7 @@ import {
 } from "./money.ts";
 import type { CashFlow, IsoDate, Txn } from "./types.ts";
 
-/** Sign a transaction type applies to unit count. `null` means "not a unit movement". */
+/** Sign applied to unit count; `null` is not a unit movement. */
 const unitDirection = (type: Txn["type"]): 1 | -1 | null => {
   switch (type) {
     case "BUY":
@@ -22,7 +22,7 @@ const unitDirection = (type: Txn["type"]): 1 | -1 | null => {
   }
 };
 
-/** The fields a unit count needs, so a caller without money values can count units too. */
+/** Fields a unit count needs. */
 export type UnitTxn = Pick<Txn, "id" | "instrumentId" | "type" | "tradeDate" | "quantity">;
 
 const byTradeDateThenId = (
@@ -30,7 +30,7 @@ const byTradeDateThenId = (
   b: Pick<Txn, "id" | "tradeDate">,
 ): number => (a.tradeDate === b.tradeDate ? a.id - b.id : a.tradeDate < b.tradeDate ? -1 : 1);
 
-/** Every transaction dated on or before `on`, oldest first. Exported for core/cash.ts. */
+/** Transactions on or before `on`, oldest first. */
 export const upTo = <T extends Pick<Txn, "id" | "tradeDate">>(
   txns: readonly T[],
   on: IsoDate,
@@ -45,8 +45,7 @@ export const positionsAt = (txns: readonly UnitTxn[], on: IsoDate): Map<number, 
   for (const t of upTo(txns, on)) {
     if (t.instrumentId === null) continue;
     if (t.type === "SPLIT") {
-      // SPLIT's quantity is the resulting total, not a delta — replace outright,
-      // even if there was no prior position (e.g. the instrument is new to the ledger).
+      // SPLIT's quantity is the resulting total, not a delta.
       positions.set(t.instrumentId, t.quantity);
       continue;
     }
@@ -62,13 +61,7 @@ export const positionsAt = (txns: readonly UnitTxn[], on: IsoDate): Map<number, 
   return positions;
 };
 
-/**
- * Instruments disposed of more than acquired by `on`. The quantity stays negative
- * in the ledger, which is the honest state, but it must never be priced and
- * folded into a total, so every consumer skips it and says which it left out.
- *
- * The cost-basis side has its own richer signal carrying the offending date.
- */
+/** Instruments disposed of more than acquired by `on`; consumers skip them and say so, never price them. */
 export const negativePositionIds = (txns: readonly Txn[], on: IsoDate): number[] =>
   [...positionsAt(txns, on)].filter(([, qty]) => qty.scaled < 0n).map(([id]) => id);
 
@@ -80,18 +73,8 @@ export const externalCashFlows = (txns: readonly Txn[]): CashFlow[] =>
     .map((t) => ({ date: t.tradeDate, amountEur: toEur(t.amount, t.fxRateEur) }));
 
 /**
- * Flows into and out of the invested portfolio, for `twr` alone and never `xirr`.
- *
- * The value series prices positions only, so the flow that changes what it prices
- * is a purchase or a sale. A deposit that has not been invested touches only the
- * cash account, which the series never looks at.
- *
- * Positive means into the measured thing, so a purchase's negative amount is
- * negated into an inflow and a sale's into an outflow.
- *
- * Transfers move quantities too but are left out: transferred in kind they carry
- * no amount to size a flow with. A transfer inside the window therefore causes
- * the mismatch `twr` warns about -- a known gap, for a rare shape.
+ * Buys and sales as flows into the invested portfolio, for `twr` only, never `xirr`: the value
+ * series prices positions only. Transfers are left out (no amount), a known gap for a rare shape.
  */
 export const investedCashFlows = (txns: readonly Txn[]): CashFlow[] =>
   txns
@@ -100,13 +83,7 @@ export const investedCashFlows = (txns: readonly Txn[]): CashFlow[] =>
     .sort(byTradeDateThenId)
     .map((t) => ({ date: t.tradeDate, amountEur: negateMoney(toEur(t.amount, t.fxRateEur)) }));
 
-/**
- * Accounts holding purchases but no cash record of any kind: no DEPOSIT, no
- * WITHDRAWAL, ever. OP's web transaction view is one -- it lists securities
- * transactions only, so the money that funded them never appears, and a
- * money-weighted return computed from deposits alone measures a portfolio
- * against a fraction of what was actually put into it.
- */
+/** Accounts with purchases but no cash record (no DEPOSIT, WITHDRAWAL or opening balance); OP's web view is one. */
 export const accountsMissingCashRecord = (txns: readonly Txn[]): number[] => {
   const withCash = new Set<number>();
   const withPurchases = new Set<number>();
@@ -119,18 +96,7 @@ export const accountsMissingCashRecord = (txns: readonly Txn[]): number[] => {
   return [...withPurchases].filter((id) => !withCash.has(id)).sort((a, b) => a - b);
 };
 
-/**
- * What a money-weighted return is measured against, chosen per account from
- * whichever record it keeps.
- *
- * A broker that reports cash gives better evidence: deposits see money sitting
- * uninvested, purchases cannot. One that reports none leaves a purchase as the
- * only evidence money arrived, and deposits alone made those holdings appear from
- * nowhere -- reporting a real portfolio at three times its true rate.
- *
- * Per account, not a blanket switch: mixing the two within one would count a
- * deposit and the purchase it funded twice.
- */
+/** XIRR flows per account: deposits/withdrawals where cash is recorded, else trades. Never mixed within one account (double count). */
 export const fundingCashFlows = (txns: readonly Txn[]): CashFlow[] => {
   const fallback = new Set(accountsMissingCashRecord(txns));
   const relevant = txns.filter((t) =>

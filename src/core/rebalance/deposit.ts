@@ -2,24 +2,15 @@ import { addMoney, money, zeroMoney, EUR, type Money } from "../money.ts";
 import type { DriftRow } from "./drift.ts";
 import { BASIS_POINTS, type Target } from "./targets.ts";
 
-export type DepositAllocation = {
+type DepositAllocation = {
   readonly key: string;
   readonly label: string;
   readonly amountEur: Money;
 };
 
 /**
- * Where to put money about to be paid in, to close as much of the gap as it can.
- *
- * The default remedy for drift, and the only one that cannot go wrong: it
- * realises no gain, triggers no tax, and moves the portfolio toward its target
- * by construction. Selling to rebalance is a separate thing the owner asks for.
- *
- * The shortfall is measured against the target applied to the total *after* the
- * deposit, not before it. Adding money changes every weight: a slice exactly on
- * target beforehand is underweight once the money lands, and a rule measured on
- * the old total would send nothing there and leave the deposit stuck in
- * whichever slice happened to be furthest behind.
+ * Where to put a coming deposit to close the gap: realises no gain, so the default remedy for drift.
+ * Shortfall is measured against the target on the total after the deposit, since the deposit changes every weight.
  */
 export const allocateDeposit = (args: {
   readonly rows: readonly DriftRow[];
@@ -33,8 +24,7 @@ export const allocateDeposit = (args: {
   const after = addMoney(totalEur, depositEur);
   const rowByKey = new Map(rows.map((row) => [row.key, row]));
 
-  // How far each targeted slice is below where it should be once the money has
-  // landed. A slice already at or above that needs none of it.
+  // Each targeted slice's gap below target once the money lands.
   const shortfalls = targets
     .map((target) => {
       const row = rowByKey.get(target.key);
@@ -47,9 +37,7 @@ export const allocateDeposit = (args: {
 
   const totalShort = shortfalls.reduce((sum, entry) => sum + entry.short, 0n);
 
-  // More than enough to close every gap: fill them all, then spread what is
-  // left by the target weights. Dumping the excess into whichever slice was
-  // furthest behind would overshoot it and open a new gap the other way.
+  // Surplus: fill every gap, then spread the rest by target weight (not into one slice, which would overshoot).
   const excess = depositEur.minor - totalShort;
   const base =
     excess >= 0n
@@ -75,9 +63,7 @@ export const allocateDeposit = (args: {
 
   if (spread.length === 0) return [];
 
-  // The largest allocation absorbs the rounding remainder, so the parts sum to
-  // exactly what was paid in -- a split that loses a cent will not reconcile
-  // against the deposit it describes.
+  // The largest allocation absorbs rounding so the parts sum exactly to the deposit.
   const assigned = spread.reduce((sum, entry) => sum + entry.amount, 0n);
   const remainder = depositEur.minor - assigned;
   const largest = spread.reduce(

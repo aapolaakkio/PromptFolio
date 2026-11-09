@@ -13,36 +13,18 @@ import { costBasisAt } from "./costbasis.ts";
 import { investedCashFlows, positionsAt } from "./ledger.ts";
 import type { CashFlow, Instrument, IsoDate, Txn } from "./types.ts";
 
-export type ValuePoint = {
+type ValuePoint = {
   readonly date: IsoDate;
   readonly valueEur: Money;
   readonly stale: boolean;
-  /**
-   * Instruments left out of `valueEur` because they could not honestly be valued:
-   * a negative net position, no price for the date, or no fx rate for it.
-   *
-   * Distinct from `stale`, which means a value was computed from an old price.
-   * An excluded holding is not in the total at all, and the caller must show it
-   * as unvalued rather than folding in an implied zero. Normally empty.
-   */
+  /** Left out of `valueEur`: negative position, no price, or no fx rate. Show as unvalued, not zero. */
   readonly excludedInstrumentIds: readonly number[];
-  /**
-   * Instruments valued at their cost basis on this day, because no price exists
-   * for them yet. Reported so `twr` can skip the sub-period in which one starts
-   * or stops being measured that way -- the jump then is a change of measuring
-   * stick, not a return.
-   */
+  /** Valued at cost basis because no price exists yet; `twr` skips the sub-period where this changes. */
   readonly costValuedInstrumentIds: readonly number[];
 };
 
-/**
- * `priceOn`/`fxOn` give the last known value on or before `date`. That alone cannot
- * tell a fresh price from a carried-forward one, so `priceDateOn` reports what the
- * returned price is dated: staleness is `priceDateOn(...) !== date`.
- */
-// Function properties, not method shorthand: every implementation is a closure
-// over its own data with no `this`, and callers pass `prices.fxOn` around as a
-// plain function. Method syntax would claim a receiver none of them has.
+/** `priceOn`/`fxOn` carry the last known value forward; stale means `priceDateOn(...) !== date`. */
+// Function properties, not methods: callers pass `prices.fxOn` around unbound.
 export type PriceLookup = {
   priceOn: (instrumentId: number, date: IsoDate) => Money | null;
   priceDateOn: (instrumentId: number, date: IsoDate) => IsoDate | null;
@@ -59,12 +41,7 @@ export const datesBetween = (from: IsoDate, to: IsoDate): IsoDate[] => {
   return out;
 };
 
-/**
- * Fractional years, ACT/ACT (ISDA): whole years by calendar anniversary, the rest as
- * days over the length of that anniversary year. An exact calendar year comes out at
- * 1.0 whether or not a leap day falls inside it, which a fixed 365 or 365.25 cannot
- * manage to XIRR's precision.
- */
+/** ACT/ACT (ISDA) fractional years: an exact calendar year is 1.0 even across a leap day. */
 const yearsBetween = (a: IsoDate, b: IsoDate): number => {
   const start = new Date(`${a}T00:00:00.000Z`);
   const end = new Date(`${b}T00:00:00.000Z`);
@@ -79,10 +56,7 @@ const yearsBetween = (a: IsoDate, b: IsoDate): number => {
   return years + fraction;
 };
 
-/**
- * Daily EUR value of all positions. A day is stale when a price was carried forward
- * rather than dated that day, or when a holding could not be valued at all.
- */
+/** Daily EUR value of all positions. Stale: a carried-forward price or an unvalued holding. */
 export const valueSeries = (
   txns: readonly Txn[],
   instruments: readonly Instrument[],
@@ -92,13 +66,8 @@ export const valueSeries = (
 ): ValuePoint[] => {
   const byId = new Map(instruments.map((i) => [i.id, i]));
 
-  /**
-   * Every split, with the counts before and after it. Price history arrives
-   * split-adjusted while the ledger keeps the raw counts held, so multiplying one
-   * by the other valued pre-split shares at post-split prices -- a hundredfold
-   * overstatement for a 1:100 reverse split, vanishing on the split date and
-   * reading as a huge one-day loss.
-   */
+  // Price history is split-adjusted but the ledger keeps raw counts, so pre-split
+  // holdings must be restated or they are valued at post-split prices.
   const splitsByInstrument = new Map<
     number,
     Array<{ date: IsoDate; after: bigint; before: bigint }>
@@ -115,12 +84,7 @@ export const valueSeries = (
     splitsByInstrument.set(t.instrumentId, list);
   }
 
-  /**
-   * A held quantity restated in the price series' own terms: scaled by every split
-   * still ahead of `date`, so a pre-split holding is valued as the post-split
-   * shares it became. Exact bigint arithmetic, half-up on the remainder, matching
-   * the rounding `core/money.ts` applies everywhere else.
-   */
+  // Scales by every split after `date`; bigint, half-up like money.ts.
   const asPricedQuantity = (instrumentId: number, qty: Quantity, date: IsoDate): Quantity => {
     const splits = splitsByInstrument.get(instrumentId);
     if (splits === undefined) return qty;
@@ -137,11 +101,7 @@ export const valueSeries = (
     return { scaled: remainder * 2n >= denominator ? quotient + 1n : quotient };
   };
 
-  /**
-   * Cost basis per instrument on a date, for holdings that have no price yet.
-   * Built only when that happens and memoised per date: a full ledger has
-   * thousands of dates and almost all of them price everything they hold.
-   */
+  // Lazy and memoised per date: almost every date prices everything it holds.
   const costCache = new Map<IsoDate, Map<number, Money>>();
   const costOn = (instrumentId: number, date: IsoDate): Money | null => {
     let byInstrument = costCache.get(date);
@@ -149,8 +109,7 @@ export const valueSeries = (
       try {
         byInstrument = costBasisAt(txns, date);
       } catch {
-        // An unmatched disposal somewhere in the ledger: the holding stays
-        // excluded rather than valued from a basis that could not be built.
+        // Unmatched disposal: stay excluded rather than use an unbuildable basis.
         byInstrument = new Map<number, Money>();
       }
       costCache.set(date, byInstrument);
@@ -166,32 +125,22 @@ export const valueSeries = (
     for (const [instrumentId, qty] of positionsAt(txns, date)) {
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
-      // A negative quantity is an unmatched disposal, not a short position: priced,
-      // it would drag the total down by a fabricated amount. Recorded rather than
-      // dropped, so the caller knows the day is missing an instrument.
+      // Negative means an unmatched disposal, not a short: pricing it would fabricate a loss.
       if (qty.scaled < 0n) {
-        // Missing a real holding, like the branches below: same signal, not a
-        // clean-looking number with an exclusion nobody was told to distrust.
         stale = true;
         excludedInstrumentIds.push(instrumentId);
         continue;
       }
       const price = prices.priceOn(instrumentId, date);
       if (price === null) {
-        // No price at all, not even a carried-forward one, so this is before the
-        // instrument's first: a subscription bought before listing, a delisted
-        // holding, a fund whose provider serves only recent history. Cost
-        // understates movement but never invents any; excluding it instead dropped
-        // a real position out of the portfolio and made twr skip every day it was
-        // held, which on a real ledger drove the figure to null.
+        // Before the first price (pre-listing buy, delisted, short history): cost
+        // understates movement but never invents it; excluding made twr null.
         const cost = costOn(instrumentId, date);
         if (cost === null) {
           stale = true;
           excludedInstrumentIds.push(instrumentId);
           continue;
         }
-        // Cost basis is already EUR, so no rate is needed. `stale` still marks the
-        // day as not built from live prices.
         stale = true;
         costValuedInstrumentIds.push(instrumentId);
         value = addMoney(value, cost);
@@ -205,8 +154,7 @@ export const valueSeries = (
       }
       const rate = prices.fxOn(instrument.currency, date);
       if (rate === null) {
-        // A dated price but no fx rate. Never fall through unconverted or as an
-        // implied zero: excluded exactly like a missing price.
+        // Price without fx: exclude, never use unconverted.
         stale = true;
         excludedInstrumentIds.push(instrumentId);
         continue;
@@ -217,7 +165,7 @@ export const valueSeries = (
   });
 };
 
-/** For the rate maths only. Rates are the only numbers in core; never build an amount from this. */
+/** Rate maths only; never build an amount from this. */
 const toNumber = (m: Money): number => Number(m.minor) / 100;
 
 /** True when both lists name the same instruments, order aside. */
@@ -269,34 +217,10 @@ export const xirr = (flows: readonly CashFlow[], finalValue: CashFlow): number =
 };
 
 /**
- * Time-weighted return: chained sub-period returns, neutralising the timing of flows.
- *
- * `flows` must describe the same portfolio `values` measures, or this computes the
- * return of two different things. `values` prices positions only, so the only flow
- * that changes it is a trade: pass `investedCashFlows`, never `externalCashFlows`
- * (that one is deposit-shaped and belongs to `xirr`).
- *
- * Same-day convention: `valueSeries(D)` already includes a trade dated `D`, so a flow
- * dated `D` is subtracted back out of the day's value before comparing it to the
- * previous base -- otherwise the capital it added counts twice, once as the base
- * growing and again as the market growing it.
- *
- * A sub-period is skipped rather than chained when it cannot be trusted:
- *
- *   - a zero start, because a deposit that has not funded a purchase yet has no base
- *     to measure against, and `0 / something` poisons every later factor;
- *   - either endpoint carrying an exclusion, because the missing holding's value makes
- *     the comparison fabricated -- a low end reads as a loss down to -100%, a low start
- *     as a gain out of nowhere;
- *   - a holding changing between cost-valued and priced, because the jump then is a
- *     change of measuring stick, not a return.
- *
- * Skipping a handful is honest; skipping most of them is not. A holding left unpriced
- * for months skips every sub-period touching it, and with it every other holding's real
- * return across that stretch -- a much shorter measurement wearing the original's label.
- * So once exclusion-driven skips are the majority, this returns null: the same honest
- * unknown `xirr` gives rather than a precise-looking number computed from a fraction of
- * the window it claims.
+ * Time-weighted return. `flows` must be `investedCashFlows` (trades), not `externalCashFlows`.
+ * A flow dated D is subtracted from D's value, since valueSeries(D) already includes that trade.
+ * Skipped sub-periods: zero start, an excluded holding at either end, or a holding switching
+ * between cost-valued and priced. Returns null once such skips are the majority.
  */
 export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): number | null => {
   if (values.length < 2) return 0;
@@ -312,47 +236,30 @@ export const twr = (values: readonly ValuePoint[], flows: readonly CashFlow[]): 
     const startPoint = values[i - 1]!;
     const endPoint = values[i]!;
     const start = toNumber(startPoint.valueEur);
-    // No base to measure against yet -- see this function's doc.
     if (start === 0) continue;
-    // Counted separately from the zero-start case, so the majority check below can
-    // tell a real gap in the data from the zero every ledger starts with.
+    // Counted apart from zero starts: those are normal, these are data gaps.
     if (startPoint.excludedInstrumentIds.length > 0 || endPoint.excludedInstrumentIds.length > 0) {
       excludedSkips++;
       continue;
     }
-    // Months of movement land in one sub-period the day a holding stops being
-    // valued at cost. A change of measuring stick, not a return.
     if (!sameInstrumentSet(startPoint.costValuedInstrumentIds, endPoint.costValuedInstrumentIds)) {
       excludedSkips++;
       continue;
     }
-    // Subtracted back out so capital invested that day is not read as growth.
     const end = toNumber(endPoint.valueEur) - (flowsByDate.get(endPoint.date) ?? 0);
     chained *= end / start;
     contributed++;
   }
 
-  // A minority sample of the window is reported unknown, not as a rate.
   if (excludedSkips > 0 && excludedSkips >= contributed) return null;
 
   return chained - 1;
 };
 
 /** One day's invested capital: what has been put into holdings, net of what has been taken out. */
-export type InvestedPoint = { readonly date: IsoDate; readonly investedEur: Money };
+type InvestedPoint = { readonly date: IsoDate; readonly investedEur: Money };
 
-/**
- * What the owner has put into their holdings, day by day.
- *
- * The counterpart to `valueSeries`: drawn together, the gap between the two is
- * the return, and it is the one picture that makes a percentage feel like
- * money. A rising value line above a flat invested line is growth; the same
- * value line above an equally rising invested line is only deposits.
- *
- * Built from `investedCashFlows`, the same flows XIRR uses, so the two cannot
- * disagree about what counts as invested. A sale reduces it: the money came
- * back out, whether or not it was spent.
- */
+/** Running invested capital from `investedCashFlows` (same as XIRR); a sale reduces it. */
 export const investedSeries = (
   txns: readonly Txn[],
   from: IsoDate,

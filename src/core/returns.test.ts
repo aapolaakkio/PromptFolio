@@ -139,8 +139,7 @@ test("converts a USD position through fxOn with correctly rounded EUR value", ()
     currency: USD,
     fxRateEur: parseFxRate("0.85005000", USD),
   };
-  // Chosen so the exact quotient lands on a rounding tie: half-up gives 85.01,
-  // any rounding-down mode would silently give 85.00 instead.
+  // Exact quotient is a rounding tie: half-up gives 85.01, rounding down 85.00.
   const usdPrices: PriceLookup = {
     priceOn: (_id, date) => (date >= "2025-01-01" ? parseMoney("100,00", USD) : null),
     priceDateOn: (_id, date) => (date >= "2025-01-01" ? "2025-01-01" : null),
@@ -158,17 +157,10 @@ test("an instrument with no known price contributes nothing and marks the day st
     fxOn: () => parseFxRate("1", EUR),
   };
   const series = valueSeries(txns, [instrument], neverPriced, "2025-01-01", "2025-01-01");
-  // Superseded: this used to report 0,00 EUR and exclude the holding. A holding with
-  // no price *yet* is now carried at its cost basis -- what was paid is the honest
-  // value of an IPO subscription, a delisted line, or a fund whose provider serves
-  // only recent history -- and reported as cost-valued rather than as a hole.
+  // No price yet: carried at cost basis (IPO subscription, delisted, short history), reported as cost-valued.
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["1000.00"]);
   expect(series.map((p) => p.stale)).toEqual([true]);
   expect(series.map((p) => p.costValuedInstrumentIds)).toEqual([[7]]);
-  // C1's requirement still holds, now met by costValuedInstrumentIds above: the
-  // caller can still tell how this day's number was arrived at. Nothing is
-  // *excluded* any more, because nothing is missing -- the holding is valued, just
-  // at cost rather than at a market price.
   expect(series[0]!.excludedInstrumentIds).toEqual([]);
 });
 
@@ -195,17 +187,11 @@ test("a priced USD instrument with no known fx rate contributes nothing and mark
   const series = valueSeries([usdTxn], [usdInstrument], noFxRate, "2025-01-01", "2025-01-01");
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
   expect(series.map((p) => p.stale)).toEqual([true]);
-  // C1: same as the no-price case above -- a real, dated price exists here, but the
-  // missing fx rate must still exclude (not zero-fabricate) this holding, visibly.
   expect(series[0]!.excludedInstrumentIds).toEqual([9]);
 });
 
 test("a SELL with no matching prior BUY drives the position negative, and that day's value excludes it rather than going negative", () => {
-  // No prior BUY at all -- e.g. one page of a paged OP import that only
-  // contains the SELL, with the matching BUY on a page not yet imported.
-  // positionsAt() (core/ledger.ts) still reports the raw signed quantity
-  // (-10), which is correct ledger state, but valueSeries must not turn
-  // that into a -1000.00 "value".
+  // Unmatched disposal (-10): excluded, not priced as a negative value.
   const txns = [txn("SELL", "2025-01-01", { qty: "10", amount: "1000,00" })];
   const series = valueSeries(
     txns,
@@ -216,12 +202,7 @@ test("a SELL with no matching prior BUY drives the position negative, and that d
   );
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["0.00"]);
   expect(series[0]!.excludedInstrumentIds).toEqual([7]);
-  // C5 fix: this day's value is missing a real holding -- exactly the same fact
-  // `stale` exists to flag for the missing-price and missing-fx branches, so this
-  // branch must set it too. (Previously this asserted `false`, on the theory that
-  // "the price is current, only the position is wrong" excused it -- that theory is
-  // exactly what let this excluded holding poison `twr` silently; see returns.ts's
-  // `twr` doc.)
+  // An excluded holding also marks the day stale.
   expect(series[0]!.stale).toBe(true);
 });
 
@@ -255,30 +236,15 @@ test("xirr throws rather than returning a bogus rate when all cash flows share a
 });
 
 test("xirr falls back to bisection when Newton-Raphson fails to converge", () => {
-  // A ~90% loss over a long (~4.1 year) window has an NPV curve so steep near the
-  // rate=0.1 seed that Newton's very first tangent-line step overshoots past
-  // rate = -1 (outside the domain of (1+rate)^t), so it must fall back to
-  // bisection to find the true rate.
+  // Steep NPV near the 0.1 seed: Newton overshoots below -1 and must fall back to bisection.
   const flows: CashFlow[] = [{ date: "2024-01-01", amountEur: parseMoney("-1000,00", EUR) }];
   const final: CashFlow = { date: "2028-02-09", amountEur: parseMoney("100,00", EUR) };
   expect(xirr(flows, final)).toBeCloseTo(-0.4292, 3);
 });
 
-// This test used to hand-build its `values`/`flows` instead of deriving them from
-// valueSeries()/investedCashFlows() the way every real caller does, and it encoded exactly
-// the mismatch that made TWR wrong for any portfolio that deposits and invests (see
-// `twr`'s doc in returns.ts and `investedCashFlows`'s doc in ledger.ts): a 1000.00 deposit
-// dated 2024-07-01, fed as a flow, against a `values[1]` of 1400.00 for that same date that
-// was hand-picked to NOT yet include it -- i.e. it assumed a deposit-shaped flow arriving
-// strictly after that day's valuation. Real `valueSeries` points already include any trade
-// dated exactly that day, so a real invested flow describes the opposite timing. Rebuilt
-// below from actual txns run through the real valueSeries()/investedCashFlows() pair.
+// Derived from real valueSeries()/investedCashFlows(): a same-day trade is already in that day's value.
 test("twr ignores the timing of a mid-year deposit that gets invested immediately", () => {
-  // 5 units bought 2024-01-01 at 100.00 (500.00). Price stays flat at 100.00 until it
-  // doubles to 200.00 on 2024-12-01. A second deposit of 500.00 is fully invested on
-  // 2024-07-01 -- still at 100.00, so it changes the portfolio's size, not its price
-  // exposure. The instrument itself doubles over the year; TWR must report that ~100%
-  // regardless of when the second deposit landed.
+  // Price doubles over the year; TWR reports ~100% regardless of when the second deposit landed.
   const txns: Txn[] = [
     txn("BUY", "2024-01-01", { qty: "5", amount: "-500,00" }),
     txn("BUY", "2024-07-01", { qty: "5", amount: "-500,00" }),
@@ -293,10 +259,6 @@ test("twr ignores the timing of a mid-year deposit that gets invested immediatel
   const flows = investedCashFlows(txns);
   expect(twr(values, flows)).toBeCloseTo(1.0, 6);
 });
-
-// C4 regressions -- verified against the real valueSeries()/investedCashFlows() pipeline,
-// the exact shape every ledger has (deposit, then invest it), reproducing the two repro
-// scenarios from the C4 report.
 
 test("twr is exactly 0 for three flat-price monthly deposits, each invested the same day", () => {
   const txns: Txn[] = [
@@ -348,8 +310,6 @@ test("twr of a flat portfolio is zero", () => {
   expect(twr(values, [])).toBeCloseTo(0, 6);
 });
 
-// --- C3 regression: a deposit that predates its first investment must not report -100% ---
-
 const point = (date: string, valueEur: string) => ({
   date,
   valueEur: parseMoney(valueEur, EUR),
@@ -359,14 +319,7 @@ const point = (date: string, valueEur: string) => ({
 });
 
 test("twr does not collapse to -100% when a deposit precedes the first purchase (the normal shape of every ledger)", () => {
-  // Reproduces the exact C3 report: a 1000.00 deposit on 2024-01-01, no purchase until
-  // 2024-01-05 (10 units @ 100.00). `valueSeries` excludes uninvested cash (§7), so the
-  // invested value is 0.00 for every day up to and including 2024-01-04 -- the old code
-  // added the deposit to that zero base anyway, producing a `0 / 1000` = 0 factor on the
-  // very first sub-period that then poisoned the whole chained product, however the
-  // position went on to perform (`chained` never recovers from one 0 factor). Here the
-  // position gains 10% (1000.00 -> 1100.00) after being funded; the fixed twr() must
-  // report that 10%, not -100%.
+  // A deposit before the first purchase has a zero base: must not report -100%.
   const values = [
     point("2024-01-01", "0,00"),
     point("2024-01-02", "0,00"),
@@ -379,26 +332,20 @@ test("twr does not collapse to -100% when a deposit precedes the first purchase 
   expect(twr(values, flows)).toBeCloseTo(0.1, 6);
 });
 
-// --- C5 regression: an excluded instrument (unpriceable, unconvertible, or an unmatched
-// disposal) must not collapse `twr` to a fabricated +/-100%, whatever the current chained
-// product happens to be doing when it hits that day. Every scenario below is run through the
-// real valueSeries()/investedCashFlows() pair, not hand-built points, so it reproduces the
-// exact mechanism the bug report described: an excluded day's value drops out of `valueEur`
-// while a same-day flow keeps moving, corrupting `end = value - flow` and then poisoning
-// `chained` (a running product) for every day after it.
+// An excluded instrument must not collapse twr to a fabricated +/-100%.
 
 const instrumentB: Instrument = {
   id: 8,
   isin: "SE0009000682",
   ticker: "B",
-  name: "Toinen rahasto",
+  name: "Another fund",
   kind: "fund",
   currency: EUR,
   priceSource: "manual",
   sourceKey: "B",
 };
 
-/** Builds a real (non-instrument-7) txn for the multi-instrument C5 scenarios below. */
+/** Builds a txn for the multi-instrument scenarios. */
 const txnFor = (
   type: TransactionType,
   instrumentId: number,
@@ -443,10 +390,7 @@ const multiLookup = (byInstrument: Record<number, Record<string, string>>): Pric
 });
 
 test("C5 repro 1: a second holding that is never priced does not collapse a flat portfolio to -100% -- it reports null (see twr's doc for the skip-vs-null decision)", () => {
-  // Instrument 7 is bought and priced flat all along (a genuinely flat position).
-  // Instrument 8 is bought the same day but never gets a price row at all (e.g. an
-  // S-Pankki/Danske manual fund set up before its first NAV entry, spec §10a A5) --
-  // excluded from every single day of the series, forever, in this reproduction.
+  // 7 is flat; 8 is bought but never priced.
   const txns = [
     txn("BUY", "2024-01-01", { qty: "10", amount: "-1000,00" }),
     txnFor("BUY", 8, "2024-01-01", { qty: "5", amount: "-500,00" }),
@@ -454,24 +398,12 @@ test("C5 repro 1: a second holding that is never priced does not collapse a flat
   const prices = multiLookup({ 7: { "2024-01-01": "100,00" } });
   const series = valueSeries(txns, [instrument, instrumentB], prices, "2024-01-01", "2024-01-10");
   const flows = investedCashFlows(txns);
-  // Before the C5 fix this chained to exactly -1 (-100%): instrument 8's BUY still
-  // counted as an inbound flow while its value dropped out of `valueEur`, so
-  // `end = value - flow` went to zero on day one and poisoned the running product
-  // for the rest of the series.
-  //
-  // It then reported null, because every sub-period was skipped. Now instrument 8
-  // is carried at cost throughout, so nothing is missing and nothing jumps: the
-  // portfolio really is flat across the window and 0% is the true answer. The
-  // property that matters is unchanged -- a holding no source prices must never
-  // manufacture a -100% return.
+  // An unpriced holding is carried at cost, so the portfolio is flat: 0%, never -100%.
   expect(twr(series, flows)).toBe(0);
 });
 
 test("C5 repro 2: an unmatched disposal (SELL with no prior BUY in this ledger) does not report a fabricated +100% -- the corrupted sub-period is skipped", () => {
-  // A single page of a paged OP import: this ledger only ever sees a SELL of 20
-  // units against a BUY of just 10 -- `positionsAt` correctly reports the raw net
-  // (-10, an unmatched disposal), which `valueSeries` excludes rather than pricing
-  // as a fabricated negative value (see returns.ts's `valueSeries` doc).
+  // Unmatched SELL (-10 raw net) is excluded.
   const txns = [
     txn("BUY", "2024-01-01", { qty: "10", amount: "-1000,00" }),
     txn("SELL", "2024-01-05", { qty: "20", amount: "2000,00" }),
@@ -479,12 +411,7 @@ test("C5 repro 2: an unmatched disposal (SELL with no prior BUY in this ledger) 
   const prices = lookup({ "2024-01-01": "100,00", "2024-01-05": "100,00" });
   const series = valueSeries(txns, [instrument], prices, "2024-01-01", "2024-01-05");
   const flows = investedCashFlows(txns);
-  // Before the C5 fix this chained to exactly +1 (+100%): the SELL's proceeds are a
-  // NEGATIVE flow in twr's sign convention (money leaving positions), so
-  // `end = 0 - (-2000.00)` fabricated a 2000.00 "value" out of an excluded (0.00)
-  // day. With the excluded day's sub-period skipped instead, only the three flat,
-  // uncorrupted days before it ever contribute a factor, so the honest answer here
-  // is flat (0%), not a fabricated double-up.
+  // The excluded day's sub-period is skipped: flat 0%, not a fabricated +100%.
   expect(twr(series, flows)).toBeCloseTo(0, 9);
 });
 
@@ -500,20 +427,12 @@ test("C5 repro 3: the same unmatched disposal, alongside a second, healthy holdi
   });
   const series = valueSeries(txns, [instrument, instrumentB], prices, "2024-01-01", "2024-01-05");
   const flows = investedCashFlows(txns);
-  // Before the C5 fix this chained to +0.5 (+50%): the same fabricated 2000.00
-  // "value" from repro 2 above, now averaged against instrument 8's real 1000.00
-  // holding on the excluded day. Skipping that one corrupted sub-period leaves the
-  // three flat, uncorrupted days -- both instruments held flat throughout -- so the
-  // honest answer is 0%, not a fabricated gain built on a fictitious number.
+  // Same skip with a second, healthy holding: 0%.
   expect(twr(series, flows)).toBeCloseTo(0, 9);
 });
 
 test("C5: a run of exclusion-skipped sub-periods that is a small minority of the series still returns a real number, not null", () => {
-  // One single excluded day out of many good ones must not throw the whole
-  // computation away -- `null` is reserved for when exclusion-driven skips are the
-  // *majority* of what would otherwise have contributed a factor (see twr's doc).
-  // Reuses repro 2's shape but extends the series well past the one bad day with
-  // more flat, fully-priced days, so uncorrupted periods clearly outnumber it.
+  // One excluded day among many good ones must not give null (only a majority of skips does).
   const txns = [
     txn("BUY", "2024-01-01", { qty: "10", amount: "-1000,00" }),
     txn("SELL", "2024-01-05", { qty: "20", amount: "2000,00" }),
@@ -531,22 +450,10 @@ test("C5: a run of exclusion-skipped sub-periods that is a small minority of the
   expect(twr(series, flows)).toBeCloseTo(0, 9);
 });
 
-// --- A distinct, pre-existing gap this fix does NOT close (documented, not silent) ---
+// Known gap: a full transfer-out drops value to 0 with no offsetting flow.
 
 test("KNOWN GAP: a whole position transferred out in kind still collapses TWR to -100%, because TRANSFER_OUT carries no cash flow for investedCashFlows to describe -- see ledger.ts's own doc on investedCashFlows for why", () => {
-  // Distinct from every C5 repro above: `valueSeries` does NOT exclude this day at
-  // all (no negative position, no missing price/fx -- the instrument is fully,
-  // correctly priced right up to the transfer). The position simply, legitimately,
-  // goes to 0.00 once every unit is transferred out. `investedCashFlows` deliberately
-  // excludes TRANSFER_IN/TRANSFER_OUT (they carry no `amount` to size a flow with --
-  // see that function's own doc), so this real drop to zero has no offsetting flow to
-  // explain it, `end` lands on exactly 0, and the chained product is poisoned exactly
-  // like C3/C5 guard against -- but neither guard fires here, because neither a zero
-  // *start* nor an *excluded* endpoint is what's happening. Fixing this would mean
-  // pricing the transferred lot into `investedCashFlows` itself (it needs a
-  // `PriceLookup` it does not currently take) -- a separate, larger change than the
-  // three-part C5 fix this test suite otherwise verifies, called out here rather than
-  // silently left unverified.
+  // Not excluded, and no flow explains the drop to 0.00 (transfers carry no amount; see investedCashFlows).
   const txns = [
     txn("BUY", "2024-01-01", { qty: "10", amount: "-1000,00" }),
     txn("TRANSFER_OUT", "2024-01-05", { qty: "10" }),
@@ -557,24 +464,17 @@ test("KNOWN GAP: a whole position transferred out in kind still collapses TWR to
   expect(twr(series, flows)).toBe(-1);
 });
 
-// Price history is served split-adjusted: a provider quotes a share at a hundred
-// times its raw price of the day, because the whole series is stated in
-// post-split terms. The ledger keeps the raw counts actually held, so multiplying
-// one by the other valued pre-split shares at post-split prices -- a hundredfold
-// overstatement for a 1:100 reverse split, vanishing on the split date and
-// reading as a large one-day portfolio loss.
+// Price history is split-adjusted but the ledger keeps raw counts.
 test("a pre-split holding is valued as the post-split shares it became", () => {
   const txns = [
     txnFor("BUY", 7, "2024-01-01", { qty: "1740", amount: "-1740,00" }),
     txnFor("SPLIT", 7, "2024-03-21", { qty: "18" }),
   ];
-  // One continuous, split-adjusted series -- no discontinuity across the split,
-  // exactly as the real one behaves (2,99 EUR before, 2,93 EUR after).
+  // One continuous split-adjusted series.
   const prices = multiLookup({ 7: { "2024-01-01": "3,00" } });
   const series = valueSeries(txns, [instrument], prices, "2024-03-20", "2024-03-21");
 
-  // 1 000 raw shares are 10 in the price series' terms: 10 x 3,00 = 30,00, both
-  // before and after. Unadjusted this read 3 000,00 EUR and then collapsed to 30.
+  // 1 000 raw shares are 10 in adjusted terms: 10 x 3,00 = 30,00 either side.
   expect(series.map((p) => formatMoney(p.valueEur))).toEqual(["54.00", "54.00"]);
 });
 
@@ -602,9 +502,7 @@ test("investedSeries carries what has been put in, and takes back what a sale re
   const series = investedSeries([bought, sold], "2025-01-09", "2025-01-21");
   const on = (date: string) => series.find((point) => point.date === date)!;
 
-  // Nothing before the purchase, the full cost after it, and less again once
-  // half came back out -- the same flows XIRR reads, so the two cannot
-  // disagree about what counts as invested.
+  // Same flows XIRR reads.
   expect(formatMoney(on("2025-01-09").investedEur)).toBe("0.00");
   expect(formatMoney(on("2025-01-10").investedEur)).toBe("1000.00");
   expect(formatMoney(on("2025-01-19").investedEur)).toBe("1000.00");
@@ -612,7 +510,6 @@ test("investedSeries carries what has been put in, and takes back what a sale re
 });
 
 test("investedSeries returns one point per day, including days nothing happened", () => {
-  // The chart draws it against valueSeries, which is also one point per day; a
-  // sparse series would misalign the two lines.
+  // One point per day, to align with valueSeries.
   expect(investedSeries([], "2025-01-01", "2025-01-05")).toHaveLength(5);
 });

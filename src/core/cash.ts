@@ -11,11 +11,8 @@ import { accountsMissingCashRecord, upTo } from "./ledger.ts";
 import { datesBetween } from "./returns.ts";
 import type { IsoDate, TransactionType, Txn } from "./types.ts";
 
-/**
- * Uninvested cash in one account, in one currency. Derived rather than stored: a
- * table would be a second copy of what the rows already say, free to drift.
- */
-export type CashBalance = {
+/** Uninvested cash in one account and currency; derived from rows, never stored. */
+type CashBalance = {
   readonly accountId: number;
   readonly currency: Currency;
   readonly amount: Money;
@@ -24,11 +21,7 @@ export type CashBalance = {
 /** A balance converted to euros, or `null` when no fx rate is known for the day. */
 export type ValuedCash = CashBalance & {
   readonly valueEur: Money | null;
-  /**
-   * Whether the money can be reached on the day being valued. Both a deposit and
-   * a current account count toward what the portfolio is worth; only one answers
-   * "what could I use today". Decided by the caller, which knows the accounts.
-   */
+  /** Not reachable on the day (e.g. a term deposit); counts toward worth but not "usable today". Set by the caller. */
   readonly locked?: boolean;
   /** When a locked balance comes free, if the account records it. */
   readonly availableFrom?: IsoDate | null;
@@ -53,14 +46,8 @@ export const lockedCashEur = (valued: readonly ValuedCash[]): Money =>
 const key = (accountId: number, currency: Currency): string => `${accountId} ${currency}`;
 
 /**
- * The types whose amount is money that entered or left the account.
- *
- * An opening balance is in: it is what the account already held, which is what a
- * balance is made of. It stays out of the cash-flow definitions instead, being
- * nobody's contribution during the period.
- *
- * Transfers are out: their amount is the acquisition value riding across a swap,
- * not cash, and counting it charged a real portfolio for money that never left.
+ * Types whose amount is cash entering or leaving the account. OPENING_BALANCE is in (a balance is
+ * built from it). Transfers are out: their amount is acquisition value, not cash.
  */
 const CASH_MOVING: ReadonlySet<TransactionType> = new Set([
   "OPENING_BALANCE",
@@ -74,15 +61,8 @@ const CASH_MOVING: ReadonlySet<TransactionType> = new Set([
 ]);
 
 /**
- * Cash held per account and currency on `on`.
- *
- * An account whose export never records the money that funded its purchases is
- * skipped: summing its rows yields the negative of everything ever bought, an
- * artefact rather than a debt. Filtered here, not per call site, because a caller
- * that forgot would show a five-figure negative as fact.
- *
- * Zero balances are dropped. A negative one in an account that does record cash
- * is kept: it is real, and hiding it would overstate the total.
+ * Cash per account and currency on `on`. Accounts whose export never records funding cash are
+ * skipped (their sum is minus everything bought). Zero balances are dropped; real negatives kept.
  */
 export const cashBalancesAt = (txns: readonly Txn[], on: IsoDate): CashBalance[] => {
   const unrecorded = new Set(accountsMissingCashRecord(txns));
@@ -107,11 +87,7 @@ export const cashBalancesAt = (txns: readonly Txn[], on: IsoDate): CashBalance[]
     );
 };
 
-/**
- * Each balance in euros at `on`'s rate. An unknown rate gives null rather than a
- * drop or a zero, exactly as an unpriceable holding does: the caller decides how
- * to show it, but must not quietly understate the total.
- */
+/** Balances in euros at `on`'s rate; an unknown rate gives null, never a silent drop or zero. */
 export const valueCash = (
   balances: readonly CashBalance[],
   fxOn: (currency: Currency, on: IsoDate) => FxRate | null,
@@ -133,13 +109,7 @@ export const totalCashEur = (valued: readonly ValuedCash[]): Money =>
     zeroMoney(EUR),
   );
 
-/**
- * Cash in euros on every day from `from` to `to`, by the same rules as
- * `cashBalancesAt`, in one pass: each transaction is added once as the days
- * reach it, rather than every balance being summed again for every day of a
- * twenty-year ledger. A balance in a currency with no rate that day is left out
- * of that day, as `totalCashEur` leaves out an unvalued one.
- */
+/** Daily euro cash by the rules of `cashBalancesAt`, in one pass; a currency without a rate that day is left out. */
 export const cashSeries = (
   txns: readonly Txn[],
   fxOn: (currency: Currency, on: IsoDate) => FxRate | null,

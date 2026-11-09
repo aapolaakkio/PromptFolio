@@ -16,28 +16,20 @@ export type Slice = {
 export type AllocationResult = {
   readonly slices: Slice[];
   /**
-   * Instruments held at `on` but left out of every slice for want of a price or a
-   * rate. They used to vanish with no trace, indistinguishable from not held.
-   *
-   * Negative positions are not in this list: they are reported over the whole
-   * ledger, while this sees one account at a time, so an instrument negative in one
-   * and positive overall would be misreported. Callers combine both.
+   * Held at `on` but left out for want of a price or fx rate. Negative positions are not
+   * listed: they are judged over the whole ledger, this sees one account at a time.
    */
   readonly excludedInstrumentIds: readonly number[];
 };
 
 const KIND_LABELS = {
-  stock: "Osakkeet",
-  etf: "ETF:t",
-  fund: "Rahastot",
-  cash: "Käteinen",
+  stock: "Shares",
+  etf: "ETFs",
+  fund: "Funds",
+  cash: "Cash",
 } satisfies Record<Instrument["kind"], string>;
 
-/**
- * Which slice a holding falls into. Exported because a caller acting on a slice --
- * a plan proposing to sell 1 000 EUR of funds -- has to know which holdings that
- * names, and deriving it twice would let the two disagree.
- */
+/** Which slice a holding falls into; exported so callers acting on a slice derive it the same way. */
 export const sliceKeyFor = (
   dimension: Dimension,
   accountId: number,
@@ -55,37 +47,26 @@ const keyAndLabel = (
     case "currency":
       return [instrument.currency, instrument.currency];
     case "account":
-      return [String(accountId), `Tili ${accountId}`];
+      return [String(accountId), `Account ${accountId}`];
     case "instrument":
       return [String(instrument.id), instrument.name];
   }
 };
 
-/**
- * Where a cash balance lands in each dimension. Cash is part of the portfolio's
- * value (spec 10c/C2, decided 2026-08-29) but it is not an instrument, so it
- * cannot go through `keyAndLabel` -- it has no kind, no id, and its currency is
- * its own rather than a security's.
- */
+/** Where a cash balance lands per dimension; cash is not an instrument, so it bypasses `keyAndLabel`. */
 const cashKeyAndLabel = (dimension: Dimension, balance: ValuedCash): readonly [string, string] => {
   switch (dimension) {
+    // A fixed-term deposit is its own slice: folding it into cash overstates liquidity.
+    // By instrument, cash is one line rather than one per account.
     case "kind":
-      // A fixed-term deposit is its own slice rather than more "cash": it
-      // behaves like a short bond, and folding the two together reports a
-      // portfolio as more liquid than it is.
+    case "instrument":
       return balance.locked === true
-        ? ["fixed_term", "Määräaikaistalletukset"]
+        ? ["fixed_term", "Fixed-term deposits"]
         : ["cash", KIND_LABELS.cash];
     case "currency":
       return [balance.currency, balance.currency];
     case "account":
-      return [String(balance.accountId), `Tili ${balance.accountId}`];
-    case "instrument":
-      // Cash is one line rather than one per account: an instrument breakdown
-      // that listed "Käteinen" three times would read as three holdings.
-      return balance.locked === true
-        ? ["fixed_term", "Määräaikaistalletukset"]
-        : ["cash", KIND_LABELS.cash];
+      return [String(balance.accountId), `Account ${balance.accountId}`];
   }
 };
 
@@ -101,7 +82,6 @@ export const allocateBy = (
   const totals = new Map<string, { label: string; value: Money }>();
   const excludedInstrumentIds = new Set<number>();
 
-  // Account grouping needs per-account positions, so walk transactions per account.
   const accountIds = [...new Set(txns.map((t) => t.accountId))];
   const buckets: Array<{ accountId: number; positions: Map<number, Quantity> }> = accountIds.map(
     (accountId) => ({
@@ -115,24 +95,18 @@ export const allocateBy = (
 
   for (const { accountId, positions } of buckets) {
     for (const [instrumentId, qty] of positions) {
-      // An unmatched disposal: priced, it would silently subtract from a
-      // bucket's total. Skipped entirely, and reported separately.
+      // Unmatched disposal: reported elsewhere, never priced.
       if (qty.scaled < 0n) continue;
       const instrument = byId.get(instrumentId);
       if (!instrument) continue;
       const price = prices.priceOn(instrumentId, on);
       if (price === null) {
-        // C1: no price at all for `on` -- this holding cannot be valued, so it must
-        // not just disappear from the response with no trace.
         excludedInstrumentIds.add(instrumentId);
         continue;
       }
       const native = mulMoney(price, qty, "half-up");
       const rate = instrument.currency === EUR ? null : prices.fxOn(instrument.currency, on);
       if (instrument.currency !== EUR && rate === null) {
-        // C1: a real price exists, but this non-EUR instrument has no fx rate for
-        // `on` -- excluded for the same reason as a missing price, not folded in as
-        // an implied 0,00 €.
         excludedInstrumentIds.add(instrumentId);
         continue;
       }
@@ -148,14 +122,10 @@ export const allocateBy = (
     }
   }
 
-  // Cash joins the same buckets as the positions, so weights are shares of a
-  // total that includes it. A balance with no fx rate for the day carries a null
-  // value and is skipped here, the same as an unpriceable holding above.
+  // Cash joins the same buckets so weights include it; an unvalued balance is skipped.
   for (const balance of cash) {
     if (balance.valueEur === null) continue;
-    // A negative balance is an overdraft, not an asset: letting it subtract from
-    // a bucket would make every other slice's weight a share of a total that
-    // does not exist. It is still reported as a balance by /api/cash.
+    // An overdraft is not an asset (still reported by /api/cash).
     if (balance.valueEur.minor <= 0n) continue;
     const [key, label] = cashKeyAndLabel(dimension, balance);
     const existing = totals.get(key);

@@ -162,8 +162,7 @@ test("a held instrument with no price on the date is excluded from the totals, a
   );
   expect(slices.map((s) => s.key)).toEqual(["etf"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
-  // C1: the excluded holding must not just vanish -- it is named here, not
-  // just silently missing from `slices`.
+  // The excluded holding is named, not silently missing from `slices`.
   expect(excludedInstrumentIds).toEqual([1]);
 });
 
@@ -210,9 +209,7 @@ test("the same instrument held across two accounts aggregates into a single slic
 });
 
 test("an instrument with a negative net position (unmatched disposal) is excluded from the totals, not counted negatively", () => {
-  // A SELL with no matching prior BUY -- positionsAt() reports -10 units, which is
-  // correct ledger state, but allocateBy must not multiply that by a price and
-  // subtract it from a bucket's total.
+  // Unmatched SELL (-10 units) must not be priced and subtracted from a bucket.
   const sell = (id: number, accountId: number, qty: string): Txn => ({
     id,
     accountId,
@@ -235,14 +232,10 @@ test("an instrument with a negative net position (unmatched disposal) is exclude
     "2025-06-01",
     "kind",
   );
-  // Only the ETF (instrument 2) contributes; the negative Nokia position is
-  // excluded entirely -- not present as a negative "stock" slice, and not
-  // silently folded into another bucket as zero either.
+  // Only the ETF contributes; the negative Nokia position is excluded entirely.
   expect(slices.map((s) => s.key)).toEqual(["etf"]);
   expect(slices.map((s) => formatMoney(s.valueEur))).toEqual(["1000.00"]);
-  // A negative position is reported via `ledger.ts`'s `negativePositionIds` instead
-  // (see `AllocationResult.excludedInstrumentIds`'s doc) -- this function's own list
-  // stays empty for this case.
+  // Negative positions are reported via `negativePositionIds`, so this list stays empty.
   expect(excludedInstrumentIds).toEqual([]);
 });
 
@@ -278,9 +271,8 @@ test("counts cash as its own slice, so a part-invested portfolio is not shown as
   );
   const cashSlice = slices.find((slice) => slice.key === "cash");
 
-  expect(cashSlice?.label).toBe("Käteinen");
+  expect(cashSlice?.label).toBe("Cash");
   expect(formatMoney(cashSlice!.valueEur)).toBe("50.00");
-  // Every weight is a share of a total that now includes the cash.
   expect(slices.reduce((sum, slice) => sum + slice.weight, 0)).toBeCloseTo(1, 10);
 });
 

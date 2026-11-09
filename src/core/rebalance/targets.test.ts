@@ -13,8 +13,7 @@ describe("checkTargets", () => {
   });
 
   test("refuses a set that does not sum to 100 %, and says what it sums to", () => {
-    // Refused rather than normalised: 90 % means a slice was forgotten, and
-    // scaling the rest up would measure drift against a target nobody set.
+    // Refused, not normalised: 90 % means a forgotten slice.
     const error = checkTargets([
       { key: "stock", weightBp: 6000 },
       { key: "fund", weightBp: 3000 },
@@ -35,8 +34,7 @@ describe("checkTargets", () => {
   });
 
   test("refuses an empty set rather than reading it as no targets", () => {
-    // "I have no targets" is stored as no rows at all; an empty set arriving
-    // here is a caller that lost them on the way.
+    // No targets is stored as no rows; an empty set is a caller that lost them.
     expect(checkTargets([])).not.toBeNull();
   });
 

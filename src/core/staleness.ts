@@ -1,29 +1,17 @@
 import type { InstrumentKind, IsoDate } from "./types.ts";
 
-/**
- * Whether a holding's price is old enough to deserve the "vanha" badge.
- *
- * A badge on every holding every weekend is a badge nobody reads. Two facts
- * decide the freshest price that can exist for a given day:
- *
- *  - **Markets close.** On a Saturday the newest close in existence is
- *    Friday's, so Friday's price is current, not late.
- *  - **Funds publish a day behind.** A fund's NAV for a given day appears the
- *    following evening, so the freshest NAV is the previous weekday's. Shares
- *    and ETFs quote intraday and have no such lag.
- *
- * The badge then means one thing: older than that. Note what this is NOT --
- * "not dated today". A months-old price is late whichever day of the week you
- * ask on, which is why this compares against an expected date rather than
- * exempting weekends outright.
- *
- * ponytail: weekends only, no Finnish holiday calendar. On Juhannus every
- * holding reads a day late for a day. Add a holiday list here if that grates.
- */
+// Stale means older than the freshest price that can exist: markets close on weekends, and
+// funds publish the previous weekday's NAV; shares and ETFs quote intraday.
+// ponytail: weekends only, no Finnish holiday calendar; add one if the Midsummer false stale grates.
 const isWeekend = (date: IsoDate): boolean => {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return day === 0 || day === 6;
 };
+
+export const daysBetween = (from: IsoDate, to: IsoDate): number =>
+  Math.round(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000,
+  );
 
 const shiftDays = (date: IsoDate, days: number): IsoDate => {
   const moved = new Date(`${date}T00:00:00Z`);
@@ -42,20 +30,13 @@ export const previousWeekday = (date: IsoDate): IsoDate => {
 const weekdayOnOrBefore = (date: IsoDate): IsoDate =>
   isWeekend(date) ? previousWeekday(date) : date;
 
-/**
- * The newest price date that can exist for this kind of instrument as of `on`.
- * A price dated this or later is current; anything earlier is late.
- */
-export const freshestPriceDate = (kind: InstrumentKind, on: IsoDate): IsoDate => {
+/** Newest price date that can exist for this kind of instrument as of `on`. */
+const freshestPriceDate = (kind: InstrumentKind, on: IsoDate): IsoDate => {
   const trading = weekdayOnOrBefore(on);
   return kind === "fund" ? previousWeekday(trading) : trading;
 };
 
-/**
- * `on` is the date being valued, `priceDate` the date of the price actually
- * used (`null` when none exists at all -- that holding renders "ei hintaa", a
- * different and louder state than this one).
- */
+/** `priceDate` is the date of the price used; null (no price at all) renders "no price", a louder state. */
 export const isPriceStale = (args: {
   readonly kind: InstrumentKind;
   readonly priceDate: IsoDate | null;

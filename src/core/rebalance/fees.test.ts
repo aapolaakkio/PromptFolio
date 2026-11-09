@@ -40,17 +40,13 @@ describe("feesByYear", () => {
   });
 
   test("capital income tax withheld on an equity savings account is not a fee", () => {
-    // The broker books it as a fee row, for a good reason -- the money leaves
-    // permanently without reaching the investor -- but it is tax on a gain, not
-    // a cost of investing. In a real ledger it is most of the fee total in the
-    // years it appears, so counting it makes fee drag meaningless.
+    // Booked as a fee row but it is tax on a gain, not a cost of investing.
     const [year] = feesByYear({
       txns: [txn("FEE", "2025-10-21", { amount: "-30,00", accountId: 7 })],
       ostAccountIds: new Set([7]),
     });
 
     expect(formatMoney(year!.totalEur)).toBe("0.00");
-    // Reported, under its own name: the figure is worth seeing.
     expect(formatMoney(year!.withheldTaxEur)).toBe("30.00");
   });
 

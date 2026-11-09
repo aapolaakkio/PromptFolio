@@ -29,16 +29,12 @@ describe("isPriceStale", () => {
   });
 
   test("Friday's close is current at the weekend, because nothing traded since", () => {
-    // Badging it "vanha" every weekend trains the user to ignore the badge.
     expect(isPriceStale({ kind: "etf", priceDate: FRIDAY, on: SATURDAY })).toBe(false);
     expect(isPriceStale({ kind: "fund", priceDate: FRIDAY, on: SUNDAY })).toBe(false);
   });
 
   test("a months-old price is still late at the weekend", () => {
-    // The weekend is not a blanket exemption: it moves the expected date back
-    // to Friday, it does not stop the comparison happening. An earlier version
-    // of this rule returned false for any weekend, which made a price carried
-    // forward from January read as current every Saturday.
+    // A weekend only moves the expected date to Friday; a January price is still stale on Saturday.
     expect(isPriceStale({ kind: "etf", priceDate: "2026-01-09", on: SATURDAY })).toBe(true);
     expect(isPriceStale({ kind: "fund", priceDate: "2026-01-09", on: SUNDAY })).toBe(true);
   });

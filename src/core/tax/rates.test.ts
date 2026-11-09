@@ -12,8 +12,7 @@ import {
 
 describe("percentOf", () => {
   test("rounds half-up to the cent, in integers", () => {
-    // 20 % of 12,34 € is 2,468 -- the third decimal has to round somewhere, and
-    // a float would decide it inconsistently.
+    // 20 % of 12,34 € is 2,468: the third decimal must round half-up.
     expect(formatMoney(percentOf(parseMoney("12,34", EUR), 20n))).toBe("2.47");
   });
 
@@ -37,7 +36,6 @@ describe("percentOf", () => {
 describe("the limits", () => {
   test("are the figures vero.fi states", () => {
     expect(formatMoney(SMALL_SALE_LIMIT_EUR)).toBe("1000.00");
-    // 100 000 €, raised from the 50 000 € the phase 1 spec recorded.
     expect(formatMoney(OST_DEPOSIT_CAP_EUR)).toBe("100000.00");
   });
 });

@@ -17,7 +17,7 @@ import {
 } from "./money.ts";
 import type { IsoDate, Txn } from "./types.ts";
 
-export type Lot = {
+type Lot = {
   readonly accountId: number;
   readonly instrumentId: number;
   readonly acquiredOn: IsoDate;
@@ -33,29 +33,15 @@ export type Disposal = {
   readonly quantity: Quantity;
   /** Net of the sale's fee, which `Txn.amount` has already deducted. */
   readonly proceedsEur: Money;
-  /**
-   * This lot's share of the sale's fee, pro-rated like the proceeds. Carried
-   * because the two Finnish methods do not share a base: the deemed cost is a
-   * percentage of the gross price with selling costs not deductible on top,
-   * while the actual-cost method does deduct them.
-   */
+  /** Pro-rated share of the sale fee: the deemed cost is on the gross price, actual-cost deducts selling costs. */
   readonly feeEur: Money;
   readonly costEur: Money;
   readonly gainEur: Money;
 };
 
-/**
- * A disposal of more units than the ledger records as acquired: incomplete or
- * out-of-order import data, not a bug here. Its own subclass so a caller can
- * check the type rather than match on wording that will change.
- *
- * Carries only the instrument and the date -- what the server needs to name the
- * offending row. The message keeps the quantities for a log, never for a client.
- */
+/** Disposal of more units than acquired (bad import data). The message has quantities: log only, never send to a client. */
 export class UnmatchedDisposalError extends Error {
-  // Assigned in the body rather than declared as a parameter property: that
-  // is TypeScript syntax Node cannot strip, only transform, and this runs
-  // under plain Node in test child processes.
+  // No parameter properties: Node cannot strip them and this runs under plain Node.
   readonly instrumentId: number;
   readonly tradeDate: IsoDate;
 
@@ -75,11 +61,7 @@ export class UnmatchedDisposalError extends Error {
   }
 }
 
-/**
- * A swap's two legs share a date and brokers disagree on which they print first.
- * The departing leg must be seen first: it releases the basis the arriving leg
- * inherits. Nothing else is reordered.
- */
+// A swap's legs share a date; the departing leg must come first to release the basis.
 const transferRank = (type: Txn["type"]): number =>
   type === "TRANSFER_OUT" ? 0 : type === "TRANSFER_IN" ? 2 : 1;
 
@@ -96,21 +78,11 @@ const chronological = (txns: readonly Txn[]): Txn[] =>
           : a.id - b.id,
     );
 
-/**
- * Prorates `whole` by `numerator / denominator`, rounding half-up. Callers that split a
- * whole into several parts must give the *final* part the exact remainder instead of
- * calling this for it, so the parts always sum back to the whole regardless of rounding.
- */
+/** Half-up pro-rata. Callers splitting a whole give the final part the exact remainder. */
 const proRata = (whole: Money, numerator: bigint, denominator: bigint): Money =>
   divMoney(money(whole.minor * numerator, whole.currency), denominator, "half-up");
 
-/**
- * Rescales `lots` so their quantities sum exactly to `newTotal`, preserving each lot's
- * proportional share of the pre-split total. Every lot but the last gets its (necessarily
- * rounded-down, since quantities are positive) proportional share; the last lot absorbs
- * whatever remainder that rounding left behind, so the split's total is always exact
- * rather than a byproduct of accumulated rounding.
- */
+/** Rescales lots proportionally to sum exactly to `newTotal`; the last lot absorbs the rounding. */
 const rescaleLots = (lots: readonly Lot[], newTotal: Quantity): Lot[] => {
   const oldTotal = lots.reduce((sum, lot) => addQuantity(sum, lot.quantity), { scaled: 0n });
   if (oldTotal.scaled === 0n) return lots.slice();
@@ -126,29 +98,14 @@ const rescaleLots = (lots: readonly Lot[], newTotal: Quantity): Lot[] => {
   });
 };
 
-/**
- * Lots belong to an account, not merely to an instrument. vero.fi states the
- * matching rule as FIFO *within one account*, so the same share held in two
- * accounts has two independent queues -- pooling them is a different rule that
- * only happens to agree while an instrument is held in one account alone.
- */
+// vero.fi: FIFO within one account, so each account has its own queue per instrument.
 const lotKey = (accountId: number, instrumentId: number): string => `${accountId}:${instrumentId}`;
 
 export const buildLots = (txns: readonly Txn[]) => {
   const openByAccountInstrument = new Map<string, Lot[]>();
   const disposals: Disposal[] = [];
-  /**
-   * The lots a departing leg gave up, waiting for the arriving one, by date.
-   *
-   * A swap moves a holding with no money changing hands, so the arriving leg's
-   * amount is zero and cost derived from it would report the whole value as gain.
-   * The basis is carried across instead, which is what a swap means: the shares
-   * change form, not value.
-   *
-   * Whole lots, not one merged total, because a swap does not restart ownership.
-   * Merging lost each lot's acquisition date and its own cost, so a fractional
-   * cash-out days later took cost pro-rata instead of from the oldest lot.
-   */
+  // Lots a departing swap leg gave up, awaiting the arriving leg, by date. A swap moves no money,
+  // so basis carries over; kept as whole lots to preserve acquisition dates and per-lot cost.
   const carriedLots = new Map<IsoDate, Lot[][]>();
 
   for (const t of chronological(txns)) {
@@ -164,10 +121,7 @@ export const buildLots = (txns: readonly Txn[]) => {
             `acquisition amount ${formatMoney(t.amount)} must not be positive (cash in on an acquisition)`,
         );
       }
-      // `t.amount` is already fee-inclusive (see `Txn.amount`'s doc): the fee was
-      // already debited as part of the cash that left the account, so the full
-      // cost basis is `-amount` alone -- adding `t.fee` again would double-count
-      // it (C2).
+      // `amount` is already fee-inclusive; adding `fee` would double-count.
       const stated = toEur(negateMoney(t.amount), t.fxRateEur, "half-up");
       const waiting = t.type === "TRANSFER_IN" ? carriedLots.get(t.tradeDate) : undefined;
       const carried = waiting?.[0];
@@ -175,12 +129,8 @@ export const buildLots = (txns: readonly Txn[]) => {
         (sum, lot) => addMoney(sum, lot.costEur),
         zeroMoney(EUR),
       );
-      // The carried lots are used when the arriving row states no value of its
-      // own (OP), and also when it states exactly what the departing leg gave
-      // up (Nordnet) -- same total, but split by acquisition date rather than
-      // merged. A stated value that disagrees with the carried total describes
-      // something other than a plain swap, so it is taken at its word and the
-      // lots are left alone.
+      // Use carried lots when the row states no value (OP) or exactly the carried total (Nordnet);
+      // any other stated value is not a plain swap and is taken at its word.
       const useCarried =
         carried !== undefined &&
         carried.length > 0 &&
@@ -217,10 +167,7 @@ export const buildLots = (txns: readonly Txn[]) => {
 
     if (t.type !== "SELL" && t.type !== "TRANSFER_OUT") continue;
 
-    // `t.amount` is already fee-inclusive (see `Txn.amount`'s doc): the fee was
-    // already deducted from the cash credited to the account, so `amount` alone
-    // is the real net proceeds -- subtracting `t.fee` again would double-count
-    // it (C2).
+    // `amount` is already net of the fee; subtracting `fee` would double-count.
     const disposalsBefore = disposals.length;
     const proceedsEur = toEur(t.amount, t.fxRateEur, "half-up");
     const feeEur = toEur(t.fee, t.fxRateEur, "half-up");
@@ -248,8 +195,6 @@ export const buildLots = (txns: readonly Txn[]) => {
         ? remainingProceeds
         : proRata(proceedsEur, takenScaled, t.quantity.scaled);
       remainingProceeds = subMoney(remainingProceeds, shareOfProceeds);
-      // Split the same way as the proceeds, last lot absorbing the remainder,
-      // so the parts sum to the fee actually charged rather than losing a cent.
       const shareOfFee = isFinalShare
         ? remainingFee
         : proRata(feeEur, takenScaled, t.quantity.scaled);
@@ -283,8 +228,7 @@ export const buildLots = (txns: readonly Txn[]) => {
     openByAccountInstrument.set(key, remainingLots);
 
     if (t.type === "TRANSFER_OUT") {
-      // Narrowed at the top of the loop; named here because the closure below
-      // does not carry the narrowing.
+      // Named because the closure below loses the narrowing.
       const departingId = instrumentId;
       const released = disposals.slice(disposalsBefore).map((disposal): Lot => ({
         accountId: t.accountId,
@@ -322,13 +266,7 @@ export type CostBasisOutcome =
   | { readonly ok: true; readonly costEur: Money }
   | { readonly ok: false; readonly error: UnmatchedDisposalError };
 
-/**
- * Each instrument's lots resolved independently, so one unmatched disposal marks
- * only its own holding unknown instead of taking the whole request down.
- *
- * Safe because lot-building never consults another instrument's transactions, so
- * one instrument in isolation produces exactly the lots it would in the whole.
- */
+/** Resolves each instrument alone, so one unmatched disposal marks only its own holding unknown. */
 export const costBasisPerInstrument = (
   txns: readonly Txn[],
   on: IsoDate,

@@ -40,8 +40,7 @@ test("a statement that agrees with the ledger reports no differences", () => {
   expect(differences(rows)).toEqual([]);
 });
 
-// Brokers publish fund units to fewer decimals than this ledger stores, so an
-// exact match is the exception for funds rather than the rule.
+// Brokers publish fund units to fewer decimals than the ledger stores.
 test("a difference in the fifth decimal is rounding, not a missing transaction", () => {
   const txns = [txn("BUY", "2026-01-05", { qty: "12,595200", amount: "-1000,00" })];
   const rows = reconcile(txns, [stated(7, "12,5952")], "2026-06-30");
@@ -54,11 +53,11 @@ test("a difference in the fifth decimal is rounding, not a missing transaction",
 
 test("the delta says which way the ledger is wrong", () => {
   const txns = [txn("BUY", "2026-01-05", { qty: "10", amount: "-1000,00" })];
-  // The statement holds more than the ledger derived: an acquisition is missing.
+  // Statement holds more: an acquisition is missing.
   expect(formatQuantity(reconcile(txns, [stated(7, "15")], "2026-06-30")[0]!.delta)).toBe(
     "5.000000",
   );
-  // And less: a disposal is missing.
+  // Less: a disposal is missing.
   expect(formatQuantity(reconcile(txns, [stated(7, "4")], "2026-06-30")[0]!.delta)).toBe(
     "-6.000000",
   );
@@ -82,7 +81,6 @@ test("positions are derived as of the statement's date, not today", () => {
     txn("BUY", "2026-01-05", { qty: "10", amount: "-1000,00" }),
     txn("BUY", "2026-09-01", { qty: "5", amount: "-500,00" }),
   ];
-  // The September purchase must not count against a June statement.
   expect(reconcile(txns, [stated(7, "10")], "2026-06-30")[0]!.withinTolerance).toBe(true);
   expect(reconcile(txns, [stated(7, "10")], "2026-09-30")[0]!.withinTolerance).toBe(false);
 });

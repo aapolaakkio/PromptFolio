@@ -43,9 +43,7 @@ const YEAR = { from: "2025-01-01", to: "2025-12-31" };
 
 describe("ostReport", () => {
   test("reproduces vero.fi's own worked example", () => {
-    // "If the account holds EUR 15,000 with EUR 5,000 profit, withdrawing
-    // EUR 1,500 results in EUR 500 taxable income." Checked against the
-    // authority's arithmetic rather than against our reading of the rule.
+    // vero.fi example: EUR 15,000 with EUR 5,000 profit, withdrawing EUR 1,500 gives EUR 500 taxable.
     const report = ostReport({
       txns: [deposit("2020-01-02", "10000,00"), withdrawal("2025-06-01", "1500,00")],
       valueAt: worth("15000,00"),
@@ -60,9 +58,7 @@ describe("ostReport", () => {
   });
 
   test("lets the capital part of a withdrawal reduce the deposits", () => {
-    // 1 500 € out, of which 500 € was profit, so 1 000 € was capital returned:
-    // deposits fall to 9 000 €. vero.fi ties the cap and the profit share to
-    // this same reduced figure, which is why one pass computes both.
+    // 500 € of the 1 500 € was profit, so 1 000 € capital returned: deposits fall to 9 000 €.
     const report = ostReport({
       txns: [deposit("2020-01-02", "10000,00"), withdrawal("2025-06-01", "1500,00")],
       valueAt: worth("15000,00"),
@@ -74,9 +70,7 @@ describe("ostReport", () => {
   });
 
   test("taxes nothing when the account is worth no more than what was paid in", () => {
-    // An OST loss is deductible only in the year the account is closed, so a
-    // withdrawal at a loss is simply not taxable income -- never a negative
-    // "taxable" figure netted against something else.
+    // An OST loss is deductible only on closing, so a loss withdrawal is not taxable, never negative.
     const report = ostReport({
       txns: [deposit("2020-01-02", "10000,00"), withdrawal("2025-06-01", "1000,00")],
       valueAt: worth("8000,00"),
@@ -100,16 +94,13 @@ describe("ostReport", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok || outcome.reason !== "no-price") throw new Error("expected a no-price block");
     expect(outcome.instrumentId).toBe(42);
-    // The split between profit and capital is unknown, so the deposits cannot
-    // be advanced -- and the report says the figures are behind rather than
-    // presenting a total that quietly ignores the withdrawal.
+    // Split unknown: deposits cannot advance, and the report says the figures are behind.
     expect(formatMoney(report.depositedEur)).toBe("10000.00");
     expect(report.incomplete).toBe(true);
   });
 
   test("carries earlier years' withdrawals into the state without reporting them", () => {
-    // 2024 takes 1 500 € out of a 15 000 € account: 500 € profit, so deposits
-    // fall to 9 000 € before 2025 is computed.
+    // 2024: 500 € profit, so deposits fall to 9 000 € before 2025.
     const report = ostReport({
       txns: [
         deposit("2020-01-02", "10000,00"),
@@ -124,8 +115,7 @@ describe("ostReport", () => {
     expect(report.withdrawals[0]!.withdrawnOn).toBe("2025-06-01");
     const outcome = report.withdrawals[0]!.outcome;
     if (!outcome.ok) throw new Error("expected a valued withdrawal");
-    // Profit is now 15 000 - 9 000 = 6 000, so the taxable share is larger
-    // than the first withdrawal's despite the identical amount.
+    // Profit is now 6 000, so the taxable share is larger for the same amount.
     expect(formatMoney(outcome.profitEur)).toBe("6000.00");
     expect(formatMoney(outcome.taxableEur)).toBe("600.00");
   });
@@ -138,15 +128,12 @@ describe("ostReport", () => {
     });
 
     expect(formatMoney(report.depositedEur)).toBe("105000.00");
-    // Over the cap is a fact worth showing as zero room, not as a negative.
     expect(formatMoney(report.capRemainingEur)).toBe("0.00");
   });
 });
 
 test("values the account before the withdrawal, not after it", () => {
-  // The withdrawal's own cash must not be missing from the total it is
-  // measured against: valuing after it leaves shrinks the denominator, which
-  // inflates the profit share of every euro taken out.
+  // Valued before the withdrawal; after it the shrunken total inflates the profit share.
   const withdrawn = withdrawal("2025-06-01", "1500,00");
   const seen: number[] = [];
   ostReport({
@@ -167,10 +154,7 @@ test("values the account before the withdrawal, not after it", () => {
 });
 
 describe("a share subscription's reservation", () => {
-  // The shape a real IPO produced on an equity savings account: money paid in,
-  // the subscription amount taken out to pay for it, the allotment booked as a
-  // purchase, and the reservation returned days later. Both cash legs are
-  // ordinary TALLETUS/NOSTO rows -- nothing in the export marks them.
+  // A real IPO on an OST: payment in, subscription taken out, allotment bought, reservation returned days later (plain TALLETUS/NOSTO rows).
   const subscription = () => [
     deposit("2026-03-02", "900,00"),
     withdrawal("2026-03-05", "900,00"),
@@ -196,8 +180,7 @@ describe("a share subscription's reservation", () => {
       to: "2026-12-31",
     });
 
-    // One payment in of 900,00 -- not two, and not reduced by a withdrawal that
-    // was really a subscription payment.
+    // One payment in of 900,00, not reduced by the subscription withdrawal.
     expect(formatMoney(report.depositedEur)).toBe("900.00");
     expect(formatMoney(report.capRemainingEur)).toBe("99100.00");
   });
@@ -208,7 +191,6 @@ describe("a share subscription's reservation", () => {
 
     expect(paired.has(rows[1]!.id)).toBe(true);
     expect(paired.has(rows[2]!.id)).toBe(true);
-    // The original payment in is not part of the pair.
     expect(paired.has(rows[0]!.id)).toBe(false);
   });
 
@@ -223,8 +205,7 @@ describe("a share subscription's reservation", () => {
   });
 
   test("does not pair a deposit that came before the withdrawal", () => {
-    // Money paid in and then genuinely taken out again is two real events, not
-    // a reservation: only a refund that *follows* its reservation cancels one.
+    // Paid in then genuinely taken out: two real events; only a refund that follows its reservation cancels one.
     const report = ostReport({
       txns: [deposit("2025-05-01", "1500,00"), withdrawal("2025-06-01", "1500,00")],
       valueAt: worth("15000,00"),
@@ -246,10 +227,7 @@ describe("a share subscription's reservation", () => {
 });
 
 describe("tax the broker withheld", () => {
-  // The broker takes the capital income tax out of the withdrawal and books it
-  // as its own row ("PÄÄOMATULOVERO OST"), which the importer maps to FEE. The
-  // amount withdrawn is therefore what reached the owner plus what was withheld
-  // from it.
+  // The broker books withheld tax as its own row (the capital-income-tax row, mapped to FEE): withdrawn = received + withheld.
   const tax = (on: IsoDate, amount: string) => row("FEE", on, `-${amount}`);
 
   test("counts toward the amount withdrawn", () => {
@@ -264,7 +242,7 @@ describe("tax the broker withheld", () => {
     });
 
     const line = report.withdrawals[0]!;
-    // 1 490,00 reached the owner and 10,00 was withheld: 1 500,00 left.
+    // 1 490,00 reached the owner, 10,00 withheld.
     expect(formatMoney(line.amountEur)).toBe("1500.00");
     expect(formatMoney(line.withheldEur)).toBe("10.00");
     const outcome = line.outcome;
@@ -273,8 +251,7 @@ describe("tax the broker withheld", () => {
   });
 
   test("is split across a day's withdrawals in proportion, so the parts sum to what left", () => {
-    // A single withdrawal reaches the ledger as several rows -- the broker
-    // splits it -- with one withholding row covering the day.
+    // One withdrawal arrives as several rows with one withholding row for the day.
     const report = ostReport({
       txns: [
         deposit("2020-01-02", "10000,00"),
@@ -298,10 +275,7 @@ describe("tax the broker withheld", () => {
 
 describe("after a withdrawal that could not be valued", () => {
   test("later withdrawals are reported as unknown, not as zero", () => {
-    // The real failure this prevents: an unpriced holding blocked a 2021
-    // withdrawal, the deposits were never reduced, and every later withdrawal
-    // then looked like it came from an account holding no profit -- reported as
-    // 0,00 € taxable on withdrawals the broker had actually withheld tax from.
+    // An unpriced holding blocked a 2021 withdrawal; later ones must not read as 0,00 € taxable.
     let call = 0;
     const report = ostReport({
       txns: [
@@ -370,9 +344,7 @@ describe("when the broker says what a row was", () => {
   });
 
   test("a withdrawal it named something else stays a withdrawal, however neatly it pairs", () => {
-    // An ordinary withdrawal followed days later by a deposit of the same size
-    // is two real events. The shape alone cannot tell them from a subscription,
-    // and treating them as one hides a taxable withdrawal.
+    // An ordinary withdrawal then a same-size deposit is two real events, not a subscription.
     const report = ostReport({
       txns: [
         deposit("2020-01-02", "10000,00"),
@@ -390,8 +362,7 @@ describe("when the broker says what a row was", () => {
   });
 
   test("rows with no text at all still fall back to the shape", () => {
-    // Everything imported before the broker's text was kept has none, and those
-    // ledgers must keep working.
+    // Rows imported before the broker's text was kept have none and must keep working.
     const report = ostReport({
       txns: [
         deposit("2026-03-02", "900,00"),

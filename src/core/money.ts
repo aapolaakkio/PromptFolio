@@ -1,16 +1,6 @@
 /**
- * A validated ISO 4217 currency code (three uppercase A-Z letters, e.g.
- * "EUR", "SEK", "USD") -- any code, not a closed union. Branded over a bare
- * `string` so a value can only reach this type through `parseCurrency`
- * (or the `EUR` constant below, itself built via `parseCurrency`): a plain
- * string literal does not structurally satisfy the brand, so it cannot be
- * smuggled into a `Money`/`FxRate` without going through validation first.
- *
- * The brand does not encode a currency's minor-unit exponent (EUR/SEK/USD
- * all have 2, but ISO 4217 also has zero-decimal codes like JPY and
- * three-decimal codes like KWD). `money.ts`'s `MONEY_SCALE = 2` below is
- * the one place that assumption is baked in; anything using a non-2-decimal
- * currency needs that constant to become per-currency first.
+ * A validated ISO 4217 code, branded so it only comes from `parseCurrency`. The brand does not
+ * encode minor units: `MONEY_SCALE = 2` assumes 2 decimals (wrong for JPY, KWD).
  */
 export type Currency = string & { readonly __brand: "Currency" };
 
@@ -21,20 +11,14 @@ export const parseCurrency = (text: string): Currency => {
   if (!ISO_4217_PATTERN.test(text)) {
     throw new Error(`Not an ISO 4217 currency code: ${JSON.stringify(text)}`);
   }
-  // SAFETY: `text` just matched ISO_4217_PATTERN, so it is exactly three
-  // uppercase A-Z letters -- the brand's whole contract.
+  // SAFETY: `text` just matched ISO_4217_PATTERN.
   return text as Currency;
 };
 
-/**
- * The base currency, used throughout core/server code that needs to compare
- * against or default to EUR. A named constant rather than a bare `"EUR"`
- * string literal at every call site, so a typo (`"EUR "`, `"EURO"`) is
- * caught once here instead of silently compiling at each comparison.
- */
+/** The base currency. */
 export const EUR: Currency = parseCurrency("EUR");
 
-export type Rounding = "half-up" | "floor";
+type Rounding = "half-up" | "floor";
 
 export type Money = { readonly minor: bigint; readonly currency: Currency };
 export type Quantity = { readonly scaled: bigint };
@@ -108,11 +92,7 @@ export const subMoney = (a: Money, b: Money): Money => {
 
 export const negateMoney = (m: Money): Money => ({ minor: -m.minor, currency: m.currency });
 
-/**
- * Divides `value` by `divisor`, both bigint, applying an explicit rounding mode.
- * `half-up` rounds ties away from zero (symmetric). `floor` rounds toward
- * negative infinity, matching Math.floor semantics for the exact rational value/divisor.
- */
+/** bigint division; `half-up` rounds ties away from zero, `floor` toward negative infinity. */
 const divideRounded = (value: bigint, divisor: bigint, mode: Rounding): bigint => {
   if (divisor === 0n) throw new Error("Division by zero");
   const negative = value < 0n !== divisor < 0n;

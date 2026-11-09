@@ -20,9 +20,7 @@ const totalOf = (allocations: readonly { amountEur: ReturnType<typeof parseMoney
 
 describe("allocateDeposit", () => {
   test("sends the money where the gap is widest", () => {
-    // 7 000 in shares and 3 000 in funds against 60/40. Depositing 1 000 makes
-    // the total 11 000, so funds should hold 4 400 and are 1 400 short while
-    // shares are already over: the whole deposit goes to funds.
+    // 7 000 shares, 3 000 funds vs 60/40: a 1 000 deposit makes funds 1 400 short, so all goes to funds.
     const allocations = allocateDeposit({
       rows: [row("stock", 7000), row("fund", 3000)],
       targets: [
@@ -39,9 +37,7 @@ describe("allocateDeposit", () => {
   });
 
   test("measures the shortfall after the deposit, not before it", () => {
-    // Both slices sit exactly on target beforehand. Adding money changes every
-    // weight, so both are underweight once it lands -- a rule measured on the
-    // old total would find no gap at all and have nowhere to put the money.
+    // Both on target beforehand, both underweight once the money lands.
     const allocations = allocateDeposit({
       rows: [row("stock", 5000), row("fund", 5000)],
       targets: [
@@ -68,8 +64,7 @@ describe("allocateDeposit", () => {
       depositEur: deposit,
     });
 
-    // A split that loses a cent will not reconcile against the deposit it
-    // describes.
+    // The parts must sum to the deposit.
     expect(formatMoney(totalOf(allocations))).toBe("100.01");
   });
 
@@ -110,9 +105,7 @@ describe("allocateDeposit", () => {
   });
 
   test("spreads a deposit larger than every gap by the target weights", () => {
-    // Once the gaps are closed the rest has to follow the targets. Dumping the
-    // excess into whichever slice was furthest behind would overshoot it and
-    // open a new gap the other way.
+    // Once gaps close, the rest follows the target weights.
     const allocations = allocateDeposit({
       rows: [row("stock", 5000), row("fund", 5000)],
       targets: [

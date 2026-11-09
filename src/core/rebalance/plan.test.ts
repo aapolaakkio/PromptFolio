@@ -30,8 +30,7 @@ describe("rebalancePlan", () => {
 
     expect(plan.trades.find((t) => t.key === "stock")!.side).toBe("sell");
     expect(plan.trades.find((t) => t.key === "fund")!.side).toBe("buy");
-    // Self-funding: it spends exactly what it raises, so it needs no new money
-    // and strands no cash.
+    // Self-funding: needs no new money and strands no cash.
     expect(formatMoney(sideTotal(plan.trades, "buy"))).toBe(
       formatMoney(sideTotal(plan.trades, "sell")),
     );
@@ -39,8 +38,7 @@ describe("rebalancePlan", () => {
   });
 
   test("every sale names the gain it would realise", () => {
-    // A tool that says "sell 4 000 € of X" without saying what that realises is
-    // quietly recommending a taxable event.
+    // A sale must state the gain it realises.
     const plan = rebalancePlan({
       rows: [row("stock", "-1000,00"), row("fund", "1000,00")],
       gainOnSale: () => parseMoney("190,00", EUR),
@@ -53,7 +51,7 @@ describe("rebalancePlan", () => {
   });
 
   test("a buy carries no gain at all, rather than a gain of zero", () => {
-    // Buying realises nothing; a 0,00 € there would read as a computed figure.
+    // Buying realises nothing; 0,00 € would read as computed.
     const plan = rebalancePlan({ rows: [row("fund", "1000,00")], gainOnSale: noGain });
     expect(plan.trades[0]!.realisedGainEur).toBeNull();
     expect(plan.trades[0]!.gainUnknown).toBe(false);
@@ -65,14 +63,11 @@ describe("rebalancePlan", () => {
 
     expect(sale.gainUnknown).toBe(true);
     expect(sale.realisedGainEur).toBeNull();
-    // The total is short by an unknown amount, and says so.
     expect(plan.gainIncomplete).toBe(true);
   });
 
   test("drops a trade below the floor and lists it", () => {
-    // A 3 € trade to correct two tenths of a point costs more in commission
-    // than the drift it corrects -- but the owner may have a reason, so it is
-    // shown rather than hidden.
+    // Below the floor: shown, not hidden.
     const plan = rebalancePlan({
       rows: [row("stock", "-3,00"), row("fund", "3,00")],
       gainOnSale: noGain,
@@ -92,7 +87,6 @@ describe("rebalancePlan", () => {
   });
 
   test("has nothing to do when every slice can only be guessed at", () => {
-    // Drift suspended by an unvaluable holding: no figure, so no trade.
     const plan = rebalancePlan({ rows: [row("stock", null)], gainOnSale: noGain });
     expect(plan.trades).toEqual([]);
     expect(plan.balanced).toBe(true);

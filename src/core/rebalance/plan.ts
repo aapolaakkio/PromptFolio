@@ -1,51 +1,32 @@
 import { addMoney, money, negateMoney, zeroMoney, EUR, type Money } from "../money.ts";
 import type { DriftRow } from "./drift.ts";
 
-/**
- * The smallest trade worth making, in minor units: 50,00 €.
- *
- * Every broker charges a minimum commission, so a 3 € trade to correct two
- * tenths of a point costs more than the drift it corrects. Trades below this
- * are dropped from the plan -- and listed, because the owner may have a reason
- * to make one anyway.
- */
-export const MIN_TRADE_MINOR = 5_000n;
+/** Smallest worthwhile trade, 50,00 €: minimum commissions outweigh smaller drift. Smaller ones are listed, not hidden. */
+const MIN_TRADE_MINOR = 5_000n;
 
 export type Trade = {
   readonly key: string;
   readonly label: string;
   readonly side: "buy" | "sell";
-  /** Always positive: the side says which way the money goes. */
   readonly amountEur: Money;
-  /** For a sale, the gain FIFO would realise. Null when the cost basis is unknown. */
+  /** For a sale, the FIFO gain it realises; null when the cost basis is unknown. */
   readonly realisedGainEur: Money | null;
   readonly gainUnknown: boolean;
 };
 
-export type RebalancePlan = {
+type RebalancePlan = {
   readonly trades: readonly Trade[];
-  /** Dropped for being below the floor. Listed, never hidden. */
+  /** Below the floor. */
   readonly tooSmall: readonly Trade[];
   readonly totalRealisedGainEur: Money;
-  /** True when any sale's gain could not be computed, so the total is short. */
   readonly gainIncomplete: boolean;
-  /** True when the remaining buys and sells fund each other exactly. */
   readonly balanced: boolean;
 };
 
 /**
- * The buys and sells that put every slice on target, and what each sale costs.
- *
- * Every sale carries the gain it would realise. This is the point of the whole
- * view: a tool that says "sell 4 000 € of X" without saying that this realises
- * a gain is not neutral advice, it is quietly recommending a taxable event. The
- * figure is a gain and never a tax -- what tax it attracts depends on the
- * owner's other capital income, which nothing here can see.
- *
- * `gainOnSale` is injected because a slice-level sale does not name an
- * instrument: "sell 1 000 € of funds" has no FIFO gain until a caller decides
- * which fund. `core` stays free of that decision and of the lot machinery's
- * wiring.
+ * Buys and sells that put every slice on target. Each sale carries the gain it realises (a gain,
+ * never a tax: that depends on income unseen here). `gainOnSale` is injected because a slice-level
+ * sale names no instrument until the caller picks one.
  */
 export const rebalancePlan = (args: {
   readonly rows: readonly DriftRow[];
@@ -90,13 +71,7 @@ export const rebalancePlan = (args: {
   };
 };
 
-/**
- * How a slice-level sale is attributed to the instruments inside it: largest
- * holding first, so the fewest positions are disturbed.
- *
- * Exported for the server layer, which knows what a slice holds. Returns the
- * amount to sell of each instrument, summing to `amountEur`.
- */
+/** Splits a slice-level sale across its holdings, largest first (fewest positions disturbed). */
 export const attributeSale = (
   holdings: readonly { readonly instrumentId: number; readonly valueEur: Money }[],
   amountEur: Money,

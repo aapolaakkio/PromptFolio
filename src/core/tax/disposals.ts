@@ -9,41 +9,29 @@ import {
 } from "./rates.ts";
 
 /** Which acquisition cost the disposal is reported with. */
-export type TaxMethod = "actual" | "deemed";
+type TaxMethod = "actual" | "deemed";
 
-/**
- * One disposal as it appears on a tax return, computed both permitted ways.
- *
- * Both are kept rather than only the winner: the taxpayer chooses, so a report
- * showing one figure is showing the wrong one whenever the other is better, and
- * the choice is only checkable if the rejected figure is visible beside it.
- */
+/** One disposal as on a tax return, computed both permitted ways so the rejected figure stays visible. */
 export type TaxableDisposal = {
   readonly accountId: number;
   readonly instrumentId: number;
   readonly acquiredOn: IsoDate;
   readonly soldOn: IsoDate;
   readonly quantity: Quantity;
-  /** Fee already deducted -- the base the actual-cost method uses. */
+  /** Fee deducted; the actual-cost base. */
   readonly netProceedsEur: Money;
-  /** Net plus the fee -- the sale price the deemed cost is a share of. */
+  /** Net plus fee; the deemed cost is a share of this. */
   readonly grossProceedsEur: Money;
   readonly actualCostEur: Money;
   readonly deemedCostEur: Money;
-  /** 20n or 40n, by how long the lot was held. */
   readonly deemedPercent: bigint;
   readonly actualGainEur: Money;
   readonly deemedGainEur: Money;
   readonly method: TaxMethod;
-  /** The gain under `method` -- what the return reports. */
   readonly gainEur: Money;
 };
 
-/**
- * True when `soldOn` falls on or after the `years`th anniversary of
- * `acquiredOn`. Calendar-based, so "at least 10 years" means the anniversary
- * itself qualifies and leap days need no special case.
- */
+/** True on or after the `years`th anniversary of `acquiredOn` (the anniversary itself qualifies). */
 const heldAtLeast = (acquiredOn: IsoDate, soldOn: IsoDate, years: number): boolean => {
   const anniversary = new Date(`${acquiredOn}T00:00:00Z`);
   anniversary.setUTCFullYear(anniversary.getUTCFullYear() + years);
@@ -51,16 +39,8 @@ const heldAtLeast = (acquiredOn: IsoDate, soldOn: IsoDate, years: number): boole
 };
 
 /**
- * Taxable disposals, from the lots `buildLots` matched.
- *
- * Disposals inside an equity savings account are dropped: nothing that happens
- * inside an OST is taxed when it happens, and counting a sale there as well as
- * the eventual withdrawal would tax the same money twice.
- *
- * Transfers are not filtered here -- the caller passes only the disposals that
- * came from a SELL, because moving one's own shares between accounts is not a
- * sale even though `buildLots` records it as a disposal so cost basis can
- * follow the shares.
+ * Taxable disposals from `buildLots`. OST disposals are dropped (taxed at withdrawal, not twice).
+ * The caller must pass only SELL disposals: `buildLots` also records transfers, which are not sales.
  */
 export const taxableDisposals = (args: {
   readonly disposals: readonly Disposal[];
@@ -81,10 +61,7 @@ export const taxableDisposals = (args: {
       const deemedCostEur = percentOf(grossProceedsEur, deemedPercent);
       const actualGainEur = subMoney(netProceedsEur, disposal.costEur);
       const deemedGainEur = subMoney(grossProceedsEur, deemedCostEur);
-      // The deemed cost is an alternative to the real one, not a way to enlarge
-      // a loss: a taxpayer claiming it on a losing sale would be claiming a
-      // bigger loss than they suffered. It is therefore only ever taken when it
-      // reduces a genuine gain.
+      // Deemed cost may only reduce a genuine gain, never enlarge a loss.
       const method: TaxMethod =
         actualGainEur.minor > 0n && deemedGainEur.minor < actualGainEur.minor ? "deemed" : "actual";
 

@@ -96,7 +96,7 @@ test("transfers in and out move units without cash", () => {
 test("a split multiplies units and leaves cash alone", () => {
   const txns = [
     txn("BUY", "2025-01-10", { instrumentId: 7, qty: "10", amount: "-1000,00" }),
-    // SPLIT quantity carries the resulting total units, not a delta
+    // SPLIT quantity is the resulting total, not a delta
     txn("SPLIT", "2025-05-10", { instrumentId: 7, qty: "40" }),
   ];
   expect(formatQuantity(positionsAt(txns, "2025-12-31").get(7)!)).toBe("40.000000");
@@ -116,10 +116,7 @@ test("external cash flows are deposits and withdrawals only, in EUR", () => {
   expect(flows.map((f) => formatMoney(f.amountEur))).toEqual(["5000.00", "-500.00", "920.00"]);
 });
 
-// OP's web transaction view exports securities transactions only: no deposits,
-// ever. Measured against Nordnet's deposits alone, a real portfolio reported a
-// money-weighted return roughly three times the truth, because the money that
-// funded OP's purchases never entered the ledger at all.
+// OP's view has no deposits; Nordnet's deposits alone gave a return ~3x the truth.
 const inAccount = (accountId: number, t: Txn): Txn => ({ ...t, accountId });
 
 test("an account with no cash record has its contributions read from purchases", () => {
@@ -130,8 +127,7 @@ test("an account with no cash record has its contributions read from purchases",
   ];
 
   expect(accountsMissingCashRecord(txns)).toEqual([2]);
-  // Account 1 keeps cash, so its deposit counts and its purchase does not --
-  // counting both would double the same money.
+  // Account 1 keeps cash, so its deposit counts and its purchase does not (no double count).
   expect(fundingCashFlows(txns).map((f) => formatMoney(f.amountEur))).toEqual([
     "1000.00",
     "500.00",
