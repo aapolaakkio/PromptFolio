@@ -312,4 +312,39 @@ describe("page instruments", () => {
     const row = await tdb.select().from(pageRecipes).get();
     expect(JSON.parse(row?.recipe ?? "null")).toEqual(next);
   });
+
+  test("a failed Muokkaa check changes nothing", async () => {
+    const { db: tdb } = await testDb();
+    const first = await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
+    const before = {
+      instrument: await tdb.select().from(instruments).all(),
+      prices: await tdb.select().from(prices).all(),
+      recipes: await tdb.select().from(pageRecipes).all(),
+    };
+    const useless = { ...RECIPE, pattern: String.raw`(?<date>nope)(?<price>nope)` };
+
+    await expect(
+      updatePageInstrument(
+        tdb,
+        first.instrument.id,
+        { currency: SEK, priceSource: "page", sourceKey: "https://example.test/uusi" },
+        deps(html("12,34"), model(useless)),
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(await tdb.select().from(instruments).all()).toEqual(before.instrument);
+    expect(await tdb.select().from(prices).all()).toEqual(before.prices);
+    expect(await tdb.select().from(pageRecipes).all()).toEqual(before.recipes);
+  });
+
+  test("a duplicate is refused before the model is asked", async () => {
+    const { db: tdb } = await testDb();
+    await addPageInstrument(tdb, NEW, deps(html("12,34"), model(RECIPE)));
+    const client = model(RECIPE);
+
+    await expect(addPageInstrument(tdb, NEW, deps(html("12,34"), client))).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(client.calls).toBe(0);
+  });
 });

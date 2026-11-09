@@ -27,6 +27,12 @@ const pageDeps = (): PageDeps => ({
 /** What saving told the form: the price a page was read for, null for any other source. */
 export type SaveResult = { readonly price: FetchedPrice | null };
 
+const MAX_SOURCE_KEY = 200;
+const MAX_PAGE_URL = 2000;
+const tooLongKey = (priceSource: string, sourceKey: string | undefined): boolean =>
+  (sourceKey ?? "").length > (priceSource === "page" ? MAX_PAGE_URL : MAX_SOURCE_KEY);
+const KEY_TOO_LONG = "Lähdetunnus on liian pitkä";
+
 const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN-tunnus on virheellinen");
 
 /** Every instrument the household knows: shared reference data, not ledger rows. */
@@ -73,7 +79,11 @@ export const createInstrument = createServerFn({ method: "POST" })
         kind: z.enum(["stock", "etf", "fund", "cash"]),
         currency: currencyField,
         priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
-        sourceKey: z.string().max(200).optional(),
+        sourceKey: z.string().max(MAX_PAGE_URL).optional(),
+      })
+      .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
+        message: KEY_TOO_LONG,
+        path: ["sourceKey"],
       })
       .refine((body) => body.priceSource === "manual" || (body.sourceKey ?? "") !== "", {
         message: "Lähdetunnus vaaditaan, kun hintalähde hakee hinnat automaattisesti",
@@ -99,12 +109,17 @@ export const createInstrument = createServerFn({ method: "POST" })
 export const editInstrument = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(
-    z.object({
-      id: z.number().int().positive(),
-      currency: currencyField,
-      priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
-      sourceKey: z.string().max(200),
-    }),
+    z
+      .object({
+        id: z.number().int().positive(),
+        currency: currencyField,
+        priceSource: z.enum(["yahoo", "nordnet_fund", "op_fund", "page", "manual"]),
+        sourceKey: z.string().max(MAX_PAGE_URL),
+      })
+      .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
+        message: KEY_TOO_LONG,
+        path: ["sourceKey"],
+      }),
   )
   .handler(({ data }) =>
     readable(async (): Promise<SaveResult> => {

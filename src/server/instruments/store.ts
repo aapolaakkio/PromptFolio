@@ -39,7 +39,7 @@ export const listInstruments = async (db: Db) => await db.select().from(instrume
  * has no ISIN any registry will give up -- and inventing one would corrupt the
  * identifier every broker's rows join on.
  */
-export const addInstrument = async (db: Db, body: NewInstrument) => {
+const refuseDuplicate = async (db: Db, body: NewInstrument): Promise<void> => {
   const isin = body.isin ?? null;
   if (isin !== null) {
     const existing = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
@@ -52,7 +52,11 @@ export const addInstrument = async (db: Db, body: NewInstrument) => {
       .get();
     if (existing) throw new HttpError(409, `Arvopaperi ${body.name} on jo lisätty`);
   }
+};
 
+export const addInstrument = async (db: Db, body: NewInstrument) => {
+  await refuseDuplicate(db, body);
+  const isin = body.isin ?? null;
   const sourceKey = body.sourceKey?.trim() || isin || body.name;
   return db
     .insert(instruments)
@@ -139,6 +143,7 @@ export const addPageInstrument = async (
   body: NewInstrument,
   deps: PageDeps,
 ): Promise<SavedPage> => {
+  await refuseDuplicate(db, body);
   const checked = await checkPage(
     body.sourceKey ?? "",
     {
