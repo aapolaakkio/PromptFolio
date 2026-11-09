@@ -364,6 +364,8 @@ describe("redacted", () => {
     ["1234 5678 9012 3456", "[REF]"],
     ["1234\u00a05678\u00a09012\u00a03456", "[REF]"],
     ["123456-789", "[REF]"],
+    ["tili123456789", "tili[REF]"],
+    ["2026-03-12345678901", "[REF]"],
   ])("%s is masked", (value, mask) => {
     expect(redacted(`viite ${value} loppu`)).toBe(`viite ${mask} loppu`);
   });
@@ -373,6 +375,7 @@ describe("redacted", () => {
     "12.03.2026",
     "2026-03-12 100,00",
     "FI0009000681 100 kpl",
+    "ISIN FI4000567029",
     "-45,60 EUR",
   ])("%s is left readable", (value) => {
     expect(redacted(value)).toBe(value);
