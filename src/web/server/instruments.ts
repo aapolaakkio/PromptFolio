@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+import {
+  InstrumentEdit,
+  KEY_TOO_LONG,
+  MAX_PAGE_URL,
+  tooLongKey,
+} from "../../server/action-inputs.ts";
 import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
 import type { InstrumentLookup } from "../../server/instruments/lookup.ts";
@@ -28,12 +34,6 @@ const pageDeps = (): PageDeps => ({
 
 /** What saving told the form: the price a page was read for, null for any other source. */
 type SaveResult = { readonly price: FetchedPrice | null };
-
-const MAX_SOURCE_KEY = 200;
-const MAX_PAGE_URL = 2000;
-const tooLongKey = (priceSource: string, sourceKey: string | undefined): boolean =>
-  (sourceKey ?? "").length > (priceSource === "page" ? MAX_PAGE_URL : MAX_SOURCE_KEY);
-const KEY_TOO_LONG = "Source code is too long";
 
 const Isin = z.string().regex(/^[A-Z]{2}[A-Z0-9]{9}\d$/, "ISIN is invalid");
 
@@ -106,19 +106,7 @@ export const createInstrument = createServerFn({ method: "POST" })
 /** Corrects an instrument's currency, price source or source code. */
 export const editInstrument = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(
-    z
-      .object({
-        id: z.number().int().positive(),
-        currency: currencyField,
-        priceSource: z.enum(["yahoo", "page", "manual"]),
-        sourceKey: z.string().max(MAX_PAGE_URL),
-      })
-      .refine((body) => !tooLongKey(body.priceSource, body.sourceKey), {
-        message: KEY_TOO_LONG,
-        path: ["sourceKey"],
-      }),
-  )
+  .validator(InstrumentEdit)
   .handler(({ data }) =>
     readable(async (): Promise<SaveResult> => {
       if (data.priceSource !== "page") {

@@ -7,6 +7,8 @@ import {
   conversationMessages,
   deleteConversation,
   listConversations,
+  Outcome,
+  recordProposalOutcome,
   startTurn,
 } from "../../server/chat/conversations.ts";
 import { HttpError } from "../../server/errors.ts";
@@ -25,6 +27,12 @@ export const removeConversation = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(ConversationId)
   .handler(({ data, context }) => readable(() => deleteConversation(context.userId, data.id)));
+
+/** What the owner did with a proposal card; the action itself ran through its own form's server function. */
+export const saveProposalOutcome = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(Outcome)
+  .handler(({ data, context }) => readable(() => recordProposalOutcome(context.userId, data)));
 
 /** Raw because the answer is an SSE stream; a refusal happens before the stream, as a JSON status code. */
 export const askTurn = createServerFn({ method: "POST" })

@@ -9,12 +9,12 @@ let auth: ReturnType<(typeof import("./auth.ts"))["getAuth"]>;
 let addCashEntry: (typeof import("./cash-entries.ts"))["addCashEntry"];
 let listCashEntries: (typeof import("./cash-entries.ts"))["listCashEntries"];
 let removeCashEntry: (typeof import("./cash-entries.ts"))["removeCashEntry"];
-let CashEntry: (typeof import("./cash-entries.ts"))["CashEntry"];
+let CashEntry: (typeof import("./action-inputs.ts"))["CashEntry"];
 
 beforeAll(async () => {
   auth = (await import("./auth.ts")).getAuth();
-  ({ addCashEntry, listCashEntries, removeCashEntry, CashEntry } =
-    await import("./cash-entries.ts"));
+  ({ addCashEntry, listCashEntries, removeCashEntry } = await import("./cash-entries.ts"));
+  ({ CashEntry } = await import("./action-inputs.ts"));
 });
 
 const sessionCookieFrom = (response: Response): string => {

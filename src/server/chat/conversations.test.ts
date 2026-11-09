@@ -234,3 +234,121 @@ describe("deleteConversation", () => {
     expect(await statusOf(() => chat.conversationMessages(owner, id))).toBe(404);
   });
 });
+
+describe("proposals in a conversation", () => {
+  const withAccount = async (): Promise<{ userId: string; accountId: number }> => {
+    const userId = await signUp();
+    const { CreateAccount, openAccount } = await import("../accounts.ts");
+    const { db } = await import("../db/index.ts");
+    const account = await openAccount(
+      db,
+      userId,
+      CreateAccount.parse({ name: "Nordnet", broker: "nordnet" }),
+    );
+    return { userId, accountId: account.id };
+  };
+
+  const proposingClient = (accountId: number): ChatClient => {
+    let round = 0;
+    return {
+      run: () => {
+        round += 1;
+        if (round === 1) {
+          return Promise.resolve({
+            text: "",
+            toolCalls: [
+              {
+                id: "p1",
+                name: "propose_cash_entry",
+                arguments: JSON.stringify({
+                  accountId,
+                  type: "DEPOSIT",
+                  tradeDate: "2026-11-01",
+                  amount: "100",
+                }),
+              },
+            ],
+          });
+        }
+        return Promise.resolve(assistantSaying("Confirm the card to save it."));
+      },
+    };
+  };
+
+  const ProposalEvent = z.object({
+    type: z.literal("proposal"),
+    proposal: z.object({ proposalId: z.string(), summary: z.string() }).loose(),
+  });
+
+  const proposalOf = async (stream: ReadableStream<Uint8Array>) => {
+    const body = await new Response(stream).text();
+    const events = body
+      .split("\n\n")
+      .filter((chunk) => chunk.startsWith("data: "))
+      .map((chunk) => z.json().parse(JSON.parse(chunk.slice("data: ".length))));
+    const first = z.object({ type: z.literal("conversation"), id: z.number() }).parse(events[0]);
+    const proposal = events.flatMap((event) => {
+      const parsed = ProposalEvent.safeParse(event);
+      return parsed.success ? [parsed.data.proposal] : [];
+    })[0];
+    if (proposal === undefined) throw new Error("No proposal streamed");
+    return { conversationId: first.id, proposal };
+  };
+
+  test("stores the summary but never the input, so an old conversation cannot replay it", async () => {
+    const { userId, accountId } = await withAccount();
+    setChatClient(proposingClient(accountId));
+    const { conversationId, proposal } = await proposalOf(
+      await turn(userId, { message: "Record my deposit" }),
+    );
+
+    const stored = await chat.conversationMessages(userId, conversationId);
+    expect(stored.map((m) => m.role)).toEqual(["user", "proposal", "assistant"]);
+    const row = stored[1];
+    expect(JSON.parse(row?.content ?? "")).toEqual({
+      proposalId: proposal.proposalId,
+      action: "cash_entry",
+      summary: proposal.summary,
+    });
+  });
+
+  test("the owner's outcome becomes a note the model reads next turn, once per proposal", async () => {
+    const { userId, accountId } = await withAccount();
+    const stranger = await signUp();
+    setChatClient(proposingClient(accountId));
+    const { conversationId, proposal } = await proposalOf(
+      await turn(userId, { message: "Record my deposit" }),
+    );
+    const outcome = {
+      conversationId,
+      proposalId: proposal.proposalId,
+      outcome: "saved" as const,
+    };
+
+    expect(await statusOf(() => chat.recordProposalOutcome(stranger, outcome))).toBe(404);
+    await chat.recordProposalOutcome(userId, outcome);
+    expect(await statusOf(() => chat.recordProposalOutcome(userId, outcome))).toBe(409);
+    expect(
+      await statusOf(() =>
+        chat.recordProposalOutcome(userId, { ...outcome, proposalId: crypto.randomUUID() }),
+      ),
+    ).toBe(404);
+
+    let sent: readonly { role: string; content: string }[] = [];
+    setChatClient({
+      run: (params) => {
+        sent = params.messages.flatMap((m) =>
+          m.role === "tool" ? [] : [{ role: m.role, content: m.content }],
+        );
+        return Promise.resolve(assistantSaying("Noted."));
+      },
+    });
+    await eventsOf(await turn(userId, { conversationId, message: "Did it work?" }));
+
+    const notes = sent.filter((m) => m.content.startsWith("[App note"));
+    expect(notes.map((m) => m.role)).toEqual(["user", "user"]);
+    expect(notes[1]?.content).toBe(
+      `[App note, not written by the owner] The owner confirmed "${proposal.summary}" and it was saved.`,
+    );
+  });
+});

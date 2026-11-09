@@ -1,31 +1,14 @@
 import { createHash } from "node:crypto";
 import { HttpError } from "./errors.ts";
 import { and, desc, eq } from "drizzle-orm";
-import { z } from "zod";
+import type { z } from "zod";
 
 import { EUR, parseMoney } from "../core/money.ts";
 import { assertAccountOwned } from "./accounts.ts";
-import { currencyField } from "./currency-field.ts";
+import { CashEntry } from "./action-inputs.ts";
 import { db } from "./db/index.ts";
 import { accounts, transactions } from "./db/schema.ts";
 import { fxRateOn } from "./fx.ts";
-
-const IsoDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in the format YYYY-MM-DD");
-
-/** The only cash movements a person may write by hand. Trades are absent: they carry an instrument and cost basis no broker record would back. Opening balance is included, else balances derived from a statement are short. */
-export const CashEntry = z
-  .object({
-    accountId: z.number().int().positive(),
-    type: z.enum(["OPENING_BALANCE", "DEPOSIT", "WITHDRAWAL", "INTEREST"]),
-    tradeDate: IsoDateSchema,
-    /** A decimal string, never a JSON number. */
-    amount: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Amount in the format 1234.56"),
-    currency: currencyField.default(EUR),
-    note: z.string().trim().max(200).optional(),
-  })
-  .strict();
 
 /** The sign comes from the type, not the caller: a signed amount would make "-100" mean two things depending on the type. */
 const signedMinor = (type: z.infer<typeof CashEntry>["type"], amount: bigint): bigint =>

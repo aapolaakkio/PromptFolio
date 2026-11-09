@@ -16,6 +16,23 @@ describe("takeEvents", () => {
     expect(events).toEqual([]);
   });
 
+  test("keeps a proposal card whose input fits the action's own schema, and drops one that does not", () => {
+    const card = {
+      proposalId: "p-1",
+      action: "cash_entry",
+      summary: "Record a withdrawal of 250.00 EUR from Nordnet on 2026-11-03.",
+      input: { accountId: 3, type: "WITHDRAWAL", tradeDate: "2026-11-03", amount: "250" },
+    };
+    const bad = { ...card, input: { ...card.input, amount: "-250" } };
+    const { events } = takeEvents(
+      `data: ${JSON.stringify({ type: "proposal", proposal: card })}\n\n` +
+        `data: ${JSON.stringify({ type: "proposal", proposal: bad })}\n\n`,
+    );
+    expect(events).toEqual([
+      { type: "proposal", proposal: { ...card, input: { ...card.input, currency: "EUR" } } },
+    ]);
+  });
+
   test("ignores keep-alive comments and blank frames", () => {
     const { events } = takeEvents(': keep-alive\n\ndata: {"type":"answer","text":"120.00"}\n\n');
     expect(events).toEqual([{ type: "answer", text: "120.00" }]);

@@ -1,12 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import {
-  addCashEntry,
-  CashEntry,
-  listCashEntries,
-  removeCashEntry,
-} from "../../server/cash-entries.ts";
+import { CashEntry } from "../../server/action-inputs.ts";
+import { addCashEntry, listCashEntries, removeCashEntry } from "../../server/cash-entries.ts";
 import { authed, readable } from "./guard.ts";
 
 const AccountId = z.number().int().positive();

@@ -109,6 +109,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         availableEur,
         lockedEur,
         balances: rows.map((row) => ({
+          accountId: row.accountId,
           account: row.accountName,
           currency: row.currency,
           amount: row.amount,
@@ -363,6 +364,8 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         instruments: instruments
           .filter((i) => owned.has(i.id))
           .map((i) => ({
+            // The id a proposal names; the name alone could match two instruments.
+            id: i.id,
             name: i.name,
             isin: i.isin,
             kind: i.kind,
@@ -391,6 +394,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         // One unpriceable holding makes every slice's euro figure wrong by an unknown amount.
         incomplete: drift.incomplete,
         rows: drift.rows.map((row) => ({
+          key: row.key,
           item: row.label,
           target: row.targetPercent,
           current: row.actualPercent,

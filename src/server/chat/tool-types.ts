@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Dimension } from "../../core/allocation.ts";
 import type { IsoDate } from "../../core/types.ts";
+import type { Proposal } from "./proposal-schema.ts";
 
 export type { Db } from "../db/index.ts";
 
@@ -32,6 +33,19 @@ export type ToolArgs = {
   readonly search?: string;
   readonly pattern?: string;
   readonly rules?: readonly { readonly pattern: string; readonly category: string }[];
+  readonly instrumentId?: number;
+  readonly date?: string;
+  readonly price?: string;
+  readonly accountId?: number;
+  readonly type?: string;
+  readonly tradeDate?: string;
+  readonly amount?: string;
+  readonly currency?: string;
+  readonly note?: string;
+  readonly targets?: readonly { readonly key: string; readonly weightPercent: string }[];
+  readonly id?: number;
+  readonly priceSource?: string;
+  readonly sourceKey?: string;
 };
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[];
@@ -48,3 +62,13 @@ export type ChatTool = {
   readonly schema: z.ZodType<ToolArgs>;
   readonly run: (input: ToolArgs) => Promise<ToolResult>;
 };
+
+/** Validates and describes an owner action; writes nothing. A refusal throws, and its message goes back to the model. */
+export type ProposalTool = {
+  readonly name: string;
+  readonly description: string;
+  readonly schema: z.ZodType<ToolArgs>;
+  readonly propose: (input: ToolArgs) => Promise<Proposal>;
+};
+
+export type AnyTool = ChatTool | ProposalTool;

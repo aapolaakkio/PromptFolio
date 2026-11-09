@@ -277,13 +277,13 @@ export const conversations = sqliteTable("conversations", {
     .default(sql`(unixepoch() * 1000)`),
 });
 
-/** One turn in a thread. Tool calls and results are not stored (derived from the ledger, a copy could go stale); `toolCalls` lists only which tools ran, for audit. */
+/** One turn in a thread. Tool calls and results are not stored (derived from the ledger, a copy could go stale); `toolCalls` lists only which tools ran, for audit. A `proposal` row holds a card's summary (never its input) and a `note` row what the owner did with it. */
 export const chatMessages = sqliteTable("chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   conversationId: integer("conversation_id")
     .notNull()
     .references(() => conversations.id, { onDelete: "cascade" }),
-  role: text("role", { enum: ["user", "assistant"] }).notNull(),
+  role: text("role", { enum: ["user", "assistant", "proposal", "note"] }).notNull(),
   content: text("content").notNull(),
   toolCalls: text("tool_calls"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })

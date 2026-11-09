@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { recordManualPrice } from "./manual.ts";
-import { PriceInput } from "../../web/server/prices.ts";
+import { PriceInput } from "../action-inputs.ts";
 import { EUR, type Currency } from "../../core/money.ts";
 
 type PriceSource = "yahoo" | "manual";

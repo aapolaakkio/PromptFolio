@@ -2,7 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { EUR, parseMoney } from "../../core/money.ts";
-import { BASIS_POINTS } from "../../core/rebalance/targets.ts";
+import {
+  DimensionInput,
+  TargetAllocationInput,
+  toBasisPoints,
+} from "../../server/action-inputs.ts";
 import { db } from "../../server/db/index.ts";
 import {
   depositPlanFor,
@@ -14,7 +18,7 @@ import {
 } from "../../server/rebalance.ts";
 import { authed, readable } from "./guard.ts";
 
-const Dimension = z.enum(["kind", "currency", "account", "instrument"]);
+const Dimension = DimensionInput;
 const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "The date must be in the format YYYY-MM-DD");
@@ -24,10 +28,6 @@ const Slice = z.object({ by: Dimension.optional(), on: IsoDate.optional() });
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/** A percentage as a decimal string, converted to integer basis points; more than two decimals is refused, not rounded. */
-const toBasisPoints = (percent: string): number =>
-  Math.round(Number(percent.replace(",", ".")) * (BASIS_POINTS / 100));
-
 export const getTargets = createServerFn()
   .middleware([authed])
   .validator(Slice)
@@ -36,22 +36,7 @@ export const getTargets = createServerFn()
 /** Stores a target set, which must sum to exactly 100 % or be refused whole. */
 export const saveTargetAllocation = createServerFn({ method: "POST" })
   .middleware([authed])
-  .validator(
-    z.object({
-      dimension: Dimension,
-      targets: z
-        .array(
-          z
-            .object({
-              key: z.string().min(1).max(120),
-              weightPercent: z.string().regex(/^\d+([.,]\d{1,2})?$/, "Share in the format 12.34"),
-            })
-            .strict(),
-        )
-        .min(1)
-        .max(200),
-    }),
-  )
+  .validator(TargetAllocationInput)
   .handler(async ({ data, context }) => {
     const result = await saveTargets(
       db,
