@@ -35,8 +35,43 @@ export type DraftResponse = {
     ignored?: boolean;
     suggestion?: Record<string, string>;
   }>;
+  /** Checked booking proposals for corporate-action rows; the owner applies or ignores each. */
+  corporateActions?: ReadonlyArray<{
+    readonly lines: readonly number[];
+    readonly kind: string;
+    readonly terms: string;
+    readonly effectiveDate: string;
+    readonly sourceUrl: string;
+    readonly taxNote: string;
+    readonly costBasisNeeded: readonly number[];
+    readonly rows: ReadonlyArray<{
+      readonly line: number;
+      readonly type: string;
+      readonly tradeDate: string;
+      readonly isin: string;
+      readonly quantityText: string;
+      readonly amountEur: string | null;
+      readonly feeEur: string;
+      readonly currency: string;
+    }>;
+  }>;
   unknownIsins: Array<{ isin: string | null; name: string; currency: string }>;
   added: Array<{ isin: string; name: string; currency: string; sourceKey: string | null }>;
+};
+
+/** A draft row as the table edits it: money and quantity as decimal strings. */
+export type EditableTxn = {
+  readonly line: number;
+  readonly tradeDate: string;
+  readonly type: string;
+  readonly isin: string;
+  readonly quantityText: string;
+  readonly amountEur: string;
+  readonly feeEur: string;
+  readonly currency: string;
+  readonly note: string;
+  /** Prefilled from a model suggestion the owner has not checked yet; never sent to the commit. */
+  readonly suggested?: boolean;
 };
 
 export type CommitResult = {

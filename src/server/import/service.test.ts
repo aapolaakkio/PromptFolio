@@ -1123,3 +1123,100 @@ describe("preview suggestions for rows the recipe could not read", () => {
     expect(body.problems[0]?.suggestion).toBeUndefined();
   });
 });
+
+describe("preview proposals for corporate actions", () => {
+  const ACTIONS = "corporate actions the app does not book";
+  const SUGGEST = "could not be read by the reading recipe";
+  const answering = (actions: () => Promise<string>) => ({
+    run: (params: { readonly messages: readonly { readonly content: string }[] }) => {
+      const system = params.messages[0]?.content ?? "";
+      if (system.includes(ACTIONS)) return actions().then((text) => ({ text, toolCalls: [] }));
+      if (system.includes(SUGGEST)) return Promise.resolve({ text: '{"rows":[]}', toolCalls: [] });
+      return nordnetReader.run(params);
+    },
+  });
+  const Preview = z.object({
+    problems: z.array(z.object({ line: z.number() })),
+    corporateActions: z.array(
+      z.object({
+        lines: z.array(z.number()),
+        rows: z.array(z.object({ line: z.number(), type: z.string(), quantityText: z.string() })),
+      }),
+    ),
+  });
+  const bought = nordnetRow({
+    id: "3999",
+    date: "2024-01-02",
+    type: "OSTO",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "100",
+    price: "4,00",
+    amount: "-400,00",
+  });
+  const splitOut = nordnetRow({
+    id: "4000",
+    date: "2024-06-10",
+    type: "SPLIT OTTO",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "100",
+    amount: "0",
+  });
+  const splitIn = nordnetRow({
+    id: "4001",
+    date: "2024-06-10",
+    type: "SPLIT JÄTTÖ",
+    name: "NOKIA",
+    isin: "FI0009000681",
+    qty: "1000",
+    amount: "0",
+  });
+  const split = JSON.stringify({
+    actions: [
+      {
+        group: 0,
+        kind: "split",
+        terms: "1:10",
+        effectiveDate: "2024-06-10",
+        sourceUrl: "https://www.nokia.com/investors/split",
+        taxNote: "A split is not a disposal.",
+        rows: [{ line: 4, type: "SPLIT", tradeDate: "2024-06-10", quantityText: "1000" }],
+      },
+    ],
+  });
+
+  afterEach(() => service._setReaderClient(nordnetReader));
+
+  test("a split pair gets a checked proposal next to its problem rows", async () => {
+    const { userId } = await signUp(`imp-ca-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    service._setReaderClient(answering(() => Promise.resolve(split)));
+    const previewed = await answer(() =>
+      service.previewUpload(
+        userId,
+        uploadForm(nordnetFileOf([bought, splitOut, splitIn]), accountId),
+      ),
+    );
+    const body = Preview.parse(previewed.body);
+    expect(body.problems.map((p) => p.line)).toEqual([3, 4]);
+    expect(body.corporateActions).toEqual([
+      { lines: [3, 4], rows: [{ line: 4, type: "SPLIT", quantityText: "1000" }] },
+    ]);
+  });
+
+  test("a model that throws leaves the preview as it was", async () => {
+    const { userId } = await signUp(`imp-ca-down-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    service._setReaderClient(answering(() => Promise.reject(new Error("down"))));
+    const previewed = await answer(() =>
+      service.previewUpload(
+        userId,
+        uploadForm(nordnetFileOf([bought, splitOut, splitIn]), accountId),
+      ),
+    );
+    const body = Preview.parse(previewed.body);
+    expect(body.problems.map((p) => p.line)).toEqual([3, 4]);
+    expect(body.corporateActions).toEqual([]);
+  });
+});

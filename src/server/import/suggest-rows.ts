@@ -18,7 +18,7 @@ export type SuggestProblem = {
 export type Suggestion = Readonly<Record<string, string>>;
 type Kind = "broker" | "bank";
 
-const BROKER_TYPES = [
+export const BROKER_TYPES = [
   "BUY",
   "SELL",
   "DIVIDEND",
@@ -130,7 +130,7 @@ const isNumberIn = (value: string, raw: string, signed = false): boolean => {
 };
 
 const isSignedAmountIn = (value: string, raw: string): boolean => isNumberIn(value, raw, true);
-const isUnsignedNumberIn = (value: string, raw: string): boolean => {
+export const isUnsignedNumberIn = (value: string, raw: string): boolean => {
   const printed = numbersIn(raw);
   return readingsOf(value.trim().replace(/^[-+\u2212]/, "")).some((reading) =>
     printed.has(reading),
@@ -150,7 +150,7 @@ const datesIn = (raw: string): ReadonlySet<string> =>
     }),
   );
 
-const isDateIn = (value: string, raw: string): boolean => {
+export const isDateIn = (value: string, raw: string): boolean => {
   try {
     return datesIn(raw).has(assertReal(value, value));
   } catch {

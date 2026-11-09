@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { applyProposal } from "./corporate-action-apply.ts";
+import { CorporateActionCard } from "./CorporateActionCard.tsx";
 import { errorMessage } from "../lib/errors.ts";
 import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,6 +21,7 @@ import {
   summariseAll,
   unknownAcross,
   type DraftResponse,
+  type EditableTxn,
 } from "./imports-draft.ts";
 import { undoConfirmMessage, type ImportRecord } from "./imports-history.ts";
 import { UnknownInstrumentForm } from "./UnknownInstrumentForm.tsx";
@@ -37,21 +40,6 @@ type Previewed = {
   readonly file: File | null;
   readonly draft: DraftResponse;
   readonly rows: EditableTxn[];
-};
-
-/** A draft row as the table edits it: money and quantity as decimal strings. */
-type EditableTxn = {
-  readonly line: number;
-  readonly tradeDate: string;
-  readonly type: string;
-  readonly isin: string;
-  readonly quantityText: string;
-  readonly amountEur: string;
-  readonly feeEur: string;
-  readonly currency: string;
-  readonly note: string;
-  /** Prefilled from a model suggestion the owner has not checked yet; never sent to the commit. */
-  readonly suggested?: boolean;
 };
 
 const QUANTITY_SCALE = 1_000_000;
@@ -155,6 +143,7 @@ const TXN_COLUMNS: readonly Column<EditableTxn>[] = [
       "FEE",
       "TRANSFER_IN",
       "TRANSFER_OUT",
+      "SPLIT",
       "INTEREST",
     ].map((value) => ({ value, label: value })),
   },
@@ -345,6 +334,12 @@ export const ImportsPage = () => {
         ) ?? null,
     );
 
+  // Applied proposals stay marked as suggestions, unlike the owner's own edits.
+  const setAppliedRows = (index: number, rows: EditableTxn[]) =>
+    setPreviews(
+      (current) => current?.map((entry, at) => (at === index ? { ...entry, rows } : entry)) ?? null,
+    );
+
   // Broker files sorted by the drop box go through this page's own flow below.
   const takeBrokerFiles = (id: number, dropped: readonly File[]) => {
     setSource("file");
@@ -509,6 +504,7 @@ export const ImportsPage = () => {
                   entry={entry}
                   unknownCount={unknown.length}
                   onRows={(rows) => setRows(index, rows)}
+                  onApplied={(rows) => setAppliedRows(index, rows)}
                 />
               ))}
 
@@ -582,58 +578,83 @@ const PreviewCard = ({
   entry,
   unknownCount,
   onRows,
+  onApplied,
 }: {
   readonly entry: Previewed;
   readonly unknownCount: number;
   readonly onRows: (rows: EditableTxn[]) => void;
-}) => (
-  <section className="card mt-6">
-    <h2>
-      Preview — {entry.name} ({entry.draft.broker})
-    </h2>
-    <p>
-      {entry.rows.length} rows to import
-      {unknownCount > 0 && `, ${unknownCount} unknown instruments`}. Correct the rows if needed
-      before importing.
-    </p>
-    {entry.draft.added.length > 0 && (
-      <ul className="text-sm">
-        {entry.draft.added.map((added) => (
-          <li key={added.isin}>
-            Adding: {added.name} — {added.sourceKey ?? "looking up ticker"} · {added.currency}
-          </li>
-        ))}
-      </ul>
-    )}
-    {entry.draft.problems.some((problem) => problem.ignored === true) && (
-      <ul className="text-muted text-sm">
-        {entry.draft.problems
-          .filter((problem) => problem.ignored === true)
-          .map((problem) => (
-            <li key={problem.line}>
-              Skipped row {problem.line}: {problem.message}
+  readonly onApplied: (rows: EditableTxn[]) => void;
+}) => {
+  // Proposals applied or ignored, by position; either way the card goes.
+  const [settled, setSettled] = useState<readonly number[]>([]);
+  const settle = (at: number) => setSettled((done) => [...done, at]);
+  const noteOf = (line: number): string => {
+    const problem = entry.draft.problems.find((p) => p.line === line);
+    return problem?.rawLine ?? problem?.message ?? "";
+  };
+  return (
+    <section className="card mt-6">
+      <h2>
+        Preview — {entry.name} ({entry.draft.broker})
+      </h2>
+      <p>
+        {entry.rows.length} rows to import
+        {unknownCount > 0 && `, ${unknownCount} unknown instruments`}. Correct the rows if needed
+        before importing.
+      </p>
+      {entry.draft.added.length > 0 && (
+        <ul className="text-sm">
+          {entry.draft.added.map((added) => (
+            <li key={added.isin}>
+              Adding: {added.name} — {added.sourceKey ?? "looking up ticker"} · {added.currency}
             </li>
           ))}
-      </ul>
-    )}
+        </ul>
+      )}
+      {entry.draft.problems.some((problem) => problem.ignored === true) && (
+        <ul className="text-muted text-sm">
+          {entry.draft.problems
+            .filter((problem) => problem.ignored === true)
+            .map((problem) => (
+              <li key={problem.line}>
+                Skipped row {problem.line}: {problem.message}
+              </li>
+            ))}
+        </ul>
+      )}
 
-    {/* Every row, never a cut-off list: this is the last screen before rows enter the ledger. */}
-    <DraftTable
-      rows={entry.rows}
-      columns={TXN_COLUMNS}
-      onChange={onRows}
-      isSuggested={(row) => row.suggested === true}
-      blank={(): EditableTxn => ({
-        line: entry.rows.length + 1,
-        tradeDate: "",
-        type: "BUY",
-        isin: "",
-        quantityText: "",
-        amountEur: "",
-        feeEur: "0",
-        currency: "EUR",
-        note: "",
-      })}
-    />
-  </section>
-);
+      {(entry.draft.corporateActions ?? []).map((proposal, at) =>
+        settled.includes(at) ? null : (
+          <CorporateActionCard
+            key={proposal.lines.join("-")}
+            proposal={proposal}
+            onApply={() => {
+              onApplied(applyProposal(entry.rows, proposal, noteOf));
+              settle(at);
+            }}
+            onIgnore={() => settle(at)}
+          />
+        ),
+      )}
+
+      {/* Every row, never a cut-off list: this is the last screen before rows enter the ledger. */}
+      <DraftTable
+        rows={entry.rows}
+        columns={TXN_COLUMNS}
+        onChange={onRows}
+        isSuggested={(row) => row.suggested === true}
+        blank={(): EditableTxn => ({
+          line: entry.rows.length + 1,
+          tradeDate: "",
+          type: "BUY",
+          isin: "",
+          quantityText: "",
+          amountEur: "",
+          feeEur: "0",
+          currency: "EUR",
+          note: "",
+        })}
+      />
+    </section>
+  );
+};

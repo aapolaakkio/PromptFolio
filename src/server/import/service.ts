@@ -19,6 +19,7 @@ import { createAdded, resolveUnknown } from "../instruments/auto-add.ts";
 import { pageDeps, withModelTimeout, type PageDeps } from "../instruments/find-page.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import { suggestRows } from "./suggest-rows.ts";
+import { proposeActions, type CorporateProposal } from "./corporate-actions.ts";
 
 export const MAX_PASTE_CHARS = 2_000_000;
 
@@ -143,18 +144,30 @@ const exampleOf = (txn: Draft["txns"][number]) => ({
   currency: txn.currency,
 });
 
+/** A model that cannot be configured is the same as one that is down: the preview goes on without it. */
+const previewClient = (): ChatClient | null => {
+  try {
+    return withModelTimeout(readerClient ?? createClient());
+  } catch {
+    return null;
+  }
+};
+
+/** Corporate-action rows get checked booking proposals; the owner applies them on the preview. */
+const corporateActionsOf = async (draft: Draft): Promise<readonly CorporateProposal[]> => {
+  if (!draft.problems.some((problem) => problem.raw.type !== undefined)) return [];
+  const client = previewClient();
+  return client === null ? [] : proposeActions(client, draft.problems);
+};
+
 /** The model proposes values for rows the recipe could not read; the page shows them as unconfirmed. */
 const withSuggestions = async (draft: Draft): Promise<Draft> => {
   const open = draft.problems.flatMap((problem, at) =>
     problem.ignored === true ? [] : [{ problem, at }],
   );
   if (open.length === 0) return draft;
-  let client: ChatClient;
-  try {
-    client = withModelTimeout(readerClient ?? createClient());
-  } catch {
-    return draft;
-  }
+  const client = previewClient();
+  if (client === null) return draft;
   const found = await suggestRows(
     client,
     "broker",
@@ -258,8 +271,11 @@ export const previewUpload = async (userId: string, form: FormData) => {
   await assertAccountOwned(userId, accountId);
   const built = await buildDraft(file, userId, accountId);
   const { broker, sha256 } = built;
-  const draft = await withSuggestions(built.draft);
-  return { broker, filename: file.name, sha256, ...draft };
+  const [draft, corporateActions] = await Promise.all([
+    withSuggestions(built.draft),
+    corporateActionsOf(built.draft),
+  ]);
+  return { broker, filename: file.name, sha256, ...draft, corporateActions };
 };
 
 export const CommitDraftBody = z
@@ -290,9 +306,12 @@ export const previewPaste = async (userId: string, body: z.infer<typeof PasteBod
   const { text, accountId } = PasteBody.parse(body);
   await assertAccountOwned(userId, accountId);
   const built = await buildPasteDraft(text, userId, accountId);
-  const draft = await withSuggestions(built.draft);
+  const [draft, corporateActions] = await Promise.all([
+    withSuggestions(built.draft),
+    corporateActionsOf(built.draft),
+  ]);
   const { sha256 } = built;
-  return { broker: "paste", filename: PASTE_FILENAME, sha256, ...draft };
+  return { broker: "paste", filename: PASTE_FILENAME, sha256, ...draft, corporateActions };
 };
 
 export const undo = (userId: string, importId: number) => undoImport(db, { userId, importId });

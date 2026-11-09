@@ -16,7 +16,7 @@ export type PageDeps = { readonly find: PageFinder; readonly client: ChatClient 
 const MAX_SEARCHES = 5;
 const MAX_TOKENS = 16000;
 
-const WEB_SEARCH_TOOL: ServerTool = {
+export const WEB_SEARCH_TOOL: ServerTool = {
   type: "web_search_20260318",
   name: "web_search",
   max_uses: MAX_SEARCHES,
@@ -56,20 +56,20 @@ const closingBrace = (text: string, from: number): number => {
   return -1;
 };
 
-const asFound = (candidate: string): z.infer<typeof Found> | null => {
+const parsedAs = <T>(candidate: string, schema: z.ZodType<T>): T | null => {
   try {
-    const parsed = Found.safeParse(JSON.parse(candidate));
+    const parsed = schema.safeParse(JSON.parse(candidate));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
 };
 
-/** The last balanced `{...}` that reads as `Found`: the model may wrap its answer in prose or correct itself. */
-const readFound = (text: string): z.infer<typeof Found> | null => {
+/** The last balanced `{...}` that reads as `schema`: the model may wrap its answer in prose or correct itself. */
+export const lastJsonMatching = <T>(text: string, schema: z.ZodType<T>): T | null => {
   for (let from = text.lastIndexOf("{"); from !== -1; from = text.lastIndexOf("{", from - 1)) {
     const to = closingBrace(text, from);
-    const found = to === -1 ? null : asFound(text.slice(from, to + 1));
+    const found = to === -1 ? null : parsedAs(text.slice(from, to + 1), schema);
     if (found !== null) return found;
     if (from === 0) break;
   }
@@ -90,7 +90,7 @@ export const webSearchFinder =
       ],
       tools: [WEB_SEARCH_TOOL],
     });
-    const found = readFound(reply.text);
+    const found = lastJsonMatching(reply.text, Found);
     if (found === null || found.url === null) return null;
     const isin = found.isin !== null && ISIN.test(found.isin) ? found.isin : null;
     return { url: found.url, isin };
