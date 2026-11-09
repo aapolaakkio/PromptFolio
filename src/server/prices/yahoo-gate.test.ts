@@ -84,4 +84,42 @@ describe("gatedFetch", () => {
     expect(await yahooPausedUntil(db, now)).toBeNull();
     expect((await pauseOf(gatedFetch(db, bad, now))) - t.now).toBe(15 * MIN);
   });
+
+  it("Retry-After as an HTTP date is honoured, uncapped", async () => {
+    const start = Date.parse("2026-11-09T12:00:00Z");
+    const { fetchImpl } = stub([tooMany({ "Retry-After": "Tue, 10 Nov 2026 00:00:00 GMT" })]);
+    const { now } = clock(start);
+    expect(await pauseOf(gatedFetch(db, fetchImpl, now))).toBe(start + 12 * 60 * MIN);
+  });
+
+  it("a non-Yahoo success between two Yahoo 429s does not reset the back-off", async () => {
+    const { t, now } = clock(0);
+    const routed = async (input: string | URL | Request): Promise<Response> =>
+      String(input).includes("finance.yahoo.com") ? tooMany() : new Response("ok", { status: 200 });
+    const gated = gatedFetch(db, routed, now);
+    t.now = await pauseOf(gated);
+    await gated("https://api.openfigi.com/v3/mapping");
+    expect((await pauseOf(gated)) - t.now).toBe(30 * MIN);
+  });
+
+  it("a non-Yahoo request goes out while Yahoo is paused", async () => {
+    const { now } = clock(0);
+    await pauseOf(gatedFetch(db, stub([tooMany()]).fetchImpl, now));
+    const { state, fetchImpl: ok } = stub([new Response("ok", { status: 200 })]);
+    const res = await gatedFetch(db, ok, now)("https://www.op.fi/x");
+    expect(res.status).toBe(200);
+    expect(state.calls).toBe(1);
+    expect(await yahooPausedUntil(db, now)).not.toBeNull();
+  });
+
+  it("a non-Yahoo 429 does not pause Yahoo", async () => {
+    const { now } = clock(0);
+    const res = await gatedFetch(
+      db,
+      stub([tooMany()]).fetchImpl,
+      now,
+    )("https://api.openfigi.com/v3/mapping");
+    expect(res.status).toBe(429);
+    expect(await yahooPausedUntil(db, now)).toBeNull();
+  });
 });

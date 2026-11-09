@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { Db } from "../db/index.ts";
 import { yahooGate } from "../db/schema.ts";
-import type { FetchImpl } from "./types.ts";
+import { urlOf, type FetchImpl } from "./types.ts";
 
 const GATE_ID = 1;
 const FIRST_BACKOFF_MS = 15 * 60_000;
@@ -42,9 +42,23 @@ export const yahooPausedUntil = async (
   return until !== null && until > now() ? until : null;
 };
 
-const retryAfterMs = (res: Response): number | null => {
-  const seconds = Number(res.headers.get("Retry-After"));
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+/** Retry-After in either of its forms: delay-seconds or an HTTP date. */
+const retryAfterMs = (res: Response, now: () => number): number | null => {
+  const value = res.headers.get("Retry-After");
+  if (value === null) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+  const untilDate = Date.parse(value) - now();
+  return Number.isFinite(untilDate) && untilDate > 0 ? untilDate : null;
+};
+
+/** Only Yahoo's own hosts are gated; OpenFIGI and op.fi have their own limits. */
+const isYahoo = (input: string | URL | Request): boolean => {
+  try {
+    return new URL(urlOf(input)).hostname.endsWith(".finance.yahoo.com");
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -54,6 +68,8 @@ const retryAfterMs = (res: Response): number | null => {
 export const gatedFetch =
   (db: Db, fetchImpl: FetchImpl, now: () => number = Date.now): FetchImpl =>
   async (input, init) => {
+    if (!isYahoo(input)) return await fetchImpl(input, init);
+
     const pausedUntil = await yahooPausedUntil(db, now);
     if (pausedUntil !== null) throw new YahooPausedError(pausedUntil);
 
@@ -65,7 +81,7 @@ export const gatedFetch =
 
     const previous = (await readGate(db))?.backoffMs ?? 0;
     const backoffMs = Math.min(previous === 0 ? FIRST_BACKOFF_MS : previous * 2, MAX_BACKOFF_MS);
-    const waitMs = retryAfterMs(res) ?? backoffMs;
+    const waitMs = retryAfterMs(res, now) ?? backoffMs;
     const until = now() + waitMs;
     await writeGate(db, { pausedUntil: until, backoffMs });
     throw new YahooPausedError(until);
