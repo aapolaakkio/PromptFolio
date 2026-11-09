@@ -28,6 +28,7 @@ import type { PriceLookup } from "../core/returns.ts";
 import { isPriceStale } from "../core/staleness.ts";
 import type { Instrument, IsoDate, Txn } from "../core/types.ts";
 import type { Db } from "./db/index.ts";
+import { isPublicPageUrl } from "./prices/page.ts";
 import {
   accounts,
   fxRates,
@@ -275,6 +276,11 @@ type HoldingView = {
   readonly ongoingChargeBp: number | null;
   /** `valueEur` x charge per year; null when either is unknown. */
   readonly yearlyCostEur: string | null;
+  /** Where the charge came from; `url` only when it is a public https page. Null while no charge is known. */
+  readonly chargeSource: {
+    readonly url: string | null;
+    readonly source: "ai" | "user";
+  } | null;
   /** Needs a staleness badge: price older than it could be, missing, or unvaluable for any other reason. */
   readonly stale: boolean;
   readonly costBasisError: { readonly tradeDate: IsoDate; readonly message: string } | null;
@@ -298,6 +304,16 @@ const explainValuationFailure = (
     : `No exchange rate for ${instrument.currency} on ${on}, so the market value of ` +
       `${instrument.name} (${instrument.isin}) cannot be computed.`;
 
+const chargeSourceOf = (
+  row: typeof instrumentCosts.$inferSelect | undefined,
+): HoldingView["chargeSource"] =>
+  row === undefined || row.ongoingChargeBp === null
+    ? null
+    : {
+        url: row.sourceUrl !== null && isPublicPageUrl(row.sourceUrl) ? row.sourceUrl : null,
+        source: row.source,
+      };
+
 const yearlyCostFor = (valueEur: Money | null, bp: number | null): string | null =>
   valueEur === null || bp === null ? null : formatMoney(yearlyCostEur(valueEur, bp));
 
@@ -313,11 +329,8 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
         .all()
     ).map((row) => [row.id, row.lookupStatus]),
   );
-  const chargeById = new Map(
-    (await db.select().from(instrumentCosts).all()).map((row) => [
-      row.instrumentId,
-      row.ongoingChargeBp,
-    ]),
+  const chargeRows = new Map(
+    (await db.select().from(instrumentCosts).all()).map((row) => [row.instrumentId, row]),
   );
   const costs = costBasisPerInstrument(txns, on);
 
@@ -398,8 +411,12 @@ export const holdingsFor = async (db: Db, userId: string, on: IsoDate): Promise<
         row.valuedEur === null || totalValuedEur.minor === 0n
           ? null
           : Number(row.valuedEur.minor) / Number(totalValuedEur.minor),
-      ongoingChargeBp: chargeById.get(row.instrumentId) ?? null,
-      yearlyCostEur: yearlyCostFor(row.valuedEur, chargeById.get(row.instrumentId) ?? null),
+      ongoingChargeBp: chargeRows.get(row.instrumentId)?.ongoingChargeBp ?? null,
+      yearlyCostEur: yearlyCostFor(
+        row.valuedEur,
+        chargeRows.get(row.instrumentId)?.ongoingChargeBp ?? null,
+      ),
+      chargeSource: chargeSourceOf(chargeRows.get(row.instrumentId)),
       priceDate: row.priceDate,
       stale:
         row.valuationError !== null ||

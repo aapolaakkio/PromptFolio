@@ -2,9 +2,9 @@ import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import type { ChatClient } from "../chat/runner.ts";
-import { isTransientFailure } from "../chat/transient.ts";
 import type { Db } from "../db/index.ts";
 import { instrumentCosts, instruments } from "../db/schema.ts";
+import { HttpError } from "../errors.ts";
 import { FINNISH_CONTEXT, RECIPE_MODEL } from "../import/recipe/ask.ts";
 import { heldInstrumentIds } from "../prices/intraday.ts";
 import { fetchPage, isPublicPageUrl } from "../prices/page.ts";
@@ -44,16 +44,42 @@ const toBasisPoints = (whole: string, fraction: string): number | null => {
 // A digit or separator before the number means a longer number ("1,20", "10,20"), so it is not this one.
 const PERCENT = /(?<![\d.,])(\d{1,2})(?:[.,](\d+))?\s*%/g;
 
-/** The page prints exactly `bp` basis points within the identity window of the whole ISIN. */
+const ISIN_TOKEN = /(?<![A-Z0-9])[A-Z]{2}[A-Z0-9]{9}\d(?![A-Z0-9])/g;
+// TER and OCF are case-sensitive labels: "ter" inside another word is not one.
+const KEYWORDS_ANY_CASE =
+  /juoksevat kulut|jatkuvat kulut|ongoing charges?|ongoing costs?|total expense ratio|årlig avgift|löpande/i;
+const KEYWORDS_UPPER = /\b(?:TER|OCF)\b/;
+// Short on purpose: the label sits beside its figure; a wider reach would borrow a neighbour's label.
+const KEYWORD_BEFORE_CHARS = 120;
+const KEYWORD_AFTER_CHARS = 60;
+
+const hasKeywordNear = (page: string, start: number, end: number): boolean => {
+  const near = page.slice(Math.max(0, start - KEYWORD_BEFORE_CHARS), end + KEYWORD_AFTER_CHARS);
+  return KEYWORDS_ANY_CASE.test(near) || KEYWORDS_UPPER.test(near);
+};
+
+const distance = (at: number, start: number, end: number): number =>
+  at < start ? start - at : Math.max(0, at - end);
+
+/** The page prints exactly `bp` basis points beside an ongoing-charge label, and the nearest ISIN to that figure (within the identity window) is this fund's. */
 export const chargeOnPage = (page: string, isin: string, bp: number): boolean => {
-  const isinAt = [...page.matchAll(new RegExp(`(?<![A-Z0-9])${isin}(?![A-Z0-9])`, "g"))].map(
-    (found) => found.index,
-  );
+  const isins = [...page.matchAll(ISIN_TOKEN)].map((found) => ({
+    at: found.index,
+    code: found[0],
+  }));
   return [...page.matchAll(PERCENT)].some((found) => {
     if (toBasisPoints(found[1] ?? "0", found[2] ?? "") !== bp) return false;
-    const end = found.index + found[0].length;
-    return isinAt.some(
-      (at) => at >= found.index - IDENTITY_WINDOW_CHARS && at <= end + IDENTITY_WINDOW_CHARS,
+    const start = found.index;
+    const end = start + found[0].length;
+    if (!hasKeywordNear(page, start, end)) return false;
+    const ranked = isins
+      .map((entry) => ({ code: entry.code, gap: distance(entry.at, start, end) }))
+      .sort((x, y) => x.gap - y.gap);
+    const [nearest, next] = ranked;
+    return (
+      nearest?.code === isin &&
+      nearest.gap <= IDENTITY_WINDOW_CHARS &&
+      (next === undefined || next.code === isin || next.gap > nearest.gap)
     );
   });
 };
@@ -73,6 +99,11 @@ export const setOwnCharge = async (
   bp: number | null,
   checkedAt: number,
 ): Promise<void> => {
+  const fund = await db.select().from(instruments).where(eq(instruments.id, instrumentId)).get();
+  if (fund === undefined) throw new HttpError(404, "Instrument not found");
+  if (fund.kind !== "fund" && fund.kind !== "etf") {
+    throw new HttpError(400, "A fee can only be set for a fund or an ETF");
+  }
   if (bp === null) {
     await db.delete(instrumentCosts).where(eq(instrumentCosts.instrumentId, instrumentId)).run();
     return;
@@ -85,9 +116,10 @@ export const setOwnCharge = async (
     .run();
 };
 
+// 0 is refused for a lookup: it is how an entry fee or a missing figure prints.
 const percentToBp = (percent: number): number | null => {
   const bp = Math.round(percent * 100);
-  return Math.abs(percent * 100 - bp) < 1e-6 && bp >= 0 && bp <= MAX_CHARGE_BP ? bp : null;
+  return Math.abs(percent * 100 - bp) < 1e-6 && bp > 0 && bp <= MAX_CHARGE_BP ? bp : null;
 };
 
 type Verified = { readonly bp: number; readonly url: string };
@@ -114,6 +146,7 @@ const verify = async (
   return chargeOnPage(page, fund.isin, bp) ? { bp, url: found.url } : null;
 };
 
+/** A failed lookup (null) only moves `checkedAt`: a fee verified earlier stays with its source. */
 const save = async (db: Db, instrumentId: number, checkedAt: number, found: Verified | null) => {
   const fields = {
     ongoingChargeBp: found?.bp ?? null,
@@ -126,7 +159,7 @@ const save = async (db: Db, instrumentId: number, checkedAt: number, found: Veri
     .values({ instrumentId, ...fields })
     .onConflictDoUpdate({
       target: instrumentCosts.instrumentId,
-      set: fields,
+      set: found === null ? { checkedAt } : fields,
       // A lookup that raced the owner's own entry must not win.
       setWhere: eq(instrumentCosts.source, "ai"),
     })
@@ -140,7 +173,7 @@ const isDue = (row: typeof instrumentCosts.$inferSelect | undefined, now: number
   return row.checkedAt < now - days * DAY_MS;
 };
 
-/** Looks up the yearly charge of up to MAX_COST_LOOKUPS_PER_RUN held funds and ETFs. A transient model failure stores nothing, so the fund is asked again next run. Never throws for one fund's failure. */
+/** Looks up the yearly charge of up to MAX_COST_LOOKUPS_PER_RUN held funds and ETFs. A failure of any kind stores null (a verified fee is kept) so the fund waits its recheck interval. Never throws for one fund's failure. */
 export const refreshCosts = async (
   db: Db,
   opts: { readonly client: ChatClient | null; readonly fetchImpl: FetchImpl; readonly now: number },
@@ -159,8 +192,11 @@ export const refreshCosts = async (
   const costs = new Map(
     (await db.select().from(instrumentCosts).all()).map((row) => [row.instrumentId, row]),
   );
+  // Never-checked first, then the longest-waiting, so no fund starves the others.
+  const checkedAt = (id: number): number => costs.get(id)?.checkedAt ?? Number.NEGATIVE_INFINITY;
   const due = candidates
     .filter((row) => isDue(costs.get(row.id), opts.now))
+    .sort((a, b) => checkedAt(a.id) - checkedAt(b.id) || a.id - b.id)
     .slice(0, MAX_COST_LOOKUPS_PER_RUN);
 
   let stored = 0;
@@ -175,7 +211,7 @@ export const refreshCosts = async (
         `Fund cost lookup failed for instrument ${fund.id}`,
         cause instanceof Error ? cause.name : "UnknownError",
       );
-      if (isTransientFailure(cause)) continue;
+      // ponytail: a transient failure also waits out the 30-day rule instead of keeping a failure counter; one night's outage costs a month's retry for those funds.
       await save(db, fund.id, opts.now, null);
       stored += 1;
     }

@@ -306,32 +306,48 @@ describe("get_fund_costs", () => {
     const { tools, instrumentId } = await seed();
     await db
       .insert(instrumentCosts)
-      .values({ instrumentId, ongoingChargeBp: 50, sourceUrl: null, checkedAt: 1, source: "ai" })
+      .values({
+        instrumentId,
+        ongoingChargeBp: 50,
+        sourceUrl: "https://funds.example.fi/x",
+        checkedAt: 1,
+        source: "ai",
+      })
       .run();
     // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_fund_costs").run({})) as {
       totalYearlyCostEur: string;
+      unknownCount: number;
       holdings: Array<{
         name: string;
         ongoingChargePercent: string | null;
         yearlyCostEur: string | null;
+        source: string | null;
+        sourceUrl: string | null;
       }>;
     };
     expect(result.holdings[0]).toMatchObject({
       name: "Testirahasto",
       ongoingChargePercent: "0.50",
       yearlyCostEur: "0.60",
+      source: "ai",
+      sourceUrl: "https://funds.example.fi/x",
     });
     expect(result.totalYearlyCostEur).toBe("0.60");
+    expect(result.unknownCount).toBe(0);
   });
 
   test("an unknown fee is null, never zero", async () => {
     const { tools } = await seed();
     // SAFETY: the tool's literal has this shape.
     const result = (await toolNamed(tools, "get_fund_costs").run({})) as {
+      totalYearlyCostEur: string | null;
+      unknownCount: number;
       holdings: Array<{ ongoingChargePercent: string | null }>;
     };
     expect(result.holdings[0]?.ongoingChargePercent).toBeNull();
+    expect(result.totalYearlyCostEur).toBeNull();
+    expect(result.unknownCount).toBe(1);
   });
 });
 

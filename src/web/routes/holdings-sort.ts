@@ -24,6 +24,8 @@ export type Holding = {
   ongoingChargeBp: number | null;
   /** `valueEur` x charge per year; null when either is unknown. */
   yearlyCostEur: string | null;
+  /** Where the charge came from; null while unknown. `url` is a vetted public page. */
+  chargeSource: { url: string | null; source: "ai" | "user" } | null;
   priceDate: string | null;
   stale: boolean;
   costBasisError: { tradeDate: string; message: string } | null;

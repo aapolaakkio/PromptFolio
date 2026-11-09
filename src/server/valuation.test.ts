@@ -221,7 +221,7 @@ test("holdings carry the price source and lookup status the label shows", async 
 test("holdings carry the ongoing charge and the yearly cost; unknown stays null", async () => {
   const { db } = await seed();
   const [before] = await holdingsFor(db, "u1", "2025-07-01");
-  expect(before).toMatchObject({ ongoingChargeBp: null, yearlyCostEur: null });
+  expect(before).toMatchObject({ ongoingChargeBp: null, yearlyCostEur: null, chargeSource: null });
   const nokia = await db.select().from(instruments).get();
   await db
     .insert(instrumentCosts)
@@ -234,7 +234,11 @@ test("holdings carry the ongoing charge and the yearly cost; unknown stays null"
     })
     .run();
   const [after] = await holdingsFor(db, "u1", "2025-07-01");
-  expect(after).toMatchObject({ ongoingChargeBp: 25, yearlyCostEur: "1.15" }); // 460.00 x 0.25 %
+  expect(after).toMatchObject({
+    ongoingChargeBp: 25,
+    yearlyCostEur: "1.15",
+    chargeSource: { url: null, source: "user" },
+  }); // 460.00 x 0.25 %
 });
 
 // Weight is a number against the sum of holdings that COULD be valued; a second priced instrument proves the split is proportional.

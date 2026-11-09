@@ -15,14 +15,26 @@ const BP_PER_UNIT = 10_000n;
 export const yearlyCostEur = (valueEur: Money, bp: number): Money =>
   divMoney(money(valueEur.minor * BigInt(bp), valueEur.currency), BP_PER_UNIT);
 
-/** Total of the known yearly costs; an unknown fee adds nothing. */
-export const sumYearlyCosts = (
+type YearlyCostSummary = {
+  /** Null when no fee is known: a zero would read as "free". */
+  readonly totalEur: string | null;
+  readonly known: number;
+  readonly total: number;
+};
+
+/** Total of the known yearly costs with how many of the funds that covers. */
+export const yearlyCostSummary = (
   rows: readonly { readonly yearlyCostEur: string | null }[],
-): string =>
-  formatMoney(
-    rows.reduce(
-      (sum, row) =>
-        row.yearlyCostEur === null ? sum : addMoney(sum, parseMoney(row.yearlyCostEur, EUR)),
-      zeroMoney(EUR),
-    ),
-  );
+): YearlyCostSummary => {
+  const known = rows.flatMap((row) => (row.yearlyCostEur === null ? [] : [row.yearlyCostEur]));
+  return {
+    totalEur:
+      known.length === 0
+        ? null
+        : formatMoney(
+            known.reduce((sum, text) => addMoney(sum, parseMoney(text, EUR)), zeroMoney(EUR)),
+          ),
+    known: known.length,
+    total: rows.length,
+  };
+};

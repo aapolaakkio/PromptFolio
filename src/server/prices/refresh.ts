@@ -330,17 +330,6 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.error("Price refresh failed", cause);
   }
   try {
-    const costs = await refreshCosts(db, {
-      client: timedClientOrNull(),
-      fetchImpl: fetch,
-      now: Date.now(),
-    });
-    if (costs.asked > 0)
-      console.log(`Fund costs: ${costs.stored} of ${costs.asked} looked up saved`);
-  } catch (cause) {
-    console.error("Fund cost lookup failed", cause instanceof Error ? cause.name : "UnknownError");
-  }
-  try {
     const fxResult = await backfillFxRates(db);
     if (fxResult.currencies > 0) {
       console.log(
@@ -363,5 +352,16 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     }
   } catch (cause) {
     console.error("Backfill failed", cause);
+  }
+  try {
+    const costs = await refreshCosts(db, {
+      client: timedClientOrNull(),
+      fetchImpl: fetch,
+      now: Date.now(),
+    });
+    if (costs.asked > 0)
+      console.log(`Fund costs: ${costs.stored} of ${costs.asked} looked up saved`);
+  } catch (cause) {
+    console.error("Fund cost lookup failed", cause instanceof Error ? cause.name : "UnknownError");
   }
 };

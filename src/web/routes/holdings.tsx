@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eur, qty, share, formatDate } from "../lib/format.ts";
-import { sumYearlyCosts } from "../../core/fund-costs.ts";
+import { yearlyCostSummary } from "../../core/fund-costs.ts";
 import { chargeLabel, instrumentLabel } from "./holdings-label.ts";
 import { sortHoldings, type Holding, type SortDirection, type SortKey } from "./holdings-sort.ts";
 import { HoldingsChart } from "../charts/HoldingsChart.tsx";
@@ -44,6 +44,41 @@ const UnknownCostCell = ({ message }: { message: string }) => (
     unknown
   </span>
 );
+
+/** The yearly total of fund fees: "unknown" until at least one fee is known, and how many funds it covers. */
+const FeeSummary = ({ rows }: { rows: readonly Holding[] }) => {
+  const summary = yearlyCostSummary(
+    rows.filter((row) => row.kind === "fund" || row.kind === "etf"),
+  );
+  if (summary.total === 0) return null;
+  return (
+    <p className="mb-2 text-sm text-muted">
+      Fund fees:{" "}
+      {summary.totalEur === null
+        ? "unknown"
+        : `${eur(summary.totalEur)} per year (${summary.known} of ${summary.total} funds known)`}
+    </p>
+  );
+};
+
+/** The percentage links to the page the fee was read from; an owner's own value says so. */
+const FeeCell = ({ row }: { row: Holding }) => {
+  const label = chargeLabel(row.ongoingChargeBp);
+  const source = row.chargeSource;
+  if (source?.url != null) {
+    return (
+      <a href={source.url} target="_blank" rel="noreferrer noopener" className="text-accent">
+        {label}
+      </a>
+    );
+  }
+  return (
+    <>
+      {label}
+      {source?.source === "user" && <div className="text-xs text-muted">set by you</div>}
+    </>
+  );
+};
 
 export const HoldingsPage = () => {
   const queryClient = useQueryClient();
@@ -119,9 +154,7 @@ export const HoldingsPage = () => {
       <section className="mb-6">
         <HoldingsChart holdings={rows} />
       </section>
-      <p className="mb-2 text-sm text-muted">
-        Fund fees: {eur(sumYearlyCosts(rows))} per year (holdings with a known fee only)
-      </p>
+      <FeeSummary rows={rows} />
       <table>
         <thead>
           <tr>
@@ -193,7 +226,7 @@ export const HoldingsPage = () => {
                 )}
               </td>
               <td className="num">
-                {chargeLabel(row.ongoingChargeBp)}
+                <FeeCell row={row} />
                 {row.yearlyCostEur !== null && (
                   <div className="text-xs text-muted">{eur(row.yearlyCostEur)} / year</div>
                 )}

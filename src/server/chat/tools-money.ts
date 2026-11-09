@@ -14,7 +14,7 @@ import { classifiedTransactions } from "../spending/transactions.ts";
 import { depositPlanFor } from "../rebalance.ts";
 import { reconciliationFor } from "../snapshots.ts";
 import { holdingsFor, loadPortfolio } from "../valuation.ts";
-import { sumYearlyCosts } from "../../core/fund-costs.ts";
+import { yearlyCostSummary } from "../../core/fund-costs.ts";
 import {
   type ChatTool,
   type Db,
@@ -93,17 +93,22 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
       const rows = (await holdingsFor(db, userId, today())).filter(
         (row) => row.kind === "fund" || row.kind === "etf",
       );
+      const summary = yearlyCostSummary(rows);
       return {
         asOf: today(),
-        totalYearlyCostEur: sumYearlyCosts(rows),
+        // Null when no fee is known: zero would read as "free".
+        totalYearlyCostEur: summary.totalEur,
+        unknownCount: summary.total - summary.known,
         holdings: rows.map((row) => ({
           name: row.name,
           isin: row.isin,
           ongoingChargePercent:
             row.ongoingChargeBp === null ? null : (row.ongoingChargeBp / 100).toFixed(2),
           yearlyCostEur: row.yearlyCostEur,
+          source: row.chargeSource?.source ?? null,
+          sourceUrl: row.chargeSource?.url ?? null,
         })),
-        note: "The total counts only holdings with a known charge. Sums are already calculated.",
+        note: "The total counts only holdings with a known charge (unknownCount have none). Sums are already calculated.",
       };
     },
   },
