@@ -110,6 +110,8 @@ const storedTrace = (proposal: Proposal): string =>
     proposalId: proposal.proposalId,
     action: proposal.action,
     summary: proposal.summary,
+    title: proposal.title,
+    facts: proposal.facts,
   });
 
 /** Records what the owner did with a card, once; the next turn's model reads it as an app note. */

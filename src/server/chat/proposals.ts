@@ -12,18 +12,26 @@ import {
 import { HttpError } from "../errors.ts";
 import { driftReportFor } from "../rebalance.ts";
 import { loadPortfolio } from "../valuation.ts";
-import type { Proposal } from "./proposal-schema.ts";
+import { isPublicPageUrl } from "../prices/page.ts";
+import type { Fact, Proposal } from "./proposal-schema.ts";
 import { type Db, type ProposalTool, type ToolArgs, today } from "./tool-types.ts";
 
 const newId = (): string => crypto.randomUUID();
 
-const money = (amount: string, currency: Currency): string => {
+/** A validated amount as the canonical "1234.50" the card formats; refused rather than guessed. */
+const canonical = (amount: string, currency: Currency): string => {
   try {
-    return `${formatMoney(parseMoney(amount, currency))} ${currency}`;
+    return formatMoney(parseMoney(amount, currency));
   } catch {
     throw new Error("The amount is not a valid decimal number");
   }
 };
+
+const text = (label: string, value: string): Fact => ({ kind: "text", label, text: value });
+
+type Named = { readonly name: string; readonly isin: string | null };
+const instrumentLabel = (instrument: Named): string =>
+  instrument.isin === null ? instrument.name : `${instrument.name} (${instrument.isin})`;
 
 /** The household registry is shared, so a proposal may only name an instrument this user's own ledger references. */
 const ownInstrument = async (db: Db, userId: string, id: number) => {
@@ -35,8 +43,8 @@ const ownInstrument = async (db: Db, userId: string, id: number) => {
   return instrument;
 };
 
-/** The same check `addCashEntry` runs; its 404 text goes back to the model with the ids it may use. */
-const ownAccountName = async (db: Db, userId: string, accountId: number): Promise<string> => {
+/** The same check `addCashEntry` runs; its 404 text goes back to the model with the ids it may use. Named with its id, since two accounts may share a name. */
+const ownAccountLabel = async (db: Db, userId: string, accountId: number): Promise<string> => {
   const accounts = await listAccounts(db, userId);
   try {
     await assertAccountOwned(userId, accountId);
@@ -45,45 +53,80 @@ const ownAccountName = async (db: Db, userId: string, accountId: number): Promis
     const known = accounts.map((account) => `${account.id} (${account.name})`).join(", ");
     throw new Error(`${cause.message}. The owner's accounts: ${known || "none"}`);
   }
-  return accounts.find((account) => account.id === accountId)?.name ?? `Account ${accountId}`;
+  const name = accounts.find((account) => account.id === accountId)?.name ?? "Account";
+  return `${name} (account #${accountId})`;
 };
 
-const CASH_WORDING = {
-  DEPOSIT: (amount: string, account: string) => `a deposit of ${amount} to ${account}`,
-  WITHDRAWAL: (amount: string, account: string) => `a withdrawal of ${amount} from ${account}`,
-  INTEREST: (amount: string, account: string) => `interest of ${amount} on ${account}`,
-  OPENING_BALANCE: (amount: string, account: string) =>
-    `an opening balance of ${amount} on ${account}`,
+const CASH = {
+  DEPOSIT: {
+    title: "Record a deposit",
+    direction: "Deposit (money in)",
+    word: "a deposit",
+    to: "to",
+  },
+  WITHDRAWAL: {
+    title: "Record a withdrawal",
+    direction: "Withdrawal (money out)",
+    word: "a withdrawal",
+    to: "from",
+  },
+  INTEREST: {
+    title: "Record interest",
+    direction: "Interest (money in)",
+    word: "interest",
+    to: "on",
+  },
+  OPENING_BALANCE: {
+    title: "Record an opening balance",
+    direction: "Opening balance",
+    word: "an opening balance",
+    to: "on",
+  },
 } as const;
 
 const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = PriceInput.parse(raw);
   const instrument = await ownInstrument(db, userId, input.instrumentId);
   const currency = parseCurrency(instrument.currency);
-  const price = money(input.price, currency);
+  const price = canonical(input.price, currency);
   if (parseMoney(input.price, currency).minor <= 0n) throw new Error("The price must be positive");
+  const name = instrumentLabel(instrument);
   return {
     proposalId: newId(),
     action: "record_price",
-    summary: `Record a manual price of ${price} for ${instrument.name} on ${input.date}.`,
+    title: "Record a manual price",
+    facts: [
+      text("Instrument", name),
+      { kind: "money", label: "Price", amount: price, currency },
+      text("Date", input.date),
+    ],
+    summary: `Record a manual price of ${price} ${currency} for ${name} on ${input.date}.`,
     input,
   };
 };
 
+// The note is the model's own text: it travels only in `input`, which the card shows apart, labelled.
 const proposeCashEntry = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = CashEntry.parse(raw);
-  const account = await ownAccountName(db, userId, input.accountId);
-  const what = CASH_WORDING[input.type](money(input.amount, input.currency), account);
-  const note = input.note === undefined || input.note === "" ? "" : ` Note: "${input.note}".`;
+  const account = await ownAccountLabel(db, userId, input.accountId);
+  const amount = canonical(input.amount, input.currency);
+  const wording = CASH[input.type];
   return {
     proposalId: newId(),
     action: "cash_entry",
-    summary: `Record ${what} on ${input.tradeDate}.${note}`,
+    title: wording.title,
+    facts: [
+      text("Account", account),
+      text("Direction", wording.direction),
+      { kind: "money", label: "Amount", amount, currency: input.currency },
+      text("Date", input.tradeDate),
+    ],
+    summary: `Record ${wording.word} of ${amount} ${input.currency} ${wording.to} ${account} on ${input.tradeDate}.`,
     input,
   };
 };
 
-/** Slice labels the owner recognises; by account, the stored account name. */
+/** Slice labels the owner recognises; by account, the stored account name and id. */
 const sliceLabels = async (
   db: Db,
   userId: string,
@@ -91,7 +134,10 @@ const sliceLabels = async (
 ): Promise<ReadonlyMap<string, string>> => {
   const { rows } = await driftReportFor(db, userId, dimension, today());
   const names = new Map(
-    (await listAccounts(db, userId)).map((account) => [String(account.id), account.name]),
+    (await listAccounts(db, userId)).map((account) => [
+      String(account.id),
+      `${account.name} (account #${account.id})`,
+    ]),
   );
   return new Map(
     rows.map((row) => [
@@ -116,40 +162,84 @@ const proposeTargets = async (db: Db, userId: string, raw: ToolArgs): Promise<Pr
     })),
   );
   if (error !== null) throw new Error(error.message);
-  const lines = input.targets.map(
-    (target) =>
-      `${labels.get(target.key) ?? target.key} ${(toBasisPoints(target.weightPercent) / 100).toFixed(2)} %`,
-  );
+  const lines = input.targets.map((target) => ({
+    label: labels.get(target.key) ?? target.key,
+    percent: `${(toBasisPoints(target.weightPercent) / 100).toFixed(2)} %`,
+  }));
   return {
     proposalId: newId(),
     action: "target_allocation",
-    summary: `Set the target allocation by ${input.dimension} to: ${lines.join(", ")}.`,
+    title: "Set the target allocation",
+    facts: [
+      text("Dimension", input.dimension),
+      ...lines.map((line) => text(line.label, line.percent)),
+    ],
+    summary: `Set the target allocation by ${input.dimension} to: ${lines.map((line) => `${line.label} ${line.percent}`).join(", ")}.`,
     input,
   };
 };
 
+const TICKER = /^[A-Z0-9.^=-]{1,20}$/;
+
+/** The code the card shows, checked first: model text is never displayed unvalidated. */
+const shownCode = (priceSource: "yahoo" | "page" | "manual", key: string): string | null => {
+  switch (priceSource) {
+    case "page":
+      if (!isPublicPageUrl(key)) throw new Error("A page source needs a public https URL");
+      return new URL(key).href;
+    case "yahoo":
+      if (!TICKER.test(key)) {
+        throw new Error("A Yahoo ticker is upper-case letters, digits and . ^ = - only");
+      }
+      return key;
+    case "manual":
+      if (key !== "") throw new Error("A manual source takes no code; leave sourceKey empty");
+      return null;
+  }
+};
+
+const SOURCE_LABEL = { yahoo: "Yahoo Finance", page: "Web page", manual: "Manual prices" } as const;
 const SOURCE_WORDING = {
-  yahoo: (key: string) => `Yahoo Finance (${key})`,
-  page: (key: string) => `a web page (${key})`,
-  manual: () => "manual prices",
+  yahoo: "Yahoo Finance",
+  page: "a web page",
+  manual: "manual prices",
 } as const;
 
 // The page check is a model call and a fetch, so it runs only in the save the owner confirms.
 const proposePriceSource = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = InstrumentEdit.parse(raw);
   const instrument = await ownInstrument(db, userId, input.id);
-  const key = input.sourceKey.trim();
-  if (input.priceSource !== "manual" && key === "") {
-    throw new Error("A source code is required when the price source fetches prices automatically");
-  }
-  const parts = [
-    `Change the price source of ${instrument.name} to ${SOURCE_WORDING[input.priceSource](key)}, quoted in ${input.currency}.`,
-    instrument.currency === input.currency
-      ? ""
-      : ` The currency changes from ${instrument.currency}, so its stored prices are deleted.`,
-    input.priceSource === "page" ? " The page is checked when you confirm." : "",
+  const code = shownCode(input.priceSource, input.sourceKey.trim());
+  const name = instrumentLabel(instrument);
+  const changesCurrency = instrument.currency !== input.currency;
+  const isPage = input.priceSource === "page";
+  const facts: Fact[] = [
+    text("Instrument", name),
+    text("Source", SOURCE_LABEL[input.priceSource]),
+    ...(code === null ? [] : [{ kind: "code" as const, label: "Code", code }]),
+    text("Currency", input.currency),
+    ...(changesCurrency
+      ? [text("Stored prices", `Deleted: the currency changes from ${instrument.currency}`)]
+      : []),
+    ...(isPage ? [text("Check", "The page is read when you confirm")] : []),
   ];
-  return { proposalId: newId(), action: "price_source", summary: parts.join(""), input };
+  const summary = [
+    `Change the price source of ${name} to ${SOURCE_WORDING[input.priceSource]}`,
+    code === null ? "" : ` (${code})`,
+    `, quoted in ${input.currency}.`,
+    changesCurrency
+      ? ` The currency changes from ${instrument.currency}, so its stored prices are deleted.`
+      : "",
+    isPage ? " The page is checked when you confirm." : "",
+  ].join("");
+  return {
+    proposalId: newId(),
+    action: "price_source",
+    title: "Change the price source",
+    facts,
+    summary,
+    input,
+  };
 };
 
 const AWAITS = " Saves nothing: the owner sees a card and decides with Confirm or Dismiss.";
@@ -187,8 +277,8 @@ export const buildProposalTools = (db: Db, userId: string): ProposalTool[] => [
   {
     name: "propose_price_source",
     description:
-      "Proposes an instrument's price source: yahoo (sourceKey is the ticker), page " +
-      "(sourceKey is the URL) or manual, with its quotation currency. id comes from " +
+      "Proposes an instrument's price source: yahoo (sourceKey is the upper-case ticker), " +
+      "page (sourceKey is a public https URL) or manual (sourceKey empty), with its quotation currency. id comes from " +
       "get_instruments. A changed currency deletes the stored prices." +
       AWAITS,
     schema: InstrumentEdit,

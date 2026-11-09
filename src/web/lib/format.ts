@@ -16,6 +16,15 @@ const DATETIME = new Intl.DateTimeFormat("en-GB", { dateStyle: "short", timeStyl
 /** `Number(value)` is safe: the value is only displayed, and the server already rounded it. */
 export const eur = (value: string): string => EUR.format(Number(value));
 
+/** A canonical decimal amount ("10000.00") in its own currency, grouped the way the rest of the app shows money. */
+export const money = (amount: string, currency: string): string =>
+  new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(amount));
+
 export const qty = (value: string): string => QTY.format(Number(value));
 
 /** A return ratio (e.g. 0.0734) as a signed percentage. */

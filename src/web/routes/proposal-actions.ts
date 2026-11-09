@@ -53,6 +53,19 @@ export const confirmProposal = async (
   }
 };
 
+/**
+ * One decision per proposal: a second click while the first save runs, or after it, does nothing (null).
+ * Final even when the save failed, matching the one outcome note the server accepts.
+ */
+export const createDecider = (actions: ProposalActions = formActions) => {
+  let started: ReadonlySet<string> = new Set();
+  return async (proposal: Proposal, confirm: boolean): Promise<CardOutcome | null> => {
+    if (started.has(proposal.proposalId)) return null;
+    started = new Set([...started, proposal.proposalId]);
+    return confirm ? await confirmProposal(proposal, actions) : { outcome: "dismissed" };
+  };
+};
+
 /** Only a card streamed in this page session still holds its input; a stored one shows as expired. */
 export const cardState = (
   live: Proposal | undefined,

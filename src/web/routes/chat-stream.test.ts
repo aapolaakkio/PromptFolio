@@ -20,7 +20,9 @@ describe("takeEvents", () => {
     const card = {
       proposalId: "p-1",
       action: "cash_entry",
-      summary: "Record a withdrawal of 250.00 EUR from Nordnet on 2026-11-03.",
+      summary: "Record a withdrawal of 250.00 EUR from Nordnet (account #3) on 2026-11-03.",
+      title: "Record a withdrawal",
+      facts: [{ kind: "money", label: "Amount", amount: "250.00", currency: "EUR" }],
       input: { accountId: 3, type: "WITHDRAWAL", tradeDate: "2026-11-03", amount: "250" },
     };
     const bad = { ...card, input: { ...card.input, amount: "-250" } };

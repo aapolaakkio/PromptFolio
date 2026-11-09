@@ -17,7 +17,7 @@ import {
   type Proposal,
 } from "../../server/chat/proposal-schema.ts";
 import { askChat } from "./chat-stream.ts";
-import { cardState, confirmProposal, type CardOutcome } from "./proposal-actions.ts";
+import { cardState, createDecider, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
 
 const isChatModel = (value: string): value is ChatModel =>
@@ -84,7 +84,9 @@ export const ChatPage = () => {
   // Proposals streamed in this page session, with their input; a reload empties this, so stored cards show as expired.
   const [live, setLive] = useState<ReadonlyMap<string, Proposal>>(new Map());
   const [decided, setDecided] = useState<ReadonlyMap<string, CardOutcome>>(new Map());
-  const [saving, setSaving] = useState<string | null>(null);
+  const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
+  // One per page: it refuses a second decision on the same card, even from a double click.
+  const decider = useRef(createDecider());
 
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -134,6 +136,8 @@ export const ChatPage = () => {
             proposalId: proposal.proposalId,
             action: proposal.action,
             summary: proposal.summary,
+            title: proposal.title,
+            facts: proposal.facts,
           };
           setPending((previous) => [
             ...previous,
@@ -159,13 +163,12 @@ export const ChatPage = () => {
   const decide = async (proposalId: string, confirm: boolean) => {
     const proposal = live.get(proposalId);
     if (proposal === undefined || conversationId === null) return;
-    setSaving(proposalId);
-    const outcome: CardOutcome = confirm
-      ? await confirmProposal(proposal)
-      : { outcome: "dismissed" };
+    setSaving((previous) => new Set([...previous, proposalId]));
+    const outcome = await decider.current(proposal, confirm);
+    setSaving((previous) => new Set([...previous].filter((id) => id !== proposalId)));
+    if (outcome === null) return;
     setDecided((previous) => new Map([...previous, [proposalId, outcome]]));
     setLive((previous) => new Map([...previous].filter(([id]) => id !== proposalId)));
-    setSaving(null);
     try {
       await saveProposalOutcome({ data: { conversationId, proposalId, ...outcome } });
     } catch (cause) {
@@ -249,14 +252,17 @@ export const ChatPage = () => {
             if (turn.role === "proposal") {
               const card = readStored(StoredProposal, turn.content);
               if (card === null) return null;
-              const { proposalId, summary } = card;
+              const { proposalId, title, facts } = card;
+              const streamed = live.get(proposalId);
               return (
                 <li key={`proposal-${proposalId}`}>
                   <ProposalCard
-                    summary={summary}
-                    state={cardState(live.get(proposalId), outcomes.get(proposalId))}
+                    title={title}
+                    facts={facts}
+                    note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
+                    state={cardState(streamed, outcomes.get(proposalId))}
                     outcome={outcomes.get(proposalId)}
-                    saving={saving === proposalId}
+                    saving={saving.has(proposalId)}
                     onConfirm={() => void decide(proposalId, true)}
                     onDismiss={() => void decide(proposalId, false)}
                   />

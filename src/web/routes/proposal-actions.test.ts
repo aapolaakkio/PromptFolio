@@ -2,7 +2,12 @@ import { describe, expect, test, vi } from "vitest";
 
 import { EUR } from "../../core/money.ts";
 import type { Proposal } from "../../server/chat/proposal-schema.ts";
-import { cardState, confirmProposal, type ProposalActions } from "./proposal-actions.ts";
+import {
+  cardState,
+  confirmProposal,
+  createDecider,
+  type ProposalActions,
+} from "./proposal-actions.ts";
 
 const actions = (): ProposalActions => ({
   savePrice: vi.fn(() => Promise.resolve()),
@@ -14,7 +19,9 @@ const actions = (): ProposalActions => ({
 const withdrawal: Proposal = {
   proposalId: "p-1",
   action: "cash_entry",
-  summary: "Record a withdrawal of 250.00 EUR from Nordnet on 2026-11-03.",
+  summary: "Record a withdrawal of 250.00 EUR from Nordnet (account #3) on 2026-11-03.",
+  title: "Record a withdrawal",
+  facts: [{ kind: "money", label: "Amount", amount: "250.00", currency: "EUR" }],
   input: {
     accountId: 3,
     type: "WITHDRAWAL",
@@ -41,6 +48,37 @@ describe("confirmProposal", () => {
       outcome: "failed",
       detail: "Account not found",
     });
+  });
+});
+
+describe("createDecider", () => {
+  test("a second Confirm while the first is saving runs the save once", async () => {
+    let finish = (): void => undefined;
+    const saveCashEntry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const decide = createDecider({ ...actions(), saveCashEntry });
+
+    const first = decide(withdrawal, true);
+    const second = decide(withdrawal, true);
+    finish();
+
+    expect(await first).toEqual({ outcome: "saved" });
+    expect(await second).toBeNull();
+    expect(await decide(withdrawal, false)).toBeNull();
+    expect(saveCashEntry).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed save is final too, so the card is not saved behind a failure note", async () => {
+    const saveCashEntry = vi.fn(() => Promise.reject(new Error("offline")));
+    const decide = createDecider({ ...actions(), saveCashEntry });
+
+    expect(await decide(withdrawal, true)).toEqual({ outcome: "failed", detail: "offline" });
+    expect(await decide(withdrawal, true)).toBeNull();
+    expect(saveCashEntry).toHaveBeenCalledTimes(1);
   });
 });
 

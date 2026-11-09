@@ -277,7 +277,9 @@ describe("proposals in a conversation", () => {
 
   const ProposalEvent = z.object({
     type: z.literal("proposal"),
-    proposal: z.object({ proposalId: z.string(), summary: z.string() }).loose(),
+    proposal: z
+      .object({ proposalId: z.string(), summary: z.string(), title: z.string(), facts: z.json() })
+      .loose(),
   });
 
   const proposalOf = async (stream: ReadableStream<Uint8Array>) => {
@@ -309,6 +311,8 @@ describe("proposals in a conversation", () => {
       proposalId: proposal.proposalId,
       action: "cash_entry",
       summary: proposal.summary,
+      title: proposal.title,
+      facts: proposal.facts,
     });
   });
 

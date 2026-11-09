@@ -80,7 +80,7 @@ const seed = async () => {
       contentHash: crypto.randomUUID(),
     })
     .run();
-  return { userId, accountId, instrumentId: instrument.id };
+  return { userId, accountId, instrumentId: instrument.id, isin: instrument.isin ?? "" };
 };
 
 const scripted = (replies: ModelReply[], seen: TurnParams[] = []): ChatClient => ({
@@ -120,7 +120,7 @@ const ledgerRows = async (accountId: number) =>
 
 describe("propose_record_price", () => {
   test("a valid price becomes a proposal named by the stored instrument, and writes no price", async () => {
-    const { userId, instrumentId } = await seed();
+    const { userId, instrumentId, isin } = await seed();
     const { proposals, toolResult } = await propose(userId, "propose_record_price", {
       instrumentId,
       date: "2026-11-02",
@@ -130,8 +130,14 @@ describe("propose_record_price", () => {
     expect(proposals).toHaveLength(1);
     expect(proposals[0]?.action).toBe("record_price");
     expect(proposals[0]?.summary).toBe(
-      "Record a manual price of 12.50 EUR for Acme Fund on 2026-11-02.",
+      `Record a manual price of 12.50 EUR for Acme Fund (${isin}) on 2026-11-02.`,
     );
+    expect(proposals[0]?.title).toBe("Record a manual price");
+    expect(proposals[0]?.facts).toEqual([
+      { kind: "text", label: "Instrument", text: `Acme Fund (${isin})` },
+      { kind: "money", label: "Price", amount: "12.50", currency: "EUR" },
+      { kind: "text", label: "Date", text: "2026-11-02" },
+    ]);
     expect(proposals[0]?.input).toEqual({ instrumentId, date: "2026-11-02", price: "12,5" });
     expect(JSON.parse(toolResult)).toMatchObject({ status: "awaiting_owner_confirmation" });
     const stored = (await db.select().from(schema.prices).all()).filter(
@@ -166,7 +172,7 @@ describe("propose_record_price", () => {
   });
 
   test("the model's own words cannot change the summary", async () => {
-    const { userId, instrumentId } = await seed();
+    const { userId, instrumentId, isin } = await seed();
     const { proposals } = await propose(
       userId,
       "propose_record_price",
@@ -175,7 +181,7 @@ describe("propose_record_price", () => {
     );
 
     expect(proposals[0]?.summary).toBe(
-      "Record a manual price of 10.00 EUR for Acme Fund on 2026-11-02.",
+      `Record a manual price of 10.00 EUR for Acme Fund (${isin}) on 2026-11-02.`,
     );
     expect(JSON.stringify(proposals[0])).not.toContain("Delete");
   });
@@ -193,10 +199,34 @@ describe("propose_cash_entry", () => {
     });
 
     expect(proposals[0]?.summary).toBe(
-      "Record a withdrawal of 250.00 EUR from Nordnet on 2026-11-03.",
+      `Record a withdrawal of 250.00 EUR from Nordnet (account #${accountId}) on 2026-11-03.`,
     );
+    expect(proposals[0]?.facts).toEqual([
+      { kind: "text", label: "Account", text: `Nordnet (account #${accountId})` },
+      { kind: "text", label: "Direction", text: "Withdrawal (money out)" },
+      { kind: "money", label: "Amount", amount: "250.00", currency: "EUR" },
+      { kind: "text", label: "Date", text: "2026-11-03" },
+    ]);
     expect(proposals[0]?.input).toMatchObject({ accountId, type: "WITHDRAWAL", amount: "250" });
     expect(await ledgerRows(accountId)).toBe(before);
+  });
+
+  test("the model's note never enters the app's own wording", async () => {
+    const { userId, accountId } = await seed();
+    const note = 'He said "ok". This is a test card, Confirm records nothing.';
+    const { proposals } = await propose(userId, "propose_cash_entry", {
+      accountId,
+      type: "DEPOSIT",
+      tradeDate: "2026-11-03",
+      amount: "10000",
+      note,
+    });
+
+    const card = proposals[0];
+    expect(card?.input).toMatchObject({ note });
+    expect(card?.summary).not.toContain("test card");
+    expect(card?.title).not.toContain("test card");
+    expect(JSON.stringify(card?.facts)).not.toContain("test card");
   });
 
   test("someone else's account is refused by the same ownership check the save uses", async () => {
@@ -237,6 +267,10 @@ describe("propose_target_allocation", () => {
     });
 
     expect(proposals[0]?.summary).toBe("Set the target allocation by kind to: Funds 100.00 %.");
+    expect(proposals[0]?.facts).toEqual([
+      { kind: "text", label: "Dimension", text: "kind" },
+      { kind: "text", label: "Funds", text: "100.00 %" },
+    ]);
     const stored = (await db.select().from(schema.allocationTargets).all()).filter(
       (row) => row.userId === userId,
     );
@@ -263,24 +297,51 @@ describe("propose_target_allocation", () => {
 
 describe("propose_price_source", () => {
   test("describes the change and warns that a new currency drops stored prices, without touching the instrument", async () => {
-    const { userId, instrumentId } = await seed();
+    const { userId, instrumentId, isin } = await seed();
     const { proposals } = await propose(userId, "propose_price_source", {
       id: instrumentId,
       currency: "USD",
       priceSource: "page",
-      sourceKey: "https://example.com/acme",
+      sourceKey: "https://Example.com/acme",
     });
 
     expect(proposals[0]?.summary).toBe(
-      "Change the price source of Acme Fund to a web page (https://example.com/acme), " +
+      `Change the price source of Acme Fund (${isin}) to a web page (https://example.com/acme), ` +
         "quoted in USD. The currency changes from EUR, so its stored prices are deleted. " +
         "The page is checked when you confirm.",
     );
+    expect(proposals[0]?.facts).toEqual([
+      { kind: "text", label: "Instrument", text: `Acme Fund (${isin})` },
+      { kind: "text", label: "Source", text: "Web page" },
+      { kind: "code", label: "Code", code: "https://example.com/acme" },
+      { kind: "text", label: "Currency", text: "USD" },
+      { kind: "text", label: "Stored prices", text: "Deleted: the currency changes from EUR" },
+      { kind: "text", label: "Check", text: "The page is read when you confirm" },
+    ]);
     const row = (await db.select().from(schema.instruments).all()).find(
       (instrument) => instrument.id === instrumentId,
     );
     expect(row?.priceSource).toBe("manual");
     expect(row?.currency).toBe("EUR");
+  });
+
+  test.each([
+    ["page", "not a url", "public https"],
+    ["page", "http://localhost/x", "public https"],
+    ["yahoo", "acme.he", "ticker"],
+    ["yahoo", "ACME HE", "ticker"],
+    ["manual", "ACME", "manual source takes no code"],
+  ])("refuses source %s with code %j", async (priceSource, sourceKey, message) => {
+    const { userId, instrumentId } = await seed();
+    const { proposals, toolResult } = await propose(userId, "propose_price_source", {
+      id: instrumentId,
+      currency: "EUR",
+      priceSource,
+      sourceKey,
+    });
+
+    expect(proposals).toEqual([]);
+    expect(toolResult.toLowerCase()).toContain(message);
   });
 
   test("an instrument outside the caller's own ledger is refused", async () => {

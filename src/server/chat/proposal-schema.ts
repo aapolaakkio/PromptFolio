@@ -4,9 +4,28 @@ import { CashEntry, InstrumentEdit, PriceInput, TargetAllocationInput } from "..
 
 // No server-only imports: the chat page validates the streamed card with this.
 
+const label = z.string().min(1).max(200);
+
+/** One line of the card, built by the app from validated input and stored names; never model prose. */
+export const FactSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), label, text: z.string().max(2000) }),
+  z.object({
+    kind: z.literal("money"),
+    label,
+    amount: z.string().regex(/^-?\d+\.\d{2}$/),
+    currency: z.string().regex(/^[A-Z]{3}$/),
+  }),
+  z.object({ kind: z.literal("code"), label, code: z.string().max(2000) }),
+]);
+
+export type Fact = z.infer<typeof FactSchema>;
+
 const base = {
   proposalId: z.string().min(1).max(64),
+  /** The sentence the model reads in later turns; built like `facts`, so never holds the model's note. */
   summary: z.string().min(1).max(4000),
+  title: z.string().min(1).max(200),
+  facts: z.array(FactSchema).max(220),
 };
 
 /** What the assistant may propose; `input` is exactly what the action's own server function takes. */
@@ -20,11 +39,10 @@ export const ProposalSchema = z.discriminatedUnion("action", [
 export type Proposal = z.infer<typeof ProposalSchema>;
 export type ProposalAction = Proposal["action"];
 
-/** The stored trace of a proposal: summary only, never the input, so a reloaded thread cannot replay it. */
+/** The stored trace of a proposal: what the card showed, never the input, so a reloaded thread cannot replay it. */
 export const StoredProposal = z.object({
-  proposalId: base.proposalId,
+  ...base,
   action: z.enum(["record_price", "cash_entry", "target_allocation", "price_source"]),
-  summary: base.summary,
 });
 
 /** A row the app stored itself; a malformed one reads as null rather than failing the page or the turn. */
