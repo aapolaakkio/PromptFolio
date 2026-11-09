@@ -8,6 +8,7 @@ import {
   createSnapshot,
   CreateSnapshot,
   deleteSnapshot,
+  explainSnapshot,
   listSnapshots,
   PasteSnapshot,
   proposeFromCsv,
@@ -61,3 +62,8 @@ export const adjustSnapshot = createServerFn({ method: "POST" })
   .handler(({ data, context }) =>
     readable(() => adjustSnapshotRow(context.userId, data.snapshotId, data)),
   );
+
+export const explainDifferences = createServerFn({ method: "POST" })
+  .middleware([authed])
+  .validator(SnapshotQuery)
+  .handler(({ data, context }) => readable(() => explainSnapshot(context.userId, data.snapshotId)));

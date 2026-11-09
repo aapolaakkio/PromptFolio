@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { reconcile, type SnapshotPosition } from "../../core/reconcile.ts";
@@ -7,9 +7,11 @@ import type { Txn } from "../../core/types.ts";
 import { assertAccountOwned } from "../accounts.ts";
 import { createClient, type ChatClient } from "../chat/runner.ts";
 import { db } from "../db/index.ts";
-import { instruments, snapshotRows, snapshots, transactions } from "../db/schema.ts";
+import { imports, instruments, snapshotRows, snapshots, transactions } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
 import { loadPortfolio } from "../valuation.ts";
+import { withModelTimeout } from "../instruments/find-page.ts";
+import { explainGaps, type GapExplanations, type GapInput } from "./explain-gap.ts";
 import { holdingsTotalCheck } from "./holdings-draft.ts";
 import { decodeHoldingsFile, readHoldingsByRecipe } from "../import/recipe/holdings-recipe.ts";
 import { extractPages } from "../import/pdf-read.ts";
@@ -353,6 +355,80 @@ export const adjustSnapshotRow = async (
     })
     .returning()
     .get();
+};
+
+const HISTORY_ROWS = 40;
+
+/** The ledger looks back a year from the statement, as far as a missing period or unbooked action is likely to reach. */
+const yearBefore = (isoDate: string): string => {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() - 1);
+  return date.toISOString().slice(0, 10);
+};
+
+const importDatesOf = async (userId: string, accountId: number): Promise<string[]> => {
+  const ids = (
+    await db
+      .selectDistinct({ id: transactions.importId })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, accountId), isNotNull(transactions.importId)))
+      .all()
+  ).flatMap((row) => (row.id === null ? [] : [row.id]));
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ createdAt: imports.createdAt })
+    .from(imports)
+    .where(and(eq(imports.userId, userId), inArray(imports.id, ids)))
+    .all();
+  return rows.map((row) => row.createdAt.toISOString().slice(0, 10)).sort();
+};
+
+/** Asks a model why the differing rows differ. Read-only: a returned adjustment only prefills the owner's Adjust form, nothing is booked. */
+export const explainSnapshot = async (
+  userId: string,
+  snapshotId: number,
+  client?: ChatClient,
+): Promise<GapExplanations> => {
+  const snapshot = await ownedSnapshot(userId, snapshotId);
+  const { txns, instruments: known } = await loadPortfolio(db, userId);
+  const own = txns.filter((t) => t.accountId === snapshot.accountId);
+  const byId = new Map(known.map((i) => [i.id, i]));
+  const since = yearBefore(snapshot.asOf);
+
+  const gaps: GapInput[] = reconcile(own, await statedRows(snapshotId), snapshot.asOf)
+    .filter((row) => !row.withinTolerance)
+    .map((row) => ({
+      instrumentId: row.instrumentId,
+      name: byId.get(row.instrumentId)?.name ?? `#${row.instrumentId}`,
+      isin: byId.get(row.instrumentId)?.isin ?? null,
+      ledger: formatQuantity(row.derived),
+      statement: formatQuantity(row.snapshot),
+      delta: formatQuantity(row.delta),
+      txns: own
+        .filter(
+          (t) =>
+            t.instrumentId === row.instrumentId &&
+            t.tradeDate >= since &&
+            t.tradeDate <= snapshot.asOf,
+        )
+        .slice(-HISTORY_ROWS)
+        .map((t) => ({ date: t.tradeDate, type: t.type, quantity: formatQuantity(t.quantity) })),
+    }));
+  if (gaps.length === 0) return { failed: false, explanations: [] };
+
+  try {
+    const model = withModelTimeout(client ?? createClient());
+    return await explainGaps(
+      model,
+      snapshot.asOf,
+      gaps,
+      await importDatesOf(userId, snapshot.accountId),
+    );
+  } catch (cause) {
+    // A model that cannot be configured is the same as one that is down.
+    console.warn("Reconcile explanation failed:", cause instanceof Error ? cause.name : "unknown");
+    return { failed: true, explanations: [] };
+  }
 };
 
 export { Adjust, CreateSnapshot, PasteSnapshot };

@@ -7,7 +7,9 @@ import { TABLE_HOLDINGS_RECIPE } from "../import/recipe/holdings-reference.ts";
 
 import { EUR } from "../../core/money.ts";
 import { HttpError } from "../errors.ts";
+import { eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
+import { imports as importsTable } from "../db/schema.ts";
 
 // Snapshots are compared against the ledger, never merged: a statement must round-trip intact and reconciliation must not touch any transaction.
 
@@ -676,5 +678,63 @@ describe("a holdings PDF", () => {
       }),
     );
     expect(refused.status).toBe(400);
+  });
+});
+
+describe("explainSnapshot", () => {
+  test("asks about this account's differing rows only, with no euro amounts, and says who owns it", async () => {
+    const { userId } = await signUp(`snap-explain-${crypto.randomUUID()}@example.com`);
+    const accountId = await createAccount(userId);
+    const otherId = await createAccount(userId);
+    const instrumentId = await createInstrument();
+    await buy(accountId, instrumentId, "100000000", "2026-03-01");
+    await buy(accountId, instrumentId, "5000000", "2024-01-01");
+    await buy(otherId, instrumentId, "7000000", "2026-04-02");
+    const [importRow] = await db
+      .insert(importsTable)
+      .values({ userId, kind: "csv", filename: "secret-name.csv", sha256: crypto.randomUUID() })
+      .returning();
+    await db
+      .update(transactions)
+      .set({ importId: importRow?.id ?? 0 })
+      .where(eq(transactions.accountId, accountId))
+      .run();
+
+    const created = await service.createSnapshot(userId, {
+      accountId,
+      asOf: "2026-06-30",
+      source: "manual",
+      rows: [{ instrumentId, quantity: "1000" }],
+    });
+    const asked: string[] = [];
+    const client = {
+      run: (params: { messages: readonly { content: string }[] }) => {
+        asked.push(params.messages.map((m) => m.content).join("\n"));
+        return Promise.resolve({
+          text: JSON.stringify({
+            rows: [{ id: 0, cause: "An unbooked split.", adjustment: null }],
+          }),
+          toolCalls: [],
+        });
+      },
+    };
+
+    const out = await answer(() => service.explainSnapshot(userId, created.id, client));
+    expect(out.body).toMatchObject({
+      failed: false,
+      explanations: [{ instrumentId, cause: "An unbooked split." }],
+    });
+    expect(asked[0]).toContain("2026-03-01");
+    expect(asked[0]).not.toContain("2024-01-01");
+    expect(asked[0]).not.toContain("2026-04-02");
+    expect(asked[0]).not.toContain("secret-name");
+    expect(asked[0]).not.toContain("100000");
+    expect(asked[0]).toContain(new Date().toISOString().slice(0, 10));
+
+    const stranger = await signUp(`snap-explain-x-${crypto.randomUUID()}@example.com`);
+    const refused = await answer(() =>
+      service.explainSnapshot(stranger.userId, created.id, client),
+    );
+    expect(refused.status).toBe(404);
   });
 });

@@ -2,7 +2,12 @@ import { useState } from "react";
 import { getAccounts } from "../server/accounts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getReconciliation, getSnapshots, removeSnapshot } from "../server/snapshots.ts";
+import {
+  explainDifferences,
+  getReconciliation,
+  getSnapshots,
+  removeSnapshot,
+} from "../server/snapshots.ts";
 import { formatDate, qty } from "../lib/format.ts";
 import { AdjustRow } from "./AdjustRow.tsx";
 import { SnapshotForm } from "./SnapshotForm.tsx";
@@ -152,6 +157,8 @@ const Result = ({
   readonly snapshotId: number;
 }) => {
   const attention = needsAttention(rows);
+  const explained = useMutation({ mutationFn: () => explainDifferences({ data: { snapshotId } }) });
+  const aiById = new Map((explained.data?.explanations ?? []).map((e) => [e.instrumentId, e]));
 
   return (
     <>
@@ -160,6 +167,19 @@ const Result = ({
           ? `All ${rows.length} rows match on ${formatDate(asOf)}.`
           : `${attention.length} / ${rows.length} rows differ on ${formatDate(asOf)}.`}
       </p>
+
+      {attention.length > 0 && (
+        <div className="mt-3 flex items-center gap-3">
+          <button type="button" disabled={explained.isPending} onClick={() => explained.mutate()}>
+            {explained.isPending ? "Explaining…" : "Explain differences"}
+          </button>
+          {(explained.isError || explained.data?.failed === true) && (
+            <p role="alert" className="text-loss text-sm">
+              Could not explain right now
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 max-h-112 overflow-auto rounded border border-line">
         <table>
@@ -174,16 +194,32 @@ const Result = ({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.instrumentId}>
-                <td>{row.name ?? `#${row.instrumentId}`}</td>
-                <td className="num">{qty(row.derived)}</td>
-                <td className="num">{qty(row.snapshot)}</td>
-                <td className="num">{row.withinTolerance ? "—" : qty(row.delta)}</td>
-                <td className={row.withinTolerance ? "text-muted" : "text-loss"}>{explain(row)}</td>
-                <td>{!row.withinTolerance && <AdjustRow snapshotId={snapshotId} row={row} />}</td>
-              </tr>
-            ))}
+            {rows.map((row) => {
+              const ai = aiById.get(row.instrumentId);
+              const suggested = ai?.adjustment != null;
+              return (
+                <tr key={row.instrumentId}>
+                  <td>{row.name ?? `#${row.instrumentId}`}</td>
+                  <td className="num">{qty(row.derived)}</td>
+                  <td className="num">{qty(row.snapshot)}</td>
+                  <td className="num">{row.withinTolerance ? "—" : qty(row.delta)}</td>
+                  <td className={row.withinTolerance ? "text-muted" : "text-loss"}>
+                    {explain(row)}
+                    {ai && <p className="mt-1 text-xs text-muted">AI suggestion: {ai.cause}</p>}
+                  </td>
+                  <td>
+                    {!row.withinTolerance && (
+                      <AdjustRow
+                        key={String(suggested)}
+                        snapshotId={snapshotId}
+                        row={row}
+                        suggested={suggested}
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { qty } from "../lib/format.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { adjustSnapshot } from "../server/snapshots.ts";
 import type { ReconcileRow } from "./reconcile-view.ts";
@@ -9,12 +10,15 @@ import type { ReconcileRow } from "./reconcile-view.ts";
 export const AdjustRow = ({
   snapshotId,
   row,
+  suggested = false,
 }: {
   readonly snapshotId: number;
   readonly row: ReconcileRow;
+  /** A checked AI suggestion equals the adjustment this form books; it opens the form but the owner still confirms. */
+  readonly suggested?: boolean;
 }) => {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(suggested);
   const [costEur, setCostEur] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -63,6 +67,12 @@ export const AdjustRow = ({
             onChange={(e) => setCostEur(e.target.value)}
           />
         </label>
+      )}
+      {suggested && (
+        <p className="text-xs">
+          AI suggestion: book {qty(row.delta)} units {adding ? "in" : "out"}, dated on the
+          statement.
+        </p>
       )}
       <p className="text-xs text-muted">
         {adding
