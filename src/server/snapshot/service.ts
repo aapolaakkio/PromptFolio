@@ -358,6 +358,7 @@ export const adjustSnapshotRow = async (
 };
 
 const HISTORY_ROWS = 40;
+const MAX_IMPORT_DATES = 50;
 
 /** The ledger looks back a year from the statement, as far as a missing period or unbooked action is likely to reach. */
 const yearBefore = (isoDate: string): string => {
@@ -380,7 +381,10 @@ const importDatesOf = async (userId: string, accountId: number): Promise<string[
     .from(imports)
     .where(and(eq(imports.userId, userId), inArray(imports.id, ids)))
     .all();
-  return rows.map((row) => row.createdAt.toISOString().slice(0, 10)).sort();
+  return rows
+    .map((row) => row.createdAt.toISOString().slice(0, 10))
+    .sort()
+    .slice(-MAX_IMPORT_DATES);
 };
 
 /** Asks a model why the differing rows differ. Read-only: a returned adjustment only prefills the owner's Adjust form, nothing is booked. */
@@ -414,7 +418,7 @@ export const explainSnapshot = async (
         .slice(-HISTORY_ROWS)
         .map((t) => ({ date: t.tradeDate, type: t.type, quantity: formatQuantity(t.quantity) })),
     }));
-  if (gaps.length === 0) return { failed: false, explanations: [] };
+  if (gaps.length === 0) return { failed: false, explanations: [], truncated: false };
 
   try {
     const model = withModelTimeout(client ?? createClient());
@@ -427,7 +431,7 @@ export const explainSnapshot = async (
   } catch (cause) {
     // A model that cannot be configured is the same as one that is down.
     console.warn("Reconcile explanation failed:", cause instanceof Error ? cause.name : "unknown");
-    return { failed: true, explanations: [] };
+    return { failed: true, explanations: [], truncated: false };
   }
 };
 

@@ -27,13 +27,16 @@ const GAP: GapInput = {
 const ASOF = "2024-06-30";
 
 type Adjustment = { type: string; tradeDate: string; quantity: string };
-const answer = (over: { id?: number; adjustment?: Adjustment | null } = {}) => ({
+const answer = (
+  over: { id?: number; category?: string; cause?: string; adjustment?: Adjustment | null } = {},
+) => ({
   id: 0,
+  category: "unbooked split",
   cause: "The 1:10 split of June 2024 is not booked.",
   adjustment: { type: "TRANSFER_IN", tradeDate: "2024-06-30", quantity: "900" },
   ...over,
 });
-const reply = (...rows: readonly ReturnType<typeof answer>[]) => JSON.stringify({ rows });
+const reply = (...rows: readonly object[]) => JSON.stringify({ rows });
 
 describe("explainGaps", () => {
   test("a gap equal to a split factor gets a cause and an adjustment equal to the gap", async () => {
@@ -43,6 +46,7 @@ describe("explainGaps", () => {
       {
         instrumentId: 7,
         cause: "The 1:10 split of June 2024 is not booked.",
+        category: "unbooked split",
         adjustment: { type: "TRANSFER_IN", tradeDate: "2024-06-30", quantity: "900.000000" },
       },
     ]);
@@ -119,19 +123,23 @@ describe("explainGaps", () => {
       run: () => Promise.reject(new TypeError("NOKIA 900 secret")),
     };
     const out = await explainGaps(client, ASOF, [GAP]);
-    expect(out).toEqual({ failed: true, explanations: [] });
+    expect(out).toEqual({ failed: true, explanations: [], truncated: false });
     expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
     warn.mockRestore();
   });
 
   test("a reply that is not the asked shape counts as a failure", async () => {
     const out = await explainGaps(scripted("no idea"), ASOF, [GAP]);
-    expect(out).toEqual({ failed: true, explanations: [] });
+    expect(out).toEqual({ failed: true, explanations: [], truncated: false });
   });
 
   test("no rows means no call", async () => {
     const client = scripted(reply());
-    expect(await explainGaps(client, ASOF, [])).toEqual({ failed: false, explanations: [] });
+    expect(await explainGaps(client, ASOF, [])).toEqual({
+      failed: false,
+      explanations: [],
+      truncated: false,
+    });
     expect(client.asked).toHaveLength(0);
   });
 
@@ -144,4 +152,31 @@ describe("explainGaps", () => {
       .parse(JSON.parse(client.asked[0]?.messages[1]?.content ?? "{}"));
     expect(asked.rows).toHaveLength(MAX_GAP_ROWS);
   });
+
+  test("one malformed row does not cost the good one", async () => {
+    const bad = { id: 1, category: "nonsense", cause: 5 };
+    const out = await explainGaps(scripted(reply(bad, answer())), ASOF, [GAP]);
+    expect(out.failed).toBe(false);
+    expect(out.explanations).toHaveLength(1);
+  });
+
+  test("an over-long cause is truncated, not fatal", async () => {
+    const out = await explainGaps(scripted(reply(answer({ cause: "x".repeat(500) }))), ASOF, [GAP]);
+    expect(out.explanations[0]?.cause).toHaveLength(300);
+  });
+
+  test("says when rows beyond the cap were left out", async () => {
+    const many = Array.from({ length: MAX_GAP_ROWS + 1 }, (_, i) => ({ ...GAP, instrumentId: i }));
+    expect((await explainGaps(scripted(reply()), ASOF, many)).truncated).toBe(true);
+    expect((await explainGaps(scripted(reply()), ASOF, [GAP])).truncated).toBe(false);
+  });
+
+  test.each(["duplicate import", "statement in another unit", "unclear"])(
+    "a %s cause keeps the sentence but offers no adjustment",
+    async (category) => {
+      const out = await explainGaps(scripted(reply(answer({ category }))), ASOF, [GAP]);
+      expect(out.explanations[0]?.adjustment).toBeNull();
+      expect(out.explanations[0]?.cause).toContain("split");
+    },
+  );
 });

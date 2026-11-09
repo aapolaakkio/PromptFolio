@@ -712,7 +712,9 @@ describe("explainSnapshot", () => {
         asked.push(params.messages.map((m) => m.content).join("\n"));
         return Promise.resolve({
           text: JSON.stringify({
-            rows: [{ id: 0, cause: "An unbooked split.", adjustment: null }],
+            rows: [
+              { id: 0, category: "unbooked split", cause: "An unbooked split.", adjustment: null },
+            ],
           }),
           toolCalls: [],
         });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { qty } from "../lib/format.ts";
@@ -19,6 +19,10 @@ export const AdjustRow = ({
 }) => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(suggested);
+  // A later suggestion opens the form without remounting it, so a typed cost basis survives.
+  useEffect(() => {
+    if (suggested) setOpen(true);
+  }, [suggested]);
   const [costEur, setCostEur] = useState("");
   const [error, setError] = useState<string | null>(null);
 

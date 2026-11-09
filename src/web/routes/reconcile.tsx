@@ -173,6 +173,9 @@ const Result = ({
           <button type="button" disabled={explained.isPending} onClick={() => explained.mutate()}>
             {explained.isPending ? "Explaining…" : "Explain differences"}
           </button>
+          {explained.data?.truncated === true && (
+            <p className="text-sm text-muted">Explained the first 20 rows.</p>
+          )}
           {(explained.isError || explained.data?.failed === true) && (
             <p role="alert" className="text-loss text-sm">
               Could not explain right now
@@ -205,16 +208,15 @@ const Result = ({
                   <td className="num">{row.withinTolerance ? "—" : qty(row.delta)}</td>
                   <td className={row.withinTolerance ? "text-muted" : "text-loss"}>
                     {explain(row)}
-                    {ai && <p className="mt-1 text-xs text-muted">AI suggestion: {ai.cause}</p>}
+                    {ai && (
+                      <p className="mt-1 text-xs text-muted">
+                        AI suggestion (unverified): {ai.cause}
+                      </p>
+                    )}
                   </td>
                   <td>
                     {!row.withinTolerance && (
-                      <AdjustRow
-                        key={String(suggested)}
-                        snapshotId={snapshotId}
-                        row={row}
-                        suggested={suggested}
-                      />
+                      <AdjustRow snapshotId={snapshotId} row={row} suggested={suggested} />
                     )}
                   </td>
                 </tr>
