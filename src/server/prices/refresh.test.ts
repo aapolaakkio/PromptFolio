@@ -828,3 +828,37 @@ async function seedCurrencyOnlyTransaction(db: TestDb, currency: typeof SEK): Pr
     })
     .run();
 }
+
+test("refreshPrices spaces page fetches and still runs Yahoo", async () => {
+  const { db } = await testDb();
+  await seedHeld(db);
+  for (const slug of ["a", "b"]) {
+    await seedHeld(db, {
+      isin: crypto.randomUUID(),
+      name: `Sivurahasto ${slug}`,
+      kind: "fund",
+      priceSource: "page",
+      sourceKey: `https://example.test/${slug}`,
+      ticker: null,
+    });
+  }
+  const pageAt: number[] = [];
+  const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
+    if (urlOf(url).includes("example.test")) {
+      pageAt.push(Date.now());
+      return new Response("<p>ei mitään</p>");
+    }
+    return yahooStub(4.31)();
+  };
+
+  const result = await refreshPrices(db, {
+    yahooSpacingMs: 0,
+    pageSpacingMs: 40,
+    fetchImpl,
+    today: "2026-08-27",
+  });
+
+  expect(result).toEqual({ ok: 1, failed: 2, paused: false });
+  expect(pageAt).toHaveLength(2);
+  expect(pageAt[1]! - pageAt[0]!).toBeGreaterThanOrEqual(35);
+});

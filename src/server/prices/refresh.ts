@@ -1,36 +1,19 @@
 import { asc, eq } from "drizzle-orm";
 
+import type { ChatClient } from "../chat/runner.ts";
+import { createClient } from "../chat/runner.ts";
 import type { Db } from "../db/index.ts";
-import { instruments, priceFetchLog, prices, transactions } from "../db/schema.ts";
+import { instruments, prices, transactions } from "../db/schema.ts";
 import { backfillFxRates, refreshFxRates } from "../fx.ts";
+import { refreshPage, PAGE_SPACING_MS } from "./page.ts";
+import { logAttempt, recordPoints, type Priced } from "./record.ts";
 import { sourceFor } from "./registry.ts";
 import { heldInstrumentIds, latestQuotesUntilPaused } from "./intraday.ts";
 import type { FetchImpl, FetchedPrice } from "./types.ts";
-import { MAX_PLAUSIBLE_RATIO, writePrices } from "./write.ts";
+import { writePrices } from "./write.ts";
 import { YahooPausedError, gatedFetch } from "./yahoo-gate.ts";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
-
-const logAttempt = async (
-  db: Db,
-  args: {
-    readonly source: string;
-    readonly instrumentId: number;
-    readonly ok: boolean;
-    readonly message: string;
-  },
-): Promise<void> => {
-  await db
-    .insert(priceFetchLog)
-    .values({
-      source: args.source,
-      instrumentId: args.instrumentId,
-      runAt: new Date(),
-      ok: args.ok,
-      message: args.message,
-    })
-    .run();
-};
 
 /** Renders a cause caught from a `PriceSource.fetch()` call as a log message. */
 const describeFailure = (cause: unknown): string =>
@@ -45,59 +28,6 @@ const RECENT_DAYS = 7;
 
 const daysBefore = (iso: string, days: number): string =>
   new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
-
-type Priced = Pick<typeof instruments.$inferSelect, "id" | "priceSource" | "sourceKey">;
-
-/**
- * Writes one instrument's fetched points and logs how it went. Returns whether
- * it counts as ok.
- *
- * A point the plausibility check refuses is reported as a failure, not folded
- * into a clean "ok" -- the fetch worked, the data was not trusted.
- */
-const recordPoints = async (
-  db: Db,
-  instrument: Priced,
-  points: readonly FetchedPrice[],
-): Promise<boolean> => {
-  const sourceId = instrument.priceSource;
-  const { written, rejectedImplausible, reBaselined } = await writePrices(
-    db,
-    instrument.id,
-    sourceId,
-    points,
-  );
-
-  if (reBaselined > 0) {
-    // Loud on purpose: an implausible price was just confirmed as a real
-    // permanent change, which is worth a human's attention.
-    const message =
-      `${written} hintapistettä tallennettu, näistä ${reBaselined} ` +
-      `UUDELLEENPERUSTETTU vahvistetun pysyvän muutoksen jälkeen` +
-      (rejectedImplausible > 0 ? ` (${rejectedImplausible} yhä hylätty)` : "");
-    console.warn(`Hintasarja uudelleenperustettu: ${sourceId} instrumentille ${instrument.id}`);
-    await logAttempt(db, { source: sourceId, instrumentId: instrument.id, ok: true, message });
-    return true;
-  }
-  if (rejectedImplausible > 0) {
-    await logAttempt(db, {
-      source: sourceId,
-      instrumentId: instrument.id,
-      ok: false,
-      message:
-        `${written} hintapistettä tallennettu, ${rejectedImplausible} hylätty ` +
-        `epäuskottavana hintahyppynä (yli ${MAX_PLAUSIBLE_RATIO}x)`,
-    });
-    return false;
-  }
-  await logAttempt(db, {
-    source: sourceId,
-    instrumentId: instrument.id,
-    ok: true,
-    message: `${written} hintapistettä`,
-  });
-  return true;
-};
 
 /** A fund or other non-Yahoo source, one page per instrument. */
 const refreshFromPage = async (
@@ -165,6 +95,28 @@ const refreshFromYahoo = async (
   return { ok, failed, paused };
 };
 
+const sleep = (ms: number): Promise<void> =>
+  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+
+/** One page instrument's run; an unexpected throw is logged, not allowed to stop the rest. */
+const refreshPageSafely = async (
+  db: Db,
+  instrument: typeof instruments.$inferSelect,
+  opts: Parameters<typeof refreshPage>[2],
+): Promise<"ok" | "failed" | "attention"> => {
+  try {
+    return await refreshPage(db, instrument, opts);
+  } catch (cause) {
+    await logAttempt(db, {
+      source: "page",
+      instrumentId: instrument.id,
+      ok: false,
+      message: describeFailure(cause),
+    });
+    return "failed";
+  }
+};
+
 /**
  * Today's price for every held, non-manual instrument, each attempt isolated
  * from the rest and each logged. An instrument nobody holds is skipped, and so
@@ -172,7 +124,13 @@ const refreshFromYahoo = async (
  */
 export const refreshPrices = async (
   db: Db,
-  opts: { fetchImpl?: FetchImpl; today?: string; yahooSpacingMs?: number } = {},
+  opts: {
+    fetchImpl?: FetchImpl;
+    today?: string;
+    yahooSpacingMs?: number;
+    client?: ChatClient | null;
+    pageSpacingMs?: number;
+  } = {},
 ): Promise<{ ok: number; failed: number; paused: boolean }> => {
   const asOf = opts.today ?? today();
   const held = await heldInstrumentIds(db);
@@ -182,8 +140,21 @@ export const refreshPrices = async (
 
   let ok = 0;
   let failed = 0;
+  const spacingMs = opts.pageSpacingMs ?? PAGE_SPACING_MS;
+  let pagesFetched = 0;
   for (const instrument of priced.filter((row) => row.priceSource !== "yahoo")) {
-    if (await refreshFromPage(db, instrument, { fetchImpl: opts.fetchImpl, asOf })) ok++;
+    if (instrument.priceSource === "page") {
+      if (pagesFetched > 0) await sleep(spacingMs);
+      pagesFetched++;
+      const outcome = await refreshPageSafely(db, instrument, {
+        fetchImpl: opts.fetchImpl ?? fetch,
+        client: opts.client ?? null,
+        today: asOf,
+        now: Date.now(),
+      });
+      if (outcome === "ok") ok++;
+      else failed++;
+    } else if (await refreshFromPage(db, instrument, { fetchImpl: opts.fetchImpl, asOf })) ok++;
     else failed++;
   }
   const yahoo = await refreshFromYahoo(
@@ -318,7 +289,7 @@ export const backfillInstrument = async (
  * would spend a request on each one every night for nothing. Only the sweep's
  * selection is affected; a direct call still attempts them.
  */
-const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund"]);
+const NEVER_BACKFILLABLE = new Set(["nordnet_fund", "op_fund", "page"]);
 
 /**
  * Whether an instrument's stored history still falls short of its earliest
@@ -416,6 +387,15 @@ export const backfillMany = async (
   return { attempted, backfilled, incomplete, errored };
 };
 
+/** The model client, or null when its key is missing: page recipes are then not re-asked. */
+const clientOrNull = (): ChatClient | null => {
+  try {
+    return createClient();
+  } catch {
+    return null;
+  }
+};
+
 /**
  * The day's prices and rates, called by POST /api/cron/refresh.
  *
@@ -429,7 +409,7 @@ export const runScheduledRefresh = async (db: Db): Promise<void> => {
     console.error("FX-kurssien päivitys epäonnistui", cause);
   }
   try {
-    const result = await refreshPrices(db);
+    const result = await refreshPrices(db, { client: clientOrNull() });
     console.log(
       `Hintapäivitys: ${result.ok} onnistui, ${result.failed} epäonnistui` +
         (result.paused ? " (Yahoo tauolla)" : ""),

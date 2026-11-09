@@ -3,12 +3,19 @@ import { MANUAL, NORDNET_FUND, OP_FUND } from "./funds.ts";
 import type { PriceSource } from "./types.ts";
 import { YAHOO } from "./yahoo.ts";
 
+// ponytail: a page needs the db and a model client, so refreshPage runs it, never this.
+const PAGE: PriceSource = {
+  id: "page",
+  async fetch(): Promise<never> {
+    throw new Error("käytä refreshPage");
+  },
+};
+
 const SOURCES = {
   yahoo: YAHOO,
   nordnet_fund: NORDNET_FUND,
   op_fund: OP_FUND,
-  // ponytail: Task 4 replaces this placeholder with the page source.
-  page: MANUAL,
+  page: PAGE,
   manual: MANUAL,
 } satisfies Record<PriceSourceId, PriceSource>;
 
