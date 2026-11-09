@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { currencyField } from "../../server/currency-field.ts";
 import { db } from "../../server/db/index.ts";
-import { lookupInstrument } from "../../server/instruments/lookup.ts";
+import { rememberedLookup } from "../../server/instruments/lookup-cache.ts";
 import {
   addInstrument,
   listInstruments,
@@ -18,7 +18,7 @@ export const getInstruments = createServerFn()
   .middleware([authed])
   .handler(() => listInstruments(db));
 
-/** Asks the price sources what a security is, before anyone registers it. */
+/** Asks the price sources what a security is, before anyone registers it: gated and remembered. */
 export const lookUpInstrument = createServerFn()
   .middleware([authed])
   .validator(
@@ -28,7 +28,9 @@ export const lookUpInstrument = createServerFn()
       currency: currencyField.nullable(),
     }),
   )
-  .handler(({ data }) => readable(() => lookupInstrument(data.isin, data.name, data.currency)));
+  .handler(({ data }) =>
+    readable(() => rememberedLookup(db, data.isin, data.name, data.currency, fetch)),
+  );
 
 /** Registers one, refusing a duplicate by ISIN, or by name when it has none. */
 export const createInstrument = createServerFn({ method: "POST" })

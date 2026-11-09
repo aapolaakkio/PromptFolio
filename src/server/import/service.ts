@@ -15,6 +15,8 @@ import { extractPages } from "./pdf-read.ts";
 import { readBrokerRecordByRecipe } from "./recipe/broker-record.ts";
 import { readBrokerTableByRecipe } from "./recipe/broker-table.ts";
 import { DraftBody } from "./txn-draft.ts";
+import { createAdded, resolveUnknown } from "../instruments/auto-add.ts";
+import type { FetchImpl } from "../prices/types.ts";
 
 // Generous relative to any real OP paste seen so far (a year of activity is
 // a few hundred lines): this is an abuse guard, not a realistic ceiling.
@@ -52,6 +54,22 @@ export const _setReaderClient = (client: ChatClient | null): void => {
   readerClient = client;
 };
 
+/** Injected by tests, so a lookup never reaches the real network. */
+let lookupFetch: FetchImpl | null = null;
+export const _setLookupFetch = (fetchImpl: FetchImpl | null): void => {
+  lookupFetch = fetchImpl;
+};
+
+/** Tests set 0, so a lookup's spaced quote requests do not sit out real seconds. */
+let quoteSpacingMs: number | undefined;
+export const _setQuoteSpacingMs = (ms: number | undefined): void => {
+  quoteSpacingMs = ms;
+};
+
+/** Looks up what the draft could not resolve; only the lookup cache is written. */
+const withLookups = (draft: Draft): Promise<Draft> =>
+  resolveUnknown(db, draft, lookupFetch ?? fetch, quoteSpacingMs);
+
 /**
  * A broker PDF's text, read by a record recipe into the same draft a CSV
  * upload produces. Nothing here checks the result beyond the recipe's own
@@ -73,7 +91,7 @@ const buildPdfDraft = async (
       known,
       accountId,
     );
-    return run.draft;
+    return await withLookups(run.draft);
   } catch (cause) {
     throw new HttpError(
       400,
@@ -118,7 +136,7 @@ const buildDraft = async (file: File, userId: string, accountId: number) => {
     );
   }
 
-  return { broker: "csv" as const, draft: run.draft, sha256 };
+  return { broker: "csv" as const, draft: await withLookups(run.draft), sha256 };
 };
 
 /**
@@ -166,7 +184,10 @@ const buildPasteDraft = async (text: string, userId: string, accountId: number) 
           accountId,
         )
       : await readBrokerRecordByRecipe(text, userId, client, known, accountId);
-    return { draft: run.draft, sha256: createHash("sha256").update(text).digest("hex") };
+    return {
+      draft: await withLookups(run.draft),
+      sha256: createHash("sha256").update(text).digest("hex"),
+    };
   } catch (cause) {
     throw cause instanceof HttpError
       ? cause
@@ -244,7 +265,13 @@ export const CommitDraftBody = z
 export const commitDraftBody = async (userId: string, body: z.infer<typeof CommitDraftBody>) => {
   const { accountId, filename, sha256, kind, draft } = CommitDraftBody.parse(body);
   await assertAccountOwned(userId, accountId);
-  const owned: Draft = { ...draft, txns: draft.txns.map((txn) => ({ ...txn, accountId })) };
+  // `added` is the browser's copy, for display; `createAdded` decides from the
+  // rows and the remembered lookups alone.
+  const owned = await createAdded(db, {
+    ...draft,
+    txns: draft.txns.map((txn) => ({ ...txn, accountId })),
+    added: [],
+  });
   const result = await commitDraft(db, { userId, accountId, filename, sha256, draft: owned, kind });
   fireBackfill(owned);
   return result;

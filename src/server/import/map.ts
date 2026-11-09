@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { EUR, parseCurrency, parseMoney, parseQuantity, type Currency } from "../../core/money.ts";
+import type { InstrumentKind } from "../instruments/openfigi.ts";
 import type { CanonicalField, CsvProblem, FieldMapping, RawRow } from "./types.ts";
 
 export type DraftTxn = {
@@ -19,6 +20,11 @@ export type DraftTxn = {
   readonly externalId: string | null;
   /** The broker's own text for the row, when the export carries one. */
   readonly note: string | null;
+  /**
+   * The broker's name for an instrument the ledger does not know yet. It is what
+   * ties a row without an ISIN (OP's paste) to the ISIN its lookup discovers.
+   */
+  readonly instrumentName?: string | undefined;
 };
 
 /**
@@ -44,6 +50,22 @@ export type Draft = {
    * no ISIN is ever invented to fill the gap.
    */
   readonly unknownIsins: Array<{ isin: string | null; name: string; currency: Currency }>;
+  /**
+   * Instruments the import will add by itself at commit. Shown for review only:
+   * the commit creates them from the remembered lookups, never from this list.
+   */
+  readonly added: AddedInstrument[];
+};
+
+export type AddedInstrument = {
+  readonly isin: string;
+  readonly name: string;
+  readonly kind: InstrumentKind;
+  readonly currency: string;
+  readonly priceSource: "yahoo" | "op_fund" | null;
+  readonly sourceKey: string | null;
+  /** Yahoo is paused: added as manual now, priced once the lookup is done. */
+  readonly pending: boolean;
 };
 
 /**
@@ -268,6 +290,7 @@ export const mapRows = (
         fxRateEur: currency === EUR ? 100_000_000 : 0, // marker; Task 12 resolves from fx_rates at commit
         externalId: cell(row, "externalId").trim() || null,
         note: cell(row, "note").trim() || null,
+        instrumentName: instrumentId === null && nameText !== "" ? nameText : undefined,
       });
     } catch (cause) {
       problems.push({
@@ -284,5 +307,6 @@ export const mapRows = (
     txns,
     problems: merged,
     unknownIsins: [...unknown.values()],
+    added: [],
   };
 };

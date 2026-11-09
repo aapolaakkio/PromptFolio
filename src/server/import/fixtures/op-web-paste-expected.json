@@ -14,7 +14,8 @@
       "currency": "EUR",
       "fxRateEur": 100000000,
       "externalId": null,
-      "note": null
+      "note": null,
+      "instrumentName": "OP-MAAILMA INDEKSI A"
     },
     {
       "accountId": 3,
@@ -30,7 +31,8 @@
       "currency": "EUR",
       "fxRateEur": 100000000,
       "externalId": null,
-      "note": null
+      "note": null,
+      "instrumentName": "OP-MAAILMA INDEKSI A"
     },
     {
       "accountId": 3,
@@ -46,7 +48,8 @@
       "currency": "EUR",
       "fxRateEur": 100000000,
       "externalId": null,
-      "note": null
+      "note": null,
+      "instrumentName": "ESIMERKKI OYJ"
     },
     {
       "accountId": 3,
@@ -62,7 +65,8 @@
       "currency": "EUR",
       "fxRateEur": 100000000,
       "externalId": null,
-      "note": null
+      "note": null,
+      "instrumentName": "ESIMERKKI OYJ"
     }
   ],
   "unknownIsins": [

@@ -3,7 +3,7 @@ import { CreateAccount, openAccount as openAccountRow } from "../accounts.ts";
 import { eq } from "drizzle-orm";
 import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
-import { instruments, transactions } from "../db/schema.ts";
+import { instruments, transactions, yahooGate } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { z, ZodError } from "zod";
@@ -55,6 +55,9 @@ beforeAll(async () => {
   PasteBody = service.PasteBody;
   // Every broker file is read by a recipe; this stands in for the model.
   service._setReaderClient(nordnetReader);
+  // Every unknown instrument is looked up; by default nothing is found.
+  service._setLookupFetch(async () => new Response("", { status: 404 }));
+  service._setQuoteSpacingMs(0);
 });
 
 /**
@@ -505,6 +508,144 @@ describe("POST /api/imports/commit", () => {
     const newest = logAfter[logAfter.length - 1]!;
     expect(newest.ok).toBe(false);
     expect(newest.message).toContain("Taustatäyttö");
+  });
+});
+
+// --- instruments added by the import itself ---
+
+/** A fresh, ISIN-shaped code per call: the suite shares one database. */
+const freshIsin = (): string =>
+  `XS${String(Math.floor(Math.random() * 1e9)).padStart(9, "0")}${Math.floor(Math.random() * 10)}`;
+
+/** Yahoo knows `symbol` in EUR; OpenFIGI and everything else answers 404. */
+const yahooKnows =
+  (symbol: string) =>
+  async (input: string | URL | Request): Promise<Response> => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("finance/search")) {
+      return new Response(JSON.stringify({ quotes: [{ symbol, quoteType: "EQUITY" }] }));
+    }
+    if (url.includes(`chart/${symbol}`)) {
+      return new Response(
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                meta: { currency: "EUR" },
+                timestamp: [1_700_000_000],
+                indicators: { quote: [{ close: [1.5] }] },
+              },
+            ],
+          },
+        }),
+      );
+    }
+    return new Response("", { status: 404 });
+  };
+
+const nothingFound = async (): Promise<Response> => new Response("", { status: 404 });
+
+describe("an import with an instrument nobody has added yet", () => {
+  beforeAll(() => {
+    service._setLookupFetch(nothingFound);
+    service._setQuoteSpacingMs(0);
+  });
+  afterEach(async () => {
+    service._setLookupFetch(nothingFound);
+    await db.delete(yahooGate).run();
+  });
+
+  const previewOne = async (userId: string, accountId: number, isin: string) =>
+    answer(() =>
+      service.previewUpload(
+        userId,
+        uploadForm(
+          nordnetFile(
+            nordnetRow({
+              id: `auto-${isin}`,
+              date: "2025-02-03",
+              type: "OSTO",
+              name: "AUTO OYJ",
+              isin,
+              qty: "10",
+              price: "1,50",
+              currency: EUR,
+              amount: "-15,00",
+            }),
+          ),
+          accountId,
+        ),
+      ),
+    );
+
+  const linkedRows = async (importId: number) =>
+    db
+      .select({ instrumentId: transactions.instrumentId })
+      .from(transactions)
+      .where(eq(transactions.importId, importId))
+      .all();
+
+  test("a preview with a new ISIN commits without any form", async () => {
+    const { userId } = await signUp(`imp-auto-found-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    const isin = freshIsin();
+    service._setLookupFetch(yahooKnows("AUTO.HE"));
+
+    const previewed = await previewOne(userId, accountId, isin);
+    // SAFETY: a 200 preview carries the draft, `added` included.
+    const body = previewed.body as {
+      unknownIsins: unknown[];
+      added: Array<{ isin: string; sourceKey: string | null; pending: boolean }>;
+    };
+    expect(body.unknownIsins).toEqual([]);
+    expect(body.added).toMatchObject([{ isin, sourceKey: "AUTO.HE", pending: false }]);
+    // The preview only remembers the lookup; the instrument is created at commit.
+    expect(
+      await db.select().from(instruments).where(eq(instruments.isin, isin)).get(),
+    ).toBeUndefined();
+
+    const committed = await commitPreviewed(userId, previewed, accountId, "csv");
+    expect(committed.status).toBe(200);
+    // SAFETY: a 200 commit answers with the import it wrote.
+    const result = committed.body as { importId: number; inserted: number };
+    expect(result.inserted).toBe(1);
+    const created = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
+    expect(created).toMatchObject({ priceSource: "yahoo", sourceKey: "AUTO.HE" });
+    expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
+  });
+
+  test("a preview while Yahoo is paused still commits, as pending", async () => {
+    const { userId } = await signUp(`imp-auto-paused-${crypto.randomUUID()}@example.com`);
+    const accountId = await openAccount(userId);
+    const isin = freshIsin();
+    await db
+      .insert(yahooGate)
+      .values({ id: 1, pausedUntil: Date.now() + 3_600_000, backoffMs: 900_000 })
+      .onConflictDoUpdate({
+        target: yahooGate.id,
+        set: { pausedUntil: Date.now() + 3_600_000, backoffMs: 900_000 },
+      });
+
+    const previewed = await previewOne(userId, accountId, isin);
+    // SAFETY: a 200 preview carries the draft, `added` included.
+    const body = previewed.body as {
+      unknownIsins: unknown[];
+      added: Array<{ isin: string; pending: boolean }>;
+    };
+    expect(body.unknownIsins).toEqual([]);
+    expect(body.added).toMatchObject([{ isin, pending: true }]);
+
+    const committed = await commitPreviewed(userId, previewed, accountId, "csv");
+    expect(committed.status).toBe(200);
+    // SAFETY: a 200 commit answers with the import it wrote.
+    const result = committed.body as { importId: number };
+    const created = await db.select().from(instruments).where(eq(instruments.isin, isin)).get();
+    expect(created).toMatchObject({
+      priceSource: "manual",
+      sourceKey: isin,
+      lookupStatus: "pending",
+    });
+    expect(await linkedRows(result.importId)).toEqual([{ instrumentId: created?.id }]);
   });
 });
 

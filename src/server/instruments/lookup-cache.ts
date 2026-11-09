@@ -25,18 +25,22 @@ const StoredLookup = z.object({
 export const lookupKey = (isin: string | null, name: string): string =>
   isin ?? `name:${name.trim().toLowerCase()}`;
 
-/** A row of an older shape fails the parse and is a miss, never a wrong answer. */
-const readCached = async (db: Db, key: string, now: number): Promise<InstrumentLookup | null> => {
-  const row = await db.select().from(instrumentLookups).where(eq(instrumentLookups.key, key)).get();
-  if (!row || row.outcome === "pending") return null;
-  if (row.outcome === "form" && now - row.checkedAt.getTime() > FORM_RETRY_MS) return null;
+/** A stored result, or null for a row of an older shape: a miss, never a wrong answer. */
+export const readStoredLookup = (stored: string): InstrumentLookup | null => {
   try {
-    const parsed = StoredLookup.safeParse(JSON.parse(row.result));
+    const parsed = StoredLookup.safeParse(JSON.parse(stored));
     // SAFETY: the stored currency was written from a Currency by this module.
     return parsed.success ? (parsed.data as InstrumentLookup) : null;
   } catch {
     return null;
   }
+};
+
+const readCached = async (db: Db, key: string, now: number): Promise<InstrumentLookup | null> => {
+  const row = await db.select().from(instrumentLookups).where(eq(instrumentLookups.key, key)).get();
+  if (!row || row.outcome === "pending") return null;
+  if (row.outcome === "form" && now - row.checkedAt.getTime() > FORM_RETRY_MS) return null;
+  return readStoredLookup(row.result);
 };
 
 export const rememberedLookup = async (

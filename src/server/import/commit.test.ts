@@ -64,7 +64,7 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   ...over,
 });
 
-const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [] });
+const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [], added: [] });
 
 const args = (accountId: number, draft: Draft, fetchImpl?: FetchImpl) => ({
   userId: "u1",
@@ -175,6 +175,7 @@ test("refuses a draft with unresolved isins", async () => {
     txns: [draftTxn({ accountId })],
     problems: [],
     unknownIsins: [{ isin: "IE00B4L5Y983", name: "IWDA", currency: EUR }],
+    added: [],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/IE00B4L5Y983/);
 });
@@ -190,6 +191,7 @@ test("refuses a draft with an unresolved instrument that has no isin, naming it 
     txns: [draftTxn({ accountId })],
     problems: [],
     unknownIsins: [{ isin: null, name: "OP-Maailma Indeksi A", currency: EUR }],
+    added: [],
   };
   await expect(commitDraft(db, args(accountId, draft))).rejects.toThrow(/OP-Maailma Indeksi A/);
 });

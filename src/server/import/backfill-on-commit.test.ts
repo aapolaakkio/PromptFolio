@@ -70,7 +70,7 @@ const draftTxn = (over: Partial<DraftTxn> & { accountId: number }): DraftTxn => 
   ...over,
 });
 
-const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [] });
+const draftOf = (txns: DraftTxn[]): Draft => ({ txns, problems: [], unknownIsins: [], added: [] });
 
 const commitArgs = (accountId: number, draft: Draft) => ({
   userId: "u1",
