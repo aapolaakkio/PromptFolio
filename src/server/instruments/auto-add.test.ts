@@ -186,6 +186,50 @@ describe("resolveUnknown", () => {
     expect(created.txns[0]?.instrumentId).toBe(row?.id);
   });
 
+  test("a name-derived lookup never replaces a found entry under the ISIN", async () => {
+    const isin = track(freshIsin());
+    const name = `OP-TESTI ${crypto.randomUUID()}`;
+    await remember(isin, found(isin, { sourceKey: "REAL.HE" }));
+    await remember(
+      lookupKey(null, name),
+      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+    );
+
+    await resolveUnknown(
+      db,
+      draftOf([txn({ instrumentName: name })], [{ isin: null, name, currency: EUR }]),
+      noNetwork,
+    );
+
+    const row = await db
+      .select()
+      .from(instrumentLookups)
+      .where(eq(instrumentLookups.key, isin))
+      .get();
+    expect(JSON.parse(row?.result ?? "{}")).toMatchObject({ sourceKey: "REAL.HE" });
+  });
+
+  test("a discovered ISIN reaches rows whose name differs only in case", async () => {
+    const isin = track(freshIsin());
+    const name = `OP-TESTI ${crypto.randomUUID()}`;
+    await remember(
+      lookupKey(null, name),
+      found(isin, { kind: "fund", priceSource: "op_fund", sourceKey: "op-testi" }),
+    );
+    const lower = name.toLowerCase();
+    const draft = draftOf(
+      [txn({ instrumentName: name }), txn({ instrumentName: lower, line: 3 })],
+      [
+        { isin: null, name, currency: EUR },
+        { isin: null, name: lower, currency: EUR },
+      ],
+    );
+
+    const resolved = await resolveUnknown(db, draft, noNetwork);
+
+    expect(resolved.txns.map((t) => t.isin)).toEqual([isin, isin]);
+  });
+
   test("a lookup that fails outright leaves the instrument unknown", async () => {
     const isin = track(freshIsin());
     const unknown = [{ isin, name: "BROKEN", currency: EUR }];

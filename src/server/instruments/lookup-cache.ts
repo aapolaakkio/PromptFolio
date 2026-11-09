@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, ne, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Currency } from "../../core/money.ts";
@@ -43,12 +43,12 @@ const readCached = async (db: Db, key: string, now: number): Promise<InstrumentL
   return readStoredLookup(row.result);
 };
 
-/** Remembers `result` under `key`, replacing whatever was there. */
-export const storeLookup = async (
+const upsertLookup = async (
   db: Db,
   key: string,
   result: InstrumentLookup,
   checkedAt: Date,
+  setWhere?: SQL,
 ): Promise<void> => {
   await db
     .insert(instrumentLookups)
@@ -56,8 +56,29 @@ export const storeLookup = async (
     .onConflictDoUpdate({
       target: instrumentLookups.key,
       set: { outcome: result.outcome, result: JSON.stringify(result), checkedAt },
+      setWhere,
     });
 };
+
+/** Remembers `result` under `key`, replacing whatever was there. */
+export const storeLookup = (
+  db: Db,
+  key: string,
+  result: InstrumentLookup,
+  checkedAt: Date,
+): Promise<void> => upsertLookup(db, key, result, checkedAt);
+
+/**
+ * Remembers `result` under `key` unless a found entry is there already: a
+ * lookup made from a name never overrides one made from the ISIN itself.
+ */
+export const storeLookupUnlessFound = (
+  db: Db,
+  key: string,
+  result: InstrumentLookup,
+  checkedAt: Date,
+): Promise<void> =>
+  upsertLookup(db, key, result, checkedAt, ne(instrumentLookups.outcome, "found"));
 
 export const rememberedLookup = async (
   db: Db,
@@ -70,7 +91,18 @@ export const rememberedLookup = async (
 ): Promise<InstrumentLookup> => {
   const key = lookupKey(isin, name);
   const cached = await readCached(db, key, now());
-  if (cached) return cached;
+  if (cached) {
+    // The same ISIN may be held in another currency than the one remembered.
+    if (
+      cached.outcome === "found" &&
+      currency !== null &&
+      cached.listingCurrency !== null &&
+      cached.listingCurrency !== currency
+    ) {
+      return { ...cached, outcome: "form", formReason: "currency" };
+    }
+    return cached;
+  }
 
   const result = await lookupInstrument(
     isin,

@@ -96,4 +96,37 @@ describe("rememberedLookup", () => {
     expect(stub.calls()).toBeGreaterThan(0);
     expect(result.outcome).toBe("form");
   });
+
+  test("a cached found in another currency than the holding's goes to the form", async () => {
+    const isin = `XS${String(Math.floor(Math.random() * 1e10)).padStart(10, "0")}`;
+    keys.push(isin);
+    const usd = {
+      kind: "stock",
+      name: "Registry Name",
+      priceSource: "yahoo",
+      sourceKey: "ABC",
+      isin,
+      listingCurrency: "USD",
+      outcome: "found",
+      formReason: null,
+    };
+    await db.insert(instrumentLookups).values({
+      key: isin,
+      outcome: "found",
+      result: JSON.stringify(usd),
+      checkedAt: new Date(NOW),
+    });
+    const stub = counted(empty);
+
+    const result = await rememberedLookup(db, isin, "ABC", EUR, stub.fetch, () => NOW, 0);
+
+    expect(stub.calls()).toBe(0);
+    expect(result).toEqual({ ...usd, outcome: "form", formReason: "currency" });
+    const row = await db
+      .select()
+      .from(instrumentLookups)
+      .where(eq(instrumentLookups.key, isin))
+      .get();
+    expect(row?.outcome).toBe("found");
+  });
 });

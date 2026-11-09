@@ -5,7 +5,12 @@ import { instrumentLookups, instruments } from "../db/schema.ts";
 import type { AddedInstrument, Draft, DraftTxn } from "../import/map.ts";
 import type { FetchImpl } from "../prices/types.ts";
 import type { InstrumentLookup } from "./lookup.ts";
-import { lookupKey, readStoredLookup, rememberedLookup, storeLookup } from "./lookup-cache.ts";
+import {
+  lookupKey,
+  readStoredLookup,
+  rememberedLookup,
+  storeLookupUnlessFound,
+} from "./lookup-cache.ts";
 import { addInstrument } from "./store.ts";
 
 type Unknown = Draft["unknownIsins"][number];
@@ -55,7 +60,7 @@ const withDiscoveredIsin = (txn: DraftTxn, discovered: ReadonlyMap<string, strin
   if (txn.isin !== null || txn.instrumentId !== null || txn.instrumentName === undefined) {
     return txn;
   }
-  const isin = discovered.get(txn.instrumentName);
+  const isin = discovered.get(lookupKey(null, txn.instrumentName));
   return isin === undefined ? txn : { ...txn, isin };
 };
 
@@ -89,10 +94,10 @@ export const resolveUnknown = async (
       continue;
     }
     if (entry.isin === null) {
-      discovered.set(entry.name, result.isin);
+      discovered.set(lookupKey(null, entry.name), result.isin);
       // Also under the ISIN, so the commit finds it from the row alone: the
       // browser need not send the broker's name back.
-      await storeLookup(db, result.isin, lookup, new Date());
+      await storeLookupUnlessFound(db, result.isin, lookup, new Date());
     }
     if (!added.some((a) => a.isin === result.isin)) added.push(result);
   }
