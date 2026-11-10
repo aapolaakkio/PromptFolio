@@ -16,18 +16,19 @@ It runs as one Cloudflare Worker with one D1 (SQLite) database. Nothing else to 
 
 ## What you get
 
-| Page          | What it shows                                                                           |
-| ------------- | --------------------------------------------------------------------------------------- |
-| **Dashboard** | Value, time- and money-weighted return, allocation, value over time, a weekly summary   |
-| **Holdings**  | Every holding: quantity, cost basis, value, gain, weight, yearly fund fee, price source |
-| **Reconcile** | A broker's holdings statement against what the ledger says, with differences explained  |
-| **Cash**      | Bank accounts, balances, statement import, manual entries                               |
-| **Spending**  | Spending by category and payee, a flow of the year's money, month by month              |
-| **Rebalance** | Target allocation, drift, where to put new money, fees per year                         |
-| **Forecast**  | Your monthly plan and what the portfolio could be worth in 1 to 20 years                |
-| **Tax**       | Per tax year: realised gains both permitted ways, dividends, equity savings accounts    |
-| **Chat**      | The assistant, also docked on every page: answers, forecasts, charts, confirmed changes |
-| **Imports**   | Drop any export; the app works out what it is. History, with undo                       |
+| Page          | What it shows                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dashboard** | Value, time- and money-weighted return, allocation, value over time, a weekly summary                                                              |
+| **Holdings**  | Every holding: quantity, cost basis, value, gain, weight, yearly fund fee, price source                                                            |
+| **Reconcile** | A broker's holdings statement against what the ledger says, with differences explained                                                             |
+| **Cash**      | Bank accounts, balances, statement import, manual entries                                                                                          |
+| **Debts**     | Add a student loan or credit card and its balances by hand; the Dashboard then shows net worth (owned minus owed) and keeps the before-debts chart |
+| **Spending**  | Spending by category and payee, a flow of the year's money, month by month                                                                         |
+| **Rebalance** | Target allocation, drift, where to put new money, fees per year                                                                                    |
+| **Forecast**  | Your monthly plan and what the portfolio could be worth in 1 to 20 years                                                                           |
+| **Tax**       | Per tax year: realised gains both permitted ways, dividends, equity savings accounts                                                               |
+| **Chat**      | The assistant, also docked on every page: answers, forecasts, charts, confirmed changes                                                            |
+| **Imports**   | Drop any export; the app works out what it is. History, with undo                                                                                  |
 
 Light and dark themes. Every time chart has a hover ticker, and the value chart zooms by dragging.
 Any chart, including one the assistant drew, exports as PNG or PDF.

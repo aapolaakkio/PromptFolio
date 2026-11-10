@@ -61,6 +61,9 @@ export const DashboardPage = () => {
   // Gated on hasEverInvested: a never-invested portfolio's staleness is an import problem.
   const staleFrom = hasEverInvested ? series.data.filter((point) => point.stale).at(-1) : undefined;
 
+  const hasDebt = returns.data.owedEur !== "0.00";
+  const hasDebtHistory = series.data.some((point) => point.owedEur !== "0.00");
+
   return (
     <>
       <h1>Dashboard</h1>
@@ -68,6 +71,14 @@ export const DashboardPage = () => {
       <WeeklySummary />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {hasDebt && (
+          <Stat
+            label="Net worth"
+            value={eur(returns.data.netWorthEur)}
+            tone={returns.data.netWorthEur.startsWith("-") ? "loss" : undefined}
+            note={`owned ${eur(returns.data.valueWithCashEur)} − owed ${eur(returns.data.owedEur)}`}
+          />
+        )}
         <Stat
           label="Portfolio value"
           value={eur(returns.data.valueWithCashEur)}
@@ -121,10 +132,26 @@ export const DashboardPage = () => {
         />
       </section>
 
+      {hasDebtHistory && (
+        <section className="card mt-6">
+          <h2>Net worth over time</h2>
+          <TimeSeriesChart
+            label="Net worth"
+            points={series.data.map((p) => ({ date: p.date, value: Number(p.netEur) }))}
+          />
+          {returns.data.debtsKnownFrom && (
+            <p className="mt-2 max-w-prose text-xs text-muted">
+              Debts are counted from {formatDate(returns.data.debtsKnownFrom)}, the first balance on
+              record.
+            </p>
+          )}
+        </section>
+      )}
+
       {hasEverInvested ? (
         <>
           <section className="card mt-6">
-            <h2>Value over time</h2>
+            <h2>{hasDebtHistory ? "Value over time (before debts)" : "Value over time"}</h2>
             <TimeSeriesChart
               label="Portfolio value"
               points={series.data.map((p) => ({
