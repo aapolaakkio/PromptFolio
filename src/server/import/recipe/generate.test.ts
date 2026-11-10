@@ -194,3 +194,18 @@ describe("what each round resends", () => {
     }
   });
 });
+
+describe("what the model is shown", () => {
+  test("an account number and a personal identity code never leave, in the sample or a tool result", async () => {
+    const text = `${await fixture()}\nTILI FI21 1234 5600 0007 85 MATTI 010190-123A`;
+    const client = stub(call(wrongSign), call(good));
+
+    await generateRecipe(text, pagesOf(text), client);
+
+    const sent = JSON.stringify(client.asked.map((params) => params.messages));
+    expect(sent).not.toContain("1234 5600");
+    expect(sent).not.toContain("010190");
+    expect(sent).toContain("xx00 0000 0000 0000 00");
+    expect(client.asked[0]?.messages[0]?.content).toContain("Never match a literal 0 or x");
+  });
+});

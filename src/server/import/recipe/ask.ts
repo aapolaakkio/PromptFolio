@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+import { maskForFileSample } from "../../chat/mask.ts";
 import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
+
 export const FINNISH_CONTEXT =
   "This app serves Finnish customers: the documents come from Finnish banks and brokers, so Finnish law and conventions apply (Finnish number and date formats, Finnish transaction type labels, and Finnish tax rules wherever tax is involved).";
+
+/** Goes with every masked file sample, so a recipe is never written to match the stand-ins. */
+export const MASKED_SAMPLE_NOTE =
+  "Privacy: in what you are shown, account numbers, personal identity codes, card numbers, phone numbers and email addresses are replaced by stand-ins of the same length: every digit by 0 and every letter by x (an IBAN is shown as xx00 0000 0000 0000 00). The real file has the real characters, and the recipe is run on the real file. Never match a literal 0 or x from the sample: match such values by their form (\\d, [A-Z], a column position), exactly as you would for the real values.";
 
 export const RECIPE_MODEL = "claude-opus-5-5";
 const MAX_TOKENS = 16000;
@@ -17,7 +23,7 @@ export type Judged = {
 
 type Asked<R, Run> = { readonly recipe: R; readonly run: Run; readonly verified: boolean };
 
-/** On failure shows the model what went wrong; null when no attempt read anything. */
+/** On failure shows the model what went wrong; null when no attempt read anything. The model sees the file with account numbers and personal codes blanked; the recipe runs on the real file. */
 export const askForRecipe = async <R, Run>(args: {
   readonly client: ChatClient;
   readonly instructions: string;
@@ -27,8 +33,8 @@ export const askForRecipe = async <R, Run>(args: {
   readonly judge: (run: Run) => Judged;
 }): Promise<Asked<R, Run> | null> => {
   let messages: readonly ChatMessage[] = [
-    { role: "system", content: args.instructions },
-    { role: "user", content: args.sample.slice(0, MAX_SAMPLE_CHARS) },
+    { role: "system", content: `${args.instructions}\n\n${MASKED_SAMPLE_NOTE}` },
+    { role: "user", content: maskForFileSample(args.sample.slice(0, MAX_SAMPLE_CHARS)) },
   ];
   let best: { recipe: R; run: Run; score: number } | null = null;
 
@@ -57,7 +63,7 @@ export const askForRecipe = async <R, Run>(args: {
       { role: "assistant", content: reply.text },
       {
         role: "user",
-        content: `The recipe does not work yet:\n${feedback}\nFix it and reply with the whole recipe.`,
+        content: `The recipe does not work yet:\n${maskForFileSample(feedback)}\nFix it and reply with the whole recipe.`,
       },
     ];
   }

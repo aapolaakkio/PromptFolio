@@ -1,9 +1,10 @@
 import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 import type { PdfPage } from "../pdf-read.ts";
-import { FINNISH_CONTEXT, RECIPE_MODEL } from "./ask.ts";
+import { FINNISH_CONTEXT, MASKED_SAMPLE_NOTE, RECIPE_MODEL } from "./ask.ts";
 import { OP_STATEMENT_RECIPE } from "./op-reference.ts";
 import type { RecipeRun } from "./run.ts";
 import type { BankRecipe } from "./types.ts";
+import { maskForFileSample } from "../../chat/mask.ts";
 import { createVerifySession, runVerifyCall, verifyToolDefinition } from "./verify-tool.ts";
 
 const MAX_TOKENS = 16000;
@@ -56,8 +57,8 @@ export const generateRecipe = async (
 ): Promise<{ recipe: BankRecipe; run: RecipeRun; verified: boolean }> => {
   const session = createVerifySession(text);
   const opening: readonly ChatMessage[] = [
-    { role: "system", content: INSTRUCTIONS },
-    { role: "user", content: sampleFor(pages) },
+    { role: "system", content: `${INSTRUCTIONS}\n\n${MASKED_SAMPLE_NOTE}` },
+    { role: "user", content: maskForFileSample(sampleFor(pages)) },
   ];
   const attempts: (readonly ChatMessage[])[] = [];
 
@@ -74,7 +75,7 @@ export const generateRecipe = async (
       { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
     ];
     for (const call of reply.toolCalls) {
-      const content = await runVerifyCall(session, call);
+      const content = maskForFileSample(await runVerifyCall(session, call));
       attempt.push({ role: "tool", tool_call_id: call.id, content });
       if (session.verified() !== null) break;
     }
