@@ -1,4 +1,4 @@
-import { importNordnet } from "./harness/flows.ts";
+import { importNordnet, importNordnetOwnInstrument } from "./harness/flows.ts";
 import { expect, test } from "./harness/test.ts";
 
 test("holdings show cost-valued rows, and a sale of units never bought has no money figures", async ({
@@ -17,10 +17,11 @@ test("holdings show cost-valued rows, and a sale of units never bought has no mo
   await expect(unmatched.getByText("unknown")).toHaveCount(4);
 });
 
-test("a price recorded by hand changes the value", async ({ page, user: _user, claude }) => {
-  await importNordnet(page, claude);
+test("a price recorded by hand changes the value", async ({ page, app, user: _user, claude }) => {
+  await importNordnetOwnInstrument(page, app, claude);
   await page.goto("/holdings");
   const row = page.getByRole("row", { name: /WisdomTree/ });
+  // Prices are shared by every user of the worker's database, so this test uses an instrument of its own.
   // The import recorded the trade price on its own date, long ago.
   await expect(row.getByText("stale")).toBeVisible();
 
@@ -39,10 +40,11 @@ test("a price recorded by hand changes the value", async ({ page, user: _user, c
 
 test("editing an instrument saves the yearly fee, shown as set by the owner", async ({
   page,
+  app,
   user: _user,
   claude,
 }) => {
-  await importNordnet(page, claude);
+  await importNordnetOwnInstrument(page, app, claude);
   await page.goto("/holdings");
   const row = page.getByRole("row", { name: /WisdomTree/ });
   await expect(row).toContainText("–");

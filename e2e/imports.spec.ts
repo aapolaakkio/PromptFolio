@@ -1,28 +1,13 @@
-import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-
 import { expect, test } from "./harness/test.ts";
 import {
   createBrokerAccount,
   importNordnet,
-  NORDNET_FIXTURE,
-  nordnetFile,
+  nordnetWithUnseenIsin,
   previewNordnet,
   queueNordnetPreview,
-  type UploadFile,
+  queueUnseenIsinImport,
+  stubEmptyRegistry,
 } from "./harness/flows.ts";
-
-const SEEDED_ISIN = "IE0002Y8CX98";
-
-/** A copy of the sample whose WisdomTree rows carry an ISIN no database has seen: instruments outlive their test in a worker's database. */
-type UnseenIsin = { readonly isin: string; readonly file: UploadFile };
-
-const withUnseenIsin = (): UnseenIsin => {
-  // 9 hex characters of a UUID are letters A-F and digits: a valid ISIN body.
-  const isin = `XS${randomUUID().replaceAll("-", "").slice(0, 9).toUpperCase()}7`;
-  const text = readFileSync(NORDNET_FIXTURE).toString("utf16le").replaceAll(SEEDED_ISIN, isin);
-  return { isin, file: nordnetFile(Buffer.from(text, "utf16le")) };
-};
 
 test("a Nordnet export previews 12 rows and imports 12 transactions", async ({
   page,
@@ -92,18 +77,9 @@ test("an ISIN the database has not seen asks for the instrument and commits once
   user: _user,
   claude,
 }) => {
-  const { isin, file } = withUnseenIsin();
-  const asked: string[] = [];
-  // OpenFIGI knows nothing of this ISIN, so the form opens empty and the owner fills it in.
-  app.upstream.on("api.openfigi.com", (call) => {
-    asked.push(call.path);
-    return new Response("[]", { headers: { "content-type": "application/json" } });
-  });
-  // The first Preview also asks Claude to find a price page for the unknown instrument (none exists); saving re-previews, which asks only for the corporate-action proposals.
-  claude.replyRecipe("nordnet");
-  claude.replyJson({ url: null, isin: null });
-  claude.replyJson({ actions: [] });
-  queueNordnetPreview(claude, false);
+  const { isin, file } = nordnetWithUnseenIsin();
+  const asked = stubEmptyRegistry(app);
+  queueUnseenIsinImport(claude);
 
   await createBrokerAccount(page, "Nordnet");
   await previewNordnet(page, file);

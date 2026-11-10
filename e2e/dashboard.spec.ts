@@ -27,6 +27,9 @@ test("after an import the dashboard shows the value, the allocation and the valu
 
   await expect(page.getByRole("heading", { name: "Value over time" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Portfolio value" })).toBeVisible();
+  // Drawn with data: its legend names the lines, and the ledger gave it invested money and cash.
+  await expect(page.getByText("Value (incl. cash)")).toBeVisible();
+  await expect(page.getByText("Invested", { exact: true })).toBeVisible();
   await expect(page.getByRole("img", { name: "Allocation" })).toBeVisible();
   await expect(page.getByRole("listitem").filter({ hasText: /Cash\s*€1,735\.09/ })).toBeVisible();
   await expect(page.getByRole("listitem").filter({ hasText: /ETFs\s*€140\.00/ })).toBeVisible();
@@ -44,6 +47,7 @@ test("the range buttons change what the value chart covers", async ({
   const allTime = page.getByRole("button", { name: "All time" });
   await expect(ytd).toHaveAttribute("aria-pressed", "true");
   // The sample's trades are all in 2025; the year so far starts after them.
+  await expect(chart).toContainText(new RegExp(`\\d{2}/\\d{2}/${new Date().getFullYear()}`));
   await expect(chart).not.toContainText("2025");
 
   await allTime.click();
