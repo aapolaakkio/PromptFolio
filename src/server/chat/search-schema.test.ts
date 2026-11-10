@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 
-import { addSearchEvent, NO_SEARCH, webUrl, type SearchEvent } from "./search-schema.ts";
+import {
+  addSearchEvent,
+  MAX_SOURCES,
+  NO_SEARCH,
+  webUrl,
+  type SearchEvent,
+} from "./search-schema.ts";
 
 describe("addSearchEvent", () => {
   test("keeps each search once, marks a failure on its line, and each source once", () => {
@@ -26,6 +32,20 @@ describe("addSearchEvent", () => {
     });
     expect(NO_SEARCH).toEqual({ searches: [], sources: [] });
   });
+});
+
+test("keeps at most fifty sources per answer", () => {
+  const sources = Array.from({ length: 60 }, (_, at) => ({
+    title: `Page ${at}`,
+    url: `https://example.com/${at}`,
+  }));
+  const web = addSearchEvent(addSearchEvent(NO_SEARCH, { type: "sources", sources }), {
+    type: "sources",
+    sources: [{ title: "Late", url: "https://example.com/late" }],
+  });
+
+  expect(MAX_SOURCES).toBe(50);
+  expect(web.sources).toEqual(sources.slice(0, 50));
 });
 
 describe("webUrl", () => {

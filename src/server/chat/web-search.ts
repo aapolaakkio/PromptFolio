@@ -5,7 +5,13 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta";
 import { z } from "zod";
 
-import { MAX_TITLE, MAX_URL, type SearchEvent, type WebSource } from "./search-schema.ts";
+import {
+  MAX_QUERY,
+  MAX_TITLE,
+  MAX_URL,
+  type SearchEvent,
+  type WebSource,
+} from "./search-schema.ts";
 import { isPersonalQuery } from "./search-query.ts";
 
 export const MAX_SEARCHES_PER_ANSWER = 3;
@@ -54,9 +60,9 @@ export const searchEventsOf = (block: BetaContentBlock, turn: WebSearchTurn): Se
   if (block.type === "server_tool_use" && block.name === "web_search") {
     const parsed = SearchInput.safeParse(block.input);
     const query = parsed.success ? parsed.data.query : "";
-    return [
-      { type: "search", id: block.id, query, personal: isPersonalQuery(query, turn.ownerName) },
-    ];
+    // Judged on the whole query; cut only so the page's schema keeps it.
+    const personal = isPersonalQuery(query, turn.ownerName);
+    return [{ type: "search", id: block.id, query: query.slice(0, MAX_QUERY), personal }];
   }
   if (block.type === "web_search_tool_result" && !Array.isArray(block.content)) {
     return [
@@ -99,3 +105,7 @@ export const unseen = (
     },
     { fresh: [], seen },
   );
+
+/** How many searches this answer has run, from the ids `unseen` has recorded. */
+export const searchesRun = (seen: ReadonlySet<string>): number =>
+  [...seen].filter((key) => key.startsWith("search:")).length;

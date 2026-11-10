@@ -9,6 +9,7 @@ import {
   type ChatEvent,
   type TurnParams,
 } from "./runner.ts";
+import { MAX_QUERY } from "./search-schema.ts";
 import type { ChatTool } from "./tool-types.ts";
 
 // Web search runs on Anthropic's side; here a fake Messages API plays both the model and the search.
@@ -16,6 +17,7 @@ import type { ChatTool } from "./tool-types.ts";
 const Body = z.looseObject({
   system: z.string().optional(),
   tools: z.array(z.looseObject({ name: z.string() })).optional(),
+  tool_choice: z.looseObject({ type: z.string() }).optional(),
   messages: z.array(
     z.object({
       role: z.string(),
@@ -242,5 +244,94 @@ describe("a streamed answer with a search", () => {
       "text",
     ]);
     expect(events.at(-1)).toEqual({ type: "answer", text: "The offer was 4.20 EUR." });
+  });
+});
+
+const searches = (count: number) =>
+  Array.from({ length: count }, (_, at) => ({
+    id: `srvtoolu_${at}`,
+    query: `Acme Oyj ${at}`,
+    results: [{ title: `Page ${at}`, url: `https://example.com/${at}` }],
+  }));
+
+const afterSearching = async (count: number) => {
+  const api = fakeAnthropic(
+    anthropicSearchStream({
+      searches: searches(count),
+      text: "Checking your holdings too.",
+      tools: [{ id: "toolu_1", name: "get_holdings", input: {} }],
+    }),
+    anthropicStream("You hold Acme."),
+  );
+  await drain(
+    runTurn(
+      createClient(api.fetchImpl),
+      [holdingsTool],
+      ask,
+      undefined,
+      undefined,
+      null,
+      SEARCH_ON,
+    ),
+  );
+  return api.bodies;
+};
+
+describe("searches per answer", () => {
+  test("three searches in round 1 leave round 2 no tool use, with the tools unchanged", async () => {
+    const [first, second] = await afterSearching(3);
+
+    expect(second?.tool_choice).toEqual({ type: "none" });
+    expect(second?.tools).toEqual(first?.tools);
+    const replayed = second?.messages[1]?.content;
+    expect(Array.isArray(replayed) ? replayed.map((block) => block.type) : replayed).toEqual([
+      "thinking",
+      ...Array.from({ length: 3 }, () => ["server_tool_use", "web_search_tool_result"]).flat(),
+      "text",
+      "tool_use",
+    ]);
+  });
+
+  test("two searches in round 1 leave round 2 the same tool, whose limit counts the whole turn", async () => {
+    const [first, second] = await afterSearching(2);
+
+    expect(second?.tool_choice).toBeUndefined();
+    expect(second?.tools).toEqual(first?.tools);
+  });
+
+  test("a sentence cut by a pause goes on in the same paragraph", async () => {
+    const api = fakeAnthropic(
+      anthropicSearchStream({
+        searches: [{ id: "srvtoolu_1", query: "Acme Oyj", results: [SOURCE] }],
+        text: "The offer ",
+        stopReason: "pause_turn",
+      }),
+      anthropicStream("was 4.20 EUR."),
+    );
+    const events = await drain(
+      runTurn(createClient(api.fetchImpl), [], ask, undefined, undefined, null, SEARCH_ON),
+    );
+
+    expect(events.at(-1)).toEqual({ type: "answer", text: "The offer was 4.20 EUR." });
+    const streamed = events.flatMap((event) => (event.type === "delta" ? [event.text] : []));
+    expect(streamed.join("")).toBe("The offer was 4.20 EUR.");
+  });
+
+  test("an overlong query is cut to what the page accepts, keeping its warning", async () => {
+    const query = `FI21 1234 5600 0007 85 ${"x".repeat(3000)}`;
+    const api = fakeAnthropic(
+      anthropicSearchStream({ searches: [{ id: "srvtoolu_1", query }], text: "Done." }),
+    );
+    const events = await drain(
+      runTurn(createClient(api.fetchImpl), [], ask, undefined, undefined, null, SEARCH_ON),
+    );
+
+    const search = events.find((event) => event.type === "search");
+    expect(search).toEqual({
+      type: "search",
+      id: "srvtoolu_1",
+      query: query.slice(0, MAX_QUERY),
+      personal: true,
+    });
   });
 });

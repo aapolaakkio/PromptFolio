@@ -2,10 +2,11 @@ import { z } from "zod";
 
 // No server-only imports: the chat page validates streamed and stored searches with this.
 
-const MAX_QUERY = 2000;
+export const MAX_QUERY = 2000;
 export const MAX_TITLE = 300;
 export const MAX_URL = 2000;
 const MAX_REASON = 200;
+export const MAX_SOURCES = 50;
 
 export const WebSourceSchema = z.object({
   title: z.string().max(MAX_TITLE),
@@ -69,7 +70,7 @@ export const addSearchEvent = (web: StoredSearch, event: SearchEvent): StoredSea
       const fresh = event.sources.filter(
         (source) => !web.sources.some((known) => known.url === source.url),
       );
-      return { ...web, sources: [...web.sources, ...fresh] };
+      return { ...web, sources: [...web.sources, ...fresh].slice(0, MAX_SOURCES) };
     }
   }
 };

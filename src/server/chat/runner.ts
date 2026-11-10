@@ -21,7 +21,13 @@ import { ROUND_BREAK, streamRound } from "./stream-round.ts";
 import type { Proposal } from "./proposal-schema.ts";
 import type { SearchEvent } from "./search-schema.ts";
 import type { AnyTool, ProposalArea } from "./tool-types.ts";
-import { CHAT_SEARCH_TOOL, SEARCH_RULES, type WebSearchTurn } from "./web-search.ts";
+import {
+  CHAT_SEARCH_TOOL,
+  MAX_SEARCHES_PER_ANSWER,
+  SEARCH_RULES,
+  searchesRun,
+  type WebSearchTurn,
+} from "./web-search.ts";
 
 /** Thinking counts against this too, so it is roomier than an answer needs. */
 const MAX_TOKENS = 16000;
@@ -88,6 +94,8 @@ export type TurnParams = {
   readonly max_tokens: number;
   readonly messages: readonly ChatMessage[];
   readonly tools: readonly (ToolDefinition | ServerTool)[];
+  /** `none` stops all tool use while leaving `tools` as sent, which earlier thinking is bound to. */
+  readonly tool_choice?: { readonly type: "none" };
   readonly response_format?: {
     readonly type: "json_schema";
     readonly json_schema: JSONSchema.BaseSchema;
@@ -151,10 +159,12 @@ const systemOf = (messages: readonly ChatMessage[]): string =>
 
 const toReply = (message: BetaMessage): ModelReply => {
   if (message.stop_reason === "refusal") throw new Error(REFUSED);
-  const text = message.content
+  const paused = message.stop_reason === "pause_turn";
+  const words = message.content
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("")
-    .trim();
+    .join("");
+  // A paused reply's words go on in the next request, so its trailing space is kept.
+  const text = paused ? words.trimStart() : words.trim();
   // A reply cut off at max_tokens may hold a call whose input never finished.
   const toolCalls =
     message.stop_reason === "max_tokens"
@@ -164,7 +174,7 @@ const toReply = (message: BetaMessage): ModelReply => {
             ? [{ id: block.id, name: block.name, arguments: JSON.stringify(block.input) }]
             : [],
         );
-  return { text, toolCalls, blocks: message.content, paused: message.stop_reason === "pause_turn" };
+  return { text, toolCalls, blocks: message.content, paused };
 };
 
 const REFUSED = "The model refused to answer this request";
@@ -215,6 +225,7 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
                 : { type: "json_schema", schema: transformJSONSchema(format.json_schema) },
           },
           tools: params.tools.length === 0 ? undefined : [...params.tools],
+          tool_choice: params.tool_choice,
           betas: fallback ? ["server-side-fallback-2026-07-01"] : undefined,
           fallbacks: fallback ? "default" : undefined,
         },
@@ -337,6 +348,20 @@ const systemMessages = (
   ];
 };
 
+/**
+ * Past the answer's searches, later rounds may use no tool at all. `max_uses` already counts the whole turn's searches, and `tools` stays as sent so earlier thinking stays valid; a paused round is left to finish its own server-side work.
+ */
+const toolUse = (seen: ReadonlySet<string>, resuming: boolean): Pick<TurnParams, "tool_choice"> =>
+  !resuming && searchesRun(seen) >= MAX_SEARCHES_PER_ANSWER
+    ? { tool_choice: { type: "none" } }
+    : {};
+
+const spokenWith = (spoken: readonly string[], text: string, resuming: boolean): string[] => {
+  if (text === "") return [...spoken];
+  const last = spoken.at(-1);
+  return resuming && last !== undefined ? [...spoken.slice(0, -1), last + text] : [...spoken, text];
+};
+
 /** One turn: an event per tool dispatched, then one answer. The loop is ours: ask, run the tools called, hand results back, until it answers in words. */
 export async function* runTurn(
   client: ChatClient,
@@ -356,18 +381,28 @@ export async function* runTurn(
   let spoken: readonly string[] = [];
   let seen: ReadonlySet<string> = new Set();
   let answered = false;
+  // After a pause the next words continue the same message, so no paragraph break goes between.
+  let resuming: boolean = false;
 
   for (let round = 0; round < MAX_ROUNDS && !answered; round++) {
     // The client's signal: a dropped connection cancels the request, since an unread tool loop still costs tokens.
-    const params = { model, max_tokens: MAX_TOKENS, messages, tools: offered };
-    const afterWords = spoken.length > 0;
-    const settled = yield* streamRound(client, { params, signal, afterWords, search, seen });
+    const params: TurnParams = {
+      model,
+      max_tokens: MAX_TOKENS,
+      messages,
+      tools: offered,
+      ...toolUse(seen, resuming),
+    };
+    const afterWords: boolean = spoken.length > 0 && !resuming;
+    const settled: { readonly reply: ModelReply; readonly seen: ReadonlySet<string> } =
+      yield* streamRound(client, { params, signal, afterWords, search, seen });
     const { reply } = settled;
     seen = settled.seen;
     if (signal?.aborted === true) return;
-    if (reply.text !== "") spoken = [...spoken, reply.text];
+    spoken = spokenWith(spoken, reply.text, resuming);
     // A paused turn resumes from its own blocks, sent back as they came, with no new question.
-    if (reply.paused === true && reply.blocks !== undefined && reply.toolCalls.length === 0) {
+    resuming = reply.paused === true && reply.blocks !== undefined && reply.toolCalls.length === 0;
+    if (resuming) {
       messages = [...messages, { role: "assistant", content: reply.text, blocks: reply.blocks }];
       continue;
     }
