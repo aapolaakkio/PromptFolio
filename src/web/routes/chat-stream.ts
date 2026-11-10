@@ -4,6 +4,7 @@ import { ChatChartSchema } from "../../server/chat/chart-schema.ts";
 import type { ChatModel } from "../../server/chat/models.ts";
 import type { PageContext } from "../../server/chat/page-context.ts";
 import { ProposalSchema } from "../../server/chat/proposal-schema.ts";
+import { SearchEventSchemas } from "../../server/chat/search-schema.ts";
 import { askTurn } from "../server/chat.ts";
 
 /** Chat events validated at the boundary; an unrecognised event is dropped, not rendered next to real figures. */
@@ -15,6 +16,7 @@ export const ChatEventSchema = z.union([
   z.object({ type: z.literal("delta"), text: z.string() }),
   z.object({ type: z.literal("answer"), text: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),
+  ...SearchEventSchemas,
 ]);
 
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
@@ -38,6 +40,7 @@ type AskBody = {
   conversationId?: number;
   model?: ChatModel;
   context?: PageContext;
+  webSearch?: boolean;
 };
 type Turn = (body: AskBody) => Promise<Response>;
 

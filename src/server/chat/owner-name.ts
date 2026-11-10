@@ -32,6 +32,12 @@ const namePattern = (name: string): RegExp | null => {
   return new RegExp(String.raw`(?<!\p{L})${body}(?!\p{L})`, "giu");
 };
 
+/** True when the text holds the owner's name as `hidingOwnerName` would hide it. */
+export const mentionsName = (text: string, name: string | null): boolean => {
+  const pattern = name === null ? null : namePattern(name);
+  return pattern !== null && new RegExp(pattern.source, "iu").test(text.normalize("NFC"));
+};
+
 /**
  * What a model is sent, with the owner's name replaced in every message text, earlier answers included (one stored before this existed may hold the name).
  */

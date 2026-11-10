@@ -2,7 +2,11 @@ import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import { z } from "zod";
 
-import { anthropicStream } from "../../src/server/chat/anthropic-stream-fixture.ts";
+import {
+  anthropicSearchStream,
+  anthropicStream,
+  type FixtureSource,
+} from "../../src/server/chat/anthropic-stream-fixture.ts";
 import { NORDNET_TABLE_RECIPE } from "../../src/server/import/recipe/broker-reference.ts";
 import { TABLE_HOLDINGS_RECIPE } from "../../src/server/import/recipe/holdings-reference.ts";
 import { OP_BANK_CSV_RECIPE } from "../../src/server/import/recipe/op-csv-reference.ts";
@@ -12,16 +16,26 @@ import type { Upstream, UpstreamCall } from "./upstream.ts";
 
 type Json = z.infer<ReturnType<typeof z.json>>;
 
+export type ClaudeTool = {
+  readonly name: string;
+  readonly type?: string;
+  readonly max_uses?: number;
+};
+
 export type ClaudeRequest = {
   readonly system: string;
   readonly lastUser: string;
   readonly model: string;
+  /** The tools the request offered, as sent. */
+  readonly tools: readonly ClaudeTool[];
 };
 
 /** Scripted Claude: replies are served in order on `api.anthropic.com/v1/messages`. */
 export type Claude = {
   reply(text: string): void;
   replyWithTool(name: string, input: Json): void;
+  /** A reply that ran one web search, then answered citing the sources it found. */
+  replyWithSearch(query: string, sources: readonly FixtureSource[], text: string): void;
   /** A text reply that is not sent until the returned function is called: lets a test look at the page while Claude is "thinking". */
   replyHeld(text: string): () => void;
   /** A deliberate failure; 4xx and 5xx are both answered without a retry by the SDK, so the turn fails at once. */
@@ -67,6 +81,15 @@ const Body = z.looseObject({
   model: z.string().default(""),
   system: Content.default([]),
   messages: z.array(z.looseObject({ role: z.string(), content: Content })).default([]),
+  tools: z
+    .array(
+      z.looseObject({
+        name: z.string(),
+        type: z.string().optional(),
+        max_uses: z.number().optional(),
+      }),
+    )
+    .default([]),
 });
 
 const textOf = (content: readonly Block[]): string =>
@@ -79,6 +102,7 @@ const describe = (call: UpstreamCall): ClaudeRequest => {
     model: body.model,
     system: textOf(body.system),
     lastUser: lastUser === undefined ? "" : textOf(lastUser.content),
+    tools: body.tools.map(({ name, type, max_uses }) => ({ name, type, max_uses })),
   };
 };
 
@@ -126,6 +150,14 @@ export const installClaude = (upstream: Upstream): Claude => {
     reply: (text) => void queue.push(stream(text)),
     replyWithTool: (name, input) =>
       void queue.push(anthropicStream("", [{ id: `toolu_${queue.length + 1}`, name, input }])),
+    replyWithSearch: (query, sources, text) =>
+      void queue.push(
+        anthropicSearchStream({
+          searches: [{ id: `srvtoolu_${queue.length + 1}`, query, results: sources }],
+          text,
+          cited: sources,
+        }),
+      ),
     replyHeld: (text) => {
       let release = (): void => undefined;
       const gate = new Promise<void>((done) => {

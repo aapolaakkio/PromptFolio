@@ -16,6 +16,9 @@ import {
 import { ChatChartSchema, StoredChartSchema } from "./chart-schema.ts";
 import { CONVERSATION_NOT_FOUND, TURN_RUNNING } from "./conversation-errors.ts";
 import { maskAccountNumbers, maskTypedText } from "./mask.ts";
+import { ownerNameNow } from "./owner-name.ts";
+import { addSearchEvent, hasSearch, NO_SEARCH, type StoredSearch } from "./search-schema.ts";
+import type { WebSearchTurn } from "./web-search.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
@@ -31,6 +34,8 @@ export const Ask = z
     message: z.string().trim().min(1, "The question cannot be empty").max(2000),
     model: z.enum(CHAT_MODEL_IDS).optional(),
     context: PageContext.optional(),
+    // Off unless the owner turned it on for this question: without it the model has no search tool.
+    webSearch: z.boolean().default(false),
   })
   .strict();
 
@@ -144,6 +149,8 @@ const modelHistory = (rows: readonly Row[]) => {
       const text = `The assistant proposed "${maskAccountNumbers(proposal.summary)}". It is not saved unless the owner confirms it.`;
       return [{ role: "user", content: `${APP_NOTE} ${text}` }];
     }
+    // Shown to the owner only; the answer it belonged to already says what was found.
+    if (row.role === "search") return [];
     if (row.role === "chart") {
       const chart = readStored(StoredChartSchema, row.content);
       if (chart === null) return [];
@@ -253,10 +260,13 @@ const sse = (event: ChatEvent): string => `data: ${JSON.stringify(event)}\n\n`;
 /** Runs one turn, yielding SSE bytes. Anything that can refuse the turn throws before the stream exists, so it stays a status code. */
 export const startTurn = async (
   userId: string,
-  input: z.infer<typeof Ask>,
+  input: z.input<typeof Ask>,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> => {
-  const { conversationId, message, model = DEFAULT_CHAT_MODEL, context } = Ask.parse(input);
+  const parsed = Ask.parse(input);
+  const { conversationId, message, model = DEFAULT_CHAT_MODEL, context } = parsed;
+  // Read now: the stream outlives the request whose owner it names.
+  const search = parsed.webSearch ? { ownerName: ownerNameNow() } : null;
   const client = clientOverride ?? resolveClient();
   // Resolved before anything is stored, so a foreign id refuses the turn without leaving a conversation behind.
   const where = context === undefined ? null : await pageLine(db, userId, context);
@@ -274,7 +284,8 @@ export const startTurn = async (
   const lockedAt = conversationId === undefined ? createdAt : await takeTurnLock(userId, found.id);
   const conversation = { id: found.id, lockedAt };
   try {
-    return await streamTurn(conversation, userId, { message, model, where, client }, signal);
+    const turnInput = { message, model, where, client, search };
+    return await streamTurn(conversation, userId, turnInput, signal);
   } catch (cause) {
     await releaseTurnLock(conversation);
     throw cause;
@@ -286,13 +297,27 @@ type TurnInput = {
   readonly model: string;
   readonly where: string | null;
   readonly client: ChatClient;
+  readonly search: WebSearchTurn | null;
+};
+
+/** One row for the answer's searches, kept even when the turn failed: the owner should see what was searched. */
+const storeSearch = async (conversationId: number, web: StoredSearch): Promise<void> => {
+  if (!hasSearch(web)) return;
+  try {
+    await db
+      .insert(chatMessages)
+      .values({ conversationId, role: "search", content: JSON.stringify(web) })
+      .run();
+  } catch (cause) {
+    console.error("Storing the searches failed:", cause instanceof Error ? cause.name : "unknown");
+  }
 };
 
 /** Stores the question and streams the turn; the lock taken by `startTurn` is released whenever it ends. */
 const streamTurn = async (
   conversation: LockedConversation,
   userId: string,
-  { message, model, where, client }: TurnInput,
+  { message, model, where, client, search }: TurnInput,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> => {
   // Stored first, so a mid-way failure still shows what was asked.
@@ -312,6 +337,7 @@ const streamTurn = async (
     ...buildProposalTools(db, userId, conversation.id),
   ];
   const used: string[] = [];
+  let web = NO_SEARCH;
   let open = true;
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -327,8 +353,15 @@ const streamTurn = async (
       };
       send({ type: "conversation", id: conversation.id });
       try {
-        for await (const event of runTurn(client, tools, history, signal, model, where)) {
+        for await (const event of runTurn(client, tools, history, signal, model, where, search)) {
           if (event.type === "tool") used.push(event.name);
+          if (
+            event.type === "search" ||
+            event.type === "search_failed" ||
+            event.type === "sources"
+          ) {
+            web = addSearchEvent(web, event);
+          }
           if (event.type === "proposal") {
             await db
               .insert(chatMessages)
@@ -371,6 +404,7 @@ const streamTurn = async (
           send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {
+        await storeSearch(conversation.id, web);
         await releaseTurnLock(conversation);
         if (open) controller.close();
       }

@@ -25,3 +25,22 @@ export const forgetPanel = (): void => {
     // Nothing was stored.
   }
 };
+
+const WEB_SEARCH_KEY = "assistant-web-search";
+
+/** Off unless this browser turned it on. */
+export const readStoredWebSearch = (): boolean => {
+  try {
+    return localStorage.getItem(WEB_SEARCH_KEY) === "on";
+  } catch {
+    return false;
+  }
+};
+
+export const storeWebSearch = (on: boolean): void => {
+  try {
+    localStorage.setItem(WEB_SEARCH_KEY, on ? "on" : "off");
+  } catch {
+    // Nothing to keep it in; the switch still applies to this load.
+  }
+};

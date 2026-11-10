@@ -5,6 +5,7 @@ import { CHAT_MODELS, type ChatModel } from "../../server/chat/models.ts";
 import type { PageContext } from "../../server/chat/page-context.ts";
 import { readStored, StoredProposal } from "../../server/chat/proposal-schema.ts";
 import { StoredChartSchema } from "../../server/chat/chart-schema.ts";
+import { StoredSearchSchema } from "../../server/chat/search-schema.ts";
 import { ChatChart } from "../charts/ChatChart.tsx";
 import { isNearBottom } from "./assistant-state.ts";
 import { renderItems } from "./chat-order.ts";
@@ -14,6 +15,7 @@ import { STARTERS } from "./starters.ts";
 import { TOOL_LABELS } from "./tool-labels.ts";
 import type { LiveCard } from "./chat-rules.ts";
 import { useChatTurn, type Turn } from "./use-chat-turn.ts";
+import { SearchTurn, WebSearchSwitch } from "./WebSearch.tsx";
 
 const isChatModel = (value: string): value is ChatModel =>
   CHAT_MODELS.some((model) => model.id === value);
@@ -83,6 +85,10 @@ const TurnItem = ({ item, cards }: { readonly item: Item; readonly cards: Cards 
   }
   if (item.turn.role === "chart") return <ChartTurn turn={item.turn} />;
   if (item.turn.role === "proposal") return <ProposalTurn turn={item.turn} cards={cards} />;
+  if (item.turn.role === "search") {
+    const web = readStored(StoredSearchSchema, item.turn.content);
+    return web === null ? null : <SearchTurn web={web} />;
+  }
   return null;
 };
 
@@ -315,6 +321,7 @@ export const ChatPanel = ({ context, variant, composerRef }: ChatPanelProps) => 
       )}
       {chat.error !== null && <p role="alert">{chat.error}</p>}
       <Composer busy={chat.busy} onAsk={chat.ask} composerRef={composerRef ?? ownComposer} />
+      <WebSearchSwitch on={chat.webSearch} busy={chat.busy} onChange={chat.setWebSearch} />
       <ModelPicker model={chat.model} busy={chat.busy} onModel={chat.setModel} />
     </div>
   );

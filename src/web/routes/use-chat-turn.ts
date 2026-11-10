@@ -6,15 +6,22 @@ import { getConversationMessages, saveProposalOutcome } from "../server/chat.ts"
 import { DEFAULT_CHAT_MODEL, type ChatModel } from "../../server/chat/models.ts";
 import type { PageContext } from "../../server/chat/page-context.ts";
 import { readStored, StoredOutcome, type Proposal } from "../../server/chat/proposal-schema.ts";
+import {
+  addSearchEvent,
+  hasSearch,
+  NO_SEARCH,
+  type StoredSearch,
+} from "../../server/chat/search-schema.ts";
 import { useAssistant } from "./assistant-context.ts";
 import type { PanelAction } from "./assistant-state.ts";
 import { refreshAfterDecision } from "./chat-refresh.ts";
 import { isConversationGone, settleCard, type LiveCard } from "./chat-rules.ts";
 import { askChat, type ChatEvent } from "./chat-stream.ts";
 import { createDecider, type CardOutcome } from "./proposal-actions.ts";
+import { useWebSearch } from "./use-web-search.ts";
 
 export type Turn = {
-  readonly role: "user" | "assistant" | "proposal" | "note" | "chart";
+  readonly role: "user" | "assistant" | "proposal" | "note" | "chart" | "search";
   readonly content: string;
 };
 
@@ -103,6 +110,7 @@ const useCards = () => {
 type StreamDeps = {
   readonly context: PageContext | null;
   readonly model: ChatModel;
+  readonly webSearch: boolean;
   readonly setError: (error: ShownError | null) => void;
   readonly addCard: (card: LiveCard) => void;
 };
@@ -113,6 +121,8 @@ const useEvents = (setError: (error: ShownError) => void, addCard: (card: LiveCa
   const [tools, setTools] = useState<string[]>([]);
   // The answer so far, word by word, until the whole one arrives and replaces it.
   const [streaming, setStreaming] = useState("");
+  // This answer's searches, one block under it, as the stored `search` row will show them.
+  const [web, setWeb] = useState<StoredSearch>(NO_SEARCH);
   const append = (turn: Turn) => setPending((previous) => [...previous, turn]);
   const apply = (event: ChatEvent, at: number | null) => {
     if (event.type === "tool") setTools((previous) => [...previous, event.name]);
@@ -123,6 +133,9 @@ const useEvents = (setError: (error: ShownError) => void, addCard: (card: LiveCa
       append(traceOf(event.proposal));
     }
     if (event.type === "chart") append(chartOf(event));
+    if (event.type === "search" || event.type === "search_failed" || event.type === "sources") {
+      setWeb((previous) => addSearchEvent(previous, event));
+    }
     if (event.type === "delta") setStreaming((previous) => previous + event.text);
     if (event.type === "answer") {
       setStreaming("");
@@ -131,18 +144,23 @@ const useEvents = (setError: (error: ShownError) => void, addCard: (card: LiveCa
   };
   const start = (message: string) => {
     setTools([]);
+    setWeb(NO_SEARCH);
     // Shown immediately; the server's stored copy replaces it once the turn is over.
     setPending([{ role: "user", content: message }]);
   };
   const end = () => {
     setStreaming("");
     setPending([]);
+    setWeb(NO_SEARCH);
   };
-  return { pending, tools, streaming, apply, start, end };
+  const shown: Turn[] = hasSearch(web)
+    ? [...pending, { role: "search", content: JSON.stringify(web) }]
+    : pending;
+  return { pending: shown, tools, streaming, apply, start, end };
 };
 
 /** One turn's stream, from the question to the answer. */
-const useStream = ({ context, model, setError, addCard }: StreamDeps) => {
+const useStream = ({ context, model, webSearch, setError, addCard }: StreamDeps) => {
   const { state, dispatch, setTurnRunning } = useAssistant();
   const queryClient = useQueryClient();
   const events = useEvents(setError, addCard);
@@ -152,7 +170,10 @@ const useStream = ({ context, model, setError, addCard }: StreamDeps) => {
     setTurnRunning(true);
     events.start(message);
     let at = state.conversationId;
-    const base = at === null ? { message, model } : { message, conversationId: at, model };
+    const base =
+      at === null
+        ? { message, model, webSearch }
+        : { message, conversationId: at, model, webSearch };
     try {
       for await (const event of askChat(context === null ? base : { ...base, context })) {
         if (event.type !== "conversation") events.apply(event, at);
@@ -181,7 +202,14 @@ export const useChatTurn = (context: PageContext | null) => {
   const [error, setError] = useState<ShownError | null>(null);
   const [model, setModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
   const cards = useCards();
-  const stream = useStream({ context, model, setError, addCard: cards.add });
+  const webSearch = useWebSearch();
+  const stream = useStream({
+    context,
+    model,
+    webSearch: webSearch.on,
+    setError,
+    addCard: cards.add,
+  });
   const stored = useHistory(conversationId, busy, dispatch);
 
   const turns: Turn[] = [...stored, ...stream.pending];
@@ -205,6 +233,8 @@ export const useChatTurn = (context: PageContext | null) => {
       cards.saveError ?? (error !== null && error.at === conversationId ? error.message : null),
     model,
     setModel,
+    webSearch: webSearch.on,
+    setWebSearch: webSearch.change,
     ask,
     outcomes,
     live: cards.live,

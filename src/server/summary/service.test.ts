@@ -67,6 +67,7 @@ describe("getWeeklySummary", () => {
     expect(out.text).toBe(GOOD);
     expect(out.week).toBe(isoWeek(now));
     expect(client.asked).toHaveLength(1);
+    expect(client.asked[0]?.tools.map((tool) => tool.name)).not.toContain("web_search");
     const row = await db
       .select()
       .from(weeklySummaries)

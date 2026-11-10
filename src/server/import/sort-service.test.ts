@@ -93,6 +93,7 @@ describe("sortUploads", () => {
     expect(prompt).toContain("My bank");
     expect(prompt).not.toContain("4321");
     expect(prompt).not.toContain("Secret bank");
+    expect(asked[0]?.tools.map((tool) => tool.name)).not.toContain("web_search");
     service._setSorterClient(null);
   });
 

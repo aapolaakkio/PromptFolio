@@ -1,5 +1,5 @@
 type Row = {
-  readonly role: "user" | "assistant" | "proposal" | "note" | "chart";
+  readonly role: "user" | "assistant" | "proposal" | "note" | "chart" | "search";
   readonly content: string;
 };
 

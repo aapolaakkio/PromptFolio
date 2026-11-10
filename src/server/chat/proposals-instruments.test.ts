@@ -300,4 +300,5 @@ test("the record price tool names only sources someone can check", () => {
   expect(tool?.description).not.toContain("the owner said");
   expect(tool?.description).toContain("find_price source");
   expect(tool?.description).toContain("the owner's own message in this conversation");
+  expect(tool?.description).toContain("a web page found with web search, by its address");
 });

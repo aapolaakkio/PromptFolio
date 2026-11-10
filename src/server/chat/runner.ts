@@ -17,8 +17,11 @@ import { hasStandIn, maskAccountNumbers } from "./mask.ts";
 import { hidingOwnerName, ownerNameNow } from "./owner-name.ts";
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import { chartSummary, type ChatChart } from "./chart-schema.ts";
+import { ROUND_BREAK, streamRound } from "./stream-round.ts";
 import type { Proposal } from "./proposal-schema.ts";
+import type { SearchEvent } from "./search-schema.ts";
 import type { AnyTool, ProposalArea } from "./tool-types.ts";
+import { CHAT_SEARCH_TOOL, SEARCH_RULES, type WebSearchTurn } from "./web-search.ts";
 
 /** Thinking counts against this too, so it is roomier than an answer needs. */
 const MAX_TOKENS = 16000;
@@ -53,7 +56,8 @@ export type ChatEvent =
   | ({ readonly type: "chart" } & ChatChart)
   | { readonly type: "delta"; readonly text: string }
   | { readonly type: "answer"; readonly text: string }
-  | { readonly type: "error"; readonly message: string };
+  | { readonly type: "error"; readonly message: string }
+  | SearchEvent;
 
 export type ToolCall = { readonly id: string; readonly name: string; readonly arguments: string };
 
@@ -61,6 +65,8 @@ export type ModelReply = {
   readonly text: string;
   readonly toolCalls: readonly ToolCall[];
   readonly blocks?: readonly BetaContentBlock[];
+  /** The API paused a long server-side turn (web search); sending `blocks` back resumes it. */
+  readonly paused?: boolean;
 };
 
 export type ChatMessage =
@@ -89,9 +95,11 @@ export type TurnParams = {
 };
 
 /** The one call the runner needs, as a shape so tests drive the loop against a scripted model. */
-type RunOptions = {
+export type RunOptions = {
   readonly signal?: AbortSignal;
   readonly onDelta?: (text: string) => void;
+  /** Each content block as it finishes, so a search shows while the answer still streams. */
+  readonly onBlock?: (block: BetaContentBlock) => void;
 };
 
 export type ChatClient = {
@@ -156,7 +164,7 @@ const toReply = (message: BetaMessage): ModelReply => {
             ? [{ id: block.id, name: block.name, arguments: JSON.stringify(block.input) }]
             : [],
         );
-  return { text, toolCalls, blocks: message.content };
+  return { text, toolCalls, blocks: message.content, paused: message.stop_reason === "pause_turn" };
 };
 
 const REFUSED = "The model refused to answer this request";
@@ -214,6 +222,8 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
       );
       const onDelta = options?.onDelta;
       if (onDelta) stream.on("text", onDelta);
+      const onBlock = options?.onBlock;
+      if (onBlock) stream.on("contentBlock", onBlock);
       return toReply(await stream.finalMessage());
     },
   };
@@ -291,47 +301,6 @@ const proposalForModel = (proposal: Proposal): Proposal => ({
   }),
 });
 
-const ROUND_BREAK = "\n\n";
-
-/** A model call whose text pieces can be iterated as they arrive; ends when the reply settles. */
-const withDeltas = (client: ChatClient, params: TurnParams, signal?: AbortSignal) => {
-  let queue: readonly string[] = [];
-  let settled = false;
-  let wake: (() => void) | null = null;
-  const notify = () => {
-    const waiting = wake;
-    wake = null;
-    waiting?.();
-  };
-  const onDelta = (text: string) => {
-    queue = [...queue, text];
-    notify();
-  };
-  const options: RunOptions = signal ? { signal, onDelta } : { onDelta };
-  const reply = client.run(params, options).finally(() => {
-    settled = true;
-    notify();
-  });
-  // A rejection is surfaced by `await reply` in the caller, after the deltas.
-  reply.catch(() => undefined);
-  const deltas = {
-    async *[Symbol.asyncIterator]() {
-      while (!settled || queue.length > 0) {
-        if (queue.length === 0) {
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
-          continue;
-        }
-        const batch = queue;
-        queue = [];
-        yield* batch;
-      }
-    },
-  };
-  return { deltas, reply };
-};
-
 /** The proposal areas the registry passed in, one line each with its tools, so the prompt cannot drift from what is offered. */
 const proposalList = (tools: readonly AnyTool[]): string | null => {
   const areas = new Map<string, { readonly area: ProposalArea; readonly names: string[] }>();
@@ -347,6 +316,27 @@ const proposalList = (tools: readonly AnyTool[]): string | null => {
   return ["What you can propose, by area of the app:", ...lines].join("\n");
 };
 
+const assistantMessage = (reply: ModelReply): ChatMessage =>
+  reply.blocks === undefined
+    ? { role: "assistant", content: reply.text, tool_calls: reply.toolCalls }
+    : { role: "assistant", content: reply.text, tool_calls: reply.toolCalls, blocks: reply.blocks };
+
+const systemMessages = (
+  tools: readonly AnyTool[],
+  pageLine: string | null,
+  search: WebSearchTurn | null,
+): ChatMessage[] => {
+  const proposable = proposalList(tools);
+  return [
+    {
+      role: "system",
+      content: search === null ? SYSTEM_PROMPT : `${SYSTEM_PROMPT}\n${SEARCH_RULES}`,
+    },
+    ...(proposable === null ? [] : [{ role: "system" as const, content: proposable }]),
+    ...(pageLine === null ? [] : [{ role: "system" as const, content: pageLine }]),
+  ];
+};
+
 /** One turn: an event per tool dispatched, then one answer. The loop is ours: ask, run the tools called, hand results back, until it answers in words. */
 export async function* runTurn(
   client: ChatClient,
@@ -356,51 +346,36 @@ export async function* runTurn(
   model: string = DEFAULT_CHAT_MODEL,
   // Where the owner asks from, written by the app (page-line.ts); its own message, so the rules above it stay whole.
   pageLine: string | null = null,
+  // Present only when the owner turned web search on for this question.
+  search: WebSearchTurn | null = null,
 ): AsyncGenerator<ChatEvent> {
   const definitions = toolDefinitions(tools);
-  const proposable = proposalList(tools);
-  let messages: readonly ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...(proposable === null ? [] : [{ role: "system" as const, content: proposable }]),
-    ...(pageLine === null ? [] : [{ role: "system" as const, content: pageLine }]),
-    ...history,
-  ];
+  const offered = search === null ? definitions : [...definitions, CHAT_SEARCH_TOOL];
+  let messages: readonly ChatMessage[] = [...systemMessages(tools, pageLine, search), ...history];
   // Every round's words, as the owner saw them stream; the stored answer is all of them.
   let spoken: readonly string[] = [];
+  let seen: ReadonlySet<string> = new Set();
   let answered = false;
 
   for (let round = 0; round < MAX_ROUNDS && !answered; round++) {
     // The client's signal: a dropped connection cancels the request, since an unread tool loop still costs tokens.
-    const streamed = withDeltas(
-      client,
-      { model, max_tokens: MAX_TOKENS, messages, tools: definitions },
-      signal,
-    );
-    let first = true;
-    for await (const piece of streamed.deltas) {
-      // A new round's words start a new paragraph, as they will in the stored answer.
-      if (first && spoken.length > 0) yield { type: "delta", text: ROUND_BREAK };
-      first = false;
-      yield { type: "delta", text: piece };
-    }
-    const reply = await streamed.reply;
+    const params = { model, max_tokens: MAX_TOKENS, messages, tools: offered };
+    const afterWords = spoken.length > 0;
+    const settled = yield* streamRound(client, { params, signal, afterWords, search, seen });
+    const { reply } = settled;
+    seen = settled.seen;
     if (signal?.aborted === true) return;
     if (reply.text !== "") spoken = [...spoken, reply.text];
+    // A paused turn resumes from its own blocks, sent back as they came, with no new question.
+    if (reply.paused === true && reply.blocks !== undefined && reply.toolCalls.length === 0) {
+      messages = [...messages, { role: "assistant", content: reply.text, blocks: reply.blocks }];
+      continue;
+    }
     if (reply.toolCalls.length === 0) {
       answered = true;
       break;
     }
-    messages = [
-      ...messages,
-      reply.blocks === undefined
-        ? { role: "assistant", content: reply.text, tool_calls: reply.toolCalls }
-        : {
-            role: "assistant",
-            content: reply.text,
-            tool_calls: reply.toolCalls,
-            blocks: reply.blocks,
-          },
-    ];
+    messages = [...messages, assistantMessage(reply)];
     for (const call of reply.toolCalls) {
       yield { type: "tool", name: call.name };
       const outcome = await runTool(tools, call);

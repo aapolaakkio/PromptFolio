@@ -271,3 +271,72 @@ test("a price the assistant proposes is saved on Confirm and Holdings shows the 
   const row = page.getByRole("row", { name: /WisdomTree/ });
   await expect(row).toContainText("€80.00");
 });
+
+const SEARCH_SOURCE = { title: "Acme Oyj offer document", url: "https://example.com/acme-offer" };
+
+const webSearchSwitch = (page: Page) =>
+  page.getByRole("switch", { name: "Web search", exact: true });
+
+test("web search is off by default, and the request then offers no search tool", async ({
+  page,
+  user: _user,
+  claude,
+}) => {
+  claude.reply("No search needed.");
+  await page.goto("/chat");
+  await expect(page.getByText("Ask about your own figures, for example:")).toBeVisible();
+  await expect(webSearchSwitch(page)).not.toBeChecked();
+  await ask(page, "What do I own?");
+
+  await expect(page.getByText("No search needed.")).toBeVisible();
+  expect(claude.requests[0]?.tools.map((tool) => tool.name)).not.toContain("web_search");
+});
+
+test("turning web search on is remembered, and a search shows its query and sources", async ({
+  page,
+  user: _user,
+  claude,
+}) => {
+  await page.goto("/chat");
+  await webSearchSwitch(page).check();
+  await page.reload();
+  await expect(webSearchSwitch(page)).toBeChecked();
+
+  claude.replyWithSearch("Acme Oyj tender offer price", [SEARCH_SOURCE], "The offer was 4.20 EUR.");
+  await ask(page, "What was the Acme tender offer price?");
+
+  await expect(page.getByText("The offer was 4.20 EUR.")).toBeVisible();
+  await expect(
+    page.getByText("Searched the web: Acme Oyj tender offer price", { exact: true }),
+  ).toBeVisible();
+  const link = page.getByRole("link", { name: SEARCH_SOURCE.title, exact: true });
+  await expect(link).toHaveAttribute("href", SEARCH_SOURCE.url);
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  expect(claude.requests[0]?.tools).toContainEqual({
+    name: "web_search",
+    type: "web_search_20260318",
+    max_uses: 3,
+  });
+
+  await page.reload();
+  await expect(
+    page.getByText("Searched the web: Acme Oyj tender offer price", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: SEARCH_SOURCE.title, exact: true })).toBeVisible();
+});
+
+test("a search whose words held an account number carries a warning", async ({
+  page,
+  user: _user,
+  claude,
+}) => {
+  await page.goto("/chat");
+  await webSearchSwitch(page).check();
+  claude.replyWithSearch("FI21 1234 5600 0007 85 balance", [], "I could not find that.");
+  await ask(page, "Look this up");
+
+  await expect(page.getByText("I could not find that.")).toBeVisible();
+  await expect(
+    page.getByText("Warning: this search included personal data.", { exact: true }),
+  ).toBeVisible();
+});

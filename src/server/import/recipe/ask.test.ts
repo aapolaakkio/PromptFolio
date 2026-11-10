@@ -28,4 +28,8 @@ test("the sample and the feedback reach the model without account numbers", asyn
   expect(sent).toContain("03.11.2026;xx00 0000 0000 0000 00;-12,50");
   expect(sent).toContain("0000000-0 Matti");
   expect(asked[0]?.messages[0]?.content).toContain("Never match a literal 0 or x");
+  // Web search belongs to the chat turn alone, and only when the owner turns it on.
+  expect(asked.flatMap((params) => params.tools).map((tool) => tool.name)).not.toContain(
+    "web_search",
+  );
 });

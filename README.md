@@ -63,6 +63,14 @@ codes, email addresses, phone numbers and your own full name. Payee names and am
 answers need them. Text inside imported files and web pages is treated as data, never as
 instructions.
 
+**Web search in chat** is off by default and switched on per browser in the composer. With it on,
+the assistant may search the web, at most three times per answer, when your data cannot answer:
+its search words go to Anthropic's web search, which runs them on Anthropic's side. They are meant
+to hold only public identifiers (an instrument's name, ISIN or ticker, a date, a public term), never
+your amounts, account numbers, payees or name. Every search is shown under the answer with the
+sources it cited; a search whose words look personal is flagged with a warning. Searches are billed
+per use, on top of tokens. A figure from the web is saved only through a card you confirm.
+
 ## Quick start
 
 Needs Node 26+ and pnpm 11+. A Cloudflare account is only needed to deploy.

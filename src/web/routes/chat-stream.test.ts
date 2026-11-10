@@ -11,6 +11,17 @@ describe("takeEvents", () => {
     expect(rest).toBe('data: {"type":"answ');
   });
 
+  test("keeps search, search failure and source events, and drops a malformed one", () => {
+    const search = { type: "search", id: "s1", query: "Acme Oyj", personal: false };
+    const failed = { type: "search_failed", id: "s1", reason: "too many searches right now" };
+    const sources = { type: "sources", sources: [{ title: "Acme", url: "https://example.com" }] };
+    const bad = { type: "search", id: "s2", query: 42 };
+    const { events } = takeEvents(
+      [search, failed, sources, bad].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+    );
+    expect(events).toEqual([search, failed, sources]);
+  });
+
   test("drops an event shape the client does not know instead of rendering it", () => {
     const { events } = takeEvents('data: {"type":"prophecy","text":"buy"}\n\n');
     expect(events).toEqual([]);

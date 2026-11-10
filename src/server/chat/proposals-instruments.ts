@@ -275,10 +275,11 @@ export const buildInstrumentProposals = (db: Db, userId: string): ProposalTool[]
       "from get_instruments, date YYYY-MM-DD and not in the future, price a decimal string in the " +
       "instrument's currency, source optional text (up to 120 characters) saying where the price " +
       "came from: a find_price source (for example 'own trade on 2021-01-20' or 'Yahoo close'), " +
-      "or the owner's own message in this conversation, quoted as such. " +
-      "Look with find_price first. The price comes only from the owner's own words or from a figure " +
-      "a tool returned in this answer (find_price, or the owner's own trade price from " +
-      "get_transactions); never estimate or invent one. It replaces a price already stored for " +
+      "a web page found with web search, by its address, or the owner's own message in this " +
+      "conversation, quoted as such. Look with find_price first. The price comes only from the " +
+      "owner's own words, a figure a tool returned in this answer (find_price, or the owner's own " +
+      "trade price from get_transactions), or a page web search found in this answer; never " +
+      "estimate or invent one. It replaces a price already stored for " +
       "that date, and prices are shared by the whole household." +
       AWAITS,
     schema: RecordPriceInput,

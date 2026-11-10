@@ -287,13 +287,15 @@ export const conversations = sqliteTable("conversations", {
   turnStartedAt: integer("turn_started_at", { mode: "timestamp_ms" }),
 });
 
-/** One turn in a thread. Tool calls and results are not stored (derived from the ledger, a copy could go stale); `toolCalls` lists only which tools ran, for audit. A `proposal` row holds a card's summary (never its input) and a `note` row what the owner did with it. */
+/** One turn in a thread. Tool calls and results are not stored (derived from the ledger, a copy could go stale); `toolCalls` lists only which tools ran, for audit. A `proposal` row holds a card's summary (never its input), a `note` row what the owner did with it, and a `search` row one answer's web searches and cited sources. */
 export const chatMessages = sqliteTable("chat_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   conversationId: integer("conversation_id")
     .notNull()
     .references(() => conversations.id, { onDelete: "cascade" }),
-  role: text("role", { enum: ["user", "assistant", "proposal", "note", "chart"] }).notNull(),
+  role: text("role", {
+    enum: ["user", "assistant", "proposal", "note", "chart", "search"],
+  }).notNull(),
   content: text("content").notNull(),
   toolCalls: text("tool_calls"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
