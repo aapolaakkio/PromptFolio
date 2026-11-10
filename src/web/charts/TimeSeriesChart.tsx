@@ -210,20 +210,19 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
     <ChartFrame title={label}>
       {/* Above the chart: a control over the plot is unreadable over its line. */}
       <div className="mb-2 flex gap-1 text-xs">
-        {RANGES.map((range) => (
-          <button
-            key={range.label}
-            type="button"
-            data-no-export=""
-            aria-pressed={zoom === null && months === range.months}
-            className={`border border-line px-2 py-0.5 ${
-              zoom === null && months === range.months ? "bg-line" : ""
-            }`}
-            onClick={() => show(range.months)}
-          >
-            {range.label}
-          </button>
-        ))}
+        <span data-no-export="" className="segmented">
+          {RANGES.map((range) => (
+            <button
+              key={range.label}
+              type="button"
+              data-no-export=""
+              aria-pressed={zoom === null && months === range.months}
+              onClick={() => show(range.months)}
+            >
+              {range.label}
+            </button>
+          ))}
+        </span>
         <span data-no-export="" className="self-center text-muted">
           or drag on the chart
         </span>

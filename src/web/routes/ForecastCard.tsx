@@ -104,17 +104,18 @@ export const ForecastCard = () => {
     <section className="card mt-8">
       <h2 className="mb-2 text-lg font-semibold">Forecast</h2>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-        {HORIZONS.map((horizon) => (
-          <button
-            key={horizon}
-            type="button"
-            aria-pressed={years === horizon}
-            className={`quiet-button ${years === horizon ? "text-accent font-medium" : ""}`}
-            onClick={() => setYears(horizon)}
-          >
-            {horizon} {horizon === 1 ? "year" : "years"}
-          </button>
-        ))}
+        <span className="segmented">
+          {HORIZONS.map((horizon) => (
+            <button
+              key={horizon}
+              type="button"
+              aria-pressed={years === horizon}
+              onClick={() => setYears(horizon)}
+            >
+              {horizon} {horizon === 1 ? "year" : "years"}
+            </button>
+          ))}
+        </span>
         <label className="mb-0 ml-auto flex items-center gap-2">
           <input
             type="checkbox"

@@ -366,7 +366,7 @@ export const ImportsPage = () => {
         <DocumentDrop accounts={accounts.data ?? []} onBrokerFiles={takeBrokerFiles} />
       )}
 
-      <section className="card">
+      <section className="card mt-4">
         <label>
           Account
           <select
@@ -546,7 +546,7 @@ export const ImportsPage = () => {
 
               <button
                 type="button"
-                className="mt-6"
+                className="primary-button mt-6"
                 disabled={!summary.canCommit || commit.isPending}
                 onClick={() => commit.mutate()}
               >

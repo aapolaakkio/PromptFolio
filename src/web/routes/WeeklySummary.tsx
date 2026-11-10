@@ -92,7 +92,7 @@ export const WeeklySummary = () => {
       )}
       <details className="mt-2" open={text === null}>
         <summary className="text-sm text-muted">Details</summary>
-        <ul className="mt-2 max-w-prose list-disc pl-5 text-sm">
+        <ul className="fact-list mt-2 max-w-prose text-sm">
           {factLines(facts).map((line, index) => (
             <li key={index}>{line}</li>
           ))}

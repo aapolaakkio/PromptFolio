@@ -69,14 +69,14 @@ const ProposalTurn = ({ turn, cards }: { readonly turn: Turn; readonly cards: Ca
 const TurnItem = ({ item, cards }: { readonly item: Item; readonly cards: Cards }) => {
   if (item.kind === "user") {
     return (
-      <li className="justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2">
+      <li className="justify-self-end max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md border border-line px-3 py-2">
         {item.content}
       </li>
     );
   }
   if (item.kind === "text") {
     return (
-      <li className="max-w-[90%] rounded bg-surface px-3 py-2">
+      <li className="max-w-[90%] rounded-2xl rounded-bl-md bg-surface px-3 py-2">
         <Markdown text={item.content} />
       </li>
     );
@@ -139,7 +139,7 @@ const Starters = ({
       <button
         key={question}
         type="button"
-        className="justify-self-start rounded-md border border-line bg-transparent px-3 py-1.5 text-left font-normal text-ink hover:bg-bg"
+        className="justify-self-start border-line px-3 py-1.5 text-left font-normal"
         onClick={() => onAsk(question)}
       >
         {question}
@@ -221,7 +221,7 @@ const Composer = ({
       <textarea
         ref={composerRef}
         rows={1}
-        className="min-w-0 flex-1 resize-none overflow-y-auto rounded-md border border-line bg-surface px-3 py-2 text-base text-ink"
+        className="min-w-0 flex-1 resize-none overflow-y-auto"
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onCompositionStart={() => {

@@ -221,7 +221,7 @@ export const SnapshotPaste = ({
 
           <button
             type="button"
-            className="mt-4"
+            className="primary-button mt-4"
             disabled={
               unmapped > 0 || rows.length === 0 || totalCheck?.ok === false || save.isPending
             }

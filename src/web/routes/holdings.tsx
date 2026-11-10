@@ -236,7 +236,7 @@ export const HoldingsPage = () => {
               </td>
               <td className="num">
                 <PriceCell priceDate={row.priceDate} stale={row.stale} />
-                <div>
+                <div className="whitespace-nowrap">
                   <button
                     type="button"
                     className="mt-1 text-xs"
@@ -311,7 +311,7 @@ const RefreshPricesButton = () => {
       {refresh.isSuccess && <span className="text-muted text-sm">Prices refreshed</span>}
       <button
         type="button"
-        className="text-sm"
+        className="primary-button text-sm"
         disabled={refresh.isPending}
         onClick={() => refresh.mutate()}
       >

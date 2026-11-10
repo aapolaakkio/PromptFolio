@@ -52,7 +52,7 @@ export const ProposalCard = ({
   const danger = removal !== null;
   return (
     <div
-      className={`bg-surface border rounded-[--radius-card] p-5 max-w-[90%] grid gap-2 text-sm ${danger ? "border-loss" : "border-line"}`}
+      className={`bg-surface border rounded-(--radius-card) p-5 max-w-[90%] grid gap-2 text-sm ${danger ? "border-loss" : "border-line"}`}
     >
       {danger ? (
         <p className="text-loss font-semibold">⚠ Delete</p>
@@ -81,7 +81,7 @@ export const ProposalCard = ({
         <div className="flex gap-2">
           <button
             type="button"
-            className={danger ? "danger-button" : undefined}
+            className={danger ? "danger-button" : "primary-button"}
             disabled={saving}
             onClick={onConfirm}
           >

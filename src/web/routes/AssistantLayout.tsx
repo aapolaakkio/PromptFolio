@@ -33,7 +33,7 @@ import { ChatPanel } from "./ChatPanel.tsx";
 const PANEL_ID = "assistant-panel";
 
 /** The page's own layout; the panel lies over it and never moves it. */
-export const PAGE_CLASS = "mx-auto max-w-5xl px-5 pb-16 pt-8";
+export const PAGE_CLASS = "mx-auto max-w-6xl px-5 pb-16 pt-8";
 
 /** Takes only `inert`: there is nothing here for the panel's width or open state to reach. */
 export const PageContent = ({
@@ -62,7 +62,7 @@ const AssistantToggle = ({
   <button
     ref={toggleRef}
     type="button"
-    className="quiet-button inline-flex items-center gap-1.5"
+    className="prompt-button"
     aria-expanded={shown}
     aria-controls={PANEL_ID}
     aria-keyshortcuts="Control+K Meta+K"
@@ -259,7 +259,7 @@ export const AssistantLayout = ({ start, end }: AssistantLayoutProps) => {
       <SelectionContext value={shell.setSelection}>
         <header
           ref={header.ref}
-          className="sticky top-0 z-10 flex items-center gap-6 border-b border-line bg-surface px-5 py-3"
+          className="app-header sticky top-0 z-10 flex items-center gap-4 px-5 py-3"
         >
           {start}
           {!shell.onChatPage && (

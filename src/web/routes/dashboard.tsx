@@ -16,10 +16,10 @@ const Stat = ({
   tone?: "gain" | "loss";
   note?: string;
 }) => (
-  <div className="card">
-    <div className="text-sm text-muted">{label}</div>
+  <div className="card stat-tile">
+    <div className="text-sm font-medium text-muted">{label}</div>
     <div
-      className={`font-mono tabular-nums text-2xl ${
+      className={`stat-figure ${
         tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : ""
       }`}
     >

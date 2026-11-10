@@ -42,7 +42,7 @@ export const CorporateActionCard = ({
         </p>
       )}
       <div className="mt-2 flex gap-2">
-        <button type="button" onClick={onApply}>
+        <button type="button" className="primary-button" onClick={onApply}>
           Apply to these rows
         </button>
         <button type="button" onClick={onIgnore}>

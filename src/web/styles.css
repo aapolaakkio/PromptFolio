@@ -7,6 +7,8 @@
   --color-ink: #13231a;
   --color-muted: #56665b;
   --color-line: #d3ddcb;
+  /* Edges that identify a control (fields, outline buttons): 3:1 against bg and surface. */
+  --color-field: #768a7c;
   --color-gain: #1a7f3c;
   --color-loss: #b3261e;
   /* Dollar green; white text on it is 5.3:1. */
@@ -16,12 +18,24 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 
-  --radius-card: 0.625rem;
+  --radius-card: 1rem;
 }
 
 /* How long the assistant panel takes to slide in or out; reduced motion skips it. */
 :root {
   --panel-duration: 200ms;
+}
+
+/* The page's light and texture, after the banner: a gradient, a glow from the top left, engraving rings. */
+:root {
+  --page-from: #f3f7ef;
+  --page-to: #e6eee1;
+  --glow: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --ring: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --field-bg: #ffffff;
+  --sheen: rgb(255 255 255 / 0.7);
+  --tint: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  --shadow-card: 0 1px 2px rgb(19 35 26 / 0.04), 0 12px 32px -20px rgb(19 35 26 / 0.22);
 }
 
 /* Chart series colours, light mode: validated for colour-vision separation against a near-white surface (three sit under 3:1, allowed only because every chart has a legend or direct labels). In a plain `:root`, not `@theme`: charts pick them by number at runtime, and Tailwind drops theme variables it cannot see used. */
@@ -44,11 +58,21 @@
   --color-ink: #e9f1e7;
   --color-muted: #93a69a;
   --color-line: #233629;
+  --color-field: #5c7a66;
   --color-gain: #5fd38d;
   --color-loss: #f87171;
   /* The dollar bill's own green; dark text on it is about 8:1. */
   --color-accent: #85bb65;
   --color-on-accent: #0b1a10;
+
+  --page-from: #0b1510;
+  --page-to: #12261b;
+  --glow: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  --ring: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  --field-bg: #0b1510;
+  --sheen: color-mix(in srgb, var(--color-accent) 5%, transparent);
+  --tint: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  --shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 16px 40px -24px rgb(0 0 0 / 0.8);
 
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -68,69 +92,245 @@
   }
   body {
     @apply bg-bg text-ink font-sans antialiased;
-    /* A soft green glow from the top, like light on a banknote. */
-    background-image: radial-gradient(
-      120% 60% at 50% 0%,
-      color-mix(in srgb, var(--color-accent) 14%, transparent),
-      transparent 70%
-    );
+    background-image:
+      radial-gradient(90% 70% at 22% 0%, var(--glow), transparent 70%),
+      linear-gradient(160deg, var(--page-from), var(--page-to));
     background-attachment: fixed;
   }
+  /* Banknote engraving: fine rings rising from the bottom right corner, behind everything. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: repeating-radial-gradient(
+      circle at 92% 115%,
+      transparent 0 47px,
+      var(--ring) 47px 48px
+    );
+    mask-image: radial-gradient(
+      circle at 92% 115%,
+      transparent 120px,
+      #000 220px,
+      transparent 75vmax
+    );
+  }
   h1 {
-    @apply text-2xl font-semibold tracking-tight mb-6;
+    @apply text-3xl font-semibold tracking-[-0.025em] mb-6;
   }
   h2 {
-    @apply text-lg font-medium mb-4;
+    @apply text-lg font-semibold tracking-tight mb-4;
   }
   label {
     @apply grid gap-1 text-sm text-muted mb-3;
   }
   input,
-  select {
-    @apply bg-surface text-ink border border-line rounded-md px-3 py-2 text-base;
+  select,
+  textarea {
+    @apply text-ink border border-field rounded-[10px] px-3 py-2 text-base;
+    background-color: var(--field-bg);
   }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-accent);
+  }
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  /* Secondary by default: a hairline pill, like the banner's chips. The padding gives up the border's pixel, so sizes stay as they were. */
   button {
-    @apply bg-accent text-on-accent rounded-md px-4 py-2 font-medium disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full border border-field
+           bg-transparent text-ink px-[15px] py-[7px] font-medium disabled:opacity-45 disabled:cursor-not-allowed;
+  }
+  button:hover:not(:disabled) {
+    background-color: var(--tint);
+  }
+  /* A form's submit is its main action: the one filled accent pill. */
+  button[type="submit"] {
+    @apply border-accent bg-accent text-on-accent;
+  }
+  button[type="submit"]:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-accent) 86%, var(--color-ink));
+  }
+  /* Actions inside a table row stay quiet so the figures lead. */
+  td button {
+    @apply border-transparent font-sans font-medium whitespace-nowrap px-3 py-2;
+    background-color: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  }
+  td button:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-ink) 11%, transparent);
+  }
+  summary {
+    @apply cursor-pointer marker:text-accent;
   }
   table {
     @apply w-full border-collapse;
   }
   th {
-    @apply text-left text-sm font-medium text-muted px-3 py-2 border-b border-line;
+    @apply text-left text-xs font-medium tracking-wide text-muted px-3 py-2.5 border-b border-line font-sans;
   }
   td {
-    @apply px-3 py-2 border-b border-line;
+    @apply px-3 py-2.5 border-b border-line;
+  }
+  tbody tr:last-child > td {
+    @apply border-b-0;
+  }
+  tbody tr:hover > td {
+    background-color: var(--tint);
+  }
+  dialog::backdrop {
+    backdrop-filter: blur(3px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(button, a, input, select, textarea) {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
   }
 }
 
 /* Every figure is tabular and right-aligned so columns of money line up. */
 @utility num {
-  @apply font-mono tabular-nums text-right;
+  @apply tabular-nums text-right;
 }
 
 @utility card {
-  @apply bg-surface border border-line rounded-[--radius-card] p-5;
+  @apply bg-surface border border-line p-5;
+  border-radius: var(--radius-card);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 120px);
+  box-shadow: var(--shadow-card);
+}
+
+/* The header: frosted, so the page's glow shows through as it scrolls under. */
+@utility app-header {
+  @apply border-b border-line;
+  background-color: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+
+  /* On a narrow screen the links scroll sideways instead of pushing the buttons out. */
+  & nav {
+    @apply min-w-0 gap-0 overflow-x-auto;
+    scrollbar-width: none;
+  }
+  & nav a {
+    @apply shrink-0 whitespace-nowrap rounded-full px-2 py-1.5;
+  }
+  & nav a:focus-visible {
+    outline-offset: -2px;
+  }
+  /* Narrow: the links get a row of their own, between the logo and the buttons, in reading order. */
+  @media (width < 56rem) {
+    @apply flex-wrap gap-y-2;
+    & nav {
+      @apply order-none basis-full -mx-2;
+    }
+  }
+  & > button {
+    @apply shrink-0 whitespace-nowrap py-1.5 text-sm;
+  }
+  & nav a:hover {
+    background-color: var(--tint);
+  }
+  & nav a[aria-current="page"] {
+    @apply text-ink font-medium;
+    background-color: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  }
+}
+
+/* The page's one main action when it is not a form submit. */
+@utility primary-button {
+  @apply border-accent bg-accent text-on-accent;
+  &:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-accent) 86%, var(--color-ink));
+  }
 }
 
 /* A button that is not the page's main action: the theme switch in the header. */
 @utility quiet-button {
-  @apply bg-transparent text-muted px-2 py-1 text-sm font-normal hover:text-ink;
+  @apply border-transparent bg-transparent text-muted px-3 py-1.5 text-sm font-normal hover:text-ink;
+}
+
+/* The assistant's door, drawn like the banner's prompt field: a chevron, then the word. */
+@utility prompt-button {
+  @apply justify-start rounded-xl border-line px-3 py-1.5 pr-5 text-sm font-normal text-muted hover:text-ink hover:border-field;
+  background-color: var(--field-bg);
+
+  &::before {
+    content: "";
+    @apply size-3 shrink-0 bg-accent;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 1.5l4.5 4.5L3 10.5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+}
+
+/* Buttons that pick one of a few: one track, the chosen segment filled. */
+@utility segmented {
+  @apply inline-flex items-center gap-0.5 rounded-full border border-line p-0.5;
+  background-color: var(--field-bg);
+
+  & > button {
+    @apply border-transparent bg-transparent text-muted px-3 py-1 text-xs font-medium hover:text-ink;
+  }
+  & > button[aria-pressed="true"] {
+    @apply bg-accent text-on-accent;
+  }
+}
+
+/* A dashboard figure: small label, large number, quiet note. */
+@utility stat-tile {
+  @apply relative isolate grid content-start gap-1 overflow-hidden;
+
+  &::after {
+    content: "";
+    @apply pointer-events-none absolute top-0 right-0 -z-10 size-40;
+    background: repeating-radial-gradient(
+      circle at 100% 0%,
+      transparent 0 19px,
+      var(--ring) 19px 20px
+    );
+    mask-image: radial-gradient(circle at 100% 0%, #000 30%, transparent 70%);
+  }
+}
+
+@utility stat-figure {
+  @apply text-3xl font-semibold tracking-tight tabular-nums;
+}
+
+/* The weekly facts: one per line, hairlines between, a small accent dot for each. */
+@utility fact-list {
+  @apply grid;
+
+  & > li {
+    @apply relative py-1.5 pl-4;
+  }
+  & > li + li {
+    @apply border-t border-line;
+  }
+  & > li::before {
+    content: "";
+    @apply absolute left-0 top-[0.85rem] size-1.5 rounded-full bg-accent;
+  }
 }
 
 /* The button that removes data on a warning card: the loss colour, so it never reads as an ordinary save. */
 @utility danger-button {
-  @apply bg-loss text-on-accent;
+  @apply border-loss bg-loss text-on-accent;
 }
 
 /* Undoes the base button styling for sort headers inside a table. */
 @utility header-button {
-  @apply bg-transparent text-inherit p-0 font-medium;
+  @apply inline border-0 bg-transparent text-inherit p-0 font-medium rounded-none whitespace-normal hover:bg-transparent hover:text-ink;
 }
 
 /* One conversation in the sidebar: one truncated line, accent kept for "new". */
 @utility chat-row {
-  @apply bg-transparent text-inherit text-left w-full min-w-0 truncate
-         rounded-md px-2 py-1.5 text-sm font-normal hover:bg-surface;
+  @apply block border-0 bg-transparent text-inherit text-left w-full min-w-0 truncate
+         rounded-lg px-2 py-1.5 text-sm font-normal hover:bg-(--tint);
 }
 
 /* The conversation being read, marked without moving anything. */
@@ -140,7 +340,7 @@
 
 /* The small × beside a conversation, kept quiet until the row is reached. */
 @utility chat-remove {
-  @apply bg-transparent text-muted px-2 py-1 text-sm leading-none opacity-0
+  @apply border-0 bg-transparent text-muted px-2 py-1 text-sm leading-none opacity-0
          hover:text-ink focus-visible:opacity-100 group-hover:opacity-100;
 }
 
@@ -154,6 +354,7 @@
     --color-ink: #13231a;
     --color-muted: #56665b;
     --color-line: #d3ddcb;
+    --color-field: #768a7c;
     --color-gain: #1a7f3c;
     --color-loss: #b3261e;
     --color-accent: #1d7a47;
