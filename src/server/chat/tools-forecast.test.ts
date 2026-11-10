@@ -339,6 +339,90 @@ describe("show_chart", () => {
     ).rejects.toThrow(/Unknown category/);
   });
 
+  test("buys and sales per year or month, from the caller's own trades, on shared periods", async () => {
+    const { userId, instrumentId } = await holder();
+    const accountId = (
+      await openAccount(db, userId, CreateAccount.parse({ name: "Second", broker: "nordnet" }))
+    ).id;
+    const other = await instrument("Other fund");
+    await txn(accountId, { instrumentId, type: "SELL", tradeDate: "2025-03-04", amount: 300_00 });
+    await txn(accountId, { instrumentId: other, tradeDate: "2025-03-20", amount: -50_50 });
+    // Not trades: a dividend and a deposit never count.
+    await txn(accountId, { instrumentId, type: "DIVIDEND", tradeDate: "2025-04-01", amount: 9_00 });
+    await txn(accountId, { type: "DEPOSIT", tradeDate: "2025-04-02", amount: 500_00 });
+    const { chart } = toolsFor(userId);
+    const thisYear = new Date().getUTCFullYear();
+    const years = Array.from({ length: thisYear - 2024 + 1 }, (_, at) => String(2024 + at));
+
+    const yearly = await chart.chart(
+      spec(
+        [
+          { source: "trades", side: "buys", per: "year", range: "max", stack: "t" },
+          { source: "trades", side: "sells", per: "year", range: "max", stack: "t" },
+        ],
+        { kind: "stacked-bar" },
+      ),
+    );
+    const [buys, sells] = yearly.data.series;
+    expect(buys?.label).toBe("Purchases per year");
+    expect(sells?.label).toBe("Sales per year");
+    // Every year from the first trade to now, so both series line up bar for bar.
+    expect(buys?.points.map((point) => point.x)).toEqual(years);
+    expect(sells?.points.map((point) => point.x)).toEqual(years);
+    expect(buys?.points.slice(0, 2)).toEqual([
+      { x: "2024", y: 1000 },
+      { x: "2025", y: 50.5 },
+    ]);
+    expect(sells?.points.slice(0, 2)).toEqual([
+      { x: "2024", y: 0 },
+      { x: "2025", y: 300 },
+    ]);
+
+    const monthly = await chart.chart(
+      spec([{ source: "trades", side: "buys", per: "month", range: "max", instrumentId: other }]),
+    );
+    const points = monthly.data.series[0]?.points ?? [];
+    expect(monthly.data.series[0]?.label).toBe("Purchases per month, Other fund");
+    expect(points[0]).toEqual({ x: "2024-01", y: 0 });
+    expect(points.find((point) => point.x === "2025-03")).toEqual({ x: "2025-03", y: 50.5 });
+    expect(points.reduce((sum, point) => sum + point.y, 0)).toBe(50.5);
+
+    const running = await chart.chart(
+      spec([
+        { source: "trades", side: "buys", per: "year", range: "max", transform: "cumulative" },
+      ]),
+    );
+    expect(running.data.series[0]?.points[1]).toEqual({ x: "2025", y: 1050.5 });
+
+    await expect(
+      chart.chart(
+        spec([
+          { source: "trades", side: "buys", per: "year", range: "max" },
+          { source: "value-series", range: "max" },
+        ]),
+      ),
+    ).rejects.toThrow(/Trades per year cannot share/);
+
+    const stranger = await holder();
+    await expect(
+      chart.chart(
+        spec([
+          {
+            source: "trades",
+            side: "sells",
+            per: "year",
+            range: "max",
+            instrumentId: stranger.instrumentId,
+          },
+        ]),
+      ),
+    ).rejects.toThrow(/Instrument not found/);
+    const empty = await toolsFor(await signUp()).chart.chart(
+      spec([{ source: "trades", side: "buys", per: "year", range: "max" }]),
+    );
+    expect(empty.data.series[0]?.points).toEqual([{ x: String(thisYear), y: 0 }]);
+  });
+
   test("refuses a unit that does not match the data", async () => {
     const { userId } = await holder();
     const { chart } = toolsFor(userId);

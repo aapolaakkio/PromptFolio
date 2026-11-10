@@ -76,6 +76,16 @@ export const SeriesRefSchema = z.discriminatedUnion("source", [
     .strict(),
   z
     .object({
+      source: z.literal("trades"),
+      side: z.enum(["buys", "sells"]),
+      per: z.enum(["month", "year"]),
+      range: Range,
+      instrumentId: z.number().int().positive().optional(),
+      ...style,
+    })
+    .strict(),
+  z
+    .object({
       source: z.literal("allocation"),
       dimension: z.enum(["kind", "currency", "account", "instrument"]),
       ...style,
