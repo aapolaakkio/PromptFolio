@@ -3,13 +3,13 @@ import { useEffect, useRef, useState, type Dispatch } from "react";
 
 import { errorMessage } from "../lib/errors.ts";
 import { getConversationMessages, saveProposalOutcome } from "../server/chat.ts";
-import { CONVERSATION_NOT_FOUND } from "../../server/chat/conversation-errors.ts";
 import { DEFAULT_CHAT_MODEL, type ChatModel } from "../../server/chat/models.ts";
 import type { PageContext } from "../../server/chat/page-context.ts";
 import { readStored, StoredOutcome, type Proposal } from "../../server/chat/proposal-schema.ts";
 import { useAssistant } from "./assistant-context.ts";
 import type { PanelAction } from "./assistant-state.ts";
 import { refreshAfterDecision } from "./chat-refresh.ts";
+import { isConversationGone, settleCard, type LiveCard } from "./chat-rules.ts";
 import { askChat, type ChatEvent } from "./chat-stream.ts";
 import { createDecider, type CardOutcome } from "./proposal-actions.ts";
 
@@ -18,14 +18,8 @@ export type Turn = {
   readonly content: string;
 };
 
-/** A card streamed in this panel, with the conversation it was streamed in: its outcome is recorded there, whatever is open now. */
-export type LiveCard = { readonly proposal: Proposal; readonly conversationId: number | null };
-
 /** An error belongs to the conversation it happened in, so picking another one hides it. */
 type ShownError = { readonly at: number | null; readonly message: string };
-
-const NO_CONVERSATION =
-  "This card was not tied to a conversation, so it cannot be confirmed. Ask again.";
 
 const storedOutcomes = (turns: readonly Turn[]): ReadonlyMap<string, CardOutcome> =>
   new Map(
@@ -52,7 +46,7 @@ const chartOf = (event: Extract<ChatEvent, { type: "chart" }>): Turn => ({
   content: JSON.stringify({ chartId: event.chartId, spec: event.spec, data: event.data }),
 });
 
-/** The stored turns; a conversation deleted elsewhere (or another owner's, after a sign-in on this browser) starts fresh. */
+/** The stored turns; a conversation deleted elsewhere (or another owner's) starts fresh. */
 const useHistory = (
   conversationId: number | null,
   busy: boolean,
@@ -64,19 +58,20 @@ const useHistory = (
     enabled: conversationId !== null && !busy,
     queryFn: () => getConversationMessages({ data: { id: conversationId ?? 0 } }),
   });
-  const gone = history.error?.message === CONVERSATION_NOT_FOUND;
+  const gone = isConversationGone(history.error);
   useEffect(() => {
     if (gone) dispatch({ type: "conversation", id: null });
   }, [gone, dispatch]);
   return gone ? [] : (history.data ?? []);
 };
 
-/** Cards streamed here and their outcomes; Confirm records against the card's own conversation. */
-const useCards = (setError: (error: ShownError) => void) => {
+/** Cards streamed here; a failed outcome save shows whatever conversation is open. */
+const useCards = () => {
   const queryClient = useQueryClient();
   const [live, setLive] = useState<ReadonlyMap<string, LiveCard>>(new Map());
   const [decided, setDecided] = useState<ReadonlyMap<string, CardOutcome>>(new Map());
   const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
+  const [saveError, setSaveError] = useState<string | null>(null);
   // One per panel: it refuses a second decision on the same card, even from a double click.
   const decider = useRef(createDecider());
 
@@ -86,23 +81,23 @@ const useCards = (setError: (error: ShownError) => void) => {
   const decide = async (proposalId: string, confirm: boolean) => {
     const card = live.get(proposalId);
     if (card === undefined) return;
-    const at = card.conversationId;
-    if (at === null) return setError({ at, message: NO_CONVERSATION });
+    setSaveError(null);
     setSaving((previous) => new Set([...previous, proposalId]));
-    const outcome = await decider.current(card.proposal, confirm);
+    const settled = await settleCard(card, confirm, {
+      decide: decider.current,
+      save: async (note) => {
+        await saveProposalOutcome({ data: note });
+      },
+      refresh: (outcome) => refreshAfterDecision(queryClient, outcome),
+    });
     setSaving((previous) => new Set([...previous].filter((id) => id !== proposalId)));
-    if (outcome === null) return;
-    setDecided((previous) => new Map([...previous, [proposalId, outcome]]));
+    if (settled === null) return;
+    setDecided((previous) => new Map([...previous, [proposalId, settled.outcome]]));
     setLive((previous) => new Map([...previous].filter(([id]) => id !== proposalId)));
-    try {
-      await saveProposalOutcome({ data: { conversationId: at, proposalId, ...outcome } });
-    } catch (cause) {
-      setError({ at, message: errorMessage(cause, "Could not tell the assistant what happened") });
-    }
-    refreshAfterDecision(queryClient, outcome);
+    setSaveError(settled.saveError);
   };
 
-  return { live, decided, saving, add, decide };
+  return { live, decided, saving, saveError, add, decide };
 };
 
 type StreamDeps = {
@@ -112,41 +107,55 @@ type StreamDeps = {
   readonly addCard: (card: LiveCard) => void;
 };
 
-/** One turn's stream: the question shown at once, then tools, cards, charts and the answer as they arrive. */
-const useStream = ({ context, model, setError, addCard }: StreamDeps) => {
-  const { state, dispatch, setTurnRunning } = useAssistant();
-  const queryClient = useQueryClient();
+/** Applies one streamed event to the pending turns; `at` is the conversation the turn runs in. */
+const useEvents = (setError: (error: ShownError) => void, addCard: (card: LiveCard) => void) => {
   const [pending, setPending] = useState<Turn[]>([]);
   const [tools, setTools] = useState<string[]>([]);
   // The answer so far, word by word, until the whole one arrives and replaces it.
   const [streaming, setStreaming] = useState("");
-
+  const append = (turn: Turn) => setPending((previous) => [...previous, turn]);
   const apply = (event: ChatEvent, at: number | null) => {
     if (event.type === "tool") setTools((previous) => [...previous, event.name]);
     if (event.type === "error") setError({ at, message: event.message });
-    if (event.type === "proposal") {
+    // The server names the conversation before anything else, so `at` is set by the time a card arrives.
+    if (event.type === "proposal" && at !== null) {
       addCard({ proposal: event.proposal, conversationId: at });
-      setPending((previous) => [...previous, traceOf(event.proposal)]);
+      append(traceOf(event.proposal));
     }
-    if (event.type === "chart") setPending((previous) => [...previous, chartOf(event)]);
+    if (event.type === "chart") append(chartOf(event));
     if (event.type === "delta") setStreaming((previous) => previous + event.text);
     if (event.type === "answer") {
       setStreaming("");
-      setPending((previous) => [...previous, { role: "assistant", content: event.text }]);
+      append({ role: "assistant", content: event.text });
     }
   };
+  const start = (message: string) => {
+    setTools([]);
+    // Shown immediately; the server's stored copy replaces it once the turn is over.
+    setPending([{ role: "user", content: message }]);
+  };
+  const end = () => {
+    setStreaming("");
+    setPending([]);
+  };
+  return { pending, tools, streaming, apply, start, end };
+};
+
+/** One turn's stream, from the question to the answer. */
+const useStream = ({ context, model, setError, addCard }: StreamDeps) => {
+  const { state, dispatch, setTurnRunning } = useAssistant();
+  const queryClient = useQueryClient();
+  const events = useEvents(setError, addCard);
 
   const run = async (message: string) => {
     setError(null);
-    setTools([]);
     setTurnRunning(true);
-    // Shown immediately; the server's stored copy replaces it once the turn is over.
-    setPending([{ role: "user", content: message }]);
+    events.start(message);
     let at = state.conversationId;
     const base = at === null ? { message, model } : { message, conversationId: at, model };
     try {
       for await (const event of askChat(context === null ? base : { ...base, context })) {
-        if (event.type !== "conversation") apply(event, at);
+        if (event.type !== "conversation") events.apply(event, at);
         else {
           at = event.id;
           dispatch({ type: "conversation", id: event.id });
@@ -156,23 +165,22 @@ const useStream = ({ context, model, setError, addCard }: StreamDeps) => {
       setError({ at, message: errorMessage(cause, "Could not fetch the answer") });
     } finally {
       setTurnRunning(false);
-      setStreaming("");
-      setPending([]);
+      events.end();
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       void queryClient.invalidateQueries({ queryKey: ["conversation"] });
     }
   };
 
-  return { pending, tools, streaming, run };
+  return { pending: events.pending, tools: events.tools, streaming: events.streaming, run };
 };
 
-/** One conversation's turns, the answer streaming into it, and its cards. The busy flag is the shell's, so the dock and the Chat page never run two turns at once. */
+/** One conversation's turns and cards. The busy flag is the shell's: one turn at a time across dock and page. */
 export const useChatTurn = (context: PageContext | null) => {
   const { state, dispatch, turnRunning: busy } = useAssistant();
   const { conversationId } = state;
   const [error, setError] = useState<ShownError | null>(null);
   const [model, setModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
-  const cards = useCards(setError);
+  const cards = useCards();
   const stream = useStream({ context, model, setError, addCard: cards.add });
   const stored = useHistory(conversationId, busy, dispatch);
 
@@ -188,11 +196,13 @@ export const useChatTurn = (context: PageContext | null) => {
   };
 
   return {
+    conversationId,
     turns,
     streaming: stream.streaming,
     tools: stream.tools,
     busy,
-    error: error !== null && error.at === conversationId ? error.message : null,
+    error:
+      cards.saveError ?? (error !== null && error.at === conversationId ? error.message : null),
     model,
     setModel,
     ask,

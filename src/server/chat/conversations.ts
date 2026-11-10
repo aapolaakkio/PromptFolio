@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "../db/index.ts";
@@ -60,29 +60,35 @@ const ownedConversation = async (userId: string, id: number) => {
   return row;
 };
 
-/** Longer than any real turn (ten model rounds); a question this old without an answer belongs to a turn that died. */
+/** Longer than any real turn (ten model rounds); a lock this old belongs to a turn whose worker died. */
 export const TURN_LOCK_MS = 3 * 60_000;
 
-/** One turn at a time: a second one would read the first question without its answer and store answers out of order. */
-const assertNoTurnRunning = async (conversationId: number): Promise<void> => {
-  const last = await db
-    .select({ role: chatMessages.role, createdAt: chatMessages.createdAt })
-    .from(chatMessages)
-    .where(eq(chatMessages.conversationId, conversationId))
-    .orderBy(desc(chatMessages.id))
-    .limit(1)
+/** One turn at a time, taken in one conditional UPDATE so two requests cannot both pass a check. */
+const takeTurnLock = async (userId: string, conversationId: number): Promise<void> => {
+  const now = Date.now();
+  const taken = await db
+    .update(conversations)
+    .set({ turnStartedAt: new Date(now) })
+    .where(
+      and(
+        eq(conversations.id, conversationId),
+        eq(conversations.userId, userId),
+        or(
+          isNull(conversations.turnStartedAt),
+          lt(conversations.turnStartedAt, new Date(now - TURN_LOCK_MS)),
+        ),
+      ),
+    )
+    .returning({ id: conversations.id })
     .get();
-  if (last?.role === "user" && Date.now() - last.createdAt.getTime() < TURN_LOCK_MS) {
-    throw new HttpError(409, TURN_RUNNING);
-  }
+  if (taken === undefined) throw new HttpError(409, TURN_RUNNING);
 };
 
-/** A turn that ended without an answer (failed, or the browser left) frees the conversation by aging its question past the lock. */
-const releaseQuestion = async (messageId: number): Promise<void> => {
+const releaseTurnLock = async (conversationId: number): Promise<void> => {
   await db
-    .update(chatMessages)
-    .set({ createdAt: new Date(Date.now() - TURN_LOCK_MS) })
-    .where(eq(chatMessages.id, messageId))
+    .update(conversations)
+    .set({ turnStartedAt: null })
+    .where(eq(conversations.id, conversationId))
     .run();
 };
 
@@ -252,19 +258,40 @@ export const startTurn = async (
     conversationId === undefined
       ? await db
           .insert(conversations)
-          .values({ userId, title: titleFrom(message) })
+          .values({ userId, title: titleFrom(message), turnStartedAt: new Date() })
           .returning()
           .get()
       : await ownedConversation(userId, conversationId);
   if (conversation === undefined) throw new HttpError(500, "Creating the conversation failed");
-  if (conversationId !== undefined) await assertNoTurnRunning(conversation.id);
+  if (conversationId !== undefined) await takeTurnLock(userId, conversation.id);
+  try {
+    return await streamTurn(conversation.id, userId, { message, model, where, client }, signal);
+  } catch (cause) {
+    await releaseTurnLock(conversation.id);
+    throw cause;
+  }
+};
 
+type TurnInput = {
+  readonly message: string;
+  readonly model: string;
+  readonly where: string | null;
+  readonly client: ChatClient;
+};
+
+/** Stores the question and streams the turn; the lock taken by `startTurn` is released whenever it ends. */
+const streamTurn = async (
+  conversationId: number,
+  userId: string,
+  { message, model, where, client }: TurnInput,
+  signal: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> => {
+  const conversation = { id: conversationId };
   // Stored first, so a mid-way failure still shows what was asked.
-  const question = await db
+  await db
     .insert(chatMessages)
     .values({ conversationId: conversation.id, role: "user", content: message })
-    .returning({ id: chatMessages.id })
-    .get();
+    .run();
 
   const history = modelHistory(await historyFor(conversation.id));
   // Scenarios and chart slots live for this turn only, so an id from another turn or user resolves to nothing.
@@ -276,8 +303,6 @@ export const startTurn = async (
     ...buildProposalTools(db, userId, conversation.id),
   ];
   const used: string[] = [];
-  let answered = false;
-
   let open = true;
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -327,7 +352,6 @@ export const startTurn = async (
                 toolCalls: used.length === 0 ? null : JSON.stringify(used),
               })
               .run();
-            answered = true;
           }
           send(event);
         }
@@ -338,7 +362,7 @@ export const startTurn = async (
           send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {
-        if (!answered && question !== undefined) await releaseQuestion(question.id);
+        await releaseTurnLock(conversation.id);
         if (open) controller.close();
       }
     },

@@ -6,7 +6,7 @@ import { ASSISTANT_PAGES, type AssistantPage } from "../../server/chat/page-cont
 export type PanelState = {
   readonly open: boolean;
   readonly conversationId: number | null;
-  /** The owner's chosen width in pixels; clamped again whenever the window changes. */
+  /** The owner's chosen width; clamped only when drawn, so a small window never overwrites it. */
   readonly width: number;
 };
 
@@ -35,8 +35,7 @@ export type PanelAction =
   | { readonly type: "resize"; readonly width: number; readonly viewport: number }
   | { readonly type: "step"; readonly delta: number; readonly viewport: number }
   | { readonly type: "edge"; readonly to: "min" | "max"; readonly viewport: number }
-  | { readonly type: "reset" }
-  | { readonly type: "fit"; readonly viewport: number };
+  | { readonly type: "reset" };
 
 export const CLOSED_PANEL: PanelState = {
   open: false,
@@ -54,7 +53,11 @@ const resized = (state: PanelState, action: PanelAction): PanelState => {
     case "resize":
       return withWidth(state, clampWidth(action.width, action.viewport));
     case "step":
-      return withWidth(state, clampWidth(state.width + action.delta, action.viewport));
+      // From the width shown, which a small window may have clamped below the stored one.
+      return withWidth(
+        state,
+        clampWidth(clampWidth(state.width, action.viewport) + action.delta, action.viewport),
+      );
     case "edge":
       return withWidth(
         state,
@@ -62,8 +65,6 @@ const resized = (state: PanelState, action: PanelAction): PanelState => {
       );
     case "reset":
       return withWidth(state, PANEL_DEFAULT_WIDTH);
-    case "fit":
-      return withWidth(state, clampWidth(state.width, action.viewport));
     default:
       return state;
   }

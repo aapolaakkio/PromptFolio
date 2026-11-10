@@ -283,6 +283,8 @@ export const conversations = sqliteTable("conversations", {
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
+  /** Set while a turn runs, cleared when it ends; a stale one (the worker died) stops blocking after TURN_LOCK_MS. */
+  turnStartedAt: integer("turn_started_at", { mode: "timestamp_ms" }),
 });
 
 /** One turn in a thread. Tool calls and results are not stored (derived from the ledger, a copy could go stale); `toolCalls` lists only which tools ran, for audit. A `proposal` row holds a card's summary (never its input) and a `note` row what the owner did with it. */

@@ -2,11 +2,7 @@ import { createContext, useContext, useEffect, type Dispatch } from "react";
 
 import type { PanelAction, PanelState } from "./assistant-state.ts";
 
-/**
- * What a page has chosen, as ids only; the server looks up the names. Account only: Holdings' forms
- * are modal dialogs, which make the panel inert while they are open, so an instrument chosen there
- * could never be asked about.
- */
+/** The account a page has chosen; the server looks up its name. Holdings' modal forms make the panel inert, so no instrument. */
 export type Selection = { readonly accountId: number };
 
 export type Assistant = {

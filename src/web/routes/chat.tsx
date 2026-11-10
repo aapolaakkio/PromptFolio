@@ -1,4 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+import { errorMessage } from "../lib/errors.ts";
 
 import { getConversations, removeConversation } from "../server/chat.ts";
 import { useAssistant } from "./assistant-context.ts";
@@ -72,8 +75,15 @@ export const ChatPage = () => {
   const title =
     conversations.data?.find((conversation) => conversation.id === conversationId)?.title ?? null;
 
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const remove = async (id: number) => {
-    await removeConversation({ data: { id } });
+    setRemoveError(null);
+    try {
+      await removeConversation({ data: { id } });
+    } catch (cause) {
+      setRemoveError(errorMessage(cause, "Could not delete the conversation"));
+      return;
+    }
     if (id === conversationId) choose(null);
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
   };
@@ -96,6 +106,7 @@ export const ChatPage = () => {
               : "Assistant — answers only from your own portfolio figures."}
           </p>
         </div>
+        {removeError !== null && <p role="alert">{removeError}</p>}
         <ChatPanel context={CHAT_PAGE} variant="page" />
       </div>
     </section>

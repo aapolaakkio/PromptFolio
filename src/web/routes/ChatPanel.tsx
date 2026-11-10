@@ -12,7 +12,8 @@ import { cardState, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
 import { STARTERS } from "./starters.ts";
 import { TOOL_LABELS } from "./tool-labels.ts";
-import { useChatTurn, type LiveCard, type Turn } from "./use-chat-turn.ts";
+import type { LiveCard } from "./chat-rules.ts";
+import { useChatTurn, type Turn } from "./use-chat-turn.ts";
 
 const isChatModel = (value: string): value is ChatModel =>
   CHAT_MODELS.some((model) => model.id === value);
@@ -94,21 +95,35 @@ const itemKey = (item: Item): string => {
   return card === null ? item.key : `proposal-${card.proposalId}`;
 };
 
-/** Follows new text only while the reader is at the bottom; scrolling up stops it until "Jump to latest". */
-const useFollow = (signal: string) => {
-  const ref = useRef<HTMLOListElement>(null);
+/** Follows the newest text, and late-growing charts or cards, only while the reader is at the bottom. */
+const useFollow = (conversationId: number | null) => {
+  const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLOListElement>(null);
   const [following, setFollowing] = useState(true);
+  // Another conversation opens at its newest turn.
+  const [seen, setSeen] = useState(conversationId);
+  if (seen !== conversationId) {
+    setSeen(conversationId);
+    setFollowing(true);
+  }
   useEffect(() => {
-    if (following) ref.current?.scrollTo({ top: ref.current.scrollHeight });
-  }, [following, signal]);
+    const box = scroller.current;
+    const list = content.current;
+    if (!following || box === null || list === null) return;
+    const toBottom = () => box.scrollTo({ top: box.scrollHeight });
+    toBottom();
+    const observer = new ResizeObserver(toBottom);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [following]);
   const onScroll = () => {
-    if (ref.current !== null) setFollowing(isNearBottom(ref.current));
+    if (scroller.current !== null) setFollowing(isNearBottom(scroller.current));
   };
   const jump = () => {
     setFollowing(true);
-    ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" });
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   };
-  return { ref, following, onScroll, jump };
+  return { scroller, content, following, onScroll, jump };
 };
 
 const Starters = ({
@@ -143,22 +158,24 @@ type TranscriptProps = {
 
 const Transcript = ({ items, cards, variant, follow, empty }: TranscriptProps) => (
   <div className={variant === "dock" ? "relative flex min-h-0 flex-1 flex-col" : "relative"}>
-    <ol
-      ref={follow.ref}
+    <div
+      ref={follow.scroller}
       onScroll={follow.onScroll}
-      className={`grid content-start gap-3 overflow-y-auto pr-1 [scrollbar-gutter:stable] ${
+      className={`overflow-y-auto pr-1 [scrollbar-gutter:stable] ${
         variant === "dock" ? "min-h-0 flex-1" : "max-h-[55vh]"
       }`}
     >
-      {items.length === 0 && empty}
-      {items.map((item) => (
-        <TurnItem key={itemKey(item)} item={item} cards={cards} />
-      ))}
-    </ol>
+      <ol ref={follow.content} className="grid content-start gap-3">
+        {items.length === 0 && empty}
+        {items.map((item) => (
+          <TurnItem key={itemKey(item)} item={item} cards={cards} />
+        ))}
+      </ol>
+    </div>
     {!follow.following && (
       <button
         type="button"
-        className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-line bg-surface px-3 py-1 text-sm font-normal text-ink shadow"
+        className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-line bg-surface px-3 py-1 text-sm font-normal text-ink"
         onClick={follow.jump}
       >
         Jump to latest
@@ -176,7 +193,7 @@ const fitHeight = (box: HTMLTextAreaElement | null) => {
   box.style.height = `${Math.min(box.scrollHeight, COMPOSER_MAX_PX)}px`;
 };
 
-/** Grows with its text; Enter sends, Shift+Enter is a new line. Never disabled, so focus stays here after sending. */
+/** Grows with its text; Enter sends, Shift+Enter breaks the line. Never disabled, so focus stays. */
 const Composer = ({
   busy,
   onAsk,
@@ -187,6 +204,8 @@ const Composer = ({
   readonly composerRef: RefObject<HTMLTextAreaElement | null>;
 }) => {
   const [draft, setDraft] = useState("");
+  // Safari fires compositionend before the Enter that ends an IME composition, with isComposing false.
+  const composing = useRef(false);
   useEffect(() => fitHeight(composerRef.current), [draft, composerRef]);
   const submit = () => {
     if (onAsk(draft)) setDraft("");
@@ -205,8 +224,17 @@ const Composer = ({
         className="min-w-0 flex-1 resize-none overflow-y-auto rounded-md border border-line bg-surface px-3 py-2 text-base text-ink"
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          setTimeout(() => {
+            composing.current = false;
+          }, 0);
+        }}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          const inIme = event.nativeEvent.isComposing || composing.current;
+          if (event.key !== "Enter" || event.shiftKey || inIme) return;
           event.preventDefault();
           submit();
         }}
@@ -255,7 +283,7 @@ type ChatPanelProps = {
   readonly composerRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
-/** The one conversation UI, on the Chat page and in the docked panel. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes nothing itself: every change is a card the owner confirms. */
+/** The one conversation UI, on the Chat page and in the dock. */
 export const ChatPanel = ({ context, variant, composerRef }: ChatPanelProps) => {
   const chat = useChatTurn(context);
   const ownComposer = useRef<HTMLTextAreaElement>(null);
@@ -264,7 +292,7 @@ export const ChatPanel = ({ context, variant, composerRef }: ChatPanelProps) => 
       ? chat.turns
       : [...chat.turns, { role: "assistant", content: chat.streaming }];
   const items = renderItems(shown);
-  const follow = useFollow(`${items.length}:${chat.streaming.length}:${chat.busy}`);
+  const follow = useFollow(chat.conversationId);
   return (
     <div
       className={

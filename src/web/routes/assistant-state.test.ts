@@ -102,10 +102,15 @@ describe("panel width", () => {
     expect(panelReducer({ ...state, width: 800 }, { type: "reset" }).width).toBe(W);
   });
 
-  test("a smaller window re-clamps a stored width", () => {
+  test("a smaller window never overwrites the stored width; a step starts from what is shown", () => {
     const wide = { ...CLOSED_PANEL, width: 900 };
-    expect(panelReducer(wide, { type: "fit", viewport: 1000 }).width).toBe(600);
-    expect(panelReducer(wide, { type: "fit", viewport: 2000 })).toBe(wide);
+    // Rendering clamps; the stored choice stays for when the window grows again.
+    expect(clampWidth(wide.width, 1000)).toBe(600);
+    expect(wide.width).toBe(900);
+    expect(panelReducer(wide, { type: "step", delta: PANEL_STEP, viewport: 1000 }).width).toBe(600);
+    expect(panelReducer(wide, { type: "step", delta: -PANEL_STEP, viewport: 1000 }).width).toBe(
+      600 - PANEL_STEP,
+    );
   });
 });
 

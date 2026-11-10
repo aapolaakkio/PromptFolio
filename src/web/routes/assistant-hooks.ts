@@ -22,47 +22,42 @@ import { readStoredPanel, storePanel } from "./assistant-storage.ts";
 // The window the panel is fixed to, without its scrollbar.
 const viewport = (): number => document.documentElement.clientWidth;
 
-/**
- * The panel state, restored after mount (the server renders it closed). Transitions start a frame
- * after the restore, so a panel stored open appears in place instead of sliding in on every load.
- */
+/** The panel state, restored after mount; it slides only once the restore is on screen. */
 export const usePanelState = () => {
   const [state, dispatch] = useReducer(panelReducer, CLOSED_PANEL);
+  const [restored, setRestored] = useState(false);
   const [animate, setAnimate] = useState(false);
-  // Zero on the server; the handle's aria-valuemax needs the real window.
+  // Zero on the server; the panel clamps its stored width to the real window when drawn.
   const [width, setWidth] = useState(0);
-  const restored = useRef(false);
 
   useEffect(() => {
     dispatch({ type: "restore", state: readPanel(readStoredPanel()) });
-    dispatch({ type: "fit", viewport: viewport() });
     setWidth(viewport());
-    const frame = requestAnimationFrame(() => setAnimate(true));
-    return () => cancelAnimationFrame(frame);
+    setRestored(true);
   }, []);
 
   useEffect(() => {
-    // The first run sees the default, not the stored state; writing it would erase what is stored.
-    if (!restored.current) {
-      restored.current = true;
-      return;
-    }
-    storePanel(JSON.stringify(state));
-  }, [state]);
+    // Runs after the restored state has committed, so a panel stored open never slides in on load.
+    if (!restored) return;
+    const frame = requestAnimationFrame(() => setAnimate(true));
+    return () => cancelAnimationFrame(frame);
+  }, [restored]);
 
   useEffect(() => {
-    const fit = () => {
-      dispatch({ type: "fit", viewport: viewport() });
-      setWidth(viewport());
-    };
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
+    // Before the restore this would be the default, and writing it would erase what is stored.
+    if (restored) storePanel(JSON.stringify(state));
+  }, [restored, state]);
+
+  useEffect(() => {
+    const measure = () => setWidth(viewport());
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, []);
 
   return { state, dispatch, animate, viewportWidth: width };
 };
 
-/** Under the breakpoint the panel is a full-width overlay: no resize handle, and the page behind it is inert. */
+/** Under the breakpoint the panel is a full-width overlay over an inert page. */
 export const useNarrow = (): boolean => {
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -112,7 +107,7 @@ export const useShortcut = (
   }, [enabled, panel, toggle]);
 };
 
-/** Focus goes to the composer when the owner opens the panel and back to the toggle when they close it; a restore moves nothing. */
+/** Owner open focuses the composer, owner close the toggle; a restore moves nothing. */
 export const useFocusOnToggle = (
   shown: boolean,
   byOwner: RefObject<boolean>,

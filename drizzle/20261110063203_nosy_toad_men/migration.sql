@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `turn_started_at` integer;

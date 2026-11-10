@@ -32,7 +32,7 @@ import { ChatPanel } from "./ChatPanel.tsx";
 
 const PANEL_ID = "assistant-panel";
 
-/** The page's own layout, never touched by the panel: it lies over the page, so opening, closing or widening it moves nothing. */
+/** The page's own layout; the panel lies over it and never moves it. */
 export const PAGE_CLASS = "mx-auto max-w-5xl px-5 pb-16 pt-8";
 
 /** Takes only `inert`: there is nothing here for the panel's width or open state to reach. */
@@ -163,12 +163,14 @@ const dockClass = (shown: boolean, animate: boolean): string =>
       : "",
   ].join(" ");
 
-/** Off-screen and inert while closed, but still mounted once opened, so a stream is never cut off. */
+/** Off-screen and inert while closed, but kept mounted so a stream is never cut off. */
 const AssistantDock = (props: DockProps) => {
   const { state, shown, narrow, dockRef, act } = props;
   const [kept, setKept] = useState(false);
   if (shown && !kept) setKept(true);
   const drag = useWidthDrag(props.dispatch);
+  // The stored width is the owner's choice; a small window only clamps what is drawn.
+  const width = props.viewport === 0 ? state.width : clampWidth(state.width, props.viewport);
   // The handler sits on the panel, so Escape closes it only while focus is inside.
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -184,11 +186,11 @@ const AssistantDock = (props: DockProps) => {
         ref={dockRef}
         aria-label="Assistant"
         inert={!shown}
-        style={{ top: props.top, width: narrow ? undefined : state.width }}
+        style={{ top: props.top, width: narrow ? undefined : width }}
         className={dockClass(shown, props.animate)}
         onKeyDown={onKeyDown}
       >
-        {!narrow && <ResizeHandle width={state.width} viewport={props.viewport} drag={drag} />}
+        {!narrow && <ResizeHandle width={width} viewport={props.viewport} drag={drag} />}
         {kept && (
           <>
             <DockHeader
@@ -211,7 +213,7 @@ const contextOf = (pathname: string, selection: Selection | undefined) => {
   return selection === undefined ? { page } : { page, selection };
 };
 
-/** The shell's assistant: state above the outlet, so a conversation (and an answer still streaming) survives a change of page. */
+/** Assistant state above the outlet, so a conversation and its stream survive a page change. */
 const useAssistantShell = () => {
   const pathname = useRouterState({ select: (router) => router.location.pathname });
   const panel = usePanelState();
@@ -248,7 +250,7 @@ const useAssistantShell = () => {
 
 type AssistantLayoutProps = { readonly start: ReactNode; readonly end: ReactNode };
 
-/** The authenticated shell with the assistant docked beside every page. Closed on the server; the stored state opens it after mount. */
+/** The authenticated shell with the assistant available on every page. */
 export const AssistantLayout = ({ start, end }: AssistantLayoutProps) => {
   const shell = useAssistantShell();
   const header = useHeight();

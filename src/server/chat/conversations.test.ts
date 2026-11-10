@@ -213,43 +213,71 @@ describe("a client that goes away mid-turn", () => {
 });
 
 describe("one turn at a time per conversation", () => {
-  const unanswered = async (userId: string, ageMs: number): Promise<number> => {
-    const { db } = await import("../db/index.ts");
-    const { chatMessages, conversations } = await import("../db/schema.ts");
-    const conversation = await db
-      .insert(conversations)
-      .values({ userId, title: "t" })
-      .returning()
-      .get();
-    if (conversation === undefined) throw new Error("no conversation");
-    await db
-      .insert(chatMessages)
-      .values({
-        conversationId: conversation.id,
-        role: "user",
-        content: "Still being answered",
-        createdAt: new Date(Date.now() - ageMs),
-      })
-      .run();
-    return conversation.id;
+  type HeldTurn = { readonly client: ChatClient; readonly answer: () => void };
+
+  /** A model that answers only when told to, so a turn can be held open. */
+  const heldClient = (): HeldTurn => {
+    let answer = (): void => undefined;
+    const reply = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    return {
+      client: { run: () => reply.then(() => assistantSaying("Held answer.")) },
+      answer: () => answer(),
+    };
   };
 
-  test("a question still being answered refuses a second turn, as 409", async () => {
+  const lockedAt = async (id: number, at: Date | null): Promise<void> => {
+    const { db } = await import("../db/index.ts");
+    const { conversations } = await import("../db/schema.ts");
+    const { eq } = await import("drizzle-orm");
+    await db.update(conversations).set({ turnStartedAt: at }).where(eq(conversations.id, id)).run();
+  };
+
+  test("a second start while a turn runs is refused with 409, even after cards and notes", async () => {
     setChatClient(scriptedClient());
     const userId = await signUp();
-    const id = await unanswered(userId, 1000);
-    expect(await statusOf(() => turn(userId, { conversationId: id, message: "Again" }))).toBe(409);
+    const id = conversationIdOf(await eventsOf(await turn(userId, { message: "First" })));
+
+    const held = heldClient();
+    setChatClient(held.client);
+    const running = await turn(userId, { conversationId: id, message: "Second" });
+    // Rows a turn stores before its answer must not switch the lock off.
+    const { db } = await import("../db/index.ts");
+    const { chatMessages } = await import("../db/schema.ts");
+    for (const role of ["proposal", "chart", "note"] as const) {
+      await db.insert(chatMessages).values({ conversationId: id, role, content: "{}" }).run();
+    }
+    expect(await statusOf(() => turn(userId, { conversationId: id, message: "Third" }))).toBe(409);
+
+    held.answer();
+    await eventsOf(running);
+    setChatClient(scriptedClient());
+    const after = await eventsOf(await turn(userId, { conversationId: id, message: "Fourth" }));
+    expect(after.at(-1)?.type).toBe("answer");
   });
 
-  test("a question older than the turn limit no longer blocks: that turn died", async () => {
+  test("the refusal says the answer may have been lost", async () => {
     setChatClient(scriptedClient());
     const userId = await signUp();
-    const id = await unanswered(userId, chat.TURN_LOCK_MS + 1000);
+    const id = conversationIdOf(await eventsOf(await turn(userId, { message: "First" })));
+    await lockedAt(id, new Date());
+    const { TURN_RUNNING } = await import("./conversation-errors.ts");
+    await expect(turn(userId, { conversationId: id, message: "Again" })).rejects.toThrow(
+      TURN_RUNNING,
+    );
+  });
+
+  test("a lock older than the turn limit no longer blocks: that turn died", async () => {
+    setChatClient(scriptedClient());
+    const userId = await signUp();
+    const id = conversationIdOf(await eventsOf(await turn(userId, { message: "First" })));
+    await lockedAt(id, new Date(Date.now() - chat.TURN_LOCK_MS - 1000));
     const events = await eventsOf(await turn(userId, { conversationId: id, message: "Again" }));
     expect(events.at(-1)?.type).toBe("answer");
   });
 
-  test("a failed or dropped turn releases the conversation at once", async () => {
+  test("a failed or dropped turn releases the conversation at once, and keeps the question's time", async () => {
     setChatClient(failingClient());
     const userId = await signUp();
     const id = conversationIdOf(await eventsOf(await turn(userId, { message: "First" })));
@@ -262,6 +290,17 @@ describe("one turn at a time per conversation", () => {
     await eventsOf(await turn(userId, { conversationId: id, message: "Dropped" }, abort.signal));
     const after = await eventsOf(await turn(userId, { conversationId: id, message: "Back" }));
     expect(after.at(-1)?.type).toBe("answer");
+
+    const { db } = await import("../db/index.ts");
+    const { chatMessages } = await import("../db/schema.ts");
+    const { eq } = await import("drizzle-orm");
+    const times = await db
+      .select({ createdAt: chatMessages.createdAt })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, id))
+      .all();
+    // Nothing is back-dated: every stored time is within this test's run.
+    expect(times.every((row) => Date.now() - row.createdAt.getTime() < 60_000)).toBe(true);
   });
 });
 
