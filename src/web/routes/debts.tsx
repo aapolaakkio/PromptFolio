@@ -17,7 +17,7 @@ import { Modal } from "./Modal.tsx";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-const DASHBOARD_KEYS = ["value-series", "returns", "allocation"] as const;
+const DASHBOARD_KEYS = ["value-series", "returns"] as const;
 
 const useRefresh = () => {
   const queryClient = useQueryClient();
@@ -177,6 +177,7 @@ const BalanceTable = ({ debt }: { debt: DebtView }) => {
                     type="button"
                     className="quiet-button"
                     aria-label={`Remove the balance of ${formatDate(balance.asOf)}`}
+                    disabled={remove.isPending}
                     onClick={() => remove.mutate(balance.asOf)}
                   >
                     ✕
@@ -212,7 +213,12 @@ const RemoveDebtModal = ({ debt, onClose }: { debt: DebtView; onClose: () => voi
         </p>
         <ErrorLine message={error} />
         <div className="flex gap-3">
-          <button type="button" className="border-loss" onClick={() => remove.mutate()}>
+          <button
+            type="button"
+            className="border-loss"
+            disabled={remove.isPending}
+            onClick={() => remove.mutate()}
+          >
             Delete
           </button>
           <button type="button" className="quiet-button" onClick={onClose}>

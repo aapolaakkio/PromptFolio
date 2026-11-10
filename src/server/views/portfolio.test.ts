@@ -1128,13 +1128,23 @@ describe("owed and net worth", () => {
 
   test("returns: net worth is value with cash minus owed, twr and mwr unchanged", async () => {
     const { userId } = await signUp(`owed-returns-${crypto.randomUUID()}@example.com`);
-    await seedThousand(userId);
+    await seedHolding(userId, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 10_000,
+      principal: 100_000,
+      prices: [
+        { date: "2024-01-01", close: 10_000 },
+        { date: "2024-01-05", close: 11_000 },
+      ],
+    });
     const before = await returnsView(db, userId, "2024-01-01", "2024-01-05");
+    expect(before.twr).not.toBeNull();
     await addOwed(userId, "2024-01-03", "300.00");
 
     const after = await returnsView(db, userId, "2024-01-01", "2024-01-05");
     expect(after.owedEur).toBe("300.00");
-    expect(after.netWorthEur).toBe("700.00");
+    expect(after.netWorthEur).toBe("800.00");
     expect(after.debtsKnownFrom).toBe("2024-01-03");
     expect(after.twr).toBe(before.twr);
     expect(after.mwr).toBe(before.mwr);

@@ -4,8 +4,12 @@ import type { z } from "zod";
 import { owedOn, type DebtBalance } from "../core/debts.ts";
 import { EUR, formatMoney, money, parseMoney } from "../core/money.ts";
 import type { IsoDate } from "../core/types.ts";
-import type { DebtBalanceInput, DebtBalanceRemoveInput, DebtInput } from "./action-inputs.ts";
-import { toBasisPoints } from "./action-inputs.ts";
+import {
+  type DebtBalanceInput,
+  type DebtBalanceRemoveInput,
+  type DebtInput,
+  toBasisPoints,
+} from "./action-inputs.ts";
 import type { Db } from "./db/index.ts";
 import { debtBalances, debts } from "./db/schema.ts";
 import { HttpError } from "./errors.ts";
