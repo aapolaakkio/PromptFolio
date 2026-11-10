@@ -28,10 +28,16 @@ test("colours are referenced through the theme, so dark mode needs no branch", (
   expect(colourFor(SERIES_COUNT + 3)).toBe("var(--series-4)");
 });
 
-test("the stylesheet defines every slot this module promises, in both themes", async () => {
+test("the stylesheet defines every slot this module promises, in both themes and on paper", async () => {
   // Values live in CSS, the count here: stops the two drifting apart.
   const css = await readFileText("src/web/styles.css");
   for (let slot = 1; slot <= SERIES_COUNT; slot++) {
-    expect(css.match(new RegExp(`--series-${slot}:`, "g"))?.length).toBe(2);
+    const values = Array.from(
+      css.matchAll(new RegExp(`--series-${slot}:\\s*([^;]+);`, "g")),
+      (match) => match[1],
+    );
+    // Light, dark, then the print block, which restates light.
+    expect(values).toHaveLength(3);
+    expect(values[2]).toBe(values[0]);
   }
 });

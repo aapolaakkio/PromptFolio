@@ -7,6 +7,7 @@ import { Chart } from "@tanstack/react-charts";
 
 import type { ForecastPoint } from "../../core/forecast.ts";
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { TIME_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
 import { compactEur } from "./TimeSeriesChart.tsx";
@@ -73,13 +74,15 @@ export const ForecastChart = ({ points }: { readonly points: readonly ForecastPo
     });
   }, [rows]);
 
+  if (points.length === 0) return <p className="text-muted">No data yet.</p>;
+
   return (
-    <div>
+    <ChartFrame title="Forecast of the portfolio value">
       <div className="mb-2 flex items-center gap-3 text-xs text-muted">
-        <span className="flex items-center gap-1.5">
+        <span data-legend-item="" className="flex items-center gap-1.5">
           <span className="h-0.5 w-4" style={{ background: colourFor(0) }} /> Expected
         </span>
-        <span className="flex items-center gap-1.5">
+        <span data-legend-item="" className="flex items-center gap-1.5">
           <span className="h-2 w-4 opacity-30" style={{ background: colourFor(0) }} />
           Rough range (10–90 %)
         </span>
@@ -87,6 +90,6 @@ export const ForecastChart = ({ points }: { readonly points: readonly ForecastPo
       <div className="h-72">
         <Chart definition={definition} height={288} ariaLabel="Forecast of the portfolio value" />
       </div>
-    </div>
+    </ChartFrame>
   );
 };

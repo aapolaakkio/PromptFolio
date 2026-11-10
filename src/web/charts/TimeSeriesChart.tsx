@@ -7,6 +7,7 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 import { eur, formatDate } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { hoverThroughBrush } from "./hover-through.ts";
 import { TIME_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
@@ -206,13 +207,14 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
   if (points.length === 0) return <p className="text-muted">No data yet.</p>;
 
   return (
-    <div>
+    <ChartFrame title={label}>
       {/* Above the chart: a control over the plot is unreadable over its line. */}
       <div className="mb-2 flex gap-1 text-xs">
         {RANGES.map((range) => (
           <button
             key={range.label}
             type="button"
+            data-no-export=""
             aria-pressed={zoom === null && months === range.months}
             className={`border border-line px-2 py-0.5 ${
               zoom === null && months === range.months ? "bg-line" : ""
@@ -222,17 +224,19 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
             {range.label}
           </button>
         ))}
-        <span className="self-center text-muted">or drag on the chart</span>
+        <span data-no-export="" className="self-center text-muted">
+          or drag on the chart
+        </span>
         {rows.some((row) => row.invested !== null) && (
           // Two series, so each line is named rather than identified by colour alone.
           <span className="ml-auto flex items-center gap-3 self-center text-muted">
-            <span className="flex items-center gap-1.5">
+            <span data-legend-item="" className="flex items-center gap-1.5">
               <span className="h-0.5 w-4" style={{ background: colourFor(0) }} />
               {rows.some((row) => row.cash !== null && row.cash !== 0)
                 ? "Value (incl. cash)"
                 : "Value"}
             </span>
-            <span className="flex items-center gap-1.5">
+            <span data-legend-item="" className="flex items-center gap-1.5">
               <span
                 className="h-0.5 w-4"
                 style={{
@@ -242,12 +246,13 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
               Invested
             </span>
             {rows.some((row) => row.cash !== null && row.cash !== 0) && (
-              <span className="flex items-center gap-1.5">
+              <span data-legend-item="" className="flex items-center gap-1.5">
                 <span className="h-0.5 w-4" style={{ background: colourFor(2) }} /> Cash
               </span>
             )}
             {split.estimate.length > 0 && (
               <span
+                data-legend-item=""
                 className="flex items-center gap-1.5"
                 title="On days before an instrument's first price, its value is the cost basis, not market value."
               >
@@ -267,6 +272,6 @@ export const TimeSeriesChart = ({ points, label }: { points: SeriesPoint[]; labe
       <div className="h-72" onPointerMoveCapture={hoverThroughBrush}>
         <Chart definition={definition} height={288} ariaLabel={label} />
       </div>
-    </div>
+    </ChartFrame>
   );
 };

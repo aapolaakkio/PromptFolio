@@ -6,6 +6,7 @@ import { Chart } from "@tanstack/react-charts";
 
 import type { FlowLink, FlowNode } from "../../server/spending/cashflow.ts";
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { bumpX } from "./curve.ts";
 import { MARK_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
@@ -125,12 +126,14 @@ export const CashFlowChart = ({
   }
 
   return (
-    <div className="h-128">
-      <Chart
-        definition={definition}
-        height={512}
-        ariaLabel="Cash flows: income, spending and investments"
-      />
-    </div>
+    <ChartFrame title="Cash flows">
+      <div className="h-128">
+        <Chart
+          definition={definition}
+          height={512}
+          ariaLabel="Cash flows: income, spending and investments"
+        />
+      </div>
+    </ChartFrame>
   );
 };

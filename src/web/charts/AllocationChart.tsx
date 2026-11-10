@@ -6,6 +6,7 @@ import { scaleOrdinal } from "@tanstack/charts/scales/ordinal";
 import { Chart } from "@tanstack/react-charts";
 
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { colourFor, SERIES_COUNT } from "./palette.ts";
 
 /** Shape of `allocationView` rows; `valueEur` is a decimal string. */
@@ -77,7 +78,7 @@ export const AllocationChart = ({ slices }: { slices: AllocationSlice[] }) => {
   if (slices.length === 0) return <p className="text-muted">No holdings.</p>;
 
   return (
-    <div>
+    <ChartFrame title="Allocation">
       <div className="h-10">
         <Chart
           height={40}
@@ -89,7 +90,7 @@ export const AllocationChart = ({ slices }: { slices: AllocationSlice[] }) => {
       </div>
       <ul className="mt-4 grid list-none gap-1.5 p-0">
         {shown.map((slice, index) => (
-          <li key={slice.key} className="flex items-center gap-2.5">
+          <li key={slice.key} data-legend-item="" className="flex items-center gap-2.5">
             <span
               className="size-2.5 flex-none rounded-sm"
               // Data-driven, so this one stays inline.
@@ -101,6 +102,6 @@ export const AllocationChart = ({ slices }: { slices: AllocationSlice[] }) => {
           </li>
         ))}
       </ul>
-    </div>
+    </ChartFrame>
   );
 };

@@ -16,6 +16,7 @@ import {
   seriesMarks,
   type Plot,
 } from "./chat-chart-marks.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { GROUP_FOCUS } from "./interactions.ts";
 
 const DEFAULT_HEIGHT = 288;
@@ -95,7 +96,11 @@ const Legend = ({ chart }: { readonly chart: ChatChartValue }) => {
   return (
     <ul aria-label="Legend" className="flex flex-wrap gap-3 text-xs">
       {entries.map((entry, index) => (
-        <li key={`${entry.appLabel}-${index}`} className="flex items-center gap-1.5">
+        <li
+          key={`${entry.appLabel}-${index}`}
+          data-legend-item=""
+          className="flex items-center gap-1.5"
+        >
           <span
             className={
               entry.faded
@@ -130,28 +135,30 @@ export const ChatChart = ({ chart }: { readonly chart: ChatChartValue }) => {
   const { title, subtitle, note, legend = "top" } = chart.spec;
   const height = chart.spec.height ?? DEFAULT_HEIGHT;
   return (
-    <figure className="card max-w-[90%] grid gap-2 text-sm">
-      <figcaption className="grid">
-        <span className="font-semibold">{title}</span>
-        {subtitle !== undefined && <span className="text-muted">{subtitle}</span>}
-      </figcaption>
-      {legend === "top" && <Legend chart={chart} />}
-      <div style={{ height }}>
-        <Chart definition={definition} height={height} ariaLabel={title} />
-      </div>
-      {legend === "bottom" && <Legend chart={chart} />}
-      <AnnotationList chart={chart} />
-      {chart.data.notes.map((line) => (
-        <p key={line} className="text-xs text-muted">
-          {line}
-        </p>
-      ))}
-      {note !== undefined && note !== "" && (
-        <div className="border-t border-line pt-2">
-          <p className="text-xs text-muted">Assistant's note</p>
-          <p className="whitespace-pre-wrap">{note}</p>
+    <figure className="card max-w-[90%] text-sm">
+      <ChartFrame title={title} className="grid gap-2">
+        <figcaption className="grid">
+          <span className="font-semibold">{title}</span>
+          {subtitle !== undefined && <span className="text-muted">{subtitle}</span>}
+        </figcaption>
+        {legend === "top" && <Legend chart={chart} />}
+        <div style={{ height }}>
+          <Chart definition={definition} height={height} ariaLabel={title} />
         </div>
-      )}
+        {legend === "bottom" && <Legend chart={chart} />}
+        <AnnotationList chart={chart} />
+        {chart.data.notes.map((line) => (
+          <p key={line} className="text-xs text-muted">
+            {line}
+          </p>
+        ))}
+        {note !== undefined && note !== "" && (
+          <div className="border-t border-line pt-2">
+            <p className="text-xs text-muted">Assistant's note</p>
+            <p className="whitespace-pre-wrap">{note}</p>
+          </div>
+        )}
+      </ChartFrame>
     </figure>
   );
 };

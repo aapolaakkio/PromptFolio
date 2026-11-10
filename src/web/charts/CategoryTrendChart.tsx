@@ -9,6 +9,7 @@ import { Chart } from "@tanstack/react-charts";
 
 import type { CategoryMonth } from "../../server/spending/monthly.ts";
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { GROUP_FOCUS } from "./interactions.ts";
 import { colourFor, SERIES_COUNT } from "./palette.ts";
 
@@ -97,8 +98,10 @@ export const CategoryTrendChart = ({
   }
 
   return (
-    <div className="h-72">
-      <Chart definition={definition} height={288} ariaLabel="Spending by category by month" />
-    </div>
+    <ChartFrame title="Spending by category by month">
+      <div className="h-72">
+        <Chart definition={definition} height={288} ariaLabel="Spending by category by month" />
+      </div>
+    </ChartFrame>
   );
 };

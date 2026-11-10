@@ -7,6 +7,7 @@ import { tooltip } from "@tanstack/charts/tooltip";
 import { crosshair } from "@tanstack/charts/crosshair";
 import { Chart } from "@tanstack/react-charts";
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { shortMonth } from "./CategoryTrendChart.tsx";
 import { GROUP_FOCUS } from "./interactions.ts";
 import { colourFor } from "./palette.ts";
@@ -64,8 +65,10 @@ export const MonthlyFlowChart = ({ months }: { readonly months: readonly Monthly
   if (months.length === 0) return <p className="text-muted">No data yet.</p>;
 
   return (
-    <div className="h-72">
-      <Chart definition={definition} height={288} ariaLabel="Income and spending by month" />
-    </div>
+    <ChartFrame title="Income and spending by month">
+      <div className="h-72">
+        <Chart definition={definition} height={288} ariaLabel="Income and spending by month" />
+      </div>
+    </ChartFrame>
   );
 };

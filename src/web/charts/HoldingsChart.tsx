@@ -6,6 +6,7 @@ import { tooltip } from "@tanstack/charts/tooltip";
 import { Chart } from "@tanstack/react-charts";
 
 import { eur } from "../lib/format.ts";
+import { ChartFrame } from "./ChartFrame.tsx";
 import { MARK_FOCUS } from "./interactions.ts";
 
 /** Only what this chart draws, so it does not depend on the whole holdings row. */
@@ -74,11 +75,13 @@ export const HoldingsChart = ({ holdings }: { holdings: readonly HoldingBar[] })
   if (rows.length === 0) return <p className="text-muted">No priced holdings.</p>;
 
   return (
-    // `height` sizes the chart: react-charts 1.x does not measure the surrounding box.
-    <Chart
-      definition={definition}
-      height={Math.max(120, rows.length * 34)}
-      ariaLabel="Holdings by value"
-    />
+    <ChartFrame title="Holdings by value">
+      {/* `height` sizes the chart: react-charts 1.x does not measure the surrounding box. */}
+      <Chart
+        definition={definition}
+        height={Math.max(120, rows.length * 34)}
+        ariaLabel="Holdings by value"
+      />
+    </ChartFrame>
   );
 };

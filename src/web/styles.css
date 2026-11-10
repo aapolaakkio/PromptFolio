@@ -143,3 +143,91 @@
   @apply bg-transparent text-muted px-2 py-1 text-sm leading-none opacity-0
          hover:text-ink focus-visible:opacity-100 group-hover:opacity-100;
 }
+
+/* "Export > PDF" prints one chart: `export-print.ts` marks <html> and that chart's frame, and only then do these rules apply. An ordinary Ctrl+P of a page is untouched. */
+@media print {
+  /* Paper is light whatever the screen is: the light values from `@theme` and the series block above, restated over the dark block. */
+  :root[data-print-chart] {
+    color-scheme: light;
+    --color-bg: #ffffff;
+    --color-surface: #ffffff;
+    --color-ink: #13231a;
+    --color-muted: #56665b;
+    --color-line: #d3ddcb;
+    --color-gain: #1a7f3c;
+    --color-loss: #b3261e;
+    --color-accent: #1d7a47;
+    --color-on-accent: #ffffff;
+
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+  }
+
+  /* Everything that neither holds the frame nor sits in it. The assistant panel goes this way too when the chart is on the page under it. */
+  :root[data-print-chart]
+    body
+    *:not(
+      [data-print-chart="frame"],
+      [data-print-chart="frame"] *,
+      :has([data-print-chart="frame"])
+    ) {
+    display: none !important;
+  }
+
+  /* What holds the frame becomes a plain box: a fixed, transformed or scrolling ancestor (the assistant panel, the chat list) would clip or misplace it. */
+  :root[data-print-chart] body,
+  :root[data-print-chart] body :has([data-print-chart="frame"]) {
+    display: block !important;
+    position: static !important;
+    transform: none !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+  }
+
+  [data-print-chart="frame"] {
+    width: 100% !important;
+    max-width: none !important;
+    color: var(--color-ink);
+    /* Legend swatches are backgrounds, which printing drops by default. */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* The menu, the range buttons, and what only a pointer draws. */
+  [data-print-chart="frame"] [data-no-export],
+  [data-print-chart="frame"] .ts-chart-tooltip,
+  [data-print-chart="frame"] .ts-chart-host > svg:not(.ts-chart),
+  [data-print-chart="frame"] svg :is([data-ts-focus-layer], [data-ts-focus-guide-layer]),
+  [data-print-chart="frame"] svg :is([class*="crosshair"], [class*="brush"]) {
+    display: none !important;
+  }
+
+  /* The drawing scales with the page through its viewBox; the screen's fixed heights would letterbox it. */
+  [data-print-chart="frame"] :has(> .ts-chart-host),
+  [data-print-chart="frame"] :is(.ts-chart-host, .ts-chart-surface, svg.ts-chart) {
+    height: auto !important;
+  }
+
+  [data-print-chart="frame"]::after {
+    content: attr(data-print-footer);
+    display: block;
+    margin-top: 1rem;
+    border-top: 1px solid var(--color-line);
+    padding-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+  }
+}
