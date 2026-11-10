@@ -230,6 +230,11 @@ const checked = (kind: Kind, fields: Readonly<Record<string, string | null>>, ra
   return kept;
 };
 
+const MASK_MARGIN = 64;
+/** Cut with a margin, masked, then cut to length: a number cut in half at the limit would otherwise pass as a short, harmless one. */
+export const cutAndMasked = (text: string): string =>
+  maskAccountNumbers(text.slice(0, MAX_RAW_CHARS + MASK_MARGIN)).slice(0, MAX_RAW_CHARS);
+
 const MASKED_FIELDS = new Set(["amountEur", "feeEur", "quantityText"]);
 
 /** An example keeps its shape (dates, types, number formats) but not its figures or payee. */
@@ -268,8 +273,8 @@ export const suggestRows = async (
             problems: asked.map((p, id) => ({
               id,
               line: p.line,
-              raw: maskAccountNumbers(p.raw.slice(0, MAX_RAW_CHARS)),
-              message: maskAccountNumbers(p.message.slice(0, MAX_RAW_CHARS)),
+              raw: cutAndMasked(p.raw),
+              message: cutAndMasked(p.message),
             })),
           }),
         },

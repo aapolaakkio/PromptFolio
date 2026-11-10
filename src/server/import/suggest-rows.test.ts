@@ -1,7 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { ChatClient, ModelReply, TurnParams } from "../chat/runner.ts";
-import { MAX_SUGGESTED_ROWS, suggestRows, type SuggestProblem } from "./suggest-rows.ts";
+import {
+  cutAndMasked,
+  MAX_SUGGESTED_ROWS,
+  suggestRows,
+  type SuggestProblem,
+} from "./suggest-rows.ts";
 
 const scripted = (text: string): ChatClient & { asked: TurnParams[] } => {
   const asked: TurnParams[] = [];
@@ -353,4 +358,11 @@ describe("keys and privacy", () => {
     expect(warn).toHaveBeenCalledWith("Row suggestions failed:", "Error");
     warn.mockRestore();
   });
+});
+
+test("an account number that straddles the length limit is not sent as a harmless-looking fragment", () => {
+  const cut = cutAndMasked(`${"a".repeat(996)} FI21 1234 5600 0007 85 loppu`);
+
+  expect(cut).not.toMatch(/\d/);
+  expect(cut.length).toBeLessThanOrEqual(1000);
 });
