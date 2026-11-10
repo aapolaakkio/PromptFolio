@@ -230,10 +230,9 @@ const checked = (kind: Kind, fields: Readonly<Record<string, string | null>>, ra
   return kept;
 };
 
-const MASK_MARGIN = 64;
-/** Cut with a margin, masked, then cut to length: a number cut in half at the limit would otherwise pass as a short, harmless one. */
+/** Masked whole, then cut: cutting first can split an account number into a fragment short enough to pass. The masker reads a line in linear time (see its timing test), so the whole row is affordable. */
 export const cutAndMasked = (text: string): string =>
-  maskAccountNumbers(text.slice(0, MAX_RAW_CHARS + MASK_MARGIN)).slice(0, MAX_RAW_CHARS);
+  maskAccountNumbers(text).slice(0, MAX_RAW_CHARS);
 
 const MASKED_FIELDS = new Set(["amountEur", "feeEur", "quantityText"]);
 

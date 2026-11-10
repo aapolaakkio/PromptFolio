@@ -366,3 +366,10 @@ test("an account number that straddles the length limit is not sent as a harmles
   expect(cut).not.toMatch(/\d/);
   expect(cut.length).toBeLessThanOrEqual(1000);
 });
+
+test("masks that shorten the text do not pull a later half-number inside the limit", () => {
+  const ibans = "FI21 1234 5600 0007 85 ".repeat(60);
+  const cut = cutAndMasked(`${ibans}${"a".repeat(1100 - ibans.length)}123456789012`);
+
+  expect(cut).not.toMatch(/\d/);
+});
