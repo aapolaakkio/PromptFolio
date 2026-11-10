@@ -400,6 +400,41 @@ export const monthlyPlan = sqliteTable(
   ],
 );
 
+/** A liability the owner tracks by hand: a student loan or a credit card. Rate is in basis points when known. */
+export const debts = sqliteTable("debts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["student_loan", "credit_card"] }).notNull(),
+  interestRateBp: integer("interest_rate_bp"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+/** What a debt owed on one day, in euro minor units, typed by hand or read from an import. */
+export const debtBalances = sqliteTable(
+  "debt_balances",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    debtId: integer("debt_id")
+      .notNull()
+      .references(() => debts.id, { onDelete: "cascade" }),
+    asOf: text("as_of").notNull(),
+    owedMinor: integer("owed_minor").notNull(),
+    source: text("source", { enum: ["import", "manual"] })
+      .notNull()
+      .default("manual"),
+    importId: integer("import_id").references(() => imports.id),
+  },
+  (t) => [
+    unique().on(t.debtId, t.asOf),
+    check("debt_balances_owed_non_negative", sql`${t.owedMinor} >= 0`),
+  ],
+);
+
 /** The owner's own expected yearly growth for an instrument, replacing the one measured from prices. */
 export const forecastRates = sqliteTable(
   "forecast_rates",
