@@ -318,3 +318,38 @@ export const SpendingRuleRemove = z
     expectSource: RuleSource.optional(),
   })
   .strict();
+
+const MAX_RATE_BP = 10_000;
+const DECIMAL_TWO = /^\d+([.,]\d{1,2})?$/;
+
+/** A debt the owner tracks by hand; the rate is a decimal percent, 0 to 100, stored as basis points. */
+export const DebtInput = z
+  .object({
+    name: z.string().trim().min(1, "Name is missing").max(80, "Name is too long"),
+    kind: z.enum(["student_loan", "credit_card"]),
+    interestRatePct: z
+      .string()
+      .refine((text) => DECIMAL_TWO.test(text), "Rate in the format 4.25")
+      .refine(
+        (text) => !DECIMAL_TWO.test(text) || toBasisPoints(text) <= MAX_RATE_BP,
+        "The rate must be at most 100",
+      )
+      .optional(),
+  })
+  .strict();
+
+/** What a debt stood at on a day; zero is allowed, a paid-off card. */
+export const DebtBalanceInput = z
+  .object({
+    debtId: z.number().int().positive(),
+    asOf: IsoDateSchema.refine(isRealCalendarDate, "The date is not a real calendar date"),
+    owedEur: z.string().regex(DECIMAL_TWO, "Amount in the format 1234.56"),
+  })
+  .strict();
+
+export const DebtBalanceRemoveInput = z
+  .object({
+    debtId: z.number().int().positive(),
+    asOf: IsoDateSchema.refine(isRealCalendarDate, "The date is not a real calendar date"),
+  })
+  .strict();
