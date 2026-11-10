@@ -15,3 +15,19 @@ for (const run of ["first", "second"]) {
     await expect(page.getByRole("heading", { name: "Student loan", level: 2 })).toHaveCount(1);
   });
 }
+
+// An expected failure: the guard must catch the call nobody scripted. If it stops catching, this test passes and Playwright reports it.
+test("a call no test scripted fails the test", async ({
+  page,
+  user: _user,
+  app,
+  claude: _claude,
+}) => {
+  test.fail();
+
+  await page.goto("/chat");
+  await page.getByLabel("Question").fill("Hello");
+  await page.getByRole("button", { name: "Ask" }).click();
+
+  await expect.poll(() => app.upstream.unexpected.length).toBeGreaterThan(0);
+});

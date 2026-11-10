@@ -12,11 +12,15 @@ const OWNER = {
 const FIXTURE = resolve("src/server/import/fixtures/nordnet-sample.csv");
 
 /** Empty instance to holdings through the pages. The fixture is read as bytes: it is UTF-16LE, and re-encoding breaks broker sniffing. */
-// Waits for the scripted Claude stand-in (plan task 2): every broker file is read by a recipe Claude writes, so Preview needs an answer.
-test.fixme("first run: an owner signs up, opens an account, imports a Nordnet export and sees the holdings", async ({
+test("first run: an owner signs up, opens an account, imports a Nordnet export and sees the holdings", async ({
   page,
   freshApp,
+  freshClaude: claude,
 }) => {
+  // Each Preview of the sample asks Claude about its corporate-action rows (none are proposed here); only the first asks for the recipe, the second finds it stored.
+  claude.replyRecipe("nordnet");
+  claude.replyJson({ actions: [] });
+  claude.replyJson({ actions: [] });
   await page.goto(`${freshApp.baseURL}/login`);
 
   await page.getByLabel("Name", { exact: true }).fill(OWNER.name);

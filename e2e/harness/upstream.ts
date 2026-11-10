@@ -12,6 +12,8 @@ export type Upstream = {
   /** Calls no handler answered; a test that leaves one here reached for the network unscripted. */
   readonly unexpected: readonly string[];
   on(host: string, handler: Handler): void;
+  /** For a stand-in that answers a call it considers a test mistake: the answer goes out, and the test still fails. */
+  flag(description: string): void;
   reset(): void;
   stop(): Promise<void>;
 };
@@ -49,6 +51,7 @@ export const startUpstream = async (): Promise<Upstream> => {
     calls,
     unexpected,
     on: (host, handler) => void handlers.set(host, handler),
+    flag: (description) => void unexpected.push(description),
     reset: () => {
       calls.length = 0;
       unexpected.length = 0;

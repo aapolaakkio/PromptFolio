@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test as base } from "@playwright/test";
 
+import { installClaude, type Claude } from "./claude.ts";
 import { startServer, type AppServer } from "./server.ts";
 import { startUpstream, type Upstream } from "./upstream.ts";
 
@@ -13,6 +14,10 @@ type TestFixtures = {
   user: TestUser;
   /** A server and empty database of this test alone, with no user yet: for the first-run form. */
   freshApp: App;
+  /** Scripted Claude (and a 404 Yahoo): replies are a queue served in order; one left unasked fails the test. */
+  claude: Claude;
+  /** The same for `freshApp`, which has an upstream of its own; its unscripted calls fail the test too. */
+  freshClaude: Claude;
   upstreamGuard: void;
 };
 type WorkerFixtures = { app: App };
@@ -78,6 +83,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     },
     { timeout: 120_000 },
   ],
+
+  claude: async ({ app, upstreamGuard: _guard }, use) => {
+    const claude = installClaude(app.upstream);
+    await use(claude);
+    expect(claude.pending, "replies the test queued and the app never asked for").toBe(0);
+  },
+
+  freshClaude: async ({ freshApp }, use) => {
+    const claude = installClaude(freshApp.upstream);
+    await use(claude);
+    expect(freshApp.upstream.unexpected, "outbound calls the test did not script").toEqual([]);
+    expect(claude.pending, "replies the test queued and the app never asked for").toBe(0);
+  },
 
   upstreamGuard: [
     async ({ app }, use) => {
