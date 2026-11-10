@@ -1,6 +1,14 @@
 import { and, asc, eq, gte, lte } from "drizzle-orm";
 
-import { formatMoney, toEur, type Currency } from "../../core/money.ts";
+import {
+  addMoney,
+  EUR,
+  formatMoney,
+  toEur,
+  zeroMoney,
+  type Currency,
+  type Money,
+} from "../../core/money.ts";
 import type { IsoDate } from "../../core/types.ts";
 import { prices } from "../db/schema.ts";
 import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
@@ -178,6 +186,69 @@ const priceSeries = async (
   return { label: `${instrument.name} price`, unit: "EUR", points: inEur };
 };
 
+const SIDE = {
+  buys: { type: "BUY", label: "Purchases" },
+  sells: { type: "SELL", label: "Sales" },
+} as const;
+
+/** Every month or year from `from` to `to`, so two series of one chart line up bar for bar. */
+const periodsBetween = (from: string, to: string, per: "month" | "year"): string[] => {
+  const periods: string[] = [];
+  const cursor = new Date(`${from.slice(0, 7)}-01T00:00:00Z`);
+  const size = per === "year" ? 4 : 7;
+  while (cursor.toISOString().slice(0, size) <= to.slice(0, size)) {
+    periods.push(cursor.toISOString().slice(0, size));
+    if (per === "year") cursor.setUTCFullYear(cursor.getUTCFullYear() + 1);
+    else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return periods;
+};
+
+/** Cash paid for purchases or received from sales (fees included, as booked), summed per month or year. */
+const tradesSeries = async (
+  db: Db,
+  userId: string,
+  ref: Extract<SeriesRef, { source: "trades" }>,
+  on: IsoDate,
+): Promise<ResolvedSeries> => {
+  const portfolio = await loadPortfolio(db, userId);
+  const trades = portfolio.txns.filter(
+    (txn) =>
+      (txn.type === "BUY" || txn.type === "SELL") &&
+      txn.instrumentId !== null &&
+      txn.tradeDate <= on,
+  );
+  const instrument = portfolio.instruments.find((row) => row.id === ref.instrumentId);
+  // The registry is household-shared: only an instrument this user's own ledger references.
+  if (
+    ref.instrumentId !== undefined &&
+    (instrument === undefined || !trades.some((txn) => txn.instrumentId === ref.instrumentId))
+  ) {
+    throw new Error("Instrument not found. Use an id from get_instruments");
+  }
+  // The first trade of either side, so buys and sales of one chart share their periods.
+  const first = trades.reduce((min, txn) => (txn.tradeDate < min ? txn.tradeDate : min), on);
+  const from = rangeStart(ref.range, on) ?? first;
+  const size = ref.per === "year" ? 4 : 7;
+  const sums = new Map<string, Money>();
+  for (const txn of trades) {
+    if (txn.type !== SIDE[ref.side].type || txn.tradeDate < from) continue;
+    if (ref.instrumentId !== undefined && txn.instrumentId !== ref.instrumentId) continue;
+    const eur = toEur(txn.amount, txn.fxRateEur);
+    const paid = eur.minor < 0n ? { ...eur, minor: -eur.minor } : eur;
+    const key = txn.tradeDate.slice(0, size);
+    sums.set(key, addMoney(sums.get(key) ?? zeroMoney(EUR), paid));
+  }
+  return {
+    label: `${SIDE[ref.side].label} per ${ref.per}${instrument === undefined ? "" : `, ${instrument.name}`}`,
+    unit: "EUR",
+    points: periodsBetween(from, on, ref.per).map((period) => ({
+      x: period,
+      y: Number(formatMoney(sums.get(period) ?? zeroMoney(EUR))),
+    })),
+  };
+};
+
 /** One reference as app-computed numbers for the caller; ids are checked against the caller's own data. */
 export const resolveSeries = async (
   db: Db,
@@ -206,6 +277,8 @@ export const resolveSeries = async (
       return spendingSeries(db, userId, ref, on);
     case "holding-price":
       return priceSeries(db, userId, ref, on);
+    case "trades":
+      return tradesSeries(db, userId, ref, on);
     case "allocation":
       return allocationSeries(db, userId, ref.dimension, unit, on);
   }

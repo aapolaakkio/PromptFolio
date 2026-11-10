@@ -22,7 +22,7 @@ const STACK_LOG = "Stacked series are drawn on a linear scale.";
 const BOUNDS_WIDENED =
   "The requested y-axis bounds would hide some values, so the chart shows the full range.";
 /** Sources whose points are amounts per month, which can be summed; the others are levels. */
-const FLOW_SOURCES: ReadonlySet<string> = new Set(["spending-by-month"]);
+const FLOW_SOURCES: ReadonlySet<string> = new Set(["spending-by-month", "trades"]);
 
 type Shown = ResolvedSeries & { readonly axis: "left" | "right" };
 
@@ -61,13 +61,20 @@ const checkRefs = (spec: ChartSpec): void => {
   spec.series.forEach((ref, index) => {
     if (ref.transform === "cumulative" && !FLOW_SOURCES.has(ref.source)) {
       throw new Error(
-        `Series ${index + 1}: cumulative sums amounts per month, so it is only for spending-by-month; ${ref.source} is already a level`,
+        `Series ${index + 1}: cumulative sums amounts per month, so it is only for spending-by-month and trades; ${ref.source} is already a level`,
       );
     }
   });
   const categories = spec.series.filter((ref) => ref.source === "allocation").length;
   if (categories > 0 && categories < spec.series.length) {
     throw new Error("Allocation is by category, not time; chart it apart from time series");
+  }
+  // A year is a label ("2024"), not a point on the time line the other sources share.
+  const yearly = spec.series.filter((ref) => ref.source === "trades" && ref.per === "year").length;
+  if (yearly > 0 && yearly < spec.series.length) {
+    throw new Error(
+      'Trades per year cannot share a chart with other series; use per "month" beside time series, or chart the years apart',
+    );
   }
   if (spec.band !== undefined) {
     if (spec.yUnit !== "EUR") throw new Error("A forecast band is in euros: use yUnit EUR");
@@ -126,13 +133,15 @@ export const buildChartTool = (db: Db, userId: string, turn: TurnState): ChartTo
     `series (1-${MAX_CHART_SERIES}), each a source plus optional style: ` +
     '{source:"forecast", scenarioId (from run_forecast in this answer), path: expected|low|high|contributed, holdingId?}, ' +
     '{source:"value-series", range}, {source:"spending-by-month", categoryId? (e.g. groceries; none = all spending), months 1-120}, ' +
+    '{source:"trades", side: buys|sells, per: month|year, range, instrumentId?} (euros paid for purchases or received from sales per period, fees included; ' +
+    "give buys and sells the same stack id for a stacked bar, or one series per instrumentId), " +
     '{source:"holding-price", instrumentId, range} (prices in euros), {source:"allocation", dimension: kind|currency|account|instrument} ' +
     "(EUR values, or % weights when yUnit is %). range: 3m, 6m, 1y, 3y, 5y, 10y or max. " +
     "Series style: kind line|area|bar|scatter|step (mix them in one chart), label (legend, ≤60), " +
     "color (palette slot 1-8 or a hex like #e34948), width 1-6, dash solid|dashed|dotted, opacity 0.1-1, " +
     "fillOpacity 0-1, curve linear|smooth|step, points (markers), axis left|right (right for a second unit), " +
     "stack (series sharing an id stack), transform none|cumulative|percent-change-from-start|index-100 " +
-    "(the app computes it; cumulative only for spending-by-month; percent change is in %, index-100 in index). " +
+    "(the app computes it; cumulative only for spending-by-month and trades; percent change is in %, index-100 in index). " +
     "yMin/yMax may widen the axis but never hide a value. Allocation cannot share a chart with time series. " +
     "Chart: title (≤120), subtitle, kind (default series kind: line|bar|area|stacked-bar), yUnit of the left axis " +
     "(EUR, %, count or index; must match its series), yScale linear|log, yMin, yMax, yFormat EUR|compact-EUR|%|number, " +
