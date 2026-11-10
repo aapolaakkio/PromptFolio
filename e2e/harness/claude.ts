@@ -6,6 +6,8 @@ import { anthropicStream } from "../../src/server/chat/anthropic-stream-fixture.
 import { NORDNET_TABLE_RECIPE } from "../../src/server/import/recipe/broker-reference.ts";
 import { TABLE_HOLDINGS_RECIPE } from "../../src/server/import/recipe/holdings-reference.ts";
 import { OP_BANK_CSV_RECIPE } from "../../src/server/import/recipe/op-csv-reference.ts";
+import { OP_STATEMENT_RECIPE } from "../../src/server/import/recipe/op-reference.ts";
+import { VERIFY_TOOL_NAME } from "../../src/server/import/recipe/verify-tool.ts";
 import type { Upstream, UpstreamCall } from "./upstream.ts";
 
 type Json = z.infer<ReturnType<typeof z.json>>;
@@ -26,8 +28,8 @@ export type Claude = {
   replyError(status: number): void;
   /** A structured-output answer: the model's text is this value as JSON. */
   replyJson(value: Json): void;
-  /** The recipe that reads `nordnet-sample.csv`, `op-bank-sample.csv` or a pasted holdings table (tab-separated, headed Nimi, Valuutta, Määrä, Arvo EUR). */
-  replyRecipe(kind: "nordnet" | "op-csv" | "holdings-table"): void;
+  /** The recipe that reads `nordnet-sample.csv`, `op-bank-sample.csv`, `op-statement-sample.pdf` (a verify_recipe tool call: the PDF reader proposes through a tool) or a pasted holdings table (tab-separated, headed Nimi, Valuutta, Määrä, Arvo EUR). */
+  replyRecipe(kind: "nordnet" | "op-csv" | "op-pdf" | "holdings-table"): void;
   /** The weekly note on the Dashboard; without this the Dashboard's call gets a 400 and the note is left out. */
   replySummary(text: string): void;
   /** Calls answered from a queue, in order. A Dashboard summary call appears only when `replySummary` queued it; the default 400 for an unqueued one is not listed. */
@@ -44,7 +46,7 @@ export const YAHOO_HOSTS = [
   "fc.yahoo.com",
 ] as const;
 
-const RECIPES = {
+const JSON_RECIPES = {
   nordnet: NORDNET_TABLE_RECIPE,
   "op-csv": OP_BANK_CSV_RECIPE,
   "holdings-table": TABLE_HOLDINGS_RECIPE,
@@ -155,7 +157,18 @@ export const installClaude = (upstream: Upstream): Claude => {
         ),
       ),
     replyJson: (value) => void queue.push(jsonStream(value)),
-    replyRecipe: (kind) => void queue.push(jsonStream(RECIPES[kind])),
+    replyRecipe: (kind) =>
+      void queue.push(
+        kind === "op-pdf"
+          ? anthropicStream("", [
+              {
+                id: `toolu_${queue.length + 1}`,
+                name: VERIFY_TOOL_NAME,
+                input: { recipe: OP_STATEMENT_RECIPE },
+              },
+            ])
+          : jsonStream(JSON_RECIPES[kind]),
+      ),
     replySummary: (text) => void summaries.push(jsonStream({ text })),
     requests,
     get pending() {
