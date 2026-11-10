@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { anthropicStream } from "../../src/server/chat/anthropic-stream-fixture.ts";
 import { NORDNET_TABLE_RECIPE } from "../../src/server/import/recipe/broker-reference.ts";
+import { TABLE_HOLDINGS_RECIPE } from "../../src/server/import/recipe/holdings-reference.ts";
 import { OP_BANK_CSV_RECIPE } from "../../src/server/import/recipe/op-csv-reference.ts";
 import type { Upstream, UpstreamCall } from "./upstream.ts";
 
@@ -21,8 +22,8 @@ export type Claude = {
   replyWithTool(name: string, input: Json): void;
   /** A structured-output answer: the model's text is this value as JSON. */
   replyJson(value: Json): void;
-  /** The recipe that reads `nordnet-sample.csv` or `op-bank-sample.csv`. */
-  replyRecipe(kind: "nordnet" | "op-csv"): void;
+  /** The recipe that reads `nordnet-sample.csv`, `op-bank-sample.csv` or a pasted holdings table (tab-separated, headed Nimi, Valuutta, Määrä, Arvo EUR). */
+  replyRecipe(kind: "nordnet" | "op-csv" | "holdings-table"): void;
   /** The weekly note on the Dashboard; without this the Dashboard's call gets a 400 and the note is left out. */
   replySummary(text: string): void;
   /** Calls answered from a queue, in order. A Dashboard summary call appears only when `replySummary` queued it; the default 400 for an unqueued one is not listed. */
@@ -39,7 +40,11 @@ export const YAHOO_HOSTS = [
   "fc.yahoo.com",
 ] as const;
 
-const RECIPES = { nordnet: NORDNET_TABLE_RECIPE, "op-csv": OP_BANK_CSV_RECIPE } as const;
+const RECIPES = {
+  nordnet: NORDNET_TABLE_RECIPE,
+  "op-csv": OP_BANK_CSV_RECIPE,
+  "holdings-table": TABLE_HOLDINGS_RECIPE,
+} as const;
 
 const SUMMARY_MARKER = "weekly note about their portfolio";
 // 400 is not retried by the SDK; `x-should-retry` stops the retry of the 500 as well.
