@@ -14,6 +14,8 @@ const CANDIDATE = new RegExp(
     String.raw`(?<!\d)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?![A-Za-z0-9])`,
     String.raw`[\w.+-]+@[\w-]+(?:\.[\w-]+)+`,
     String.raw`(?:\d[ -]?){0,6}[*•]{2,}(?:[ -]?[*•]+)*[ -]?\d{2,4}`,
+    // Nine digits or more is never an amount here: masked even between the commas of a CSV row.
+    String.raw`(?<!\d)\+?\d(?:[ \u00a0_-]?\d){8,}`,
     String.raw`(?<!\d|\d[.,])\+?\d(?:[  _-]?\d){5,}(?!\d|[.,]\d)`,
   ].join("|"),
   "g",
