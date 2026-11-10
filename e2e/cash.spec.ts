@@ -3,7 +3,7 @@ import { createBankAccount, importOpCsv } from "./harness/flows.ts";
 
 test("a bank account is created from Cash and selected", async ({ page, user: _user }) => {
   await page.goto("/cash");
-  await expect(page.getByText("No bank accounts yet.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "+ New bank account" })).toBeVisible();
 
   await createBankAccount(page, "OP Current");
 
@@ -25,7 +25,6 @@ test("the OP CSV imports 5 rows and Cash shows the balance they add up to", asyn
   const row = page.getByRole("row", { name: /^OP Current EUR/ });
   await expect(row.getByRole("cell", { name: "1660.29", exact: true })).toBeVisible();
   await expect(row.getByRole("cell", { name: "€1,660.29" })).toBeVisible();
-  await expect(page.getByText("€1,660.29").first()).toBeVisible();
 });
 
 test("a manual deposit is added and removed", async ({ page, user: _user }) => {

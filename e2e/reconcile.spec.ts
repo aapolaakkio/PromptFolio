@@ -117,13 +117,13 @@ test("a statement is deleted after the confirm", async ({ page, user: _user, cla
   await saveByHand(page, LEDGER);
   await expect(page.getByText("All 4 rows match on 31/12/2025.")).toBeVisible();
 
-  page.once("dialog", (dialog) => {
-    expect(dialog.message()).toBe(
-      "Delete this statement? Adjustments made from it stay in effect.",
-    );
-    void dialog.dismiss();
-  });
-  await page.getByRole("button", { name: "Delete statement" }).click();
+  const asked = page.waitForEvent("dialog");
+  // The click only returns once the dialog is handled: start it, read the dialog, then settle both.
+  const clicked = page.getByRole("button", { name: "Delete statement" }).click();
+  const dialog = await asked;
+  expect(dialog.message()).toBe("Delete this statement? Adjustments made from it stay in effect.");
+  await dialog.dismiss();
+  await clicked;
   await expect(page.getByText("All 4 rows match on 31/12/2025.")).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.accept());

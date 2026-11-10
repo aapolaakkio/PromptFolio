@@ -16,15 +16,21 @@ test("a second visit in the same week reads the stored note and makes no call", 
   page,
   user: _user,
   claude,
+  app,
 }) => {
+  // The note is cached per ISO week (Helsinki): a run straddling Monday 00:00 would recompute.
+  const claudeCalls = () => app.upstream.calls.filter((call) => call.host === "api.anthropic.com");
   claude.replySummary(NOTE);
   await page.goto("/");
   await expect(page.getByText(NOTE)).toBeVisible();
   expect(claude.requests).toHaveLength(1);
+  expect(claudeCalls()).toHaveLength(1);
 
   await page.goto("/");
   await expect(page.getByText(NOTE)).toBeVisible();
   expect(claude.requests).toHaveLength(1);
+  // An unqueued call gets a silent 400 that `claude.requests` leaves out: count the host's calls too.
+  expect(claudeCalls()).toHaveLength(1);
 });
 
 test("a note with a number that is not in the facts is refused and the facts are shown instead", async ({

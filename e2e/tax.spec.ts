@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 
+import type { Page } from "@playwright/test";
+
+import type { Claude } from "./harness/claude.ts";
 import { importNordnet, NORDNET_FIXTURE, nordnetFile } from "./harness/flows.ts";
 import { expect, test } from "./harness/test.ts";
 
@@ -97,10 +100,8 @@ const sampleWithSales = () => {
   return nordnetFile(Buffer.from([...body, ...extra].join(separator) + separator, "utf16le"));
 };
 
-const importWithSales = (
-  page: Parameters<typeof importNordnet>[0],
-  claude: Parameters<typeof importNordnet>[1],
-) => importNordnet(page, claude, { file: sampleWithSales(), transactions: 13, swapRows: false });
+const importWithSales = (page: Page, claude: Claude) =>
+  importNordnet(page, claude, { file: sampleWithSales(), transactions: 13, swapRows: false });
 
 test("a tax year shows each sale under the method that gave the lower gain, with the other method's figure beside it", async ({
   page,

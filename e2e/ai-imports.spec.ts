@@ -82,6 +82,7 @@ test("a file the model cannot place is left for the owner", async ({
   claude,
 }) => {
   await createBrokerAccount(page, "Nordnet");
+  await page.goto("/imports");
   claude.replyJson({
     files: [{ index: 0, kind: "unknown", accountId: null, reason: "A shopping list" }],
   });
@@ -99,6 +100,7 @@ test("a file the model cannot place is left for the owner", async ({
   await expect(page.getByLabel("Account for groceries.txt")).toHaveValue("");
   // Nothing is offered for the file until the owner chooses what it is.
   await expect(page.getByRole("heading", { name: /not recognised ·/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Preview" })).toBeDisabled();
 });
 
 test("an OP PDF statement previews its rows and matches the closing balance", async ({
@@ -123,6 +125,7 @@ test("an OP PDF statement previews its rows and matches the closing balance", as
   await expect(page.getByText(/^Bank statement .*balance/)).toBeVisible();
   await expect(page.getByText("The rows match the closing balance.")).toBeVisible();
   await expect(page.getByRole("cell", { name: "K-MARKET ESIMERKKI" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "OMA TALLETUS" })).toBeVisible();
 
   await page.getByRole("button", { name: "Import", exact: true }).click();
   await expect(page.getByText("2 new transactions, 0 already imported.")).toBeVisible();
@@ -161,8 +164,12 @@ test("a new bank layout asks Claude for a recipe and previews the rows it reads"
   await page.getByRole("button", { name: "Preview" }).click();
 
   await expect(page.getByRole("button", { name: "Import", exact: true })).toBeEnabled();
-  await expect(page.getByRole("cell", { name: "Harbour Bakery" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "Lantern Works Ltd" })).toBeVisible();
+  // Debit and Credit are two columns: the point of the recipe is that they come out signed.
+  const rowOf = (payee: string) =>
+    page.getByRole("row").filter({ has: page.getByRole("cell", { name: payee }) });
+  // The amount is the row's second text box (after the date).
+  await expect(rowOf("Harbour Bakery").getByRole("textbox").nth(1)).toHaveValue("-4.50");
+  await expect(rowOf("Lantern Works Ltd").getByRole("textbox").nth(1)).toHaveValue("1200.00");
   await expect(page.getByRole("cell", { name: "Pinewood Books" })).toBeVisible();
   // One call only: the recipe was accepted on its first answer.
   expect(claude.requests).toHaveLength(1);

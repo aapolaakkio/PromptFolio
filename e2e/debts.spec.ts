@@ -97,6 +97,7 @@ test("a balance dated in the future cannot be submitted from the form", async ({
   ).toBe(true);
   await expect(loan).toContainText("No balance yet");
   await expect(total(page)).toContainText("€0.00");
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("the server refuses a balance dated in the future with its own message", async ({

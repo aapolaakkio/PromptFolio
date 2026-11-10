@@ -44,7 +44,10 @@ test("an answer streams into the transcript with the question above it", async (
   await expect(page.getByText("Your portfolio is empty so far.")).toBeVisible();
   await expect(page.getByLabel("Question")).toHaveValue("");
   await expect(
-    page.getByRole("listitem").filter({ hasText: "What do I own?" }).first(),
+    page
+      .getByRole("listitem")
+      .filter({ hasText: /^What do I own\?$/ })
+      .filter({ hasNot: page.getByRole("button") }),
   ).toBeVisible();
 });
 
@@ -63,6 +66,9 @@ test("a tool call shows what was fetched, then the answer", async ({
   await expect(page.getByText("You hold nothing yet.")).toBeVisible();
   await expect(page.getByText("Fetched: holdings")).toBeHidden();
   expect(claude.requests).toHaveLength(2);
+  expect(claude.requests[0]?.lastUser).toContain("What do I hold?");
+  // The harness JSON-stringifies non-text blocks: the second request carries the tool result.
+  expect(claude.requests[1]?.lastUser).toContain("tool_result");
 });
 
 test("Confirm on a proposal card saves the rule and Spending shows it", async ({

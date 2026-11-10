@@ -149,7 +149,11 @@ export const createBankAccount = async (page: Page, name: string): Promise<void>
   await dialog.getByRole("combobox", { name: "Account kind" }).selectOption("bank");
   await dialog.getByRole("button", { name: "Create account" }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole("combobox", { name: "Bank account" })).toContainText(name);
+  const select = page.getByRole("combobox", { name: "Bank account" });
+  const created = await select
+    .getByRole("option", { name: new RegExp(`^${name} ·`) })
+    .getAttribute("value");
+  await expect(select).toHaveValue(created ?? "");
 };
 
 export const opFile = (text: string = readFileSync(OP_FIXTURE, "utf8")): UploadFile => ({
