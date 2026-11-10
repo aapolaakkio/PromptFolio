@@ -26,7 +26,7 @@ export const getDebts = createServerFn()
 export const createDebt = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(DebtInput)
-  .handler(({ data, context }) => addDebt(db, context.userId, data));
+  .handler(({ data, context }) => readable(() => addDebt(db, context.userId, data)));
 
 export const deleteDebt = createServerFn({ method: "POST" })
   .middleware([authed])
