@@ -2,13 +2,11 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "./harness/test.ts";
 import type { Claude } from "./harness/claude.ts";
-import { createBankAccount, importNordnet, importOpCsv, opFile } from "./harness/flows.ts";
+import { createBankAccount, importNordnet, importOpCsv, opCsv, opRow } from "./harness/flows.ts";
 
-const HEADER =
-  '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"';
 const PAYEE = "ZZ TESTIKAUPPA";
-const STORE_ROW = `"2025-09-02";"2025-09-02";"-23,50";"162";"PKORTTIMAKSU";"${PAYEE}";"";"";"";"";"2025090200000001"`;
-const SALARY_ROW = `"2025-09-01";"2025-09-01";"1000,00";"162";"PALKKA";"ESIMERKKI OYJ";"";"";"";"";"2025090100000009"`;
+const STORE_ROW = opRow("2025-09-02", "-23,50", "PKORTTIMAKSU", PAYEE, "2025090200000001");
+const SALARY_ROW = opRow("2025-09-01", "1000,00", "PALKKA", "ESIMERKKI OYJ", "2025090100000009");
 
 const ask = async (page: Page, question: string): Promise<void> => {
   await page.getByLabel("Question").fill(question);
@@ -18,7 +16,7 @@ const ask = async (page: Page, question: string): Promise<void> => {
 /** A bank account whose one payee no rule knows: it shows as Other on Spending. */
 const importUncategorisedPayee = async (page: Page, claude: Claude): Promise<void> => {
   await createBankAccount(page, "OP Current");
-  const file = opFile([HEADER, SALARY_ROW, STORE_ROW].join("\n"));
+  const file = opCsv(SALARY_ROW, STORE_ROW);
   await importOpCsv(page, claude, { account: "OP Current", file, classifier: { rules: [] } });
 };
 

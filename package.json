@@ -14,7 +14,7 @@
     "db:migrate:local": "wrangler d1 migrations apply promptfolio --local",
     "test": "vitest run",
     "test:cov": "vitest run --coverage",
-    "typecheck": "pnpm run cf-typegen && tsc --noEmit",
+    "typecheck": "pnpm run cf-typegen && tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "lint": "oxlint --type-aware",
     "lint:fix": "oxlint --type-aware --fix --fix-suggestions",
     "fmt": "oxfmt src e2e '!src/web/routeTree.gen.ts'",

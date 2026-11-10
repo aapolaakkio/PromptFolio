@@ -162,6 +162,21 @@ export const opFile = (text: string = readFileSync(OP_FIXTURE, "utf8")): UploadF
   buffer: Buffer.from(text, "utf8"),
 });
 
+export const OP_HEADER =
+  '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"';
+
+/** One OP export row in the fixture's format. */
+export const opRow = (
+  date: string,
+  amount: string,
+  label: string,
+  payee: string,
+  id: string,
+): string => `"${date}";"${date}";"${amount}";"162";"${label}";"${payee}";"";"";"";"";"${id}"`;
+
+/** An OP export of the given rows under the real header. */
+export const opCsv = (...rows: string[]): UploadFile => opFile([OP_HEADER, ...rows].join("\n"));
+
 export type OpImportOptions = {
   /** The bank account to import into, by name. */
   readonly account: string;

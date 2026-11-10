@@ -46,8 +46,8 @@ test("the range buttons change what the value chart covers", async ({
   const ytd = page.getByRole("button", { name: "YTD" });
   const allTime = page.getByRole("button", { name: "All time" });
   await expect(ytd).toHaveAttribute("aria-pressed", "true");
-  // The sample's trades are all in 2025; the year so far starts after them.
-  await expect(chart).toContainText(new RegExp(`\\d{2}/\\d{2}/${new Date().getFullYear()}`));
+  // The sample's trades are all in 2025; the year so far starts after them. The legend shows the chart is drawn; no tick in the current year is assumed, as there may be none in the first days of January.
+  await expect(page.getByText("Value (incl. cash)")).toBeVisible();
   await expect(chart).not.toContainText("2025");
 
   await allTime.click();

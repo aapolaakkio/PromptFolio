@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import { importNordnet } from "./harness/flows.ts";
 import { expect, test } from "./harness/test.ts";
@@ -9,6 +9,17 @@ const cents = (text: string): number =>
   Math.round(Number(text.replace(/^[^€]*€/, "").replaceAll(",", "")) * 100);
 
 const PORTFOLIO = "€1,875.09";
+
+const PERCENT_TOLERANCE = 0.02;
+const EURO_TOLERANCE = 0.1;
+
+/** The last two cells of a drift row: the difference in percent and the euros to move, each within a tolerance of what is expected. */
+const expectDrift = async (row: Locator, percent: number, euros: number): Promise<void> => {
+  const cells = await row.getByRole("cell").allInnerTexts();
+  const [shown, moved] = cells.slice(-2).map((cell) => Number(cell.replace(/[^\d.-]/g, "")));
+  expect(Math.abs((shown ?? Number.NaN) - percent)).toBeLessThanOrEqual(PERCENT_TOLERANCE);
+  expect(Math.abs((moved ?? Number.NaN) - euros)).toBeLessThanOrEqual(EURO_TOLERANCE);
+};
 
 /** Types ETFs 60 % and Cash 40 % into the first-time editor (one row per held slice) and saves. */
 const saveTargets = async (page: Page): Promise<void> => {
@@ -39,15 +50,13 @@ test("targets are refused until they add up, then the drift table shows each sli
   await save.click();
 
   await expect(page.getByText(`Portfolio value ${PORTFOLIO}.`)).toBeVisible();
-  // ETFs hold 140.00 of 1,875.09 = 7.47 %; cash is the rest. The difference and the euros to move come from the rounded shares (52.53 % of the portfolio = 984.98), not from the exact ones (985.04); pinned as the app shows them today.
+  // ETFs hold 140.00 of 1,875.09 = 7.47 %; cash is the rest. The difference and the euros to move come from rounded shares (known app rounding bug: 984.98 shown, 985.04 exact), so those cells are checked within a tolerance and fixing the bug does not break the test.
   const etfs = page.getByRole("row", { name: /^ETFs 60\.00 %/ });
   await expect(etfs.getByRole("cell", { name: "7.47 %", exact: true })).toBeVisible();
-  await expect(etfs.getByRole("cell", { name: "-52.53 %", exact: true })).toBeVisible();
-  await expect(etfs.getByRole("cell", { name: "€984.98", exact: true })).toBeVisible();
+  await expectDrift(etfs, -52.53, 985);
   const cash = page.getByRole("row", { name: /^Cash 40\.00 %/ });
   await expect(cash.getByRole("cell", { name: "92.53 %", exact: true })).toBeVisible();
-  await expect(cash.getByRole("cell", { name: "52.53 %", exact: true })).toBeVisible();
-  await expect(cash.getByRole("cell", { name: "-€984.98", exact: true })).toBeVisible();
+  await expectDrift(cash, 52.53, -985);
   await expect(page.getByText("Without a target")).toHaveCount(0);
 
   await page.reload();

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { resolve } from "node:path";
 
@@ -9,6 +9,9 @@ const ROOT = resolve(import.meta.dirname, "../..");
 /** Inside Playwright's output folder: ignored by git, emptied at the start of each run, and nowhere near `.wrangler/` (the real database). */
 const STATE = resolve(ROOT, "test-results/e2e");
 const START_LIMIT_MS = 60_000;
+const KILL_AFTER_MS = 5_000;
+/** The owner's `.env` holds a real API key and telemetry posts to Cloudflare: neither is wanted in a test. */
+const QUIET_ENV = { WRANGLER_SEND_METRICS: "false" } as const;
 
 const freePort = (): Promise<number> =>
   new Promise((done) => {
@@ -46,11 +49,12 @@ const wranglerConfig = (baseURL: string, upstreamUrl: string): string =>
     },
   });
 
+/** Run from the state dir: wrangler looks for `.env` in its working directory, and the config's paths are absolute. */
 const wrangler = (dir: string, args: readonly string[]): void => {
   execFileSync(
     resolve(ROOT, "node_modules/.bin/wrangler"),
     ["d1", ...args, "--local", "-c", `${dir}/wrangler.jsonc`, "--persist-to", `${dir}/state`],
-    { cwd: ROOT, stdio: "pipe" },
+    { cwd: dir, env: { ...process.env, ...QUIET_ENV }, stdio: "pipe" },
   );
 };
 
@@ -69,6 +73,9 @@ export const startServer = async (upstreamUrl: string): Promise<AppServer> => {
   const port = await freePort();
   const baseURL = `http://localhost:${port}`;
   const dir = resolve(STATE, String(port));
+  // A restarted worker can be handed a port an earlier server used; its old database must not come back.
+  if (!dir.startsWith(`${STATE}/`)) throw new Error(`refusing to clear ${dir}`);
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/wrangler.jsonc`, wranglerConfig(baseURL, upstreamUrl));
   writeFileSync(`${dir}/seed.sql`, seedSql());
@@ -83,7 +90,7 @@ export const startServer = async (upstreamUrl: string): Promise<AppServer> => {
     ["dev", "--port", String(port), "--strictPort"],
     {
       cwd: ROOT,
-      env: { ...process.env, E2E_DIR: dir },
+      env: { ...process.env, ...QUIET_ENV, E2E_DIR: dir },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -95,8 +102,20 @@ export const startServer = async (upstreamUrl: string): Promise<AppServer> => {
   const stop = (): Promise<void> =>
     new Promise((done) => {
       if (child.exitCode !== null || child.pid === undefined) return done();
-      child.once("exit", () => done());
-      process.kill(-child.pid, "SIGTERM");
+      const pid = child.pid;
+      const killer = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // The group is already gone.
+        }
+        done();
+      }, KILL_AFTER_MS);
+      child.once("exit", () => {
+        clearTimeout(killer);
+        done();
+      });
+      process.kill(-pid, "SIGTERM");
     });
 
   const deadline = Date.now() + START_LIMIT_MS;

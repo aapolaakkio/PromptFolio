@@ -51,6 +51,11 @@ describe("installUpstreamOverride", () => {
     "http://10.0.0.1:1",
     "https://127.0.0.1:1",
     "nonsense",
+    "http://localhost:1@evil.example",
+    "http://127.0.0.1:80.evil.example",
+    "HTTP://LOCALHOST:1",
+    "http://[::1]:1",
+    "http://127.0.0.1:1/x",
   ])("leaves fetch alone for %s", (target) => {
     recording();
     const before = globalThis.fetch;

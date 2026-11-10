@@ -180,7 +180,11 @@ global `fetch` throws.
 
 The browser tests need Chromium once: `pnpm exec playwright install chromium`. Then `pnpm e2e`
 starts one dev server and one empty local database per Playwright worker, under
-`test-results/e2e/`. It never touches the real database in `.wrangler/` or your `.env`. Every call
+`test-results/e2e/`. It never touches the real database in `.wrangler/`, and Wrangler and Vite read no root `.env` (they run
+with the state dir as their `.env` location) and send no telemetry (`WRANGLER_SEND_METRICS=false`). One
+read remains: `@cloudflare/vite-plugin` loads the root `.env` for keys starting `CLOUDFLARE_` or
+`WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_` into the dev server's environment; nothing else gets
+through, and the test Worker's own bindings come from a generated config. Every call
 to Claude, Yahoo and the ECB goes to a local stand-in (`E2E_UPSTREAM`), and a call a test did not
 script fails it. Run one file with `pnpm e2e e2e/cash.spec.ts`, or one worker at a time with
 `pnpm e2e --workers 1`.

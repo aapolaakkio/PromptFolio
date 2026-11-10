@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
+import { nordnetFile } from "./harness/flows.ts";
 import { expect, test } from "./harness/test.ts";
 
 const OWNER = {
@@ -8,8 +6,6 @@ const OWNER = {
   email: "e2e@example.com",
   password: "correct horse battery staple",
 };
-
-const FIXTURE = resolve("src/server/import/fixtures/nordnet-sample.csv");
 
 /** Empty instance to holdings through the pages. The fixture is read as bytes: it is UTF-16LE, and re-encoding breaks broker sniffing. */
 test("first run: an owner signs up, opens an account, imports a Nordnet export and sees the holdings", async ({
@@ -42,11 +38,7 @@ test("first run: an owner signs up, opens an account, imports a Nordnet export a
   const account = page.getByRole("combobox", { name: "Account", exact: true });
   await expect(account).toHaveValue(/\d+/);
 
-  await page.getByLabel(/Broker CSV or PDF files/).setInputFiles({
-    name: "nordnet-sample.csv",
-    mimeType: "text/csv",
-    buffer: readFileSync(FIXTURE),
-  });
+  await page.getByLabel(/Broker CSV or PDF files/).setInputFiles(nordnetFile());
   await page.getByRole("button", { name: "Preview" }).click();
 
   // 13 rows; the fractional adjustment's cash-only twin is reported, not booked.
@@ -55,11 +47,7 @@ test("first run: an owner signs up, opens an account, imports a Nordnet export a
   await commit.click();
 
   // Every row is a duplicate: nothing is written twice.
-  await page.getByLabel(/Broker CSV or PDF files/).setInputFiles({
-    name: "nordnet-sample.csv",
-    mimeType: "text/csv",
-    buffer: readFileSync(FIXTURE),
-  });
+  await page.getByLabel(/Broker CSV or PDF files/).setInputFiles(nordnetFile());
   await page.getByRole("button", { name: "Preview" }).click();
   await page.getByRole("button", { name: /^Import 12 transactions$/ }).click();
   await expect(page.getByText("0 transactions imported, 12 skipped as duplicates")).toBeVisible();

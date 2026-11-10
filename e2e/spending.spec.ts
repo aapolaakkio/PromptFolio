@@ -1,20 +1,11 @@
 import type { Page } from "@playwright/test";
 
 import { expect, test } from "./harness/test.ts";
-import { createBankAccount, importOpCsv, opFile } from "./harness/flows.ts";
-
-const HEADER =
-  '"Kirjauspäivä";"Arvopäivä";"Määrä EUROA";"Laji";"Selitys";"Saaja/Maksaja";"Saajan tilinumero";"Saajan pankin BIC";"Viite";"Viesti";"Arkistointitunnus"';
-
-/** One OP export row in the fixture's format. */
-const opRow = (date: string, amount: string, label: string, payee: string, id: string): string =>
-  `"${date}";"${date}";"${amount}";"162";"${label}";"${payee}";"";"";"";"";"${id}"`;
+import { createBankAccount, importOpCsv, opCsv, opRow } from "./harness/flows.ts";
 
 /** The page draws a cash-flow diagram that needs income; every period used below holds some. */
 const salary = (id: string): string =>
   opRow("2025-09-01", "1000,00", "PALKKA", "ESIMERKKI OYJ", id);
-
-const opCsv = (...rows: string[]) => opFile([HEADER, ...rows].join("\n"));
 
 /** Fixed dates, never today's: the page's default range is the last year. */
 const showPeriod = async (page: Page, from: string, to: string): Promise<void> => {
