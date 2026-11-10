@@ -284,7 +284,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         count: matching.length,
         transactions: shown.map((txn) => ({
           date: txn.date,
-          text: txn.text,
+          text: maskAccountNumbers(txn.text),
           amountEur: txn.amountEur,
           category: txn.category,
           categoryLabel: txn.categoryLabel,

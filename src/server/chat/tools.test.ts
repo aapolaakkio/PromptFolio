@@ -810,6 +810,18 @@ describe("get_transaction_class", () => {
     expect(result.count).toBe(1);
     expect(result.transactions[0]?.text).toContain("LIDL");
   });
+
+  test("an account number in a row's text is masked", async () => {
+    const { tools, bankAccountId } = await seed();
+    await spend(bankAccountId, "TILISIIRTO — FI21 1234 5600 0007 85", -3_000, "2026-05-03");
+
+    const result = await toolNamed(tools, "get_transaction_class").run({
+      from: "2026-05-01",
+      to: "2026-05-31",
+    });
+
+    expect(JSON.stringify(result)).not.toContain("5600");
+  });
 });
 
 describe("get_spending_rules", () => {
