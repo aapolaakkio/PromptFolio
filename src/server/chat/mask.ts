@@ -5,21 +5,22 @@ const MIN_IBAN_DIGITS = 8;
 
 // Never a tab or line break, so a mask stays inside one cell of a file.
 const SEP = String.raw`[    _-]`;
-const DATE = String.raw`(?:19|20)\d{2}-(?:0[1-9]|1[0-2])(?:-[0-3]\d)?(?![\d-]|[.,]\d)`;
+// A whole date may be followed by a comma and a digit (the next CSV cell); a year-month may not, it would be an amount.
+const DATE = String.raw`(?:19|20)\d{2}-(?:0[1-9]|1[0-2])(?:-[0-3]\d(?![\d-])|(?![\d-]|[.,]\d))`;
 const EMAIL_CHAR = String.raw`\p{L}\p{N}_.+-`;
 
 /** One pass, leftmost first. No pattern has a repeat inside a repeat with an optional part: file lines are long and not ours. */
 const CANDIDATE = new RegExp(
   [
     String.raw`(?<isin>(?<![A-Za-z0-9])[A-Z]{2}[A-Z0-9]{9}\d(?![A-Za-z0-9]))`,
-    String.raw`(?<date>(?<!\d|\d[.,])${DATE})`,
+    String.raw`(?<date>(?<!\d)${DATE})`,
     // Groups of an IBAN or a card may stand up to three spaces apart, as PDF text often has them.
     String.raw`(?<iban>(?<![A-Za-z0-9])[A-Za-z]{2}\d{2}(?:(?:${SEP}{1,3}|\.)?[A-Za-z0-9]{4}){2,7}(?:${SEP}{0,3}[A-Za-z0-9]{1,4}|\.\d{1,4})?(?![A-Za-z0-9]))`,
     String.raw`(?<dotted>(?<!\d|\d[.,/])\d+(?:[./]\d+){2,}(?![./]?\d))`,
     // A Finnish personal identity code, an email address, a partly starred card number, a card in groups of four.
     String.raw`(?<!\d)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?![A-Za-z0-9])`,
     String.raw`(?<![${EMAIL_CHAR}])[${EMAIL_CHAR}]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+`,
-    String.raw`(?<![*•])(?:\d[ -]?){0,6}[*•]{2,}(?:[ -][*•]+)*[ -]?\d{2,4}`,
+    String.raw`(?<![*•]|[*•][ -])(?:\d[ -]?){0,6}[*•]{2,}(?:[ -][*•]+)*[ -]?\d{2,4}`,
     String.raw`(?<!\d)\d{4}(?:${SEP}{1,3}\d{4}){2,4}(?!\d)`,
     // Nine digits or more: masked even between the commas of a CSV row. Six to eight: unless it is the whole or fraction part of a decimal.
     String.raw`(?<long>(?<!\d)\+?\d(?:${SEP}?(?!${DATE})\d){8,})`,
@@ -56,18 +57,19 @@ const PLAIN_NUMBER = new RegExp(
 
 const digitCount = (text: string): number => text.replace(/\D/g, "").length;
 
-const masked = (text: string, hide: (found: string) => string): string =>
+const masked = (text: string, hide: (found: string) => string, typed = false): string =>
   text.replace(CANDIDATE, (match: string, ...found: (string | undefined)[]) => {
     const [isin, date, iban, dotted, long, short] = found;
     if (date !== undefined) return match;
     if ((long ?? short) !== undefined && PLAIN_NUMBER.test(match)) return match;
+    if (typed && short !== undefined && /^\d+$/.test(match)) return match;
     if (dotted !== undefined && (digitCount(match) < MIN_DOTTED_DIGITS || THOUSANDS.test(match))) {
       return match;
     }
     if (isin !== undefined) return hasIsinCheckDigit(match) ? match : hide(match);
     if (iban !== undefined && digitCount(match) < MIN_IBAN_DIGITS) {
       // IBAN-shaped words ("AB12 some word here"): keep them, but still mask what follows the prefix.
-      return match.slice(0, 4) + masked(match.slice(4), hide);
+      return match.slice(0, 4) + masked(match.slice(4), hide, typed);
     }
     return hide(match);
   });
@@ -78,7 +80,10 @@ const masked = (text: string, hide: (found: string) => string): string =>
  */
 export const maskAccountNumbers = (text: string): string => masked(text, () => MASK);
 
-const STAND_IN = /…|(?<!\p{L})x{3,}(?!\p{L})/u;
+/** What the owner typed in chat: a bare number of six to eight digits is a sum or a quantity they are asking about, so it stays; everything else is masked as usual. */
+export const maskTypedText = (text: string): string => masked(text, () => MASK, true);
+
+const STAND_IN = /…|(?<!\p{L})(?:x{3,}|x{2,}(?:[\s,.-]{1,3}x{2,})+)(?!\p{L})/u;
 
 /** True when text a model wrote carries a mask it was shown: saving it would store the mask in place of the real value. */
 export const hasStandIn = (text: string): boolean => STAND_IN.test(text);

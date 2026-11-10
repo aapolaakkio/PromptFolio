@@ -15,7 +15,7 @@ import {
 } from "./proposal-schema.ts";
 import { ChatChartSchema, StoredChartSchema } from "./chart-schema.ts";
 import { CONVERSATION_NOT_FOUND, TURN_RUNNING } from "./conversation-errors.ts";
-import { maskAccountNumbers } from "./mask.ts";
+import { maskAccountNumbers, maskTypedText } from "./mask.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
@@ -63,8 +63,10 @@ const ownedConversation = async (userId: string, id: number) => {
 /** Longer than any real turn (ten model rounds); a lock this old belongs to a turn whose worker died. */
 export const TURN_LOCK_MS = 3 * 60_000;
 
+type LockedConversation = { readonly id: number; readonly lockedAt: Date };
+
 /** One turn at a time, taken in one conditional UPDATE so two requests cannot both pass a check. */
-const takeTurnLock = async (userId: string, conversationId: number): Promise<void> => {
+const takeTurnLock = async (userId: string, conversationId: number): Promise<Date> => {
   const now = Date.now();
   const taken = await db
     .update(conversations)
@@ -82,13 +84,15 @@ const takeTurnLock = async (userId: string, conversationId: number): Promise<voi
     .returning({ id: conversations.id })
     .get();
   if (taken === undefined) throw new HttpError(409, TURN_RUNNING);
+  return new Date(now);
 };
 
-const releaseTurnLock = async (conversationId: number): Promise<void> => {
+/** Only the lock this turn took: a turn that outlived the limit must not clear the lock of the one that replaced it. */
+const releaseTurnLock = async ({ id, lockedAt }: LockedConversation): Promise<void> => {
   await db
     .update(conversations)
     .set({ turnStartedAt: null })
-    .where(eq(conversations.id, conversationId))
+    .where(and(eq(conversations.id, id), eq(conversations.turnStartedAt, lockedAt)))
     .run();
 };
 
@@ -130,7 +134,7 @@ const modelHistory = (rows: readonly Row[]) => {
   return rows.flatMap((row): { role: "user" | "assistant"; content: string }[] => {
     if (row.role === "user" || row.role === "assistant") {
       // What the owner typed may hold an account number; the stored text keeps it, the model does not get it.
-      const content = row.role === "user" ? maskAccountNumbers(row.content) : row.content;
+      const content = row.role === "user" ? maskTypedText(row.content) : row.content;
       return [{ role: row.role, content }];
     }
     if (row.role === "proposal") {
@@ -256,20 +260,22 @@ export const startTurn = async (
   // Resolved before anything is stored, so a foreign id refuses the turn without leaving a conversation behind.
   const where = context === undefined ? null : await pageLine(db, userId, context);
 
-  const conversation =
+  const createdAt = new Date();
+  const found =
     conversationId === undefined
       ? await db
           .insert(conversations)
-          .values({ userId, title: titleFrom(message), turnStartedAt: new Date() })
+          .values({ userId, title: titleFrom(message), turnStartedAt: createdAt })
           .returning()
           .get()
       : await ownedConversation(userId, conversationId);
-  if (conversation === undefined) throw new HttpError(500, "Creating the conversation failed");
-  if (conversationId !== undefined) await takeTurnLock(userId, conversation.id);
+  if (found === undefined) throw new HttpError(500, "Creating the conversation failed");
+  const lockedAt = conversationId === undefined ? createdAt : await takeTurnLock(userId, found.id);
+  const conversation = { id: found.id, lockedAt };
   try {
-    return await streamTurn(conversation.id, userId, { message, model, where, client }, signal);
+    return await streamTurn(conversation, userId, { message, model, where, client }, signal);
   } catch (cause) {
-    await releaseTurnLock(conversation.id);
+    await releaseTurnLock(conversation);
     throw cause;
   }
 };
@@ -283,12 +289,11 @@ type TurnInput = {
 
 /** Stores the question and streams the turn; the lock taken by `startTurn` is released whenever it ends. */
 const streamTurn = async (
-  conversationId: number,
+  conversation: LockedConversation,
   userId: string,
   { message, model, where, client }: TurnInput,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> => {
-  const conversation = { id: conversationId };
   // Stored first, so a mid-way failure still shows what was asked.
   await db
     .insert(chatMessages)
@@ -364,7 +369,7 @@ const streamTurn = async (
           send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {
-        await releaseTurnLock(conversation.id);
+        await releaseTurnLock(conversation);
         if (open) controller.close();
       }
     },

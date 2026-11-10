@@ -18,13 +18,13 @@ const contentsOf = (turn: TurnParams): string[] => turn.messages.map((message) =
 describe("hidingOwnerName", () => {
   test("the name becomes x characters of the same length, in any case and either order", () => {
     const hidden = hidingOwnerName(
-      params("Maksaja: VIRTANEN MATTI JUHANI", "Virtanen, Matti / matti virtanen"),
+      params("Maksaja: VIRTANEN MATTI JUHANI", "Virtanen, Matti / matti.virtanen"),
       "Matti Virtanen",
     );
 
     expect(contentsOf(hidden).slice(1)).toEqual([
       "Maksaja: xxxxxxxx xxxxx JUHANI",
-      "xxxxxxxx, xxxxx / xxxxx xxxxxxxx",
+      "xxxxxxxx, xxxxx / xxxxx.xxxxxxxx",
     ]);
   });
 

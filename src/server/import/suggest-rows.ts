@@ -268,8 +268,8 @@ export const suggestRows = async (
             problems: asked.map((p, id) => ({
               id,
               line: p.line,
-              raw: maskAccountNumbers(p.raw).slice(0, MAX_RAW_CHARS),
-              message: maskAccountNumbers(p.message).slice(0, MAX_RAW_CHARS),
+              raw: maskAccountNumbers(p.raw.slice(0, MAX_RAW_CHARS)),
+              message: maskAccountNumbers(p.message.slice(0, MAX_RAW_CHARS)),
             })),
           }),
         },

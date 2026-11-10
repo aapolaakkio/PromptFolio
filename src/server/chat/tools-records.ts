@@ -5,7 +5,7 @@ import { listAccounts } from "../accounts.ts";
 import { listCashEntries } from "../cash-entries.ts";
 import { conversations, imports } from "../db/schema.ts";
 import { listSnapshots, reconcileSnapshot } from "../snapshot/service.ts";
-import { maskAccountNumbers } from "./mask.ts";
+import { maskAccountNumbers, maskTypedText } from "./mask.ts";
 import type { ChatTool, Db, ToolResult } from "./tool-types.ts";
 
 const NoArgs = z.object({}).strict();
@@ -144,7 +144,7 @@ export const buildRecordTools = (db: Db, userId: string): ChatTool[] => [
       return {
         conversations: rows.map((row) => ({
           id: row.id,
-          title: row.title === null ? null : maskAccountNumbers(row.title),
+          title: row.title === null ? null : maskTypedText(row.title),
           date: row.createdAt.toISOString().slice(0, 10),
         })),
         truncated,

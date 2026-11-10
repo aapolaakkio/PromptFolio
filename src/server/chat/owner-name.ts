@@ -28,7 +28,7 @@ const namePattern = (name: string): RegExp | null => {
   const part = `(?:${parts.map(literal).join("|")})`;
   const [only] = parts;
   if (parts.length === 1 && (only?.match(/\p{L}/gu)?.length ?? 0) < MIN_LONE_LETTERS) return null;
-  const body = parts.length === 1 ? part : String.raw`${part}(?:[\s,]{1,3}${part})+`;
+  const body = parts.length === 1 ? part : String.raw`${part}(?:[\s,.-]{1,3}${part})+`;
   return new RegExp(String.raw`(?<!\p{L})${body}(?!\p{L})`, "giu");
 };
 

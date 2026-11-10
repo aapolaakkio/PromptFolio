@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { hasStandIn, maskAccountNumbers, maskForFileSample } from "./mask.ts";
+import { hasStandIn, maskAccountNumbers, maskForFileSample, maskTypedText } from "./mask.ts";
 
 describe("maskAccountNumbers", () => {
   test.each([
@@ -58,6 +58,8 @@ describe("maskAccountNumbers", () => {
     "100 2026-11-03",
     "20261103",
     "2024-2026",
+    "2024-03-01,12.50",
+    "12,50,2024-03-01,7",
     "1 234 567,89",
     "1.234.567,89",
     "12.03.2026",
@@ -97,10 +99,27 @@ describe("maskForFileSample", () => {
   });
 });
 
-test.each(["OP …", "xxxx OP", '{"name":"xxxxx xxxxxxxx"}'])("%s carries a mask", (text) => {
-  expect(hasStandIn(text)).toBe(true);
-});
+test.each(["OP …", "xxxx OP", "xx xx OP", '{"name":"xxxxx xxxxxxxx"}'])(
+  "%s carries a mask",
+  (text) => {
+    expect(hasStandIn(text)).toBe(true);
+  },
+);
 
 test.each(["OP Käyttötili", "Maxxx Oy", "xx", "Exxon"])("%s carries no mask", (text) => {
   expect(hasStandIn(text)).toBe(false);
+});
+
+describe("maskTypedText", () => {
+  test.each(["Jos sijoitan 250000 euroa 20 vuotta", "Osta 1000000 kpl", "12345678"])(
+    "%s keeps its bare number",
+    (text) => expect(maskTypedText(text)).toBe(text),
+  );
+
+  test.each([
+    ["Is FI21 1234 5600 0007 85 mine?", "Is … mine?"],
+    ["OP 1234567-8", "OP …"],
+    ["ref 123456789", "ref …"],
+    ["matti@example.fi 010190-123A", "… …"],
+  ])("%s is still masked", (text, masked) => expect(maskTypedText(text)).toBe(masked));
 });

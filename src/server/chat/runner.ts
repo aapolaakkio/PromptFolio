@@ -240,7 +240,7 @@ const AWAITING =
   "an app note will say what they decided.";
 
 const HIDDEN_VALUE =
-  "This contains a value that is hidden from you (shown as … or as x characters), so it cannot be saved from chat. Tell the owner to enter it in the form on the page.";
+  "Not saved: one of the text fields contains … or a run of x characters. Those are how hidden values are shown to you, so they cannot be saved. If you typed the ellipsis yourself, write three dots or leave it out and try again; otherwise tell the owner to enter this in the form on the page.";
 
 /** Runs one tool call. Every failure comes back as a message, since a thrown tool would kill the turn. A proposal comes only from a proposal tool's own call, never from text in a result. */
 const runTool = async (tools: readonly AnyTool[], call: ToolCall): Promise<ToolOutcome> => {
