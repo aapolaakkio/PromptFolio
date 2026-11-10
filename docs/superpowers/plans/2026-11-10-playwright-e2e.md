@@ -46,7 +46,7 @@
 2. A worker restarted after a failed test: the old server and fake must be stopped and the new ones must get new ports and a new database (Task 1, teardown test by killing a test).
 3. `E2E_UPSTREAM` set to a non-loopback URL in production must be ignored, not obeyed (Task 1 unit test).
 4. A streamed chat turn that outlives its test must not leak a scripted reply into the next test of the same worker (Task 2: `claude` fixture resets the queue and fails on leftovers).
-5. Dates: seeded prices and the app's "today" are Helsinki dates; a run just after midnight UTC must not see stale prices (Task 1 seed uses `helsinkiToday`).
+5. An outbound call no test scripted must fail that test, not pass silently (Task 2 adds the test Task 1 skipped).
 
 ---
 
@@ -91,21 +91,163 @@
 - [ ] **Step 1:** Move `anthropicStream`; `pnpm test src/server/chat`: PASS.
 - [ ] **Step 2:** Write `e2e/harness/claude.ts` and the fixture.
 - [ ] **Step 3:** `e2e/chat-smoke.spec.ts`: on `/chat` the user asks "Hello", `claude.reply("Hi from the fake.")`, the text appears; `claude.requests[0].system` contains "Finnish".
-- [ ] **Step 4:** `pnpm e2e` twice; commit `test(e2e): scripted Claude and Yahoo stand-ins`.
+- [ ] **Step 4:** Close two gaps Task 1 left. (a) In `e2e/harness.spec.ts` add a test that proves the guard: with `test.fail()`, a signed-in user opens `/chat` and sends a message with nothing queued; the test must be reported as an expected failure because `upstream.unexpected` is not empty. (b) Prove a restarted worker gets a new server: run `pnpm e2e e2e/harness.spec.ts --workers 1` with one test temporarily made to fail first, confirm in `test-results/e2e/` that two port directories exist and no `vite dev --port` process of the run is left (`pgrep -fl "E2E\|vite dev --port"`; the owner's own dev server on port 3000 is not yours, never kill it). Restore the test. Report what you saw.
+- [ ] **Step 5:** `pnpm e2e` twice; commit `test(e2e): scripted Claude and Yahoo stand-ins`.
 
-### Tasks 3–9: one spec file per page
+## Tasks 3–9: one spec file per page
 
-Each task: read the page component in `src/web/routes/` and its view tests, add small helpers to `e2e/harness/flows.ts` when two specs need the same steps (`createBrokerAccount`, `importNordnet`, `createBankAccount`, `importOpCsv` using `src/server/import/fixtures/nordnet-sample.csv` and `op-bank-sample.csv`), write the spec, see each test fail once, run `pnpm e2e` twice, commit `test(e2e): <page>`.
+Every one of these tasks follows the same steps: read the page component in `src/web/routes/` and its view tests, add small helpers to `e2e/harness/flows.ts` when two specs need the same steps (`createBrokerAccount`, `importNordnet`, `createBankAccount`, `importOpCsv` using `src/server/import/fixtures/nordnet-sample.csv` and `op-bank-sample.csv`), write the spec, see each test fail once, run `pnpm e2e` twice, commit `test(e2e): <page>`.
 
-| Task | Spec files                                                 | Scenarios (each its own test)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3    | `auth.spec.ts`, `smoke.spec.ts`, `isolation.spec.ts`       | first-run form creates the owner and lands on `/` (`freshApp`); mismatched passwords refused; logged out, `/holdings` redirects to `/login`; wrong password shows an error; sign out; every nav link opens its heading with no console error and no failed request; theme toggle survives reload; user B sees none of user A's accounts, debts or chat                                                                                                                                                            |
-| 4    | `imports.spec.ts`, `holdings.spec.ts`, `dashboard.spec.ts` | Nordnet import "Import 12 transactions", re-import "0 transactions imported, 12 skipped as duplicates"; history lists it; undo empties Holdings; an ISIN not seeded asks for the instrument and commits after it is filled in; Holdings rows WisdomTree "€68.00" and Nordnet Suomi Indeksi "-5"; record a price by hand changes the value; rename/edit an instrument; Dashboard empty state for a new user; after import value stat, allocation and "Value over time" chart drawn; range buttons change the chart |
-| 5    | `cash.spec.ts`, `spending.spec.ts`                         | create a bank account; import the OP CSV, balance shown; manual entry add and remove; rename account; Spending totals by category; a payee without a category gets a rule and moves; month switch; internal transfers are not spending                                                                                                                                                                                                                                                                            |
-| 6    | `debts.spec.ts`, `reconcile.spec.ts`                       | add student loan and credit card; add balances, "Owed in total" follows the latest; future date refused with "A balance cannot be dated in the future"; remove balance and debt with the confirm dialog; Dashboard shows "Net worth" and "Value over time (before debts)" only with a debt; Reconcile: a pasted or typed holdings statement that matches shows no differences, one that differs names the instrument                                                                                              |
-| 7    | `rebalance.spec.ts`, `forecast.spec.ts`, `tax.spec.ts`     | set targets, drift shown, new-money split adds up to the amount typed; monthly plan row add, change, remove; horizon 1 to 20 years redraws; real/nominal toggle; Tax year with the fixture's sales shows both methods and the year switch                                                                                                                                                                                                                                                                         |
-| 8    | `chat.spec.ts`                                             | streamed answer; tool call then answer (two queued replies), tool label shown; proposal card Confirm writes the change and it is visible on its page, Decline writes nothing; deletion card is warning-styled; chart reply draws a chart; docked assistant on `/holdings` sends the page name; conversation list, reopen, delete; Claude 500 shows an error and the composer works again                                                                                                                          |
-| 9    | `ai-imports.spec.ts`, `summary.spec.ts`                    | drop two files at once, fake sort reply places each on its account; unknown kind left for the owner; OP PDF statement import; a new bank layout asks for a recipe (fake reply) and previews rows; weekly summary shows the fake note; a note with a number not in the facts is not shown                                                                                                                                                                                                                          |
+They consume the harness from Tasks 1–2: `test`, `expect` from `e2e/harness/test.ts`; fixtures `user`, `app`, `freshApp`, `claude`.
+
+### Task 3: Auth, smoke, isolation
+
+**Files:**
+
+- Create: `e2e/auth.spec.ts`, `e2e/smoke.spec.ts`, `e2e/isolation.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- first-run form creates the owner and lands on `/` (`freshApp`)
+- mismatched passwords refused
+- logged out, `/holdings` redirects to `/login`
+- wrong password shows an error
+- sign out
+- every nav link opens its heading with no console error and no failed request
+- theme toggle survives reload
+- user B sees none of user A's accounts, debts or chat
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): auth, smoke, isolation`.
+
+### Task 4: Imports, holdings, dashboard
+
+**Files:**
+
+- Create: `e2e/imports.spec.ts`, `e2e/holdings.spec.ts`, `e2e/dashboard.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- Nordnet import "Import 12 transactions", re-import "0 transactions imported, 12 skipped as duplicates"
+- history lists it
+- undo empties Holdings
+- an ISIN not seeded asks for the instrument and commits after it is filled in
+- Holdings rows WisdomTree "€68.00" and Nordnet Suomi Indeksi "-5"
+- record a price by hand changes the value
+- rename/edit an instrument
+- Dashboard empty state for a new user
+- after import value stat, allocation and "Value over time" chart drawn
+- range buttons change the chart
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): imports, holdings, dashboard`.
+
+### Task 5: Cash and spending
+
+**Files:**
+
+- Create: `e2e/cash.spec.ts`, `e2e/spending.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- create a bank account
+- import the OP CSV, balance shown
+- manual entry add and remove
+- rename account
+- Spending totals by category
+- a payee without a category gets a rule and moves
+- month switch
+- internal transfers are not spending
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): cash and spending`.
+
+### Task 6: Debts and reconcile
+
+**Files:**
+
+- Create: `e2e/debts.spec.ts`, `e2e/reconcile.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- add student loan and credit card
+- add balances, "Owed in total" follows the latest
+- future date refused with "A balance cannot be dated in the future"
+- remove balance and debt with the confirm dialog
+- Dashboard shows "Net worth" and "Value over time (before debts)" only with a debt
+- Reconcile: a pasted or typed holdings statement that matches shows no differences, one that differs names the instrument
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): debts and reconcile`.
+
+### Task 7: Rebalance, forecast, tax
+
+**Files:**
+
+- Create: `e2e/rebalance.spec.ts`, `e2e/forecast.spec.ts`, `e2e/tax.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- set targets, drift shown, new-money split adds up to the amount typed
+- monthly plan row add, change, remove
+- horizon 1 to 20 years redraws
+- real/nominal toggle
+- Tax year with the fixture's sales shows both methods and the year switch
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): rebalance, forecast, tax`.
+
+### Task 8: Chat
+
+**Files:**
+
+- Create: `e2e/chat.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- streamed answer
+- tool call then answer (two queued replies), tool label shown
+- proposal card Confirm writes the change and it is visible on its page, Decline writes nothing
+- deletion card is warning-styled
+- chart reply draws a chart
+- docked assistant on `/holdings` sends the page name
+- conversation list, reopen, delete
+- Claude 500 shows an error and the composer works again
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): chat`.
+
+### Task 9: AI imports and weekly summary
+
+**Files:**
+
+- Create: `e2e/ai-imports.spec.ts`, `e2e/summary.spec.ts`
+- Modify (if shared steps are needed): `e2e/harness/flows.ts`
+
+**Scenarios (each its own test):**
+
+- drop two files at once, fake sort reply places each on its account
+- unknown kind left for the owner
+- OP PDF statement import
+- a new bank layout asks for a recipe (fake reply) and previews rows
+- weekly summary shows the fake note
+- a note with a number not in the facts is not shown
+
+- [ ] **Step 1:** Read the page components and their view tests.
+- [ ] **Step 2:** Write the spec files; see each test fail once by breaking one assertion, then restore.
+- [ ] **Step 3:** `pnpm e2e` twice, `pnpm lint`, `pnpm fmt:check`; commit `test(e2e): ai imports and weekly summary`.
 
 ### Task 10: Docs and final proof
 
