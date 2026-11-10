@@ -17,7 +17,8 @@ import {
   UNIT_TYPES,
   type UnitType,
 } from "./corporate-action-groups.ts";
-import { isDateIn, redacted } from "./suggest-rows.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
+import { isDateIn } from "./suggest-rows.ts";
 
 export type { ActionProblem } from "./corporate-action-groups.ts";
 
@@ -120,11 +121,11 @@ const question = (groups: readonly ActionProblem[][]): string =>
       rows: rows.map((problem) => ({
         line: problem.line,
         date: problem.raw.tradeDate ?? null,
-        label: redacted(labelOf(problem)),
-        instrument: redacted(problem.raw.instrumentName ?? ""),
+        label: maskAccountNumbers(labelOf(problem)),
+        instrument: maskAccountNumbers(problem.raw.instrumentName ?? ""),
         isin: problem.raw.isin ?? null,
         quantity: problem.raw.quantity ?? null,
-        note: redacted(problem.message),
+        note: maskAccountNumbers(problem.message),
       })),
     })),
   });

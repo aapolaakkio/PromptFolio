@@ -54,8 +54,10 @@ The rule everywhere: **the model proposes, the app checks, you decide.**
 - **Weekly summary.** The app gathers the facts; the model only words them. A text containing a
   number that is not one of the facts is thrown away.
 
-Account numbers are masked before any text goes to the model. Text inside imported files and web
-pages is treated as data, never as instructions.
+Before any text goes to the model, the app hides account and card numbers, personal identity
+codes, email addresses, phone numbers and your own name. Payee names and amounts are sent: the
+answers need them. Text inside imported files and web pages is treated as data, never as
+instructions.
 
 ## Quick start
 

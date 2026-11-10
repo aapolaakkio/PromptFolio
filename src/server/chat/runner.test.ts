@@ -3,6 +3,7 @@ import { z } from "zod";
 import { env } from "cloudflare:workers";
 
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
+import { withOwnerName } from "./owner-name.ts";
 import {
   createClient,
   runTurn,
@@ -332,6 +333,25 @@ const fakeAnthropic = (...responses: Response[]) => {
 };
 
 describe("createClient", () => {
+  test("the owner's name of the request it was made in never reaches the API", async () => {
+    const api = fakeAnthropic(anthropicStream("done"));
+    const client = withOwnerName("Matti Virtanen", () => createClient(api.fetchImpl));
+
+    await client.run({
+      model: "claude-opus-5-5",
+      max_tokens: 64,
+      messages: [
+        { role: "system", content: "ohje" },
+        { role: "user", content: "Maksaja VIRTANEN MATTI" },
+      ],
+      tools: [],
+    });
+
+    const sent = JSON.stringify(api.bodies[0]);
+    expect(sent).not.toMatch(/virtanen|matti/i);
+    expect(sent).toContain("Maksaja xxxxxxxx xxxxx");
+  });
+
   test("sends the Messages API shape: system on top, tool results as user turns", async () => {
     const api = fakeAnthropic(anthropicStream("done"));
     await createClient(api.fetchImpl).run({

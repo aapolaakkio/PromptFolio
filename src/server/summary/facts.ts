@@ -18,7 +18,7 @@ import {
 } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
 import { accounts, imports, instruments, transactions } from "../db/schema.ts";
-import { redacted } from "../import/suggest-rows.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
 import { notSpendingIds } from "../spending/internal.ts";
 import { recurringPayments } from "../spending/recurring.ts";
 import { rulesFor } from "../spending/rules.ts";
@@ -125,7 +125,7 @@ const biggestMovers = (
       const pct = pctText(change, ofText(then.valueEur ?? "0"));
       return change.minor === 0n || pct === null
         ? []
-        : [{ name: redacted(holding.name), change, pct }];
+        : [{ name: maskAccountNumbers(holding.name), change, pct }];
     })
     .sort((a, b) => Math.abs(Number(b.change.minor)) - Math.abs(Number(a.change.minor)))
     .slice(0, MAX_MOVERS)
@@ -167,7 +167,7 @@ const newInstrumentsSince = async (db: Db, userId: string, since: Date): Promise
     .innerJoin(accounts, eq(accounts.id, transactions.accountId))
     .where(and(eq(accounts.userId, userId), gte(instruments.createdAt, since)))
     .all();
-  return rows.map((row) => redacted(row.name));
+  return rows.map((row) => maskAccountNumbers(row.name));
 };
 
 const recurringChanged = async (db: Db, userId: string, now: Date): Promise<number> => {
@@ -213,7 +213,7 @@ export const gatherFacts = async (db: Db, userId: string, now: Date): Promise<Su
       : holding.lookupStatus === "ok"
         ? null
         : REASONS[holding.lookupStatus];
-    return reason === null ? [] : [{ name: redacted(holding.name), reason }];
+    return reason === null ? [] : [{ name: maskAccountNumbers(holding.name), reason }];
   });
 
   return {

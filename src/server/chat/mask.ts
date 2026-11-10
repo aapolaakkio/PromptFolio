@@ -8,7 +8,8 @@ const CANDIDATE = new RegExp(
   [
     String.raw`(?<isin>(?<![A-Za-z0-9])[A-Z]{2}[A-Z0-9]{9}\d(?![A-Za-z0-9]))`,
     String.raw`(?<date>(?<!\d|\d[.,])(?:19|20)\d{2}-(?:0[1-9]|1[0-2])(?:-[0-3]\d)?(?![\d-]|[.,]\d))`,
-    String.raw`(?<iban>(?<![A-Za-z0-9])[A-Za-z]{2}\d{2}(?:[  _-]?[A-Za-z0-9]{4}){2,7}(?:[  _-]?[A-Za-z0-9]{1,4})?(?![A-Za-z0-9]))`,
+    String.raw`(?<iban>(?<![A-Za-z0-9])[A-Za-z]{2}\d{2}(?:[  ._-]?[A-Za-z0-9]{4}){2,7}(?:[  _-]?[A-Za-z0-9]{1,4}|\.\d{1,4})?(?![A-Za-z0-9]))`,
+    String.raw`(?<dotted>(?<!\d|\d[.,/])\d+(?:[./]\d+){2,}(?![./]?\d))`,
     // A Finnish personal identity code, an email address, a partly starred card number.
     String.raw`(?<!\d)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?![A-Za-z0-9])`,
     String.raw`[\w.+-]+@[\w-]+(?:\.[\w-]+)+`,
@@ -31,11 +32,19 @@ const hasIsinCheckDigit = (code: string): boolean => {
   return sum % 10 === 0;
 };
 
+const MIN_DOTTED_DIGITS = 9;
+/** 1.234.567 is an amount with thousands separators, not an identifier. */
+const THOUSANDS = /^\d{1,3}(?:\.\d{3})+$/;
+
 const digitCount = (text: string): number => text.replace(/\D/g, "").length;
 
 const masked = (text: string, hide: (found: string) => string): string =>
-  text.replace(CANDIDATE, (match: string, isin?: string, date?: string, iban?: string) => {
+  text.replace(CANDIDATE, (match: string, ...found: (string | undefined)[]) => {
+    const [isin, date, iban, dotted] = found;
     if (date !== undefined) return match;
+    if (dotted !== undefined && (digitCount(match) < MIN_DOTTED_DIGITS || THOUSANDS.test(match))) {
+      return match;
+    }
     if (isin !== undefined) return hasIsinCheckDigit(match) ? match : hide(match);
     if (iban !== undefined && digitCount(match) < MIN_IBAN_DIGITS) {
       // IBAN-shaped words ("AB12 some word here"): keep them, but still mask what follows the prefix.

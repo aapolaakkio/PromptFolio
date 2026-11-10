@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BANK_ROW_TYPES, type TransactionType } from "../../core/types.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
 import type { ChatClient } from "../chat/runner.ts";
 import { FINNISH_CONTEXT, RECIPE_MODEL } from "./recipe/ask.ts";
 import { NORDNET, OP_WEB_PASTE } from "./fixtures/broker-mappings.ts";
@@ -229,38 +230,6 @@ const checked = (kind: Kind, fields: Readonly<Record<string, string | null>>, ra
   return kept;
 };
 
-const IBAN_ANY_CASE =
-  /\b[A-Z]{2}\d{2}(?:[\s\u00a0.-]?[A-Z0-9]{4}){3,7}(?:[\s\u00a0.-]?[A-Z0-9]{1,4})?\b/gi;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const ISIN_CODE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
-
-/** The ISIN check digit: Luhn over the digits with each letter written as 10..35. */
-const hasIsinCheckDigit = (code: string): boolean => {
-  const digits = code.replace(/[A-Z]/g, (letter) => String(letter.charCodeAt(0) - 55));
-  const sum = digits
-    .split("")
-    .reverse()
-    .reduce((total, char, at) => {
-      const doubled = at % 2 === 1 ? Number(char) * 2 : Number(char);
-      return total + (doubled > 9 ? doubled - 9 : doubled);
-    }, 0);
-  return sum % 10 === 0;
-};
-
-/** A whole ISO date or a real ISIN, which the model must read; anything else digit-heavy is masked. */
-const isKept = (run: string): boolean =>
-  ISO_DATE.test(run) || (ISIN_CODE.test(run) && hasIsinCheckDigit(run));
-/** 9+ digits joined only by single spaces or hyphens: account, card and reference numbers. A decimal mark ends a run. */
-const DIGIT_RUN =
-  /\b[A-Z]{2}[A-Z0-9]{9}\d\b|(?<!\d)\d{4}-\d{2}-\d{2}(?![\d-])|(?<!\d)\d(?:[\s\u00a0-]?\d){8,}/g;
-
-/** What the model sees: account and reference numbers are not needed to read a row. */
-export const redacted = (text: string): string =>
-  text
-    .replace(IBAN_ANY_CASE, "[IBAN]")
-    .replace(DIGIT_RUN, (run) => (isKept(run) ? run : "[REF]"))
-    .slice(0, MAX_RAW_CHARS);
-
 const MASKED_FIELDS = new Set(["amountEur", "feeEur", "quantityText"]);
 
 /** An example keeps its shape (dates, types, number formats) but not its figures or payee. */
@@ -299,8 +268,8 @@ export const suggestRows = async (
             problems: asked.map((p, id) => ({
               id,
               line: p.line,
-              raw: redacted(p.raw),
-              message: redacted(p.message),
+              raw: maskAccountNumbers(p.raw).slice(0, MAX_RAW_CHARS),
+              message: maskAccountNumbers(p.message).slice(0, MAX_RAW_CHARS),
             })),
           }),
         },

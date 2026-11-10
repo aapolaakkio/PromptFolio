@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { ChatClient } from "../chat/runner.ts";
 import { FINNISH_CONTEXT, RECIPE_MODEL } from "./recipe/ask.ts";
-import { redacted } from "./suggest-rows.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
 
 export const MAX_DROP_FILES = 25;
 export const SAMPLE_LINES = 60;
@@ -109,10 +109,10 @@ export const sortDocuments = async (
             })),
             files: readable.map(({ file, index }) => ({
               index,
-              name: redacted(file.name.slice(0, MAX_NAME_CHARS)),
+              name: maskAccountNumbers(file.name.slice(0, MAX_NAME_CHARS)),
               lines: file.lines
                 .slice(0, SAMPLE_LINES)
-                .map((line) => redacted(line.slice(0, MAX_LINE_CHARS))),
+                .map((line) => maskAccountNumbers(line.slice(0, MAX_LINE_CHARS))),
             })),
           }),
         },

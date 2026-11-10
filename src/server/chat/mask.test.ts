@@ -20,6 +20,13 @@ describe("maskAccountNumbers", () => {
     ["write to matti.meikalainen@example.fi now", "write to … now"],
     ["Card 4920 **** **** 1234", "Card …"],
     ["call +358 40 123 45 67", "call …"],
+    ["FI21.1234.5600.0007.85 loppu", "… loppu"],
+    ["FI21-1234-5600-0007-85", "…"],
+    ["kortti 1234.5678.9012.3456", "kortti …"],
+    ["kortti 1234/5678/9012/3456", "kortti …"],
+    ["1234\u00a05678\u00a09012\u00a03456", "…"],
+    ["2026-03-12345678901", "…"],
+    ["RF1212345678", "…"],
     ["Not an ISIN FI0008800512", "Not an ISIN …"],
     ["AB12 some 1234567 here", "… here"],
     ["0.1234567 and 12,3456789", "0.1234567 and 12,3456789"],
@@ -36,6 +43,13 @@ describe("maskAccountNumbers", () => {
     "op-2026-10.csv",
     "-1234567,50",
     "AB12 some word here",
+    "1 234 567,89",
+    "1.234.567,89",
+    "12.03.2026",
+    "29.8.2025 - 28.8.2026",
+    "2026-03-12 100,00",
+    "FI0009000681 100 kpl",
+    "ISIN FI4000567029",
   ])("leaves %s alone: ISINs, amounts, dates and ids are not account numbers", (text) => {
     expect(maskAccountNumbers(text)).toBe(text);
   });

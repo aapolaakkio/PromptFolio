@@ -14,6 +14,7 @@ import { HttpError } from "../errors.ts";
 import type { JSONSchema } from "zod/v4/core";
 
 import { maskAccountNumbers } from "./mask.ts";
+import { hidingOwnerName, ownerNameNow } from "./owner-name.ts";
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import { chartSummary, type ChatChart } from "./chart-schema.ts";
 import type { Proposal } from "./proposal-schema.ts";
@@ -166,8 +167,12 @@ export const createClient = (fetchImpl?: typeof fetch): ChatClient => {
   const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new HttpError(503, "ANTHROPIC_API_KEY is missing from the server settings");
 
+  // Read now, not at run time: a streamed turn outlives the request it was made in.
+  const ownerName = ownerNameNow();
+
   return {
-    run: async (params, options) => {
+    run: async (turn, options) => {
+      const params = hidingOwnerName(turn, ownerName);
       const baseURL = env.AI_GATEWAY_ID
         ? await env.AI.gateway(env.AI_GATEWAY_ID).getUrl("anthropic")
         : undefined;

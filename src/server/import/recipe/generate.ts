@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { ChatClient, ChatMessage } from "../../chat/runner.ts";
 import type { PdfPage } from "../pdf-read.ts";
 import { FINNISH_CONTEXT, MASKED_SAMPLE_NOTE, RECIPE_MODEL } from "./ask.ts";
@@ -25,6 +27,14 @@ export const sampleFor = (pages: readonly PdfPage[]): string => {
     .filter((part) => part !== "")
     .join("\n\n");
 };
+
+/** Masks each string of a JSON result, not the JSON text: an escape such as \\n before a number would hide it from the masker. */
+const Json = z.json();
+const maskedValues = (json: string): string =>
+  JSON.stringify(Json.parse(JSON.parse(json)), (_key, value: z.infer<typeof Json>) => {
+    const text = z.string().safeParse(value);
+    return text.success ? maskForFileSample(text.data) : value;
+  });
 
 /** Deliberately mechanical: no layout advice (a model that follows it stops looking). */
 const INSTRUCTIONS = `${FINNISH_CONTEXT}
@@ -75,7 +85,7 @@ export const generateRecipe = async (
       { role: "assistant", content: reply.text, tool_calls: reply.toolCalls },
     ];
     for (const call of reply.toolCalls) {
-      const content = maskForFileSample(await runVerifyCall(session, call));
+      const content = maskedValues(await runVerifyCall(session, call));
       attempt.push({ role: "tool", tool_call_id: call.id, content });
       if (session.verified() !== null) break;
     }

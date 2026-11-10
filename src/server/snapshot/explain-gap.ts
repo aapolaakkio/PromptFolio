@@ -4,7 +4,7 @@ import { formatQuantity, parseQuantity } from "../../core/money.ts";
 import type { ChatClient } from "../chat/runner.ts";
 import { FINNISH_CONTEXT, RECIPE_MODEL } from "../import/recipe/ask.ts";
 import { assertReal } from "../import/recipe/date-format.ts";
-import { redacted } from "../import/suggest-rows.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
 
 export const MAX_GAP_ROWS = 20;
 const MAX_TOKENS = 8000;
@@ -103,7 +103,7 @@ const question = (
     importDates,
     rows: gaps.map((gap, id) => ({
       id,
-      instrument: redacted(gap.name),
+      instrument: maskAccountNumbers(gap.name),
       isin: gap.isin,
       statement: gap.statement,
       ledger: gap.ledger,
