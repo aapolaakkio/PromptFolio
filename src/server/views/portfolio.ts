@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 
-import { addMoney, negateMoney } from "../../core/money.ts";
+import { addMoney, negateMoney, subMoney } from "../../core/money.ts";
+import { firstBalanceDate, owedOn, owedSeries } from "../../core/debts.ts";
+import { debtBalancesFor } from "../debts.ts";
 import { twr, xirr } from "../../core/returns.ts";
 import { cashFlowFor } from "../spending/cashflow.ts";
 import { cashlessAccountIds, notSpendingIds } from "../spending/internal.ts";
@@ -77,17 +79,24 @@ export const valueSeriesView = async (
   const start = from ?? earliestTradeDate(investedTxns) ?? to;
   const invested = investedSeries(investedTxns, start, to);
   const cash = cashSeries(cashTxns, prices.fxOn, start, to);
-  return valueSeries(investedTxns, instruments, prices, start, to).map((point, index) => ({
-    date: point.date,
-    valueEur: formatMoney(point.valueEur),
-    investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
-    cashEur: formatMoney(cash[index]?.cashEur ?? zeroMoney(EUR)),
-    stale: point.stale,
-    // A holding with no price yet that day is valued at cost; the chart draws these days apart.
-    costValued: point.costValuedInstrumentIds.length > 0,
-    // Instruments excluded from this day's valueEur (negative net position from an unmatched disposal); /api/holdings carries their ISIN and name.
-    excludedInstrumentIds: point.excludedInstrumentIds,
-  }));
+  const owed = owedSeries(await debtBalancesFor(db, userId), start, to);
+  return valueSeries(investedTxns, instruments, prices, start, to).map((point, index) => {
+    const cashEur = cash[index]?.cashEur ?? zeroMoney(EUR);
+    const owedEur = owed[index]?.owedEur ?? zeroMoney(EUR);
+    return {
+      date: point.date,
+      valueEur: formatMoney(point.valueEur),
+      investedEur: formatMoney(invested[index]?.investedEur ?? zeroMoney(EUR)),
+      cashEur: formatMoney(cashEur),
+      owedEur: formatMoney(owedEur),
+      netEur: formatMoney(subMoney(addMoney(point.valueEur, cashEur), owedEur)),
+      stale: point.stale,
+      // A holding with no price yet that day is valued at cost; the chart draws these days apart.
+      costValued: point.costValuedInstrumentIds.length > 0,
+      // Instruments excluded from this day's valueEur (negative net position from an unmatched disposal); /api/holdings carries their ISIN and name.
+      excludedInstrumentIds: point.excludedInstrumentIds,
+    };
+  });
 };
 
 export const allocationView = async (db: Db, userId: string, dimension: Dimension, on: IsoDate) => {
@@ -308,6 +317,9 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
   );
   const cashEur = totalCashEur(cashAtEnd);
   const positionsEur = final ? final.valueEur : zeroMoney(EUR);
+  const balances = await debtBalancesFor(db, userId);
+  const owedEur = owedOn(balances, to);
+  const valueWithCashEur = addMoney(positionsEur, cashEur);
 
   return {
     from,
@@ -317,7 +329,10 @@ export const returnsView = async (db: Db, userId: string, from: IsoDate, to: Iso
     // What of that cash is spendable, and what is locked until maturity.
     availableCashEur: formatMoney(availableCashEur(cashAtEnd)),
     lockedCashEur: formatMoney(lockedCashEur(cashAtEnd)),
-    valueWithCashEur: formatMoney(addMoney(positionsEur, cashEur)),
+    valueWithCashEur: formatMoney(valueWithCashEur),
+    owedEur: formatMoney(owedEur),
+    netWorthEur: formatMoney(subMoney(valueWithCashEur, owedEur)),
+    debtsKnownFrom: firstBalanceDate(balances),
     stale: final?.stale ?? false,
     twr: twr(series, twrFlows),
     mwr,

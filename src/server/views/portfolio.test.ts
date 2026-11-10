@@ -6,6 +6,7 @@ import { AllocationInput } from "../../web/server/portfolio.ts";
 import { Range } from "../../web/server/portfolio.ts";
 import { db } from "../db/index.ts";
 import { holdingsFor } from "../valuation.ts";
+import { addDebt, setDebtBalance } from "../debts.ts";
 import {
   allocationView,
   cashView,
@@ -292,6 +293,8 @@ describe("GET /api/value-series", () => {
       stale: false,
       costValued: false,
       cashEur: "0.00",
+      owedEur: "0.00",
+      netEur: "100.00",
       excludedInstrumentIds: [],
     });
     expect(body.at(-1)).toEqual({
@@ -301,6 +304,8 @@ describe("GET /api/value-series", () => {
       stale: false,
       costValued: false,
       cashEur: "0.00",
+      owedEur: "0.00",
+      netEur: "110.00",
       excludedInstrumentIds: [],
     });
     // 2024-01-02..04 carry the 1.1. price forward -- stale.
@@ -361,6 +366,8 @@ describe("GET /api/value-series", () => {
         stale: false,
         costValued: false,
         cashEur: "0.00",
+        owedEur: "0.00",
+        netEur: "0.00",
         excludedInstrumentIds: [],
       },
     ]);
@@ -1075,5 +1082,71 @@ describe("GET /api/spending/uncategorised", () => {
 
     // Money put into a fund is not an unclassified expense waiting for a label.
     expect((await ask(userId)).merchants).toEqual([]);
+  });
+});
+
+describe("owed and net worth", () => {
+  const seedThousand = (userId: string) =>
+    seedHolding(userId, {
+      buyDate: "2024-01-01",
+      quantity: 10_000_000,
+      unitPrice: 10_000,
+      principal: 100_000,
+      prices: [{ date: "2024-01-01", close: 10_000 }],
+    });
+
+  const addOwed = async (userId: string, asOf: string, owedEur: string) => {
+    const { id } = await addDebt(db, userId, { name: "Loan", kind: "student_loan" });
+    await setDebtBalance(db, userId, { debtId: id, asOf, owedEur });
+  };
+
+  test("value series: owed and net follow the latest balance, from its day on", async () => {
+    const { userId } = await signUp(`owed-series-${crypto.randomUUID()}@example.com`);
+    await seedThousand(userId);
+    await addOwed(userId, "2024-01-03", "300.00");
+
+    const body = await valueSeriesView(db, userId, "2024-01-01", "2024-01-05");
+    expect(body.map((p) => [p.owedEur, p.netEur])).toEqual([
+      ["0.00", "1000.00"],
+      ["0.00", "1000.00"],
+      ["300.00", "700.00"],
+      ["300.00", "700.00"],
+      ["300.00", "700.00"],
+    ]);
+  });
+
+  test("net worth can be negative and prints a leading minus", async () => {
+    const { userId } = await signUp(`owed-neg-${crypto.randomUUID()}@example.com`);
+    await seedThousand(userId);
+    await addOwed(userId, "2024-01-01", "1500.00");
+
+    const body = await valueSeriesView(db, userId, "2024-01-01", "2024-01-01");
+    expect(body[0]!.netEur).toBe("-500.00");
+    const returns = await returnsView(db, userId, "2024-01-01", "2024-01-05");
+    expect(returns.netWorthEur).toBe("-500.00");
+  });
+
+  test("returns: net worth is value with cash minus owed, twr and mwr unchanged", async () => {
+    const { userId } = await signUp(`owed-returns-${crypto.randomUUID()}@example.com`);
+    await seedThousand(userId);
+    const before = await returnsView(db, userId, "2024-01-01", "2024-01-05");
+    await addOwed(userId, "2024-01-03", "300.00");
+
+    const after = await returnsView(db, userId, "2024-01-01", "2024-01-05");
+    expect(after.owedEur).toBe("300.00");
+    expect(after.netWorthEur).toBe("700.00");
+    expect(after.debtsKnownFrom).toBe("2024-01-03");
+    expect(after.twr).toBe(before.twr);
+    expect(after.mwr).toBe(before.mwr);
+  });
+
+  test("no debts: nothing owed, net worth equals value with cash", async () => {
+    const { userId } = await signUp(`owed-none-${crypto.randomUUID()}@example.com`);
+    await seedThousand(userId);
+
+    const returns = await returnsView(db, userId, "2024-01-01", "2024-01-05");
+    expect(returns.owedEur).toBe("0.00");
+    expect(returns.netWorthEur).toBe(returns.valueWithCashEur);
+    expect(returns.debtsKnownFrom).toBeNull();
   });
 });
