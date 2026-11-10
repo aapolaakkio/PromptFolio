@@ -103,6 +103,26 @@ describe("debts", () => {
     ).toBe(false);
   });
 
+  test("an amount of 13 integer digits is refused, 12 is stored exactly", () => {
+    const parse = (owedEur: string) =>
+      DebtBalanceInput.safeParse({ debtId: 1, asOf: "2026-01-01", owedEur }).success;
+    expect(parse("1000000000000")).toBe(false);
+    expect(parse("1000000000000.00")).toBe(false);
+    expect(parse("999999999999.99")).toBe(true);
+  });
+
+  test("the largest accepted amount round-trips exactly", async () => {
+    const { userId, id } = await withDebt();
+    await debts.setDebtBalance(db, userId, {
+      debtId: id,
+      asOf: "2026-01-10",
+      owedEur: "999999999999.99",
+    });
+    const list = await debts.listDebts(db, userId, "2026-01-10");
+    expect(list.totalOwedEur).toBe("999999999999.99");
+    expect(list.debts[0]?.owedEur).toBe("999999999999.99");
+  });
+
   test("another user's debt answers 404 and is not changed", async () => {
     const { id } = await withDebt();
     const other = await signUp();

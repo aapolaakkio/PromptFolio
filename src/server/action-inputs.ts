@@ -321,6 +321,7 @@ export const SpendingRuleRemove = z
 
 const MAX_RATE_BP = 10_000;
 const DECIMAL_TWO = /^\d+([.,]\d{1,2})?$/;
+const OWED_AMOUNT = /^\d{1,12}([.,]\d{1,2})?$/;
 
 /** A debt the owner tracks by hand; the rate is a decimal percent, 0 to 100, stored as basis points. */
 export const DebtInput = z
@@ -343,7 +344,9 @@ export const DebtBalanceInput = z
   .object({
     debtId: z.number().int().positive(),
     asOf: IsoDateSchema.refine(isRealCalendarDate, "The date is not a real calendar date"),
-    owedEur: z.string().regex(DECIMAL_TWO, "Amount in the format 1234.56"),
+    owedEur: z
+      .string()
+      .regex(OWED_AMOUNT, "Amount in the format 1234.56, at most 12 digits before the decimal"),
   })
   .strict();
 
