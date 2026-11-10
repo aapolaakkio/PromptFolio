@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test as base } from "@playwright/test";
 
-import { installClaude, type Claude } from "./claude.ts";
+import { finishClaude, installClaude, type Claude } from "./claude.ts";
 import { startServer, type AppServer } from "./server.ts";
 import { startUpstream, type Upstream } from "./upstream.ts";
 
@@ -84,17 +84,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { timeout: 120_000 },
   ],
 
-  claude: async ({ app, upstreamGuard: _guard }, use) => {
+  claude: async ({ app, page, upstreamGuard: _guard }, use) => {
     const claude = installClaude(app.upstream);
     await use(claude);
-    expect(claude.pending, "replies the test queued and the app never asked for").toBe(0);
+    await finishClaude(claude, app.upstream, page);
   },
 
-  freshClaude: async ({ freshApp }, use) => {
+  freshClaude: async ({ freshApp, page }, use) => {
     const claude = installClaude(freshApp.upstream);
     await use(claude);
+    await finishClaude(claude, freshApp.upstream, page);
     expect(freshApp.upstream.unexpected, "outbound calls the test did not script").toEqual([]);
-    expect(claude.pending, "replies the test queued and the app never asked for").toBe(0);
   },
 
   upstreamGuard: [

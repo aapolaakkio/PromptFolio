@@ -1,4 +1,4 @@
-import { expect, test } from "./harness/test.ts";
+import { expect, test, type App } from "./harness/test.ts";
 
 /** Two tests that write the same thing: each has its own user (and, across workers, its own database), so each sees one row. */
 for (const run of ["first", "second"]) {
@@ -16,18 +16,37 @@ for (const run of ["first", "second"]) {
   });
 }
 
-// An expected failure: the guard must catch the call nobody scripted. If it stops catching, this test passes and Playwright reports it.
-test("a call no test scripted fails the test", async ({
-  page,
-  user: _user,
+const MESSAGES_URL = (app: App): string => `${app.upstream.url}/api.anthropic.com/v1/messages`;
+
+/** The Worker's call to Claude with nothing queued, sent straight to the stand-in: no page, no selector to break. */
+const askClaudeUnscripted = async (app: App): Promise<Response> => {
+  const response = await fetch(MESSAGES_URL(app), {
+    method: "POST",
+    body: JSON.stringify({
+      model: "m",
+      system: "s",
+      messages: [{ role: "user", content: "Hello" }],
+    }),
+  });
+  await response.text();
+  return response;
+};
+
+test("an unscripted call to Claude is answered 500 and recorded as unexpected", async ({
   app,
   claude: _claude,
 }) => {
+  const response = await askClaudeUnscripted(app);
+
+  expect(response.status).toBe(500);
+  expect(app.upstream.unexpected).toEqual([expect.stringContaining("no reply queued (Hello)")]);
+  // The guard has its own test below; this one hands it a clean slate.
+  app.upstream.reset();
+});
+
+// Expected to fail, and nothing in the body can: it only sends the call. So the failure is the guard's (upstreamGuard in harness/test.ts); if the guard stops catching, this test passes and Playwright reports that.
+test("a call no test scripted fails the test", async ({ app, claude: _claude }) => {
   test.fail();
 
-  await page.goto("/chat");
-  await page.getByLabel("Question").fill("Hello");
-  await page.getByRole("button", { name: "Ask" }).click();
-
-  await expect.poll(() => app.upstream.unexpected.length).toBeGreaterThan(0);
+  await askClaudeUnscripted(app);
 });

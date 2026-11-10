@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { z } from "zod";
 
 import { anthropicStream } from "../../src/server/chat/anthropic-stream-fixture.ts";
@@ -22,6 +24,7 @@ export type Claude = {
   replyRecipe(broker: "nordnet"): void;
   /** The weekly note on the Dashboard; without this the Dashboard's call gets a 400 and the note is left out. */
   replySummary(text: string): void;
+  /** Calls answered from a queue, in order. A Dashboard summary call appears only when `replySummary` queued it; the default 400 for an unqueued one is not listed. */
   readonly requests: readonly ClaudeRequest[];
   /** Replies queued and never asked for. */
   readonly pending: number;
@@ -119,4 +122,23 @@ export const installClaude = (upstream: Upstream): Claude => {
       return queue.length + summaries.length;
     },
   };
+};
+
+const QUIET_MS = 200;
+
+/**
+ * End of a test: closes the page, then waits until no call has reached the upstream for a moment, so a chat turn still in flight cannot reach the next test's handler and take its reply. (No generation counter: a call carries nothing that says which test made it.) Then fails on replies left in the queue.
+ */
+export const finishClaude = async (
+  claude: Claude,
+  upstream: Upstream,
+  page: Page,
+): Promise<void> => {
+  await page.close();
+  let seen = -1;
+  while (seen !== upstream.calls.length) {
+    seen = upstream.calls.length;
+    await new Promise((done) => setTimeout(done, QUIET_MS));
+  }
+  expect(claude.pending, "replies the test queued and the app never asked for").toBe(0);
 };
