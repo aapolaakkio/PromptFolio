@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { z } from "zod";
 
 import { formatMoney, money as moneyOf, parseCurrency, parseMoney } from "../../core/money.ts";
 import {
@@ -197,6 +198,9 @@ const proposeForecastRate = async (db: Db, userId: string, raw: ToolArgs): Promi
   };
 };
 
+/** The saved input stays the form's; `source` only labels the card. */
+const RecordPriceInput = PriceInput.extend({ source: z.string().trim().max(120).optional() });
+
 const storedPrice = async (db: Db, instrumentId: number, date: string) => {
   const row = await db
     .select()
@@ -209,7 +213,7 @@ const storedPrice = async (db: Db, instrumentId: number, date: string) => {
 };
 
 const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
-  const input = PriceInput.parse(raw);
+  const { source, ...input } = RecordPriceInput.parse(raw);
   try {
     assertNotFuture(input.date);
   } catch (cause) {
@@ -230,6 +234,9 @@ const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promis
       { kind: "money", label: "Price", amount: price, currency },
       text("Date", input.date),
       ...(was === null ? [] : [text("Replaces", was)]),
+      ...(source === undefined || source === ""
+        ? []
+        : [text("Source (stated by the assistant)", source)]),
       HOUSEHOLD_SHARED,
     ],
     summary:
@@ -269,12 +276,14 @@ export const buildInstrumentProposals = (db: Db, userId: string): ProposalTool[]
     description:
       "Proposes one manual price for one instrument the owner holds on one date: instrumentId " +
       "from get_instruments, date YYYY-MM-DD and not in the future, price a decimal string in the " +
-      "instrument's currency. The price comes only from the owner's own words or from a figure a " +
-      "tool returned in this answer (for example the owner's own trade price from " +
+      "instrument's currency, source optional text (up to 120 characters) saying where the price " +
+      "came from, for example 'own trade on 2021-01-20', 'Yahoo close' or 'the owner said'. " +
+      "Look with find_price first. The price comes only from the owner's own words or from a figure " +
+      "a tool returned in this answer (find_price, or the owner's own trade price from " +
       "get_transactions); never estimate or invent one. It replaces a price already stored for " +
       "that date, and prices are shared by the whole household." +
       AWAITS,
-    schema: PriceInput,
+    schema: RecordPriceInput,
     propose: (input) => proposeRecordPrice(db, userId, input),
   },
   {

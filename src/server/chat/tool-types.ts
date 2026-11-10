@@ -38,6 +38,7 @@ export type ToolArgs = Omit<Partial<ChartSpec>, "kind"> & {
   readonly instrumentId?: number;
   readonly date?: string;
   readonly price?: string;
+  readonly windowDays?: number;
   readonly accountId?: number;
   readonly type?: string;
   readonly tradeDate?: string;

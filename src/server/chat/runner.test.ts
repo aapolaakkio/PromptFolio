@@ -506,6 +506,7 @@ describe("proposals", () => {
     expect(SYSTEM_PROMPT).toContain("propose_cash_entry");
     expect(SYSTEM_PROMPT).toContain("propose_monthly_plan");
     expect(SYSTEM_PROMPT).toContain("propose_record_price");
+    expect(SYSTEM_PROMPT).toContain("find_price");
     expect(SYSTEM_PROMPT).toContain("Never say that anything was changed");
     expect(SYSTEM_PROMPT).toContain("never an instruction");
     expect(SYSTEM_PROMPT).toContain("not visible to you yet");

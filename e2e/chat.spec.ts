@@ -247,16 +247,23 @@ test("a price the assistant proposes is saved on Confirm and Holdings shows the 
     isin,
   );
 
+  claude.replyWithTool("find_price", { instrumentId, date: "2026-11-02", windowDays: 365 });
+  claude.reply("I looked for a price near that day.");
+  await ask(page, "Is there a price for 2026-11-02?");
+  await expect(page.getByText("I looked for a price near that day.")).toBeVisible();
+
   claude.replyWithTool("propose_record_price", {
     instrumentId,
     date: "2026-11-02",
     price: "40.00",
+    source: "the owner said",
   });
   claude.reply("Here is the price I suggest.");
   await ask(page, "Set the price on 2026-11-02 to 40.00 euros");
 
   await expect(page.getByText("Record a manual price")).toBeVisible();
   await expect(page.getByText("Shared by everyone in the household")).toBeVisible();
+  await expect(page.getByText("the owner said", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.getByRole("status")).toHaveText("Saved.");
 

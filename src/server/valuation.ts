@@ -93,7 +93,7 @@ export type Portfolio = {
  */
 // ponytail: pre-split trades dropped rather than adjusted by the split ratio;
 // adjust them if a split instrument's early history matters.
-const tradedPrices = (
+export const tradedPrices = (
   txns: readonly Txn[],
   stored: readonly { instrumentId: number; date: string }[],
 ) => {

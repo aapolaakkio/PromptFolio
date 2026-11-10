@@ -8,7 +8,9 @@ import {
   MAX_SERIES_POINTS,
   today,
 } from "./tool-types.ts";
+import type { FetchImpl } from "../prices/types.ts";
 import { buildMoneyTools } from "./tools-money.ts";
+import { buildPriceTool } from "./tools-price.ts";
 import { buildRecordTools } from "./tools-records.ts";
 
 import { allocateBy } from "../../core/allocation.ts";
@@ -61,7 +63,7 @@ const Transactions = z
   })
   .strict();
 
-export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
+export const buildChatTools = (db: Db, userId: string, fetchImpl?: FetchImpl): ChatTool[] => [
   {
     name: "get_holdings",
     description:
@@ -471,4 +473,5 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
   },
   ...buildMoneyTools(db, userId),
   ...buildRecordTools(db, userId),
+  buildPriceTool(db, userId, fetchImpl),
 ];

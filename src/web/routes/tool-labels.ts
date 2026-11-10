@@ -21,6 +21,7 @@ export const TOOL_LABELS = new Map<string, string>([
   ["get_reconciliation", "reconciliation"],
   ["get_recurring_payments", "recurring payments"],
   ["get_net_worth_series", "net worth over time"],
+  ["find_price", "price lookup"],
   ["propose_record_price", "price proposal"],
   ["propose_cash_entry", "cash entry proposal"],
   ["propose_target_allocation", "target proposal"],

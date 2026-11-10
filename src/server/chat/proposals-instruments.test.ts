@@ -191,6 +191,26 @@ describe("propose_record_price", () => {
     expect(await priceRows(instrumentId)).toBe(0);
   });
 
+  test("the source the assistant names is a labelled fact, and not part of the saved input", async () => {
+    const { userId, instrumentId } = await seed();
+    const card = onlyCard(
+      await propose(userId, "propose_record_price", {
+        instrumentId,
+        date: "2026-11-02",
+        price: "12.50",
+        source: "own trade on 2021-01-20",
+      }),
+    );
+
+    expect(card.facts).toContainEqual({
+      kind: "text",
+      label: "Source (stated by the assistant)",
+      text: "own trade on 2021-01-20",
+    });
+    expect(card.input).toEqual({ instrumentId, date: "2026-11-02", price: "12.50" });
+    expect(card.summary).not.toContain("own trade");
+  });
+
   test("an existing price for that date is shown as what the new one replaces", async () => {
     const { userId, instrumentId } = await seed();
     await recordManualPrice(db, { instrumentId, date: "2026-11-02", price: "9.00" });
