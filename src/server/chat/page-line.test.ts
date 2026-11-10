@@ -4,7 +4,7 @@ import { db } from "../db/index.ts";
 import { HttpError } from "../errors.ts";
 import { PageContext } from "./page-context.ts";
 import { pageLine } from "./page-line.ts";
-import { seed } from "./proposal-test-kit.ts";
+import { bankAccount, seed } from "./proposal-test-kit.ts";
 
 // The page the owner is on reaches the model as one line the app writes from its own records.
 
@@ -52,7 +52,15 @@ describe("pageLine", () => {
       selection: { accountId, instrumentId },
     });
     expect(line).toBe(
-      `The owner is on the Holdings page. Selected account: "Nordnet" (account #${accountId}). Selected instrument: "Acme Fund" (${isin}).`,
+      `The owner is on the Holdings page. Selected account: Nordnet (account #${accountId}). Selected instrument: "Acme Fund" (${isin}).`,
+    );
+  });
+
+  test("masks an account number in the account's name, as everything else the model reads", async () => {
+    const { userId } = await seed();
+    const accountId = await bankAccount(userId, "OP FI49 5000 9420 0287 30");
+    expect(await pageLine(db, userId, { page: "cash", selection: { accountId } })).toBe(
+      `The owner is on the Cash page. Selected account: OP … (account #${accountId}).`,
     );
   });
 

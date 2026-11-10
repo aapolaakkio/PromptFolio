@@ -14,6 +14,7 @@ import {
   type Proposal,
 } from "./proposal-schema.ts";
 import { ChatChartSchema, StoredChartSchema } from "./chart-schema.ts";
+import { CONVERSATION_NOT_FOUND, TURN_RUNNING } from "./conversation-errors.ts";
 import { maskAccountNumbers } from "./mask.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
@@ -55,8 +56,34 @@ const ownedConversation = async (userId: string, id: number) => {
     .from(conversations)
     .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
     .get();
-  if (!row) throw new HttpError(404, "Conversation not found");
+  if (!row) throw new HttpError(404, CONVERSATION_NOT_FOUND);
   return row;
+};
+
+/** Longer than any real turn (ten model rounds); a question this old without an answer belongs to a turn that died. */
+export const TURN_LOCK_MS = 3 * 60_000;
+
+/** One turn at a time: a second one would read the first question without its answer and store answers out of order. */
+const assertNoTurnRunning = async (conversationId: number): Promise<void> => {
+  const last = await db
+    .select({ role: chatMessages.role, createdAt: chatMessages.createdAt })
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(desc(chatMessages.id))
+    .limit(1)
+    .get();
+  if (last?.role === "user" && Date.now() - last.createdAt.getTime() < TURN_LOCK_MS) {
+    throw new HttpError(409, TURN_RUNNING);
+  }
+};
+
+/** A turn that ended without an answer (failed, or the browser left) frees the conversation by aging its question past the lock. */
+const releaseQuestion = async (messageId: number): Promise<void> => {
+  await db
+    .update(chatMessages)
+    .set({ createdAt: new Date(Date.now() - TURN_LOCK_MS) })
+    .where(eq(chatMessages.id, messageId))
+    .run();
 };
 
 const titleFrom = (message: string): string =>
@@ -230,12 +257,14 @@ export const startTurn = async (
           .get()
       : await ownedConversation(userId, conversationId);
   if (conversation === undefined) throw new HttpError(500, "Creating the conversation failed");
+  if (conversationId !== undefined) await assertNoTurnRunning(conversation.id);
 
   // Stored first, so a mid-way failure still shows what was asked.
-  await db
+  const question = await db
     .insert(chatMessages)
     .values({ conversationId: conversation.id, role: "user", content: message })
-    .run();
+    .returning({ id: chatMessages.id })
+    .get();
 
   const history = modelHistory(await historyFor(conversation.id));
   // Scenarios and chart slots live for this turn only, so an id from another turn or user resolves to nothing.
@@ -247,6 +276,7 @@ export const startTurn = async (
     ...buildProposalTools(db, userId, conversation.id),
   ];
   const used: string[] = [];
+  let answered = false;
 
   let open = true;
   return new ReadableStream<Uint8Array>({
@@ -297,6 +327,7 @@ export const startTurn = async (
                 toolCalls: used.length === 0 ? null : JSON.stringify(used),
               })
               .run();
+            answered = true;
           }
           send(event);
         }
@@ -307,6 +338,7 @@ export const startTurn = async (
           send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {
+        if (!answered && question !== undefined) await releaseQuestion(question.id);
         if (open) controller.close();
       }
     },

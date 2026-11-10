@@ -33,7 +33,7 @@ export const CashPage = () => {
 
   const bankAccounts = (accounts.data ?? []).filter((account) => account.kind === "bank");
   const chosen = accountId ?? bankAccounts[0]?.id ?? null;
-  usePublishSelection({ accountId: chosen ?? undefined });
+  usePublishSelection(chosen);
 
   const entries = useQuery({
     queryKey: ["cash-entries", chosen],

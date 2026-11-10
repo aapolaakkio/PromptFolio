@@ -176,7 +176,7 @@ export const ImportsPage = () => {
   // The import an undo is in flight for; disables only that entry's button.
   const [undoingId, setUndoingId] = useState<number | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
-  usePublishSelection({ accountId: accountId ?? undefined });
+  usePublishSelection(accountId);
 
   const accounts = useQuery({
     queryKey: ["accounts"],

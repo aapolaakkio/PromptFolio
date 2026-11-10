@@ -1,13 +1,17 @@
 import { signOut } from "../lib/auth-client.ts";
 import { errorMessage } from "../lib/errors.ts";
+import { forgetPanel } from "./assistant-storage.ts";
 import { SessionGate } from "./session-gate.tsx";
 
 /** Ends the session, then leaves: the route guard only runs on navigation, so nothing else would move the page. */
 export const signOutAndLeave = async (
   endSession: () => Promise<void>,
   go: (path: string) => void,
+  // The panel's stored conversation belongs to this owner; the next one on this browser starts fresh.
+  forget: () => void,
 ): Promise<void> => {
   await endSession();
+  forget();
   go("/login");
 };
 
@@ -25,6 +29,7 @@ export const AuthenticatedLayout = () => (
         },
         // A full load, not a client navigation: it also drops the cached figures from memory.
         (path) => window.location.assign(path),
+        forgetPanel,
       ).catch((cause: unknown) => window.alert(errorMessage(cause, "Sign-out failed")))
     }
   />

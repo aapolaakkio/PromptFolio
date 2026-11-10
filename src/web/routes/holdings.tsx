@@ -8,7 +8,6 @@ import { HoldingsChart } from "../charts/HoldingsChart.tsx";
 import { RecordPriceForm } from "./RecordPriceForm.tsx";
 import { EditInstrumentForm } from "./EditInstrumentForm.tsx";
 import { Modal } from "./Modal.tsx";
-import { usePublishSelection } from "./assistant-context.ts";
 import { getHoldings } from "../server/portfolio.ts";
 import { refreshPricesNow } from "../server/prices.ts";
 
@@ -90,8 +89,6 @@ export const HoldingsPage = () => {
   const [priceFormFor, setPriceFormFor] = useState<number | null>(null);
   /** The holding whose "correct how this is priced" form is open. */
   const [editFor, setEditFor] = useState<number | null>(null);
-  // An open Edit or Enter-price form names the instrument the owner is looking at.
-  usePublishSelection({ instrumentId: editFor ?? priceFormFor ?? undefined });
 
   const holdings = useQuery({
     queryKey: ["holdings"],

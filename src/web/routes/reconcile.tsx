@@ -33,7 +33,7 @@ export const ReconcilePage = () => {
   });
 
   const chosenAccount = accountId ?? accounts.data?.[0]?.id ?? null;
-  usePublishSelection({ accountId: chosenAccount ?? undefined });
+  usePublishSelection(chosenAccount);
 
   const snapshots = useQuery({
     queryKey: ["snapshots", chosenAccount],

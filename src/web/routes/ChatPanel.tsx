@@ -1,304 +1,293 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { errorMessage } from "../lib/errors.ts";
 import { Markdown } from "../markdown/Markdown.tsx";
-import { getConversationMessages, saveProposalOutcome } from "../server/chat.ts";
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL, type ChatModel } from "../../server/chat/models.ts";
+import { CHAT_MODELS, type ChatModel } from "../../server/chat/models.ts";
 import type { PageContext } from "../../server/chat/page-context.ts";
-import {
-  readStored,
-  StoredOutcome,
-  StoredProposal,
-  type Proposal,
-} from "../../server/chat/proposal-schema.ts";
+import { readStored, StoredProposal } from "../../server/chat/proposal-schema.ts";
 import { StoredChartSchema } from "../../server/chat/chart-schema.ts";
 import { ChatChart } from "../charts/ChatChart.tsx";
+import { isNearBottom } from "./assistant-state.ts";
 import { renderItems } from "./chat-order.ts";
-import { refreshAfterDecision } from "./chat-refresh.ts";
-import { askChat } from "./chat-stream.ts";
-import { cardState, createDecider, type CardOutcome } from "./proposal-actions.ts";
+import { cardState, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
+import { STARTERS } from "./starters.ts";
 import { TOOL_LABELS } from "./tool-labels.ts";
+import { useChatTurn, type LiveCard, type Turn } from "./use-chat-turn.ts";
 
 const isChatModel = (value: string): value is ChatModel =>
   CHAT_MODELS.some((model) => model.id === value);
 
-type Turn = {
-  readonly role: "user" | "assistant" | "proposal" | "note" | "chart";
-  readonly content: string;
+type Item = ReturnType<typeof renderItems>[number];
+
+type Cards = {
+  readonly live: ReadonlyMap<string, LiveCard>;
+  readonly outcomes: ReadonlyMap<string, CardOutcome>;
+  readonly saving: ReadonlySet<string>;
+  readonly decide: (proposalId: string, confirm: boolean) => Promise<void>;
 };
 
-const storedOutcomes = (turns: readonly Turn[]): ReadonlyMap<string, CardOutcome> =>
-  new Map(
-    turns.flatMap((turn): [string, CardOutcome][] => {
-      if (turn.role !== "note") return [];
-      const parsed = readStored(StoredOutcome, turn.content);
-      return parsed === null ? [] : [[parsed.proposalId, parsed]];
-    }),
+const ChartTurn = ({ turn }: { readonly turn: Turn }) => {
+  const chart = readStored(StoredChartSchema, turn.content);
+  if (chart === null) return null;
+  return (
+    <li>
+      {"expired" in chart ? (
+        <div className="card max-w-[90%] grid gap-1 text-sm">
+          <span className="font-semibold">{chart.spec.title}</span>
+          <span className="text-muted">Chart expired — ask again.</span>
+        </div>
+      ) : (
+        <ChatChart chart={chart} />
+      )}
+    </li>
   );
+};
+
+const ProposalTurn = ({ turn, cards }: { readonly turn: Turn; readonly cards: Cards }) => {
+  const card = readStored(StoredProposal, turn.content);
+  if (card === null) return null;
+  const { proposalId, title, facts, action } = card;
+  const streamed = cards.live.get(proposalId)?.proposal;
+  return (
+    <li>
+      <ProposalCard
+        action={action}
+        title={title}
+        facts={facts}
+        note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
+        state={cardState(streamed, cards.outcomes.get(proposalId))}
+        outcome={cards.outcomes.get(proposalId)}
+        saving={cards.saving.has(proposalId)}
+        onConfirm={() => void cards.decide(proposalId, true)}
+        onDismiss={() => void cards.decide(proposalId, false)}
+      />
+    </li>
+  );
+};
+
+const TurnItem = ({ item, cards }: { readonly item: Item; readonly cards: Cards }) => {
+  if (item.kind === "user") {
+    return (
+      <li className="justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2">
+        {item.content}
+      </li>
+    );
+  }
+  if (item.kind === "text") {
+    return (
+      <li className="max-w-[90%] rounded bg-surface px-3 py-2">
+        <Markdown text={item.content} />
+      </li>
+    );
+  }
+  if (item.turn.role === "chart") return <ChartTurn turn={item.turn} />;
+  if (item.turn.role === "proposal") return <ProposalTurn turn={item.turn} cards={cards} />;
+  return null;
+};
+
+const itemKey = (item: Item): string => {
+  if (item.kind !== "card") return item.key;
+  const chart =
+    item.turn.role === "chart" ? readStored(StoredChartSchema, item.turn.content) : null;
+  if (chart !== null) return `chart-${chart.chartId}`;
+  const card = item.turn.role === "proposal" ? readStored(StoredProposal, item.turn.content) : null;
+  return card === null ? item.key : `proposal-${card.proposalId}`;
+};
+
+/** Follows new text only while the reader is at the bottom; scrolling up stops it until "Jump to latest". */
+const useFollow = (signal: string) => {
+  const ref = useRef<HTMLOListElement>(null);
+  const [following, setFollowing] = useState(true);
+  useEffect(() => {
+    if (following) ref.current?.scrollTo({ top: ref.current.scrollHeight });
+  }, [following, signal]);
+  const onScroll = () => {
+    if (ref.current !== null) setFollowing(isNearBottom(ref.current));
+  };
+  const jump = () => {
+    setFollowing(true);
+    ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" });
+  };
+  return { ref, following, onScroll, jump };
+};
+
+const Starters = ({
+  page,
+  onAsk,
+}: {
+  readonly page: PageContext["page"];
+  readonly onAsk: (text: string) => boolean;
+}) => (
+  <li className="grid gap-2 text-sm">
+    <span className="text-muted">Ask about your own figures, for example:</span>
+    {STARTERS[page].map((question) => (
+      <button
+        key={question}
+        type="button"
+        className="justify-self-start rounded-md border border-line bg-transparent px-3 py-1.5 text-left font-normal text-ink hover:bg-bg"
+        onClick={() => onAsk(question)}
+      >
+        {question}
+      </button>
+    ))}
+  </li>
+);
+
+type TranscriptProps = {
+  readonly items: readonly Item[];
+  readonly cards: Cards;
+  readonly variant: "page" | "dock";
+  readonly follow: ReturnType<typeof useFollow>;
+  readonly empty: ReactNode;
+};
+
+const Transcript = ({ items, cards, variant, follow, empty }: TranscriptProps) => (
+  <div className={variant === "dock" ? "relative flex min-h-0 flex-1 flex-col" : "relative"}>
+    <ol
+      ref={follow.ref}
+      onScroll={follow.onScroll}
+      className={`grid content-start gap-3 overflow-y-auto pr-1 [scrollbar-gutter:stable] ${
+        variant === "dock" ? "min-h-0 flex-1" : "max-h-[55vh]"
+      }`}
+    >
+      {items.length === 0 && empty}
+      {items.map((item) => (
+        <TurnItem key={itemKey(item)} item={item} cards={cards} />
+      ))}
+    </ol>
+    {!follow.following && (
+      <button
+        type="button"
+        className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-line bg-surface px-3 py-1 text-sm font-normal text-ink shadow"
+        onClick={follow.jump}
+      >
+        Jump to latest
+      </button>
+    )}
+  </div>
+);
+
+// About five lines; past that the box scrolls.
+const COMPOSER_MAX_PX = 160;
+
+const fitHeight = (box: HTMLTextAreaElement | null) => {
+  if (box === null) return;
+  box.style.height = "auto";
+  box.style.height = `${Math.min(box.scrollHeight, COMPOSER_MAX_PX)}px`;
+};
+
+/** Grows with its text; Enter sends, Shift+Enter is a new line. Never disabled, so focus stays here after sending. */
+const Composer = ({
+  busy,
+  onAsk,
+  composerRef,
+}: {
+  readonly busy: boolean;
+  readonly onAsk: (text: string) => boolean;
+  readonly composerRef: RefObject<HTMLTextAreaElement | null>;
+}) => {
+  const [draft, setDraft] = useState("");
+  useEffect(() => fitHeight(composerRef.current), [draft, composerRef]);
+  const submit = () => {
+    if (onAsk(draft)) setDraft("");
+  };
+  return (
+    <form
+      className="flex items-end gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <textarea
+        ref={composerRef}
+        rows={1}
+        className="min-w-0 flex-1 resize-none overflow-y-auto rounded-md border border-line bg-surface px-3 py-2 text-base text-ink"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          submit();
+        }}
+        placeholder="E.g. what is the portfolio worth today?"
+        aria-label="Question"
+      />
+      <button type="submit" disabled={busy || draft.trim() === ""}>
+        Ask
+      </button>
+    </form>
+  );
+};
+
+const ModelPicker = ({
+  model,
+  busy,
+  onModel,
+}: {
+  readonly model: ChatModel;
+  readonly busy: boolean;
+  readonly onModel: (model: ChatModel) => void;
+}) => (
+  <label className="mb-0 text-sm text-muted">
+    Model
+    <select
+      value={model}
+      disabled={busy}
+      onChange={(event) => {
+        if (isChatModel(event.target.value)) onModel(event.target.value);
+      }}
+    >
+      {CHAT_MODELS.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  </label>
+);
 
 type ChatPanelProps = {
-  readonly conversationId: number | null;
-  readonly onConversation: (id: number | null) => void;
   /** Where the owner asks from; the server resolves its ids and writes the line the model sees. */
   readonly context: PageContext | null;
   /** "dock" fills the side panel's height; "page" keeps the full Chat page's fixed transcript height. */
   readonly variant: "page" | "dock";
-  readonly composerRef?: Ref<HTMLInputElement>;
+  readonly composerRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
 /** The one conversation UI, on the Chat page and in the docked panel. The assistant does no arithmetic: every figure came from a tool named under "Fetched:". It writes nothing itself: every change is a card the owner confirms. */
-export const ChatPanel = ({
-  conversationId,
-  onConversation,
-  context,
-  variant,
-  composerRef,
-}: ChatPanelProps) => {
-  const queryClient = useQueryClient();
-  const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<Turn[]>([]);
-  const [tools, setTools] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
-  // The answer so far, word by word, until the whole one arrives and replaces it.
-  const [streaming, setStreaming] = useState("");
-  // Proposals streamed in this page session, with their input; a reload empties this, so stored cards show as expired.
-  const [live, setLive] = useState<ReadonlyMap<string, Proposal>>(new Map());
-  const [decided, setDecided] = useState<ReadonlyMap<string, CardOutcome>>(new Map());
-  const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
-  // One per panel: it refuses a second decision on the same card, even from a double click.
-  const decider = useRef(createDecider());
-
-  const history = useQuery({
-    queryKey: ["conversation", conversationId],
-    // Not mid-turn: a fetch would return the stored question while `pending` still shows its copy, doubling it.
-    enabled: conversationId !== null && !busy,
-    queryFn: () => getConversationMessages({ data: { id: conversationId ?? 0 } }),
-  });
-
-  const turns: Turn[] = [...(history.data ?? []), ...pending];
-  const outcomes = new Map([...storedOutcomes(turns), ...decided]);
-
-  // The transcript scrolls and follows the newest turn, so a long answer cannot push the question box off the page.
-  const transcript = useRef<HTMLOListElement>(null);
-  useEffect(() => {
-    transcript.current?.scrollTo({ top: transcript.current.scrollHeight });
-  }, [turns.length, busy, streaming]);
-
-  const send = async () => {
-    const message = draft.trim();
-    if (message === "" || busy) return;
-    setDraft("");
-    setError(null);
-    setTools([]);
-    setBusy(true);
-    // Shown immediately; the server's stored copy replaces it once the turn is over.
-    setPending([{ role: "user", content: message }]);
-
-    try {
-      const base =
-        conversationId === null ? { message, model } : { message, conversationId, model };
-      const request = context === null ? base : { ...base, context };
-      for await (const event of askChat(request)) {
-        if (event.type === "conversation") onConversation(event.id);
-        if (event.type === "tool") setTools((previous) => [...previous, event.name]);
-        if (event.type === "error") setError(event.message);
-        if (event.type === "proposal") {
-          const { proposal } = event;
-          setLive((previous) => new Map([...previous, [proposal.proposalId, proposal]]));
-          const trace = {
-            proposalId: proposal.proposalId,
-            action: proposal.action,
-            summary: proposal.summary,
-            title: proposal.title,
-            facts: proposal.facts,
-          };
-          setPending((previous) => [
-            ...previous,
-            { role: "proposal", content: JSON.stringify(trace) },
-          ]);
-        }
-        if (event.type === "chart") {
-          const chart = { chartId: event.chartId, spec: event.spec, data: event.data };
-          setPending((previous) => [
-            ...previous,
-            { role: "chart", content: JSON.stringify(chart) },
-          ]);
-        }
-        if (event.type === "delta") setStreaming((previous) => previous + event.text);
-        if (event.type === "answer") {
-          setStreaming("");
-          setPending((previous) => [...previous, { role: "assistant", content: event.text }]);
-        }
-      }
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not fetch the answer"));
-    } finally {
-      setBusy(false);
-      setStreaming("");
-      setPending([]);
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-    }
-  };
-
-  /** Runs the action through its form's server function, then tells the conversation what happened. */
-  const decide = async (proposalId: string, confirm: boolean) => {
-    const proposal = live.get(proposalId);
-    if (proposal === undefined || conversationId === null) return;
-    setSaving((previous) => new Set([...previous, proposalId]));
-    const outcome = await decider.current(proposal, confirm);
-    setSaving((previous) => new Set([...previous].filter((id) => id !== proposalId)));
-    if (outcome === null) return;
-    setDecided((previous) => new Map([...previous, [proposalId, outcome]]));
-    setLive((previous) => new Map([...previous].filter(([id]) => id !== proposalId)));
-    try {
-      await saveProposalOutcome({ data: { conversationId, proposalId, ...outcome } });
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not tell the assistant what happened"));
-    }
-    refreshAfterDecision(queryClient, outcome);
-  };
-
-  const startNew = () => {
-    onConversation(null);
-    setPending([]);
-    setTools([]);
-    setError(null);
-  };
-
+export const ChatPanel = ({ context, variant, composerRef }: ChatPanelProps) => {
+  const chat = useChatTurn(context);
+  const ownComposer = useRef<HTMLTextAreaElement>(null);
+  const shown: Turn[] =
+    chat.streaming === ""
+      ? chat.turns
+      : [...chat.turns, { role: "assistant", content: chat.streaming }];
+  const items = renderItems(shown);
+  const follow = useFollow(`${items.length}:${chat.streaming.length}:${chat.busy}`);
   return (
     <div
       className={
         variant === "dock" ? "flex min-h-0 flex-1 flex-col gap-3" : "grid content-start gap-4"
       }
     >
-      <ol
-        ref={transcript}
-        className={
-          variant === "dock"
-            ? "grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1"
-            : "grid max-h-[55vh] content-start gap-3 overflow-y-auto pr-1"
-        }
-      >
-        {turns.length === 0 && (
-          <li className="text-muted text-sm">
-            Ask, for example, where the money went last month, or ask it to categorise unknown
-            payees.
-          </li>
-        )}
-        {renderItems(
-          streaming === "" ? turns : [...turns, { role: "assistant", content: streaming }],
-        ).map((item) => {
-          if (item.kind === "user") {
-            return (
-              <li
-                key={item.key}
-                className="justify-self-end max-w-[80%] whitespace-pre-wrap rounded border border-line px-3 py-2"
-              >
-                {item.content}
-              </li>
-            );
-          }
-          if (item.kind === "text") {
-            return (
-              <li key={item.key} className="max-w-[90%] rounded bg-surface px-3 py-2">
-                <Markdown text={item.content} />
-              </li>
-            );
-          }
-          const { turn } = item;
-          if (turn.role === "chart") {
-            const chart = readStored(StoredChartSchema, turn.content);
-            if (chart === null) return null;
-            return (
-              <li key={`chart-${chart.chartId}`}>
-                {"expired" in chart ? (
-                  <div className="card max-w-[90%] grid gap-1 text-sm">
-                    <span className="font-semibold">{chart.spec.title}</span>
-                    <span className="text-muted">Chart expired — ask again.</span>
-                  </div>
-                ) : (
-                  <ChatChart chart={chart} />
-                )}
-              </li>
-            );
-          }
-          if (turn.role !== "proposal") return null;
-          const card = readStored(StoredProposal, turn.content);
-          if (card === null) return null;
-          const { proposalId, title, facts, action } = card;
-          const streamed = live.get(proposalId);
-          return (
-            <li key={`proposal-${proposalId}`}>
-              <ProposalCard
-                action={action}
-                title={title}
-                facts={facts}
-                note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
-                state={cardState(streamed, outcomes.get(proposalId))}
-                outcome={outcomes.get(proposalId)}
-                saving={saving.has(proposalId)}
-                onConfirm={() => void decide(proposalId, true)}
-                onDismiss={() => void decide(proposalId, false)}
-              />
-            </li>
-          );
-        })}
-      </ol>
-
-      {busy && streaming === "" && (
+      <Transcript
+        items={items}
+        cards={chat}
+        variant={variant}
+        follow={follow}
+        empty={<Starters page={context?.page ?? "chat"} onAsk={chat.ask} />}
+      />
+      {chat.busy && chat.streaming === "" && (
         <p className="text-muted">
-          {tools.length === 0
+          {chat.tools.length === 0
             ? "Thinking…"
-            : `Fetched: ${tools.map((name) => TOOL_LABELS.get(name) ?? name).join(", ")}`}
+            : `Fetched: ${chat.tools.map((name) => TOOL_LABELS.get(name) ?? name).join(", ")}`}
         </p>
       )}
-      {error !== null && <p role="alert">{error}</p>}
-
-      <form
-        className="flex gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-      >
-        <input
-          ref={composerRef}
-          className="min-w-0 flex-1"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="E.g. what is the portfolio worth today?"
-          aria-label="Question"
-        />
-        <button type="submit" disabled={busy || draft.trim() === ""}>
-          Ask
-        </button>
-      </form>
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <label className="mb-0 text-sm text-muted">
-          Model
-          <select
-            value={model}
-            disabled={busy}
-            onChange={(event) => {
-              if (isChatModel(event.target.value)) setModel(event.target.value);
-            }}
-          >
-            {CHAT_MODELS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="quiet-button" disabled={busy} onClick={startNew}>
-          New conversation
-        </button>
-      </div>
+      {chat.error !== null && <p role="alert">{chat.error}</p>}
+      <Composer busy={chat.busy} onAsk={chat.ask} composerRef={composerRef ?? ownComposer} />
+      <ModelPicker model={chat.model} busy={chat.busy} onModel={chat.setModel} />
     </div>
   );
 };

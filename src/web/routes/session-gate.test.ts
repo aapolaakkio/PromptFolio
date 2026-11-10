@@ -7,6 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
+import { PAGE_CLASS, PageContent } from "./AssistantLayout.tsx";
 import { SessionGate } from "./session-gate.tsx";
 
 const noop = () => {};
@@ -74,4 +75,14 @@ test("the full Chat page hides the toggle, since the page is the chat", async ()
   const html = await renderAt("/chat");
   expect(html).not.toMatch(TOGGLE);
   expect(html).toContain("PROTECTED_PAGE_MARKER");
+});
+
+test("the page content takes nothing from the panel but `inert`, so the panel never moves it", async () => {
+  const plain = renderToStaticMarkup(PageContent({ inert: false, children: "PAGE" }));
+  const covered = renderToStaticMarkup(PageContent({ inert: true, children: "PAGE" }));
+  expect(plain).toBe(`<div><main class="${PAGE_CLASS}">PAGE</main></div>`);
+  expect(covered.replace(/ inert=""/, "")).toBe(plain);
+
+  const html = await renderAt("/");
+  expect(html).toContain(`<div><main class="${PAGE_CLASS}">PROTECTED_PAGE_MARKER</main></div>`);
 });

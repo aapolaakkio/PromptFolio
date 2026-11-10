@@ -176,7 +176,7 @@ describe("the page the owner asks from", () => {
       }),
     );
     expect(system).toContain(
-      `The owner is on the Cash page. Selected account: "Nordnet" (account #${owner.accountId}).`,
+      `The owner is on the Cash page. Selected account: Nordnet (account #${owner.accountId}).`,
     );
 
     const foreign = { page: "cash" as const, selection: { accountId: stranger.accountId } };
@@ -209,6 +209,59 @@ describe("a client that goes away mid-turn", () => {
     expect(events.some((event) => event.type === "error")).toBe(false);
     const stored = await chat.conversationMessages(userId, conversationIdOf(events));
     expect(stored.map((m) => m.role)).toEqual(["user"]);
+  });
+});
+
+describe("one turn at a time per conversation", () => {
+  const unanswered = async (userId: string, ageMs: number): Promise<number> => {
+    const { db } = await import("../db/index.ts");
+    const { chatMessages, conversations } = await import("../db/schema.ts");
+    const conversation = await db
+      .insert(conversations)
+      .values({ userId, title: "t" })
+      .returning()
+      .get();
+    if (conversation === undefined) throw new Error("no conversation");
+    await db
+      .insert(chatMessages)
+      .values({
+        conversationId: conversation.id,
+        role: "user",
+        content: "Still being answered",
+        createdAt: new Date(Date.now() - ageMs),
+      })
+      .run();
+    return conversation.id;
+  };
+
+  test("a question still being answered refuses a second turn, as 409", async () => {
+    setChatClient(scriptedClient());
+    const userId = await signUp();
+    const id = await unanswered(userId, 1000);
+    expect(await statusOf(() => turn(userId, { conversationId: id, message: "Again" }))).toBe(409);
+  });
+
+  test("a question older than the turn limit no longer blocks: that turn died", async () => {
+    setChatClient(scriptedClient());
+    const userId = await signUp();
+    const id = await unanswered(userId, chat.TURN_LOCK_MS + 1000);
+    const events = await eventsOf(await turn(userId, { conversationId: id, message: "Again" }));
+    expect(events.at(-1)?.type).toBe("answer");
+  });
+
+  test("a failed or dropped turn releases the conversation at once", async () => {
+    setChatClient(failingClient());
+    const userId = await signUp();
+    const id = conversationIdOf(await eventsOf(await turn(userId, { message: "First" })));
+    setChatClient(scriptedClient("Now it works."));
+    const events = await eventsOf(await turn(userId, { conversationId: id, message: "Retry" }));
+    expect(events.at(-1)).toEqual({ type: "answer", text: "Now it works." });
+
+    const abort = new AbortController();
+    abort.abort();
+    await eventsOf(await turn(userId, { conversationId: id, message: "Dropped" }, abort.signal));
+    const after = await eventsOf(await turn(userId, { conversationId: id, message: "Back" }));
+    expect(after.at(-1)?.type).toBe("answer");
   });
 });
 

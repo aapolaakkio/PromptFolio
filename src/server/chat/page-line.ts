@@ -1,7 +1,8 @@
 import { listAccounts } from "../accounts.ts";
 import { HttpError } from "../errors.ts";
 import type { AssistantPage, PageContext } from "./page-context.ts";
-import { ownInstrument } from "./proposal-kit.ts";
+import { maskAccountNumbers } from "./mask.ts";
+import { accountName, ownInstrument } from "./proposal-kit.ts";
 import type { Db } from "./tool-types.ts";
 
 const PAGE_NAMES = {
@@ -20,7 +21,7 @@ const PAGE_NAMES = {
 const accountPart = async (db: Db, userId: string, accountId: number): Promise<string> => {
   const account = (await listAccounts(db, userId)).find((candidate) => candidate.id === accountId);
   if (account === undefined) throw new HttpError(404, "Account not found");
-  return `Selected account: ${JSON.stringify(account.name)} (account #${account.id}).`;
+  return `Selected account: ${maskAccountNumbers(accountName(account))}.`;
 };
 
 const instrumentPart = async (db: Db, userId: string, instrumentId: number): Promise<string> => {

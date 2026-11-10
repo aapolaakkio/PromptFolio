@@ -1,204 +1,292 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   useCallback,
-  useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 
+import { getConversations } from "../server/chat.ts";
 import { AssistantContext, SelectionContext, type Selection } from "./assistant-context.ts";
 import {
-  CLOSED_PANEL,
+  useFocusOnToggle,
+  useHeight,
+  useNarrow,
+  usePanelState,
+  useShortcut,
+  useWidthDrag,
+} from "./assistant-hooks.ts";
+import {
+  clampWidth,
   dockShown,
-  isShortcut,
-  PANEL_KEY,
   pageOf,
-  panelReducer,
-  readPanel,
+  PANEL_MIN_WIDTH,
   type PanelAction,
+  type PanelState,
 } from "./assistant-state.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
 
 const PANEL_ID = "assistant-panel";
 
-// Private windows and blocked storage throw; the panel then just forgets between loads.
-const readStorage = (): string | null => {
-  try {
-    return localStorage.getItem(PANEL_KEY);
-  } catch {
-    return null;
-  }
+/** The page's own layout, never touched by the panel: it lies over the page, so opening, closing or widening it moves nothing. */
+export const PAGE_CLASS = "mx-auto max-w-5xl px-5 pb-16 pt-8";
+
+/** Takes only `inert`: there is nothing here for the panel's width or open state to reach. */
+export const PageContent = ({
+  inert,
+  children,
+}: {
+  readonly inert: boolean;
+  readonly children: ReactNode;
+}) => (
+  <div inert={inert}>
+    <main className={PAGE_CLASS}>{children}</main>
+  </div>
+);
+
+const AssistantToggle = ({
+  shown,
+  answering,
+  toggleRef,
+  onToggle,
+}: {
+  readonly shown: boolean;
+  readonly answering: boolean;
+  readonly toggleRef: RefObject<HTMLButtonElement | null>;
+  readonly onToggle: () => void;
+}) => (
+  <button
+    ref={toggleRef}
+    type="button"
+    className="quiet-button inline-flex items-center gap-1.5"
+    aria-expanded={shown}
+    aria-controls={PANEL_ID}
+    aria-keyshortcuts="Control+K Meta+K"
+    title="Assistant (Ctrl/Cmd+K)"
+    onClick={onToggle}
+  >
+    Chat
+    {answering && !shown && (
+      <>
+        <span aria-hidden className="size-1.5 rounded-full bg-accent motion-safe:animate-pulse" />
+        <span className="sr-only">, answer in progress</span>
+      </>
+    )}
+  </button>
+);
+
+const DockHeader = ({
+  conversationId,
+  busy,
+  onNew,
+  onClose,
+}: {
+  readonly conversationId: number | null;
+  readonly busy: boolean;
+  readonly onNew: () => void;
+  readonly onClose: () => void;
+}) => {
+  const conversations = useQuery({
+    queryKey: ["conversations"],
+    queryFn: () => getConversations(),
+  });
+  const title = conversations.data?.find((row) => row.id === conversationId)?.title ?? "Assistant";
+  return (
+    <div className="grid gap-2">
+      <h2 className="mb-0 truncate" title={title}>
+        {title}
+      </h2>
+      <div className="flex flex-wrap items-center gap-1">
+        <button type="button" className="quiet-button" disabled={busy} onClick={onNew}>
+          New conversation
+        </button>
+        <Link to="/chat" className="quiet-button no-underline">
+          Open full view
+        </Link>
+        <button type="button" className="quiet-button ml-auto" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
 };
-const writeStorage = (value: string): void => {
-  try {
-    localStorage.setItem(PANEL_KEY, value);
-  } catch {
-    // Nothing to keep it in; the open panel still works for this load.
-  }
+
+const ResizeHandle = ({
+  width,
+  viewport,
+  drag,
+}: {
+  readonly width: number;
+  readonly viewport: number;
+  readonly drag: ReturnType<typeof useWidthDrag>;
+}) => (
+  // A focusable separator is the ARIA pattern for a resizable splitter.
+  <div
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize assistant"
+    aria-valuenow={width}
+    aria-valuemin={PANEL_MIN_WIDTH}
+    aria-valuemax={clampWidth(Number.POSITIVE_INFINITY, viewport)}
+    tabIndex={0}
+    className="absolute inset-y-0 left-0 w-2 -translate-x-1/2 cursor-col-resize touch-none hover:bg-line focus-visible:bg-accent"
+    {...drag.handlers}
+  />
+);
+
+type DockProps = {
+  readonly state: PanelState;
+  readonly shown: boolean;
+  readonly narrow: boolean;
+  readonly animate: boolean;
+  readonly top: number;
+  readonly viewport: number;
+  readonly busy: boolean;
+  readonly context: ReturnType<typeof contextOf>;
+  readonly dockRef: RefObject<HTMLElement | null>;
+  readonly composerRef: RefObject<HTMLTextAreaElement | null>;
+  readonly act: (action: PanelAction) => void;
+  readonly dispatch: (action: PanelAction) => void;
 };
 
-const isTyping = (target: EventTarget | null): target is HTMLElement =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+const dockClass = (shown: boolean, animate: boolean): string =>
+  [
+    "fixed bottom-0 right-0 z-10 flex w-full flex-col gap-3 border-l border-line bg-surface p-4",
+    shown ? "translate-x-0" : "translate-x-full",
+    // Only the slide animates: the width drag follows the pointer directly.
+    animate
+      ? "transition-transform duration-(--panel-duration) ease-out motion-reduce:transition-none"
+      : "",
+  ].join(" ");
 
-/** Follows the sticky header's height, so the dock starts right under it on any width. */
-const useHeight = () => {
-  const ref = useRef<HTMLElement>(null);
-  const [height, setHeight] = useState(0);
-  useEffect(() => {
-    const element = ref.current;
-    if (element === null) return;
-    const observer = new ResizeObserver(() => setHeight(element.offsetHeight));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  return { ref, height };
-};
-
-type AssistantLayoutProps = { readonly start: ReactNode; readonly end: ReactNode };
-
-/**
- * The authenticated shell with the assistant docked beside every page. Its state sits above the
- * outlet, so a conversation (and an answer still streaming) survives a change of page. Closed on
- * the server and on first paint; the stored state opens it after mount.
- */
-export const AssistantLayout = ({ start, end }: AssistantLayoutProps) => {
-  const pathname = useRouterState({ select: (router) => router.location.pathname });
-  const [state, dispatch] = useReducer(panelReducer, CLOSED_PANEL);
-  const [selection, setSelection] = useState<Selection | undefined>(undefined);
-  // Once opened the panel stays mounted (hidden when closed), so a stream is never cut off.
+/** Off-screen and inert while closed, but still mounted once opened, so a stream is never cut off. */
+const AssistantDock = (props: DockProps) => {
+  const { state, shown, narrow, dockRef, act } = props;
   const [kept, setKept] = useState(false);
-  const header = useHeight();
-  const toggleRef = useRef<HTMLButtonElement>(null);
-  const composerRef = useRef<HTMLInputElement>(null);
-  const dockRef = useRef<HTMLElement>(null);
-  const restored = useRef(false);
-  // Focus moves only when the owner opened or closed it, not when a reload restored it.
-  const byOwner = useRef(false);
-  const wasShown = useRef(false);
-
-  const shown = dockShown(state, pathname);
-  const page = pageOf(pathname);
-  const onChatPage = page === "chat";
-
-  const act = useCallback((action: PanelAction) => {
-    byOwner.current = true;
-    dispatch(action);
-  }, []);
-
-  useEffect(() => {
-    dispatch({ type: "restore", state: readPanel(readStorage()) });
-  }, []);
-
-  useEffect(() => {
-    // The first run sees the default, not the stored state; writing it would erase what is stored.
-    if (!restored.current) {
-      restored.current = true;
-      return;
-    }
-    writeStorage(JSON.stringify(state));
-  }, [state]);
-
-  useEffect(() => {
-    if (shown) setKept(true);
-    if (shown === wasShown.current) return;
-    wasShown.current = shown;
-    const owner = byOwner.current;
-    byOwner.current = false;
-    if (!owner) return;
-    if (shown) composerRef.current?.focus();
-    else toggleRef.current?.focus();
-  }, [shown]);
-
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (onChatPage) return;
-      const inside = event.target instanceof Node && dockRef.current?.contains(event.target);
-      if (!isShortcut(event, isTyping(event.target) && inside !== true)) return;
-      event.preventDefault();
-      act({ type: "toggle" });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onChatPage, act]);
-
+  if (shown && !kept) setKept(true);
+  const drag = useWidthDrag(props.dispatch);
   // The handler sits on the panel, so Escape closes it only while focus is inside.
-  const onPanelKey = (event: KeyboardEvent) => {
+  const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     event.preventDefault();
     act({ type: "close" });
   };
-
-  const assistant = useMemo(() => ({ state, dispatch }), [state]);
-  const context = page === null ? null : selection === undefined ? { page } : { page, selection };
-
   return (
-    <AssistantContext value={assistant}>
-      <SelectionContext value={setSelection}>
+    <>
+      {/* Over the whole window while dragging: no text selection, no chart hover. Outside the panel, whose transform would contain it. */}
+      {drag.dragging && <div className="fixed inset-0 z-20 cursor-col-resize select-none" />}
+      <aside
+        id={PANEL_ID}
+        ref={dockRef}
+        aria-label="Assistant"
+        inert={!shown}
+        style={{ top: props.top, width: narrow ? undefined : state.width }}
+        className={dockClass(shown, props.animate)}
+        onKeyDown={onKeyDown}
+      >
+        {!narrow && <ResizeHandle width={state.width} viewport={props.viewport} drag={drag} />}
+        {kept && (
+          <>
+            <DockHeader
+              conversationId={state.conversationId}
+              busy={props.busy}
+              onNew={() => props.dispatch({ type: "conversation", id: null })}
+              onClose={() => act({ type: "close" })}
+            />
+            <ChatPanel context={props.context} variant="dock" composerRef={props.composerRef} />
+          </>
+        )}
+      </aside>
+    </>
+  );
+};
+
+const contextOf = (pathname: string, selection: Selection | undefined) => {
+  const page = pageOf(pathname);
+  if (page === null) return null;
+  return selection === undefined ? { page } : { page, selection };
+};
+
+/** The shell's assistant: state above the outlet, so a conversation (and an answer still streaming) survives a change of page. */
+const useAssistantShell = () => {
+  const pathname = useRouterState({ select: (router) => router.location.pathname });
+  const panel = usePanelState();
+  const [selection, setSelection] = useState<Selection | undefined>(undefined);
+  const [turnRunning, setTurnRunning] = useState(false);
+  const narrow = useNarrow();
+  const refs = {
+    toggle: useRef<HTMLButtonElement>(null),
+    composer: useRef<HTMLTextAreaElement>(null),
+    dock: useRef<HTMLElement>(null),
+    byOwner: useRef(false),
+  };
+  const shown = dockShown(panel.state, pathname);
+  const onChatPage = pageOf(pathname) === "chat";
+  const { dispatch } = panel;
+  const byOwner = refs.byOwner;
+  const act = useCallback(
+    (action: PanelAction) => {
+      byOwner.current = true;
+      dispatch(action);
+    },
+    [byOwner, dispatch],
+  );
+  const toggle = useCallback(() => act({ type: "toggle" }), [act]);
+  useShortcut(!onChatPage, refs.dock, toggle);
+  useFocusOnToggle(shown, refs.byOwner, refs.composer, refs.toggle);
+  const assistant = useMemo(
+    () => ({ state: panel.state, dispatch, turnRunning, setTurnRunning }),
+    [panel.state, dispatch, turnRunning],
+  );
+  const context = contextOf(pathname, selection);
+  return { panel, assistant, setSelection, narrow, refs, shown, onChatPage, act, toggle, context };
+};
+
+type AssistantLayoutProps = { readonly start: ReactNode; readonly end: ReactNode };
+
+/** The authenticated shell with the assistant docked beside every page. Closed on the server; the stored state opens it after mount. */
+export const AssistantLayout = ({ start, end }: AssistantLayoutProps) => {
+  const shell = useAssistantShell();
+  const header = useHeight();
+  return (
+    <AssistantContext value={shell.assistant}>
+      <SelectionContext value={shell.setSelection}>
         <header
           ref={header.ref}
           className="sticky top-0 z-10 flex items-center gap-6 border-b border-line bg-surface px-5 py-3"
         >
           {start}
-          {!onChatPage && (
-            <button
-              ref={toggleRef}
-              type="button"
-              className="quiet-button"
-              aria-expanded={shown}
-              aria-controls={PANEL_ID}
-              aria-keyshortcuts="Control+K Meta+K"
-              title="Assistant (Ctrl/Cmd+K)"
-              onClick={() => act({ type: "toggle" })}
-            >
-              Chat
-            </button>
+          {!shell.onChatPage && (
+            <AssistantToggle
+              shown={shell.shown}
+              answering={shell.assistant.turnRunning}
+              toggleRef={shell.refs.toggle}
+              onToggle={shell.toggle}
+            />
           )}
           {end}
         </header>
-        <div className={shown ? "min-[900px]:pr-[400px]" : undefined}>
-          <main className="mx-auto max-w-5xl px-5 pb-16 pt-8">
-            <Outlet />
-          </main>
-        </div>
-        <aside
-          id={PANEL_ID}
-          ref={dockRef}
-          aria-label="Assistant"
-          style={{ top: header.height }}
-          className={`${shown ? "flex" : "hidden"} fixed bottom-0 right-0 z-10 w-full flex-col gap-3 border-l border-line bg-surface p-4 min-[900px]:w-[400px]`}
-          onKeyDown={onPanelKey}
-        >
-          {(shown || kept) && (
-            <>
-              <div className="flex items-center gap-3">
-                <h2 className="mb-0 mr-auto">Assistant</h2>
-                <Link to="/chat" className="text-sm">
-                  Open full view
-                </Link>
-                <button
-                  type="button"
-                  className="quiet-button"
-                  aria-label="Close assistant"
-                  onClick={() => act({ type: "close" })}
-                >
-                  ×
-                </button>
-              </div>
-              <ChatPanel
-                conversationId={state.conversationId}
-                onConversation={(id) => dispatch({ type: "conversation", id })}
-                context={context}
-                variant="dock"
-                composerRef={composerRef}
-              />
-            </>
-          )}
-        </aside>
+        <PageContent inert={shell.shown && shell.narrow}>
+          <Outlet />
+        </PageContent>
+        <AssistantDock
+          state={shell.panel.state}
+          shown={shell.shown}
+          narrow={shell.narrow}
+          animate={shell.panel.animate}
+          top={header.height}
+          viewport={shell.panel.viewportWidth}
+          busy={shell.assistant.turnRunning}
+          context={shell.context}
+          dockRef={shell.refs.dock}
+          composerRef={shell.refs.composer}
+          act={shell.act}
+          dispatch={shell.panel.dispatch}
+        />
       </SelectionContext>
     </AssistantContext>
   );

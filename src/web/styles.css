@@ -19,6 +19,11 @@
   --radius-card: 0.625rem;
 }
 
+/* How long the assistant panel takes to slide in or out; reduced motion skips it. */
+:root {
+  --panel-duration: 200ms;
+}
+
 /* Chart series colours, light mode: validated for colour-vision separation against a near-white surface (three sit under 3:1, allowed only because every chart has a legend or direct labels). In a plain `:root`, not `@theme`: charts pick them by number at runtime, and Tailwind drops theme variables it cannot see used. */
 :root {
   --series-1: #2a78d6;
@@ -58,6 +63,8 @@
 @layer base {
   html {
     color-scheme: light;
+    /* The scrollbar's room is kept even when a page does not scroll, so nothing shifts sideways when it appears. */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-bg text-ink font-sans antialiased;
