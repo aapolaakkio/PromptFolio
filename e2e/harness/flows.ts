@@ -42,9 +42,10 @@ export const createBrokerAccount = async (page: Page, name: string): Promise<voi
 };
 
 /** Queues what one Nordnet Preview asks Claude: the recipe only when the user has none stored yet, then the corporate-action proposal call. */
-export const queueNordnetPreview = (claude: Claude, firstTime: boolean): void => {
+export const queueNordnetPreview = (claude: Claude, firstTime: boolean, withSwaps = true): void => {
   if (firstTime) claude.replyRecipe("nordnet");
-  claude.replyJson({ actions: [] });
+  // Claude is asked for corporate-action proposals only when the file holds the sample's swap rows.
+  if (withSwaps) claude.replyJson({ actions: [] });
 };
 
 /** Picks the file and presses Preview; the account must already be selected on /imports. */
@@ -61,19 +62,34 @@ export type ImportOptions = {
   readonly account?: string;
   /** False when this user's recipe is already stored (an earlier import in the same test). */
   readonly recipe?: boolean;
+  /** A variant of the sample, and how many transactions it holds (12 for the sample itself). */
+  readonly file?: UploadFile;
+  readonly transactions?: number;
+  /** False for a variant without the sample's HANetf swap rows. */
+  readonly swapRows?: boolean;
 };
 
 /** A user with a Nordnet account that holds the sample's 12 transactions. Ends on /imports after the commit. */
 export const importNordnet = async (
   page: Page,
   claude: Claude,
-  { account = "Nordnet", recipe = true }: ImportOptions = {},
+  {
+    account = "Nordnet",
+    recipe = true,
+    file,
+    transactions = 12,
+    swapRows = true,
+  }: ImportOptions = {},
 ): Promise<void> => {
-  queueNordnetPreview(claude, recipe);
+  queueNordnetPreview(claude, recipe, swapRows);
   await createBrokerAccount(page, account);
-  await previewNordnet(page);
-  await page.getByRole("button", { name: /^Import 12 transactions$/ }).click();
-  await expect(page.getByText("12 transactions imported, 0 skipped as duplicates")).toBeVisible();
+  await previewNordnet(page, file);
+  await page
+    .getByRole("button", { name: `Import ${transactions} transactions`, exact: true })
+    .click();
+  await expect(
+    page.getByText(`${transactions} transactions imported, 0 skipped as duplicates`),
+  ).toBeVisible();
 };
 
 export type UnseenIsin = { readonly isin: string; readonly file: UploadFile };
