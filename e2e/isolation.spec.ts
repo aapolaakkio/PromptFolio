@@ -6,10 +6,11 @@ test("user B sees none of user A's accounts, debts or chat", async ({
   page,
   browser,
   app,
-  user: _userA,
+  user: userA,
   claude,
 }) => {
   claude.reply("Hi from the fake.");
+  claude.reply("Hi B from the fake.");
 
   await page.goto("/imports");
   await page.getByLabel("Account name").fill("Nordnet A-only");
@@ -38,18 +39,34 @@ test("user B sees none of user A's accounts, debts or chat", async ({
       },
     });
     expect(signUp.ok(), await signUp.text()).toBe(true);
+    const sessionEmail = async (request: typeof page.request): Promise<string> => {
+      const body: { user: { email: string } } = await (
+        await request.get("/api/auth/get-session")
+      ).json();
+      return body.user.email;
+    };
+    expect(await sessionEmail(page.request)).toBe(userA.email);
+    expect(await sessionEmail(contextB.request)).not.toBe(userA.email);
     const pageB = await contextB.newPage();
+    // The harness's networkidle wait covers `page` only; a click before React attaches is lost.
+    const open = async (path: string): Promise<void> => {
+      await pageB.goto(path);
+      await pageB.waitForLoadState("networkidle");
+    };
 
-    await pageB.goto("/imports");
+    await open("/imports");
     await expect(pageB.getByText("No accounts yet.")).toBeVisible();
     await expect(pageB.getByRole("option", { name: "Nordnet A-only" })).toHaveCount(0);
 
-    await pageB.goto("/debts");
-    await expect(pageB.getByRole("heading", { name: "Debts", level: 1 })).toBeVisible();
+    await open("/debts");
+    await expect(pageB.getByText("No debts yet.")).toBeVisible();
     await expect(pageB.getByText("A-only loan")).toHaveCount(0);
 
-    await pageB.goto("/chat");
-    await expect(pageB.getByRole("button", { name: "New conversation" })).toBeVisible();
+    await open("/chat");
+    await pageB.getByLabel("Question").fill("B-only question");
+    await pageB.getByRole("button", { name: "Ask" }).click();
+    await expect(pageB.getByText("Hi B from the fake.")).toBeVisible();
+    await expect(pageB.getByRole("button", { name: "B-only question", exact: true })).toBeVisible();
     await expect(pageB.getByText("A-only question")).toHaveCount(0);
   } finally {
     await contextB.close();

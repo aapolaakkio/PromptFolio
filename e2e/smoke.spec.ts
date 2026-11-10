@@ -23,7 +23,11 @@ test("every nav link opens its heading with no console error and no failed reque
     if (message.type() === "error") problems.push(`console: ${message.text()}`);
   });
   page.on("pageerror", (error) => problems.push(`pageerror: ${error.message}`));
-  page.on("requestfailed", (request) => problems.push(`failed: ${request.url()}`));
+  page.on("requestfailed", (request) => {
+    // Navigation cancels in-flight fetches; that is not a failure.
+    if (request.failure()?.errorText === "net::ERR_ABORTED") return;
+    problems.push(`failed: ${request.url()}`);
+  });
   page.on("response", (response) => {
     if (response.status() >= 400) problems.push(`${response.status()}: ${response.url()}`);
   });
