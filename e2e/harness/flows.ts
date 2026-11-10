@@ -121,3 +121,51 @@ export const importNordnetOwnInstrument = async (
   await expect(page.getByText("12 transactions imported, 0 skipped as duplicates")).toBeVisible();
   return isin;
 };
+
+export const OP_FIXTURE = resolve("src/server/import/fixtures/op-bank-sample.csv");
+
+/** Opens Cash and creates a bank account, leaving it the selected one. */
+export const createBankAccount = async (page: Page, name: string): Promise<void> => {
+  await page.goto("/cash");
+  await page.getByRole("button", { name: "+ New bank account" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Account name").fill(name);
+  await dialog.getByRole("combobox", { name: "Account kind" }).selectOption("bank");
+  await dialog.getByRole("button", { name: "Create account" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("combobox", { name: "Bank account" })).toContainText(name);
+};
+
+export const opFile = (text: string = readFileSync(OP_FIXTURE, "utf8")): UploadFile => ({
+  name: "op-bank-sample.csv",
+  mimeType: "text/csv",
+  buffer: Buffer.from(text, "utf8"),
+});
+
+export type OpImportOptions = {
+  /** The bank account to import into, by name. */
+  readonly account: string;
+  /** False when this user's OP recipe is already stored (an earlier OP import in the same test). */
+  readonly recipe?: boolean;
+  readonly file?: UploadFile;
+  /** What the payee classifier answers after the commit; omit when the file holds no payee without a rule. */
+  readonly classifier?: Parameters<Claude["replyJson"]>[0];
+};
+
+/** Imports an OP CSV into an existing bank account through Imports. Ends on /imports after the commit. */
+export const importOpCsv = async (
+  page: Page,
+  claude: Claude,
+  { account, recipe = true, file = opFile(), classifier }: OpImportOptions,
+): Promise<void> => {
+  if (recipe) claude.replyRecipe("op-csv");
+  if (classifier !== undefined) claude.replyJson(classifier);
+  await page.goto("/imports");
+  await page
+    .getByRole("combobox", { name: "Account", exact: true })
+    .selectOption({ label: account });
+  await page.getByLabel("Bank statements").setInputFiles(file);
+  await page.getByRole("button", { name: "Preview" }).click();
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByText(/\d+ new transactions, \d+ already imported/)).toBeVisible();
+};

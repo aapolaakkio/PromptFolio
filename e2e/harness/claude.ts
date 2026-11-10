@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { anthropicStream } from "../../src/server/chat/anthropic-stream-fixture.ts";
 import { NORDNET_TABLE_RECIPE } from "../../src/server/import/recipe/broker-reference.ts";
+import { OP_BANK_CSV_RECIPE } from "../../src/server/import/recipe/op-csv-reference.ts";
 import type { Upstream, UpstreamCall } from "./upstream.ts";
 
 type Json = z.infer<ReturnType<typeof z.json>>;
@@ -20,8 +21,8 @@ export type Claude = {
   replyWithTool(name: string, input: Json): void;
   /** A structured-output answer: the model's text is this value as JSON. */
   replyJson(value: Json): void;
-  /** The recipe that reads `src/server/import/fixtures/nordnet-sample.csv`. */
-  replyRecipe(broker: "nordnet"): void;
+  /** The recipe that reads `nordnet-sample.csv` or `op-bank-sample.csv`. */
+  replyRecipe(kind: "nordnet" | "op-csv"): void;
   /** The weekly note on the Dashboard; without this the Dashboard's call gets a 400 and the note is left out. */
   replySummary(text: string): void;
   /** Calls answered from a queue, in order. A Dashboard summary call appears only when `replySummary` queued it; the default 400 for an unqueued one is not listed. */
@@ -38,7 +39,7 @@ export const YAHOO_HOSTS = [
   "fc.yahoo.com",
 ] as const;
 
-const RECIPES = { nordnet: NORDNET_TABLE_RECIPE } as const;
+const RECIPES = { nordnet: NORDNET_TABLE_RECIPE, "op-csv": OP_BANK_CSV_RECIPE } as const;
 
 const SUMMARY_MARKER = "weekly note about their portfolio";
 // 400 is not retried by the SDK; `x-should-retry` stops the retry of the 500 as well.
@@ -115,7 +116,7 @@ export const installClaude = (upstream: Upstream): Claude => {
     replyWithTool: (name, input) =>
       void queue.push(anthropicStream("", [{ id: `toolu_${queue.length + 1}`, name, input }])),
     replyJson: (value) => void queue.push(jsonStream(value)),
-    replyRecipe: (broker) => void queue.push(jsonStream(RECIPES[broker])),
+    replyRecipe: (kind) => void queue.push(jsonStream(RECIPES[kind])),
     replySummary: (text) => void summaries.push(jsonStream({ text })),
     requests,
     get pending() {
