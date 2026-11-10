@@ -871,6 +871,19 @@ describe("get_spending_rules", () => {
   });
 });
 
+describe("account numbers in spending rules", () => {
+  test("a rule whose pattern is an account number is shown masked and cannot be probed by search", async () => {
+    const { tools, userId } = await seed();
+    await addRules(db, userId, [{ pattern: "FI21 1234 5600 0007 85", category: "home" }], "ai");
+
+    const listed = await toolNamed(tools, "get_spending_rules").run({});
+    expect(JSON.stringify(listed)).not.toContain("5600");
+
+    const probed = await toolNamed(tools, "get_spending_rules").run({ search: "5600" });
+    expect(probed).toMatchObject({ count: 0 });
+  });
+});
+
 describe("get_reconciliation", () => {
   test("reports an account with no statement as unchecked, not as matching", async () => {
     const { tools } = await seed();

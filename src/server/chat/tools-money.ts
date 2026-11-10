@@ -311,7 +311,11 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
     schema: RuleQuery,
     run: async (input): Promise<ToolResult> => {
       const { search, limit = 60 } = RuleQuery.parse(input);
-      const all = await rulesFor(db, userId);
+      // A pattern is a payee's text and can hold an account number: masked before it is searched or shown.
+      const all = (await rulesFor(db, userId)).map((rule) => ({
+        ...rule,
+        pattern: maskAccountNumbers(rule.pattern),
+      }));
       const needle = search?.toUpperCase();
       const matching =
         needle === undefined
