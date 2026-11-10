@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./harness/test.ts";
 
 const OWNER = {
   name: "E2E Owner",
@@ -12,10 +12,12 @@ const OWNER = {
 const FIXTURE = resolve("src/server/import/fixtures/nordnet-sample.csv");
 
 /** Empty instance to holdings through the pages. The fixture is read as bytes: it is UTF-16LE, and re-encoding breaks broker sniffing. */
-test("first run: an owner signs up, opens an account, imports a Nordnet export and sees the holdings", async ({
+// Waits for the scripted Claude stand-in (plan task 2): every broker file is read by a recipe Claude writes, so Preview needs an answer.
+test.fixme("first run: an owner signs up, opens an account, imports a Nordnet export and sees the holdings", async ({
   page,
+  freshApp,
 }) => {
-  await page.goto("/login");
+  await page.goto(`${freshApp.baseURL}/login`);
 
   await page.getByLabel("Name", { exact: true }).fill(OWNER.name);
   await page.getByLabel("Email").fill(OWNER.email);
@@ -23,17 +25,17 @@ test("first run: an owner signs up, opens an account, imports a Nordnet export a
   await page.getByLabel("Confirm password").fill(OWNER.password);
   await page.getByRole("button", { name: /create account/i }).click();
 
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL(`${freshApp.baseURL}/`);
 
-  await page.goto("/imports");
+  await page.goto(`${freshApp.baseURL}/imports`);
   await expect(page.getByRole("heading", { name: "Imports" })).toBeVisible();
 
   // With no accounts yet the page shows the creation form on its own.
   await page.getByLabel("Account name").fill("Nordnet");
-  await page.getByLabel("Broker").selectOption("nordnet");
+  await page.getByRole("combobox", { name: "Broker", exact: true }).selectOption("nordnet");
   await page.getByRole("button", { name: "Create account" }).click();
 
-  const account = page.getByLabel("AccountChoose an account");
+  const account = page.getByRole("combobox", { name: "Account", exact: true });
   await expect(account).toHaveValue(/\d+/);
 
   await page.getByLabel(/Broker CSV or PDF files/).setInputFiles({
@@ -58,7 +60,7 @@ test("first run: an owner signs up, opens an account, imports a Nordnet export a
   await page.getByRole("button", { name: /^Import 12 transactions$/ }).click();
   await expect(page.getByText("0 transactions imported, 12 skipped as duplicates")).toBeVisible();
 
-  await page.goto("/holdings");
+  await page.goto(`${freshApp.baseURL}/holdings`);
   // One BUY of 2 units at 34.00 with no fee, never sold.
   const wisdomTree = page.getByRole("row", { name: /WisdomTree/ });
   await expect(wisdomTree).toContainText("€68.00");

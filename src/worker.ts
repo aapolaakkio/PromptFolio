@@ -1,10 +1,14 @@
 import handler from "@tanstack/react-start/server-entry";
+import { env } from "cloudflare:workers";
 
 import { db } from "./server/db/index.ts";
 import { pageDeps } from "./server/instruments/find-page.ts";
 import { resolvePending } from "./server/instruments/resolve-pending.ts";
 import { refreshIntraday } from "./server/prices/intraday.ts";
 import { runScheduledRefresh } from "./server/prices/refresh.ts";
+import { installUpstreamOverride } from "./server/upstream-override.ts";
+
+installUpstreamOverride(env.E2E_UPSTREAM);
 
 const EVENING_CRON = "0 18 * * 1-5";
 const INTRADAY_CRON = "0 0-17,19-23 * * 1-5";
