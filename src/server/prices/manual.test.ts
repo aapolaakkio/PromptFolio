@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "vitest";
-import { recordManualPrice } from "./manual.ts";
+import { assertNotFuture, recordManualPrice } from "./manual.ts";
 import { PriceInput } from "../action-inputs.ts";
 import { EUR, type Currency } from "../../core/money.ts";
 
@@ -255,5 +255,17 @@ describe("recordManualPrice", () => {
       date: "2026-08-27",
       price: "20",
     });
+  });
+});
+
+describe("assertNotFuture", () => {
+  test("allows the Helsinki day and refuses the day after it", () => {
+    const morning = new Date("2026-06-15T10:00:00Z");
+    const lateEvening = new Date("2026-06-15T22:30:00Z");
+
+    expect(() => assertNotFuture("2026-06-15", morning)).not.toThrow();
+    expect(() => assertNotFuture("2026-06-16", morning)).toThrow("future");
+    expect(() => assertNotFuture("2026-06-16", lateEvening)).not.toThrow();
+    expect(() => assertNotFuture("2026-06-17", lateEvening)).toThrow("future");
   });
 });

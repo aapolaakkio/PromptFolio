@@ -20,6 +20,7 @@ import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
 import { buildForecastTools } from "./tools-forecast.ts";
+import { buildPriceTool } from "./tools-price.ts";
 import { createTurnState } from "./turn-state.ts";
 import { PageContext } from "./page-context.ts";
 import { pageLine } from "./page-line.ts";
@@ -305,6 +306,7 @@ const streamTurn = async (
   const turnState = createTurnState();
   const tools = [
     ...buildChatTools(db, userId),
+    buildPriceTool(db, userId, turnState),
     ...buildForecastTools(db, userId, turnState),
     buildChartTool(db, userId, turnState),
     ...buildProposalTools(db, userId, conversation.id),

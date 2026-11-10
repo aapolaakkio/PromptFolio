@@ -5,25 +5,34 @@ import { EUR } from "../../core/money.ts";
 import { db } from "../db/index.ts";
 import { prices, yahooGate } from "../db/schema.ts";
 import { addInstrument } from "../instruments/store.ts";
+import { yahooPausedUntil } from "../prices/yahoo-gate.ts";
 import { buy, randomIsin, seed } from "./proposal-test-kit.ts";
 import { urlOf } from "../prices/types.ts";
-import type { ToolArgs } from "./tool-types.ts";
+import type { ChatTool, ToolArgs } from "./tool-types.ts";
 import { buildPriceTool } from "./tools-price.ts";
+import { createTurnState } from "./turn-state.ts";
 
 // find_price reads only: the owner's own trades, stored prices and at most one gated Yahoo call.
 
 const Found = z.object({
-  candidates: z.array(z.object({ source: z.string(), date: z.string(), price: z.string() })),
+  candidates: z.array(
+    z.object({
+      source: z.string(),
+      date: z.string(),
+      price: z.string(),
+      note: z.string().optional(),
+    }),
+  ),
   notes: z.array(z.string()),
 });
 type Found = z.infer<typeof Found>;
 
-const closes = (dates: readonly number[], values: readonly (number | null)[]) =>
+const closes = (dates: readonly number[], values: readonly (number | null)[], currency = "EUR") =>
   Response.json({
     chart: {
       result: [
         {
-          meta: { currency: "EUR" },
+          meta: { currency },
           timestamp: dates,
           indicators: { quote: [{ close: values }] },
         },
@@ -38,8 +47,11 @@ const run = async (
     throw new Error("the network must not be reached");
   },
 ): Promise<Found> => {
-  return Found.parse(await buildPriceTool(db, userId, fetchImpl).run(input));
+  return Found.parse(await buildPriceTool(db, userId, createTurnState(), fetchImpl).run(input));
 };
+
+const ask = async (tool: ChatTool, input: ToolArgs): Promise<Found> =>
+  Found.parse(await tool.run(input));
 
 const yahooHolding = async () => {
   const owner = await seed();
@@ -148,9 +160,86 @@ describe("find_price", () => {
       run(userId, { instrumentId: other.instrumentId, date: "2026-01-03" }),
     ).rejects.toThrow("Instrument not found");
     await expect(run(userId, { instrumentId, date: "2999-01-01" })).rejects.toThrow("future");
-    const tool = buildPriceTool(db, userId, fetch);
+    const tool = buildPriceTool(db, userId, createTurnState(), fetch);
     expect(
       tool.schema.safeParse({ instrumentId, date: "2026-01-03", windowDays: 9999 }).success,
     ).toBe(false);
+  });
+
+  test("a Yahoo close in another currency than the holding's says so on the candidate", async () => {
+    const { userId, instrumentId } = await yahooHolding();
+    const found = await run(userId, { instrumentId, date: "2026-03-03" }, () =>
+      Promise.resolve(closes([1772496000], [4.2], "USD")),
+    );
+
+    expect(found.candidates).toContainEqual({
+      source: "yahoo history",
+      date: "2026-03-03",
+      price: "4.20 USD",
+      note: "in USD; the holding is priced in EUR: convert before recording",
+    });
+  });
+
+  test("a Yahoo error that is not a rate limit is reported as unreadable", async () => {
+    const { userId, instrumentId } = await yahooHolding();
+    const found = await run(userId, { instrumentId, date: "2026-03-03" }, () =>
+      Promise.resolve(new Response("broken", { status: 500 })),
+    );
+
+    expect(found.notes).toContain("Yahoo history could not be read");
+  });
+
+  test("a Retry-After on a 429 sets how long Yahoo stays paused", async () => {
+    const { userId, instrumentId } = await yahooHolding();
+    await db.delete(yahooGate).run();
+    const before = Date.now();
+    const found = await run(userId, { instrumentId, date: "2026-03-03" }, () =>
+      Promise.resolve(
+        new Response("slow down", { status: 429, headers: { "Retry-After": "120" } }),
+      ),
+    );
+    const until = await yahooPausedUntil(db);
+    await db.delete(yahooGate).run();
+
+    expect(found.notes).toContain("Yahoo is rate limited, try later");
+    expect(until).toBeGreaterThanOrEqual(before + 120_000);
+    expect(until).toBeLessThanOrEqual(Date.now() + 120_000);
+  });
+});
+
+describe("find_price within one answer", () => {
+  test("a repeated lookup is answered from the turn's own copy, without a second fetch", async () => {
+    const { userId, instrumentId } = await yahooHolding();
+    let fetches = 0;
+    const tool = buildPriceTool(db, userId, createTurnState(), () => {
+      fetches += 1;
+      return Promise.resolve(closes([1772496000], [4.2]));
+    });
+    const first = await ask(tool, { instrumentId, date: "2026-03-03" });
+    const again = await ask(tool, { instrumentId, date: "2026-03-03" });
+
+    expect(fetches).toBe(1);
+    expect(again).toEqual(first);
+  });
+
+  test("the fourth Yahoo lookup makes no fetch and says the lookups are used up", async () => {
+    const yahoo = await yahooHolding();
+    let fetches = 0;
+    const tool = buildPriceTool(db, yahoo.userId, createTurnState(), () => {
+      fetches += 1;
+      return Promise.resolve(closes([1772496000], [4.2]));
+    });
+    for (const date of ["2026-03-03", "2026-05-03", "2026-07-03"]) {
+      await ask(tool, { instrumentId: yahoo.instrumentId, date });
+    }
+    const fourth = await ask(tool, {
+      instrumentId: yahoo.instrumentId,
+      date: "2026-09-03",
+      windowDays: 365,
+    });
+
+    expect(fetches).toBe(3);
+    expect(fourth.notes).toContain("Yahoo lookups used up for this answer");
+    expect(fourth.candidates.map((c) => c.source)).toEqual(["own trade"]);
   });
 });

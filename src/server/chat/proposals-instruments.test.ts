@@ -6,6 +6,7 @@ import { db } from "../db/index.ts";
 import { forecastRates, instrumentCosts, instruments, prices } from "../db/schema.ts";
 import { recordManualPrice } from "../prices/manual.ts";
 import { onlyCard, propose, randomIsin, seed } from "./proposal-test-kit.ts";
+import { buildInstrumentProposals } from "./proposals-instruments.ts";
 
 // Instrument proposals: the registry is shared, so a card may only name what the caller's own ledger holds.
 
@@ -181,6 +182,7 @@ describe("propose_record_price", () => {
     expect(card.facts).toEqual([
       { kind: "text", label: "Instrument", text: `Acme Fund (${isin})` },
       { kind: "money", label: "Price", amount: "12.50", currency: "EUR" },
+      { kind: "text", label: "Currency", text: "EUR, the instrument's currency" },
       { kind: "text", label: "Date", text: "2026-11-02" },
       { kind: "text", label: "Applies to", text: "Shared by everyone in the household" },
     ]);
@@ -289,4 +291,13 @@ describe("propose_record_price", () => {
       `Record a manual price of 10.00 EUR for Acme Fund (${isin}) on 2026-11-02.`,
     );
   });
+});
+
+test("the record price tool names only sources someone can check", () => {
+  const tool = buildInstrumentProposals(db, "nobody").find(
+    (candidate) => candidate.name === "propose_record_price",
+  );
+  expect(tool?.description).not.toContain("the owner said");
+  expect(tool?.description).toContain("find_price source");
+  expect(tool?.description).toContain("the owner's own message in this conversation");
 });

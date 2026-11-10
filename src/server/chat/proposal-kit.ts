@@ -42,14 +42,19 @@ export const instrumentLabel = (instrument: Named): string =>
   instrument.isin === null ? instrument.name : `${instrument.name} (${instrument.isin})`;
 
 /** The household registry is shared, so a proposal may only name an instrument this user's own ledger references. */
-export const ownInstrument = async (db: Db, userId: string, id: number) => {
-  const { txns, instruments } = await loadPortfolio(db, userId);
+type Portfolio = Awaited<ReturnType<typeof loadPortfolio>>;
+
+/** An instrument the owner has traded, from a portfolio already loaded. */
+export const instrumentIn = ({ txns, instruments }: Portfolio, id: number) => {
   const instrument = instruments.find((candidate) => candidate.id === id);
   if (instrument === undefined || !txns.some((txn) => txn.instrumentId === id)) {
     throw new Error("Instrument not found");
   }
   return instrument;
 };
+
+export const ownInstrument = async (db: Db, userId: string, id: number) =>
+  instrumentIn(await loadPortfolio(db, userId), id);
 
 export const accountName = (account: { readonly name: string; readonly id: number }): string =>
   `${account.name} (account #${account.id})`;

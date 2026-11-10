@@ -4,14 +4,13 @@ import { parseCurrency, parseMoney } from "../../core/money.ts";
 import type { Db } from "../db/index.ts";
 import { instruments } from "../db/schema.ts";
 import { HttpError } from "../errors.ts";
+import { helsinkiToday } from "../summary/helsinki.ts";
 import { requirePositiveMinor, type FetchedPrice, type PriceSource } from "./types.ts";
 import { writePrices } from "./write.ts";
 
-const DAY_MS = 86_400_000;
-
-/** A day ahead of UTC is allowed: a Finnish owner's today is already tomorrow in UTC after 21:00 or 22:00. */
+/** The owner's today is Helsinki's, which runs ahead of UTC from 21:00 or 22:00 UTC. */
 export const assertNotFuture = (date: string, now: Date = new Date()): void => {
-  if (date > new Date(now.getTime() + DAY_MS).toISOString().slice(0, 10)) {
+  if (date > helsinkiToday(now)) {
     throw new HttpError(400, "The date is in the future");
   }
 };

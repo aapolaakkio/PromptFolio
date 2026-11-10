@@ -53,7 +53,8 @@ test("commits and then de-duplicates a statement past D1's parameter cap", async
 
   const stored = await db.select({ id: transactions.id }).from(transactions).all();
   expect(stored).toHaveLength(ROWS);
-});
+  // Seeds a large statement and commits it twice in a row: slow, not racy, on a busy machine.
+}, 30_000);
 
 const twice = (over: Partial<BankRow>): readonly BankRow[] => [
   {

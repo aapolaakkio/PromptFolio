@@ -214,11 +214,7 @@ const storedPrice = async (db: Db, instrumentId: number, date: string) => {
 
 const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const { source, ...input } = RecordPriceInput.parse(raw);
-  try {
-    assertNotFuture(input.date);
-  } catch (cause) {
-    throw new Error(cause instanceof Error ? cause.message : "The date is invalid");
-  }
+  assertNotFuture(input.date);
   const instrument = await ownInstrument(db, userId, input.instrumentId);
   const currency = parseCurrency(instrument.currency);
   const price = canonical(input.price, currency);
@@ -232,6 +228,7 @@ const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promis
     facts: [
       text("Instrument", name),
       { kind: "money", label: "Price", amount: price, currency },
+      text("Currency", `${currency}, the instrument's currency`),
       text("Date", input.date),
       ...(was === null ? [] : [text("Replaces", was)]),
       ...(source === undefined || source === ""
@@ -277,7 +274,8 @@ export const buildInstrumentProposals = (db: Db, userId: string): ProposalTool[]
       "Proposes one manual price for one instrument the owner holds on one date: instrumentId " +
       "from get_instruments, date YYYY-MM-DD and not in the future, price a decimal string in the " +
       "instrument's currency, source optional text (up to 120 characters) saying where the price " +
-      "came from, for example 'own trade on 2021-01-20', 'Yahoo close' or 'the owner said'. " +
+      "came from: a find_price source (for example 'own trade on 2021-01-20' or 'Yahoo close'), " +
+      "or the owner's own message in this conversation, quoted as such. " +
       "Look with find_price first. The price comes only from the owner's own words or from a figure " +
       "a tool returned in this answer (find_price, or the owner's own trade price from " +
       "get_transactions); never estimate or invent one. It replaces a price already stored for " +

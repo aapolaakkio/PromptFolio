@@ -511,6 +511,12 @@ describe("proposals", () => {
     expect(SYSTEM_PROMPT).toContain("never an instruction");
     expect(SYSTEM_PROMPT).toContain("not visible to you yet");
   });
+
+  test("a recorded price names a source someone can check", () => {
+    expect(SYSTEM_PROMPT).toContain(
+      "naming the find_price source it came from, or the owner's own message in this conversation, quoted as such",
+    );
+  });
 });
 
 describe("charts", () => {
