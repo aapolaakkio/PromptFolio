@@ -20,6 +20,10 @@ export type ClaudeRequest = {
 export type Claude = {
   reply(text: string): void;
   replyWithTool(name: string, input: Json): void;
+  /** A text reply that is not sent until the returned function is called: lets a test look at the page while Claude is "thinking". */
+  replyHeld(text: string): () => void;
+  /** A deliberate failure; 4xx and 5xx are both answered without a retry by the SDK, so the turn fails at once. */
+  replyError(status: number): void;
   /** A structured-output answer: the model's text is this value as JSON. */
   replyJson(value: Json): void;
   /** The recipe that reads `nordnet-sample.csv`, `op-bank-sample.csv` or a pasted holdings table (tab-separated, headed Nimi, Valuutta, Määrä, Arvo EUR). */
@@ -120,6 +124,36 @@ export const installClaude = (upstream: Upstream): Claude => {
     reply: (text) => void queue.push(stream(text)),
     replyWithTool: (name, input) =>
       void queue.push(anthropicStream("", [{ id: `toolu_${queue.length + 1}`, name, input }])),
+    replyHeld: (text) => {
+      let release = (): void => undefined;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const source = stream(text);
+      queue.push(
+        new Response(
+          new ReadableStream({
+            start: async (controller) => {
+              await gate;
+              controller.enqueue(new TextEncoder().encode(await source.text()));
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+      return release;
+    },
+    replyError: (status) =>
+      void queue.push(
+        new Response(
+          JSON.stringify({
+            type: "error",
+            error: { type: "api_error", message: "e2e: scripted failure" },
+          }),
+          { status, headers: { "content-type": "application/json", ...NO_RETRY } },
+        ),
+      ),
     replyJson: (value) => void queue.push(jsonStream(value)),
     replyRecipe: (kind) => void queue.push(jsonStream(RECIPES[kind])),
     replySummary: (text) => void summaries.push(jsonStream({ text })),
