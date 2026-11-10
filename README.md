@@ -98,6 +98,7 @@ pnpm run deploy                                 # migrates the database, then up
 | `ANTHROPIC_API_KEY`  | Claude API key for every AI feature.                                              |
 | `AI_GATEWAY_ID`      | Optional Cloudflare AI Gateway name; `AI_GATEWAY_TOKEN` for an authenticated one. |
 | `CRON_SECRET`        | Lets you run the price refresh by hand with `POST /api/cron/refresh`.             |
+| `E2E_UPSTREAM`       | Tests only; `pnpm e2e` sets it. A local stand-in for Claude, Yahoo and the ECB.   |
 
 ## Getting data in
 
@@ -164,7 +165,7 @@ Restore into an empty database with `wrangler d1 execute promptfolio --remote --
 ```bash
 pnpm run dev          # hot-reloading server on :3000
 pnpm run check        # lint, format check, typecheck, tests with coverage
-pnpm run e2e          # the browser test, against its own database
+pnpm run e2e          # the browser tests, against their own database
 pnpm run db:generate  # a migration from a schema change
 ```
 
@@ -176,6 +177,13 @@ src/web/       React frontend (TanStack Start, Router, Query, Charts)
 
 No test touches the network or a model: every fetch and every model call is injected, and the
 global `fetch` throws.
+
+The browser tests need Chromium once: `pnpm exec playwright install chromium`. Then `pnpm e2e`
+starts one dev server and one empty local database per Playwright worker, under
+`test-results/e2e/`. It never touches the real database in `.wrangler/` or your `.env`. Every call
+to Claude, Yahoo and the ECB goes to a local stand-in (`E2E_UPSTREAM`), and a call a test did not
+script fails it. Run one file with `pnpm e2e e2e/cash.spec.ts`, or one worker at a time with
+`pnpm e2e --workers 1`.
 
 ## Limits
 
