@@ -146,7 +146,7 @@
 
 /* "Export > PDF" prints one chart: `export-print.ts` marks <html> and that chart's frame, and only then do these rules apply. An ordinary Ctrl+P of a page is untouched. */
 @media print {
-  /* Paper is light whatever the screen is: the light values from `@theme` and the series block above, restated over the dark block. */
+  /* Paper is light whatever the screen is. Over the dark block: the light theme's colours, except the two backgrounds, which are paper white, not the light theme's tinted ones. `print-styles.test.ts` and `palette.test.ts` hold the copies to their originals. */
   :root[data-print-chart] {
     color-scheme: light;
     --color-bg: #ffffff;
@@ -206,10 +206,10 @@
     -webkit-print-color-adjust: exact;
   }
 
-  /* The menu, the range buttons, and what only a pointer draws. */
+  /* The menu, the range buttons, and what only a pointer draws. The library appends each control's own <svg> (brush, pinned cursor) to its mount, `.ts-chart-surface`, beside the chart's. */
   [data-print-chart="frame"] [data-no-export],
   [data-print-chart="frame"] .ts-chart-tooltip,
-  [data-print-chart="frame"] .ts-chart-host > svg:not(.ts-chart),
+  [data-print-chart="frame"] .ts-chart-surface > svg:not(.ts-chart),
   [data-print-chart="frame"] svg :is([data-ts-focus-layer], [data-ts-focus-guide-layer]),
   [data-print-chart="frame"] svg :is([class*="crosshair"], [class*="brush"]) {
     display: none !important;

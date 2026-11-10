@@ -135,8 +135,9 @@ export const ChatChart = ({ chart }: { readonly chart: ChatChartValue }) => {
   const { title, subtitle, note, legend = "top" } = chart.spec;
   const height = chart.spec.height ?? DEFAULT_HEIGHT;
   return (
-    <figure className="card max-w-[90%] text-sm">
-      <ChartFrame title={title} className="grid gap-2">
+    <ChartFrame title={title} className="card max-w-[90%] grid gap-2 text-sm">
+      {/* The caption stays the figure's first child: that is what names it. */}
+      <figure className="grid gap-2">
         <figcaption className="grid">
           <span className="font-semibold">{title}</span>
           {subtitle !== undefined && <span className="text-muted">{subtitle}</span>}
@@ -158,7 +159,7 @@ export const ChatChart = ({ chart }: { readonly chart: ChatChartValue }) => {
             <p className="whitespace-pre-wrap">{note}</p>
           </div>
         )}
-      </ChartFrame>
-    </figure>
+      </figure>
+    </ChartFrame>
   );
 };

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { exportFileName, inlinePaint, legendRows, readLegend, slugOf } from "./export-model.ts";
+import { exportFileName, legendRows, readLegend, slugOf } from "./export-model.ts";
 
 describe("slugOf", () => {
   test("turns spaces, slashes and punctuation into single dashes", () => {
@@ -9,6 +9,12 @@ describe("slugOf", () => {
 
   test("keeps the letter under a Finnish accent", () => {
     expect(slugOf("Säästöt ja määrä – Åland")).toBe("saastot-ja-maara-aland");
+  });
+
+  test("caps a long chat title, so the file name stays under what Windows accepts", () => {
+    const slug = slugOf(`${"a".repeat(59)} tail ${"b".repeat(200)}`);
+
+    expect(slug).toBe("a".repeat(59));
   });
 
   test("falls back when nothing usable is left", () => {
@@ -74,66 +80,6 @@ describe("readLegend", () => {
     };
 
     expect(readLegend(frame, styleOf)).toEqual([]);
-  });
-});
-
-type FakeNode = {
-  readonly computed: Record<string, string>;
-  readonly children: FakeNode[];
-  readonly inlined: Map<string, string>;
-  readonly style: { readonly setProperty: (name: string, value: string) => void };
-};
-const node = (computed: Record<string, string>, children: FakeNode[] = []): FakeNode => {
-  const inlined = new Map<string, string>();
-  return {
-    computed,
-    children,
-    inlined,
-    style: { setProperty: (name, value) => void inlined.set(name, value) },
-  };
-};
-const inlinedOf = (target: FakeNode): Record<string, string> => Object.fromEntries(target.inlined);
-const lookup = (source: FakeNode) => ({
-  getPropertyValue: (name: string) => source.computed[name] ?? "",
-});
-
-describe("inlinePaint", () => {
-  test("writes the resolved colour where the source had a CSS variable", () => {
-    // The browser's computed style has already resolved `var(--series-3)`.
-    const source = node({ color: "rgb(19, 35, 26)" }, [
-      node({ fill: "rgb(27, 175, 122)", stroke: "none", color: "rgb(19, 35, 26)" }),
-    ]);
-    const copy = node({}, [node({})]);
-
-    inlinePaint(source, copy, lookup);
-
-    expect(inlinedOf(copy.children[0]!)).toMatchObject({
-      fill: "rgb(27, 175, 122)",
-      stroke: "none",
-      color: "rgb(19, 35, 26)",
-    });
-    expect(Object.values(inlinedOf(copy.children[0]!)).join(" ")).not.toContain("var(");
-  });
-
-  test("replaces currentColor with the element's own text colour", () => {
-    const source = node({ fill: "currentcolor", color: "rgb(233, 241, 231)" });
-    const copy = node({});
-
-    inlinePaint(source, copy, lookup);
-
-    expect(inlinedOf(copy).fill).toBe("rgb(233, 241, 231)");
-  });
-
-  test("carries the font, which `inherit` would lose outside the page", () => {
-    const source = node({ "font-family": "Inter, sans-serif", "font-size": "11px" });
-    const copy = node({});
-
-    inlinePaint(source, copy, lookup);
-
-    expect(inlinedOf(copy)).toMatchObject({
-      "font-family": "Inter, sans-serif",
-      "font-size": "11px",
-    });
   });
 });
 

@@ -20,27 +20,16 @@ type LegendRoot<Swatch> = {
   readonly querySelectorAll: (selector: string) => ArrayLike<LegendItem<Swatch>>;
 };
 
-/** What a computed style can tell about one property; `getComputedStyle` fits. */
-type StyleLookup = { readonly getPropertyValue: (name: string) => string };
-
-/** The part of an element the paint inliner touches; a real `Element` and a test fake both fit. */
-type PaintNode<Self> = {
-  readonly children: ArrayLike<Self>;
-  /** Optional because `Element` only gains it as an HTML or SVG element. */
-  readonly style?: { readonly setProperty: (name: string, value: string) => void };
-};
-
 export const LEGEND_ITEM = "data-legend-item";
 
 const FALLBACK_SLUG = "chart";
-const COMBINING_MARKS = /[̀-ͯ]/g;
+const COMBINING_MARKS = /\p{M}/gu;
 const NOT_SLUG = /[^a-z0-9]+/g;
 const EDGE_DASHES = /^-+|-+$/g;
+/** A chat title can run to 200 characters; Windows paths and some download managers refuse names that long. */
+const SLUG_MAX = 60;
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
 const COLOUR = /rgba?\([^)]*\)|#[0-9a-f]{3,8}/i;
-/** Every property whose value depends on the page's stylesheet, and so is lost once the SVG stands alone. */
-const PAINT_PROPERTIES = ["color", "fill", "stroke", "font-family", "font-size", "font-weight"];
-const PAINTS = new Set(["fill", "stroke"]);
 
 /** ASCII, lower case, dashes: safe as a file name on every system. */
 export const slugOf = (title: string): string => {
@@ -49,6 +38,8 @@ export const slugOf = (title: string): string => {
     .replace(COMBINING_MARKS, "")
     .toLowerCase()
     .replace(NOT_SLUG, "-")
+    .replace(EDGE_DASHES, "")
+    .slice(0, SLUG_MAX)
     .replace(EDGE_DASHES, "");
   return slug === "" ? FALLBACK_SLUG : slug;
 };
@@ -88,29 +79,6 @@ export const readLegend = <Swatch>(
     const opacity = Number(style.opacity);
     return [{ colour, label, opacity: Number.isFinite(opacity) ? opacity : 1 }];
   });
-
-/**
- * Writes each source element's computed paint and font onto its copy, so the copy draws the same
- * once serialised: CSS variables, `currentColor` and `inherit` mean nothing outside the page.
- */
-export const inlinePaint = <Node extends PaintNode<Node>>(
-  source: Node,
-  copy: Node,
-  styleOf: (node: Node) => StyleLookup,
-): void => {
-  const style = styleOf(source);
-  const colour = style.getPropertyValue("color");
-  for (const property of PAINT_PROPERTIES) {
-    const value = style.getPropertyValue(property);
-    if (value === "") continue;
-    const own = PAINTS.has(property) && value.toLowerCase() === "currentcolor" ? colour : value;
-    if (own !== "") copy.style?.setProperty(property, own);
-  }
-  Array.from(source.children).forEach((child, index) => {
-    const twin = copy.children[index];
-    if (twin !== undefined) inlinePaint(child, twin, styleOf);
-  });
-};
 
 export const SWATCH_WIDTH = 16;
 const SWATCH_GAP = 6;

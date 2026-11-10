@@ -162,6 +162,12 @@ describe("every chart", () => {
   });
 });
 
+describe("ChatChart", () => {
+  test("keeps its caption as the figure's first child, so the figure is named by it", () => {
+    expect(renderToStaticMarkup(charts.ChatChart)).toMatch(/<figure[^>]*><figcaption/);
+  });
+});
+
 describe("legends", () => {
   test.each([
     ["AllocationChart", charts.AllocationChart],
