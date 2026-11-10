@@ -399,7 +399,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         from,
         to,
         payments: payments.map((payment) => ({
-          payee: payment.payee,
+          payee: maskAccountNumbers(payment.payee),
           categoryLabel: payment.categoryLabel,
           cadence: payment.cadence,
           typicalEur: payment.typicalEur,

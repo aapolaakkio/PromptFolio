@@ -14,7 +14,7 @@ import {
   type ModelReply,
   type TurnParams,
 } from "./runner.ts";
-import type { ChatTool, ToolArgs, ToolResult } from "./tools.ts";
+import type { ChatTool, ToolArgs, ToolResult } from "./tool-types.ts";
 import type { ChartTool, ProposalTool } from "./tool-types.ts";
 
 // The loop runs against a scripted model and a fake Messages API; the global fetch throws, so a regression reaching the real service fails here.

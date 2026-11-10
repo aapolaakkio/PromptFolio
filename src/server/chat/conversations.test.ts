@@ -138,6 +138,24 @@ describe("startTurn", () => {
   });
 });
 
+describe("what the model reads of the owner's own words", () => {
+  test("an account number typed into a question is stored but not sent", async () => {
+    let sent = "";
+    setChatClient({
+      run: (params) => {
+        sent = JSON.stringify(params.messages);
+        return Promise.resolve(assistantSaying("ok"));
+      },
+    });
+    const userId = await signUp();
+
+    await eventsOf(await turn(userId, { message: "Is FI21 1234 5600 0007 85 mine?" }));
+
+    expect(sent).not.toContain("1234 5600");
+    expect(sent).toContain("Is … mine?");
+  });
+});
+
 describe("choosing a model", () => {
   test("the picked model answers the turn, and one not on the list is refused", async () => {
     let asked: string | null = null;

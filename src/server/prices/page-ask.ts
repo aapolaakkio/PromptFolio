@@ -63,6 +63,7 @@ export const writePageRecipe = async (
     client,
     instructions: INSTRUCTIONS,
     sample: pageSample(html, expect.identity),
+    publicSample: true,
     schema: PageRecipeSchema,
     run: (recipe) => runPageRecipe(html, recipe, expect.identity, expect.today),
     judge: (read) => {

@@ -118,7 +118,7 @@ const outcomeText = (summary: string, outcome: z.infer<typeof StoredOutcome>): s
     case "saved":
       return `The owner confirmed "${summary}" and it was saved.`;
     case "failed":
-      return `The owner confirmed "${summary}" but saving failed: ${outcome.detail ?? "no reason given"}. Nothing was saved.`;
+      return `The owner confirmed "${summary}" but saving failed: ${maskAccountNumbers(outcome.detail ?? "no reason given")}. Nothing was saved.`;
     case "dismissed":
       return `The owner dismissed "${summary}". Nothing was saved.`;
   }
@@ -129,7 +129,9 @@ const modelHistory = (rows: readonly Row[]) => {
   const summaries = new Map(storedProposals(rows).map((p) => [p.proposalId, p.summary]));
   return rows.flatMap((row): { role: "user" | "assistant"; content: string }[] => {
     if (row.role === "user" || row.role === "assistant") {
-      return [{ role: row.role, content: row.content }];
+      // What the owner typed may hold an account number; the stored text keeps it, the model does not get it.
+      const content = row.role === "user" ? maskAccountNumbers(row.content) : row.content;
+      return [{ role: row.role, content }];
     }
     if (row.role === "proposal") {
       const proposal = readStored(StoredProposal, row.content);
@@ -203,7 +205,7 @@ export const listConversations = async (userId: string) =>
       .all()
   ).map((row) => ({
     id: row.id,
-    title: row.title ?? "Keskustelu",
+    title: row.title ?? "Conversation",
     createdAt: row.createdAt.toISOString(),
   }));
 
@@ -358,7 +360,7 @@ const streamTurn = async (
       } catch (cause) {
         if (!signal.aborted) {
           // Server log only: an SDK error can carry request detail the browser must not see.
-          console.error("Chat turn failed", cause);
+          console.error("Chat turn failed:", cause instanceof Error ? cause.name : "unknown");
           send({ type: "error", message: "Fetching the answer failed" });
         }
       } finally {

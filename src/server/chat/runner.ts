@@ -13,7 +13,7 @@ import { z } from "zod";
 import { HttpError } from "../errors.ts";
 import type { JSONSchema } from "zod/v4/core";
 
-import { maskAccountNumbers } from "./mask.ts";
+import { hasStandIn, maskAccountNumbers } from "./mask.ts";
 import { hidingOwnerName, ownerNameNow } from "./owner-name.ts";
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import { chartSummary, type ChatChart } from "./chart-schema.ts";
@@ -239,6 +239,9 @@ const AWAITING =
   "Nothing has been saved. The owner sees this as a card with Confirm and Dismiss; " +
   "an app note will say what they decided.";
 
+const HIDDEN_VALUE =
+  "This contains a value that is hidden from you (shown as … or as x characters), so it cannot be saved from chat. Tell the owner to enter it in the form on the page.";
+
 /** Runs one tool call. Every failure comes back as a message, since a thrown tool would kill the turn. A proposal comes only from a proposal tool's own call, never from text in a result. */
 const runTool = async (tools: readonly AnyTool[], call: ToolCall): Promise<ToolOutcome> => {
   const tool = tools.find((candidate) => candidate.name === call.name);
@@ -253,6 +256,9 @@ const runTool = async (tools: readonly AnyTool[], call: ToolCall): Promise<ToolO
     if ("chart" in tool) {
       const chart = await tool.chart(input);
       return { content: JSON.stringify(chartSummary(chart)), proposal: null, chart };
+    }
+    if (hasStandIn(JSON.stringify(input))) {
+      return { content: JSON.stringify({ error: HIDDEN_VALUE }), proposal: null };
     }
     const proposal = await tool.propose(input);
     return {

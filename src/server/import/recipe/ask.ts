@@ -28,13 +28,21 @@ export const askForRecipe = async <R, Run>(args: {
   readonly client: ChatClient;
   readonly instructions: string;
   readonly sample: string;
+  /** A public web page, not the owner's file: sent as it is. */
+  readonly publicSample?: true;
   readonly schema: z.ZodType<R>;
   readonly run: (recipe: R) => Run;
   readonly judge: (run: Run) => Judged;
 }): Promise<Asked<R, Run> | null> => {
+  const shown = (text: string): string =>
+    args.publicSample === true ? text : maskForFileSample(text);
+  const instructions =
+    args.publicSample === true
+      ? args.instructions
+      : `${args.instructions}\n\n${MASKED_SAMPLE_NOTE}`;
   let messages: readonly ChatMessage[] = [
-    { role: "system", content: `${args.instructions}\n\n${MASKED_SAMPLE_NOTE}` },
-    { role: "user", content: maskForFileSample(args.sample.slice(0, MAX_SAMPLE_CHARS)) },
+    { role: "system", content: instructions },
+    { role: "user", content: shown(args.sample.slice(0, MAX_SAMPLE_CHARS)) },
   ];
   let best: { recipe: R; run: Run; score: number } | null = null;
 
@@ -63,7 +71,7 @@ export const askForRecipe = async <R, Run>(args: {
       { role: "assistant", content: reply.text },
       {
         role: "user",
-        content: `The recipe does not work yet:\n${maskForFileSample(feedback)}\nFix it and reply with the whole recipe.`,
+        content: `The recipe does not work yet:\n${shown(feedback)}\nFix it and reply with the whole recipe.`,
       },
     ];
   }

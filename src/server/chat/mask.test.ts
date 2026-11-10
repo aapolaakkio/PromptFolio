@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { maskAccountNumbers, maskForFileSample } from "./mask.ts";
+import { hasStandIn, maskAccountNumbers, maskForFileSample } from "./mask.ts";
 
 describe("maskAccountNumbers", () => {
   test.each([
@@ -28,7 +28,14 @@ describe("maskAccountNumbers", () => {
     ["2026-03-12345678901", "…"],
     ["RF1212345678", "…"],
     ["03.11.2026,123456789,12,50", "03.11.2026,…,12,50"],
-    ["5,123456789;7.123 456 789.5", "5,…;7.….5"],
+    ["5,123456789;7,023 456 789", "5,…;7,…"],
+    ["FI21  1234  5600  0007  85", "…"],
+    ["FI21\u202f1234\u202f5600\u202f0007\u202f85", "…"],
+    ["4920  1234  5678  9012", "…"],
+    ["ääkkö@example.fi", "…"],
+    ["mätti.möttönen@example.fi ok", "… ok"],
+    ["040 123 456", "…"],
+    ["3.14159265358979", "3.…"],
     ["Not an ISIN FI0008800512", "Not an ISIN …"],
     ["AB12 some 1234567 here", "… here"],
     ["0.1234567 and 12,3456789", "0.1234567 and 12,3456789"],
@@ -45,6 +52,12 @@ describe("maskAccountNumbers", () => {
     "op-2026-10.csv",
     "-1234567,50",
     "AB12 some word here",
+    "100 000 €",
+    "1 234 567 EUR",
+    "123 456 789,00",
+    "100 2026-11-03",
+    "20261103",
+    "2024-2026",
     "1 234 567,89",
     "1.234.567,89",
     "12.03.2026",
@@ -55,6 +68,19 @@ describe("maskAccountNumbers", () => {
   ])("leaves %s alone: ISINs, amounts, dates and ids are not account numbers", (text) => {
     expect(maskAccountNumbers(text)).toBe(text);
   });
+});
+
+test("a long line of stars, dashes or letters is read in no time", () => {
+  const started = performance.now();
+  for (const line of [
+    "*".repeat(40_000),
+    "-a".repeat(20_000),
+    "1 ".repeat(20_000),
+    "FI21 ".repeat(8_000),
+  ]) {
+    maskAccountNumbers(line);
+  }
+  expect(performance.now() - started).toBeLessThan(500);
 });
 
 describe("maskForFileSample", () => {
@@ -69,4 +95,12 @@ describe("maskForFileSample", () => {
   test("never reaches across a tab or a line break", () => {
     expect(maskForFileSample("FI21\t1234\n5600 1")).toBe("FI21\t1234\n5600 1");
   });
+});
+
+test.each(["OP …", "xxxx OP", '{"name":"xxxxx xxxxxxxx"}'])("%s carries a mask", (text) => {
+  expect(hasStandIn(text)).toBe(true);
+});
+
+test.each(["OP Käyttötili", "Maxxx Oy", "xx", "Exxon"])("%s carries no mask", (text) => {
+  expect(hasStandIn(text)).toBe(false);
 });

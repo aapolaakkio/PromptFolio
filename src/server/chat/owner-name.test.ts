@@ -16,16 +16,34 @@ const params = (...contents: string[]): TurnParams => ({
 const contentsOf = (turn: TurnParams): string[] => turn.messages.map((message) => message.content);
 
 describe("hidingOwnerName", () => {
-  test("every part of the name becomes x characters of the same length, in any case and order", () => {
+  test("the name becomes x characters of the same length, in any case and either order", () => {
     const hidden = hidingOwnerName(
-      params("Maksaja: VIRTANEN MATTI JUHANI", "matti's savings, Virtanen"),
+      params("Maksaja: VIRTANEN MATTI JUHANI", "Virtanen, Matti / matti virtanen"),
       "Matti Virtanen",
     );
 
     expect(contentsOf(hidden).slice(1)).toEqual([
       "Maksaja: xxxxxxxx xxxxx JUHANI",
-      "xxxxx's savings, xxxxxxxx",
+      "xxxxxxxx, xxxxx / xxxxx xxxxxxxx",
     ]);
+  });
+
+  test("one part alone is left: it may be a company, a ticker or a plain word", () => {
+    const turn = params(
+      '{"name":"Sampo Oyj","ticker":"SAMPO","may":1}',
+      "You may propose. Bo went to Li",
+    );
+
+    expect(contentsOf(hidingOwnerName(turn, "Sampo May")).slice(1)).toEqual(
+      contentsOf(turn).slice(1),
+    );
+    expect(contentsOf(hidingOwnerName(turn, "Bo Li")).slice(1)).toEqual(contentsOf(turn).slice(1));
+  });
+
+  test("a single-word name is hidden as a whole word only", () => {
+    const hidden = hidingOwnerName(params("Madonna paid Madonnas bill"), "Madonna");
+
+    expect(contentsOf(hidden)[1]).toBe("xxxxxxx paid Madonnas bill");
   });
 
   test("the model is told, once, in the system message", () => {
@@ -34,30 +52,32 @@ describe("hidingOwnerName", () => {
     expect(contentsOf(hidden)[0]).toMatch(/^Be brief\.\n\nPrivacy: the owner's own name/);
   });
 
-  test("a name inside a longer word is left alone, and so is a tool result's shape", () => {
+  test("tool results keep their shape and an earlier answer is hidden too", () => {
     const turn: TurnParams = {
-      ...params("Mattila Oy, Virtasen"),
+      ...params(),
       messages: [
-        { role: "user", content: "Mattila Oy, Virtasen" },
-        { role: "tool", tool_call_id: "c1", content: '{"payee":"Åke Öst"}' },
+        { role: "assistant", content: "Hello Åke Öst" },
+        { role: "tool", tool_call_id: "c1", content: '{"payee":"Öst,Åke"}' },
       ],
     };
 
-    expect(contentsOf(hidingOwnerName(turn, "Matti Virtanen"))[0]).toBe("Mattila Oy, Virtasen");
-    expect(contentsOf(hidingOwnerName(turn, "Åke Öst"))[1]).toBe('{"payee":"xxx xxx"}');
+    expect(contentsOf(hidingOwnerName(turn, "Åke  Öst"))).toEqual([
+      "Hello xxx xxx",
+      '{"payee":"xxx,xxx"}',
+    ]);
   });
 
-  test("no name, or one too short to be told from a word, changes nothing", () => {
+  test("no name changes nothing", () => {
     const turn = params("Bo went to Li");
 
     expect(hidingOwnerName(turn, null)).toBe(turn);
-    expect(hidingOwnerName(turn, "Bo Li")).toBe(turn);
+    expect(hidingOwnerName(turn, " ")).toBe(turn);
   });
 
   test("a name with regex characters is matched literally", () => {
-    const hidden = hidingOwnerName(params("Anne-Marie (A.M.) O'Neil+co"), "Anne-Marie O'Neil+co");
+    const hidden = hidingOwnerName(params("O'Neil+co, Anne-Marie (A.M.)"), "Anne-Marie O'Neil+co");
 
-    expect(contentsOf(hidden)[1]).toBe("xxxx-xxxxx (A.M.) x'xxxx+xx");
+    expect(contentsOf(hidden)[1]).toBe("x'xxxx+xx, xxxx-xxxxx (A.M.)");
   });
 });
 

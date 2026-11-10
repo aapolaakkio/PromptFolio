@@ -102,7 +102,7 @@ export const sortDocuments = async (
           content: JSON.stringify({
             accounts: accounts.map(({ id, name, kind, broker, accountType }) => ({
               id,
-              name,
+              name: maskAccountNumbers(name),
               kind,
               broker,
               type: accountType,

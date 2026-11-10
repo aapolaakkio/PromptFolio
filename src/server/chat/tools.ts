@@ -26,8 +26,6 @@ import { driftReportFor, feeReportFor } from "../rebalance.ts";
 import { taxYearFor, taxYearsFor } from "../tax.ts";
 import { cashFor, holdingsFor, loadPortfolio } from "../valuation.ts";
 
-export { type ChatTool, type JsonValue, type ToolArgs, type ToolResult } from "./tool-types.ts";
-
 const NoArgs = z.object({}).strict();
 const OnDate = z.object({ on: IsoDateSchema.optional() }).strict();
 const Range = z.object({ from: IsoDateSchema.optional(), to: IsoDateSchema.optional() }).strict();
@@ -323,7 +321,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         to,
         totalEur: summary.totalEur,
         merchants: summary.groups.map((group) => ({
-          name: group.label,
+          name: maskAccountNumbers(group.label),
           totalEur: group.totalEur,
           count: group.count,
         })),

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Txn } from "../../core/types.ts";
 import type { Db } from "../db/index.ts";
+import { maskAccountNumbers } from "../chat/mask.ts";
 import type { ChatClient } from "../chat/runner.ts";
 import { CATEGORY_LABELS } from "./categories.ts";
 import { addRules, categoriseWith, rulesFor, type SpendingRule } from "./rules.ts";
@@ -47,7 +48,7 @@ const promptFor = (merchants: readonly string[]): string =>
     ...Object.entries(CATEGORY_LABELS).map(([id, label]) => `- ${id}: ${label}`),
     "",
     "Payees:",
-    ...merchants.map((name) => `- ${name}`),
+    ...merchants.map((name) => `- ${maskAccountNumbers(name)}`),
     "",
     "Reply with a JSON object only, in the form",
     '{"rules":[{"pattern":"K-MARKET","category":"groceries"}]}',

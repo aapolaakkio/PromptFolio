@@ -144,7 +144,7 @@ export const buildRecordTools = (db: Db, userId: string): ChatTool[] => [
       return {
         conversations: rows.map((row) => ({
           id: row.id,
-          title: row.title,
+          title: row.title === null ? null : maskAccountNumbers(row.title),
           date: row.createdAt.toISOString().slice(0, 10),
         })),
         truncated,

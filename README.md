@@ -55,7 +55,7 @@ The rule everywhere: **the model proposes, the app checks, you decide.**
   number that is not one of the facts is thrown away.
 
 Before any text goes to the model, the app hides account and card numbers, personal identity
-codes, email addresses, phone numbers and your own name. Payee names and amounts are sent: the
+codes, email addresses, phone numbers and your own full name. Payee names and amounts are sent: the
 answers need them. Text inside imported files and web pages is treated as data, never as
 instructions.
 
