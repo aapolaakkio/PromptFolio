@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './app/login'
 import { Route as AuthenticatedIndexRouteImport } from './app/_authenticated/index'
 import { Route as AuthenticatedCashRouteImport } from './app/_authenticated/cash'
 import { Route as AuthenticatedChatRouteImport } from './app/_authenticated/chat'
+import { Route as AuthenticatedDebtsRouteImport } from './app/_authenticated/debts'
 import { Route as AuthenticatedForecastRouteImport } from './app/_authenticated/forecast'
 import { Route as AuthenticatedHoldingsRouteImport } from './app/_authenticated/holdings'
 import { Route as AuthenticatedImportsRouteImport } from './app/_authenticated/imports'
@@ -46,6 +47,11 @@ const AuthenticatedCashRoute = AuthenticatedCashRouteImport.update({
 const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
   id: '/chat',
   path: '/chat',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedDebtsRoute = AuthenticatedDebtsRouteImport.update({
+  id: '/debts',
+  path: '/debts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedForecastRoute = AuthenticatedForecastRouteImport.update({
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/cash': typeof AuthenticatedCashRoute
   '/chat': typeof AuthenticatedChatRoute
+  '/debts': typeof AuthenticatedDebtsRoute
   '/forecast': typeof AuthenticatedForecastRoute
   '/holdings': typeof AuthenticatedHoldingsRoute
   '/imports': typeof AuthenticatedImportsRoute
@@ -113,6 +120,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/cash': typeof AuthenticatedCashRoute
   '/chat': typeof AuthenticatedChatRoute
+  '/debts': typeof AuthenticatedDebtsRoute
   '/forecast': typeof AuthenticatedForecastRoute
   '/holdings': typeof AuthenticatedHoldingsRoute
   '/imports': typeof AuthenticatedImportsRoute
@@ -130,6 +138,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authenticated/cash': typeof AuthenticatedCashRoute
   '/_authenticated/chat': typeof AuthenticatedChatRoute
+  '/_authenticated/debts': typeof AuthenticatedDebtsRoute
   '/_authenticated/forecast': typeof AuthenticatedForecastRoute
   '/_authenticated/holdings': typeof AuthenticatedHoldingsRoute
   '/_authenticated/imports': typeof AuthenticatedImportsRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/cash'
     | '/chat'
+    | '/debts'
     | '/forecast'
     | '/holdings'
     | '/imports'
@@ -162,6 +172,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/cash'
     | '/chat'
+    | '/debts'
     | '/forecast'
     | '/holdings'
     | '/imports'
@@ -178,6 +189,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authenticated/cash'
     | '/_authenticated/chat'
+    | '/_authenticated/debts'
     | '/_authenticated/forecast'
     | '/_authenticated/holdings'
     | '/_authenticated/imports'
@@ -232,6 +244,13 @@ declare module '@tanstack/react-router' {
       path: '/chat'
       fullPath: '/chat'
       preLoaderRoute: typeof AuthenticatedChatRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/debts': {
+      id: '/_authenticated/debts'
+      path: '/debts'
+      fullPath: '/debts'
+      preLoaderRoute: typeof AuthenticatedDebtsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/forecast': {
@@ -303,6 +322,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedCashRoute: typeof AuthenticatedCashRoute
   AuthenticatedChatRoute: typeof AuthenticatedChatRoute
+  AuthenticatedDebtsRoute: typeof AuthenticatedDebtsRoute
   AuthenticatedForecastRoute: typeof AuthenticatedForecastRoute
   AuthenticatedHoldingsRoute: typeof AuthenticatedHoldingsRoute
   AuthenticatedImportsRoute: typeof AuthenticatedImportsRoute
@@ -316,6 +336,7 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedCashRoute: AuthenticatedCashRoute,
   AuthenticatedChatRoute: AuthenticatedChatRoute,
+  AuthenticatedDebtsRoute: AuthenticatedDebtsRoute,
   AuthenticatedForecastRoute: AuthenticatedForecastRoute,
   AuthenticatedHoldingsRoute: AuthenticatedHoldingsRoute,
   AuthenticatedImportsRoute: AuthenticatedImportsRoute,

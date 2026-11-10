@@ -33,6 +33,9 @@ export const SessionGate = ({ isPending, hasSession, onSignOut }: SessionGatePro
             <Link to="/cash" className="text-muted no-underline hover:text-ink">
               Cash
             </Link>
+            <Link to="/debts" className="text-muted no-underline hover:text-ink">
+              Debts
+            </Link>
             <Link to="/spending" className="text-muted no-underline hover:text-ink">
               Spending
             </Link>

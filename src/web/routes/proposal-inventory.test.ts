@@ -44,6 +44,10 @@ const INVENTORY = {
   getSummary: "not offered: reads, saves nothing",
   saveProposalOutcome: "not offered: the card's own outcome note",
   askTurn: "not offered: the chat itself",
+  createDebt: "not offered: debts are kept by hand on the Debts page",
+  deleteDebt: "not offered: debts are kept by hand on the Debts page",
+  saveDebtBalance: "not offered: debts are kept by hand on the Debts page",
+  deleteDebtBalance: "not offered: debts are kept by hand on the Debts page",
 } satisfies Readonly<Record<string, string | readonly ProposalAction[]>>;
 
 const servers = import.meta.glob<string>("../server/*.ts", {

@@ -10,6 +10,7 @@ const PAGE_NAMES = {
   holdings: "Holdings",
   reconcile: "Reconcile",
   cash: "Cash",
+  debts: "Debts",
   spending: "Spending",
   rebalance: "Rebalance",
   forecast: "Forecast",

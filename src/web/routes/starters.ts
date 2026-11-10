@@ -9,6 +9,7 @@ export const STARTERS = {
   ],
   reconcile: ["Does my latest statement match the ledger?", "Which differences need my attention?"],
   cash: ["How much cash do I have across my accounts?", "What came in and went out last month?"],
+  debts: ["How much do I owe in total?", "What is my net worth?"],
   spending: [
     "Where did the money go last month?",
     "Which payees are still uncategorised?",

@@ -6,6 +6,7 @@ export const ASSISTANT_PAGES = [
   "holdings",
   "reconcile",
   "cash",
+  "debts",
   "spending",
   "rebalance",
   "forecast",
