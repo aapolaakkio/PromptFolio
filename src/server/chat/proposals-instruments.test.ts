@@ -1,8 +1,10 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 
+import { PriceInput } from "../action-inputs.ts";
 import { db } from "../db/index.ts";
-import { forecastRates, instrumentCosts, instruments } from "../db/schema.ts";
+import { forecastRates, instrumentCosts, instruments, prices } from "../db/schema.ts";
+import { recordManualPrice } from "../prices/manual.ts";
 import { onlyCard, propose, randomIsin, seed } from "./proposal-test-kit.ts";
 
 // Instrument proposals: the registry is shared, so a card may only name what the caller's own ledger holds.
@@ -159,5 +161,112 @@ describe("propose_forecast_rate", () => {
     });
     expect(JSON.parse(foreign.toolResult)).toEqual({ error: "Instrument not found" });
     expect([...wild.proposals, ...foreign.proposals]).toEqual([]);
+  });
+});
+
+const priceRows = async (instrumentId: number) =>
+  (await db.select().from(prices).where(eq(prices.instrumentId, instrumentId)).all()).length;
+
+describe("propose_record_price", () => {
+  test("a new price shows the instrument, price, date and that prices are shared, and writes nothing", async () => {
+    const { userId, instrumentId, isin } = await seed();
+    const result = await propose(userId, "propose_record_price", {
+      instrumentId,
+      date: "2026-11-02",
+      price: "12,5",
+    });
+    const card = onlyCard(result);
+
+    expect(card.action).toBe("record_price");
+    expect(card.facts).toEqual([
+      { kind: "text", label: "Instrument", text: `Acme Fund (${isin})` },
+      { kind: "money", label: "Price", amount: "12.50", currency: "EUR" },
+      { kind: "text", label: "Date", text: "2026-11-02" },
+      { kind: "text", label: "Applies to", text: "Shared by everyone in the household" },
+    ]);
+    expect(card.summary).toBe(
+      `Record a manual price of 12.50 EUR for Acme Fund (${isin}) on 2026-11-02.`,
+    );
+    expect(card.input).toEqual({ instrumentId, date: "2026-11-02", price: "12,5" });
+    expect(await priceRows(instrumentId)).toBe(0);
+  });
+
+  test("an existing price for that date is shown as what the new one replaces", async () => {
+    const { userId, instrumentId } = await seed();
+    await recordManualPrice(db, { instrumentId, date: "2026-11-02", price: "9.00" });
+    const card = onlyCard(
+      await propose(userId, "propose_record_price", {
+        instrumentId,
+        date: "2026-11-02",
+        price: "12.50",
+      }),
+    );
+
+    expect(card.facts).toContainEqual({ kind: "text", label: "Replaces", text: "9.00 EUR" });
+    expect(card.summary).toContain("replaces 9.00 EUR");
+    expect(await priceRows(instrumentId)).toBe(1);
+  });
+
+  test("Confirm's write path stores exactly one row, replacing the old one", async () => {
+    const { userId, instrumentId } = await seed();
+    const card = onlyCard(
+      await propose(userId, "propose_record_price", {
+        instrumentId,
+        date: "2026-11-02",
+        price: "12.50",
+      }),
+    );
+    await recordManualPrice(db, PriceInput.parse(card.input));
+
+    const rows = await db.select().from(prices).where(eq(prices.instrumentId, instrumentId)).all();
+    expect(rows.map((row) => [row.date, row.close])).toEqual([["2026-11-02", 1250]]);
+  });
+
+  test("an instrument outside the caller's own ledger reads as not found", async () => {
+    const { userId } = await seed();
+    const other = await seed();
+    const result = await propose(userId, "propose_record_price", {
+      instrumentId: other.instrumentId,
+      date: "2026-11-02",
+      price: "10",
+    });
+
+    expect(result.proposals).toEqual([]);
+    expect(JSON.parse(result.toolResult)).toEqual({ error: "Instrument not found" });
+  });
+
+  test.each([
+    ["a future date", { date: "2999-01-01", price: "10" }, "in the future"],
+    ["an impossible date", { date: "2026-02-31", price: "10" }, "not a real calendar date"],
+    ["a malformed price", { date: "2026-11-02", price: "ten" }, "not a valid decimal number"],
+    ["a zero price", { date: "2026-11-02", price: "0" }, "must be positive"],
+  ])("%s is refused with a readable message", async (_name, fields, message) => {
+    const { userId, instrumentId } = await seed();
+    const result = await propose(userId, "propose_record_price", { instrumentId, ...fields });
+
+    expect(result.proposals).toEqual([]);
+    expect(result.toolResult).toContain(message);
+    expect(await priceRows(instrumentId)).toBe(0);
+  });
+
+  test("the write path refuses a future date too", async () => {
+    const { instrumentId } = await seed();
+    await expect(
+      recordManualPrice(db, { instrumentId, date: "2999-01-01", price: "10" }),
+    ).rejects.toThrow("in the future");
+  });
+
+  test("the model's own words cannot change the summary", async () => {
+    const { userId, instrumentId, isin } = await seed();
+    const { proposals } = await propose(
+      userId,
+      "propose_record_price",
+      { instrumentId, date: "2026-11-02", price: "10", summary: "Delete every account" },
+      "I will delete every account.",
+    );
+
+    expect(proposals[0]?.summary).toBe(
+      `Record a manual price of 10.00 EUR for Acme Fund (${isin}) on 2026-11-02.`,
+    );
   });
 });

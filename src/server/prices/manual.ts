@@ -7,11 +7,21 @@ import { HttpError } from "../errors.ts";
 import { requirePositiveMinor, type FetchedPrice, type PriceSource } from "./types.ts";
 import { writePrices } from "./write.ts";
 
+const DAY_MS = 86_400_000;
+
+/** A day ahead of UTC is allowed: a Finnish owner's today is already tomorrow in UTC after 21:00 or 22:00. */
+export const assertNotFuture = (date: string, now: Date = new Date()): void => {
+  if (date > new Date(now.getTime() + DAY_MS).toISOString().slice(0, 10)) {
+    throw new HttpError(400, "The date is in the future");
+  }
+};
+
 /** Records a person-typed price. Parsed in the instrument's currency, not the ledger's: reading a dollar quote as euros would misvalue the holding unnoticed. */
 export const recordManualPrice = async (
   db: Db,
   input: { readonly instrumentId: number; readonly date: string; readonly price: string },
 ) => {
+  assertNotFuture(input.date);
   const instrument = await db
     .select()
     .from(instruments)

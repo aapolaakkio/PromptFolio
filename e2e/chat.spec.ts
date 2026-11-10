@@ -2,7 +2,14 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "./harness/test.ts";
 import type { Claude } from "./harness/claude.ts";
-import { createBankAccount, importNordnet, importOpCsv, opCsv, opRow } from "./harness/flows.ts";
+import {
+  createBankAccount,
+  importNordnet,
+  importNordnetOwnInstrument,
+  importOpCsv,
+  opCsv,
+  opRow,
+} from "./harness/flows.ts";
 
 const PAYEE = "ZZ TESTIKAUPPA";
 const STORE_ROW = opRow("2025-09-02", "-23,50", "PKORTTIMAKSU", PAYEE, "2025090200000001");
@@ -214,4 +221,46 @@ test("a Claude failure shows an error and the composer asks again", async ({
   await ask(page, "Second try");
   await expect(page.getByText("Back again.")).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+/** The id the assistant read from get_instruments for one ISIN: ids are the database's, so the test learns it the way the assistant does. */
+const idOfIsin = (toolResult: string, isin: string): number => {
+  const match = new RegExp(`"id\\\\?":(\\d+),[^}]*?${isin}`).exec(toolResult);
+  if (match?.[1] === undefined) throw new Error(`no instrument id for ${isin} in ${toolResult}`);
+  return Number(match[1]);
+};
+
+test("a price the assistant proposes is saved on Confirm and Holdings shows the new value", async ({
+  page,
+  app,
+  user: _user,
+  claude,
+}) => {
+  const isin = await importNordnetOwnInstrument(page, app, claude);
+  claude.replyWithTool("get_instruments", {});
+  claude.reply("Here are your instruments.");
+  await page.goto("/chat");
+  await ask(page, "Which instruments do I have?");
+  await expect(page.getByText("Here are your instruments.")).toBeVisible();
+  const instrumentId = idOfIsin(
+    claude.requests.findLast((seen) => seen.lastUser.includes("tool_result"))?.lastUser ?? "",
+    isin,
+  );
+
+  claude.replyWithTool("propose_record_price", {
+    instrumentId,
+    date: "2026-11-02",
+    price: "40.00",
+  });
+  claude.reply("Here is the price I suggest.");
+  await ask(page, "Set the price on 2026-11-02 to 40.00 euros");
+
+  await expect(page.getByText("Record a manual price")).toBeVisible();
+  await expect(page.getByText("Shared by everyone in the household")).toBeVisible();
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved.");
+
+  await page.goto("/holdings");
+  const row = page.getByRole("row", { name: /WisdomTree/ });
+  await expect(row).toContainText("€80.00");
 });

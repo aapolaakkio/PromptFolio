@@ -1,21 +1,8 @@
 import type { Dimension } from "../../core/allocation.ts";
-import {
-  EUR,
-  addMoney,
-  formatMoney,
-  parseCurrency,
-  parseMoney,
-  zeroMoney,
-} from "../../core/money.ts";
+import { EUR, addMoney, formatMoney, parseMoney, zeroMoney } from "../../core/money.ts";
 import { checkTargets } from "../../core/rebalance/targets.ts";
 import { listAccounts } from "../accounts.ts";
-import {
-  CashEntry,
-  PlanInput,
-  PriceInput,
-  TargetAllocationInput,
-  toBasisPoints,
-} from "../action-inputs.ts";
+import { CashEntry, PlanInput, TargetAllocationInput, toBasisPoints } from "../action-inputs.ts";
 import { listInstruments } from "../instruments/store.ts";
 import { listPlan, planFingerprint } from "../monthly-plan.ts";
 import { driftReportFor } from "../rebalance.ts";
@@ -25,7 +12,6 @@ import {
   instrumentLabel,
   newId,
   ownAccountLabel,
-  ownInstrument,
   text,
 } from "./proposal-kit.ts";
 import type { Fact, Proposal } from "./proposal-schema.ts";
@@ -68,27 +54,6 @@ const CASH = {
     to: "on",
   },
 } as const;
-
-const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
-  const input = PriceInput.parse(raw);
-  const instrument = await ownInstrument(db, userId, input.instrumentId);
-  const currency = parseCurrency(instrument.currency);
-  const price = canonical(input.price, currency);
-  if (parseMoney(input.price, currency).minor <= 0n) throw new Error("The price must be positive");
-  const name = instrumentLabel(instrument);
-  return {
-    proposalId: newId(),
-    action: "record_price",
-    title: "Record a manual price",
-    facts: [
-      text("Instrument", name),
-      { kind: "money", label: "Price", amount: price, currency },
-      text("Date", input.date),
-    ],
-    summary: `Record a manual price of ${price} ${currency} for ${name} on ${input.date}.`,
-    input,
-  };
-};
 
 // The note is the model's own text: it travels only in `input`, which the card shows apart, labelled.
 const proposeCashEntry = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
@@ -224,21 +189,11 @@ const proposePlan = async (db: Db, userId: string, raw: ToolArgs): Promise<Propo
 const LEDGER: ProposalArea = {
   name: "Ledger and plan",
   sentence:
-    "record a manual price, a cash entry (deposit, withdrawal, interest or opening balance), " +
+    "record a cash entry (deposit, withdrawal, interest or opening balance), " +
     "the target allocation and the monthly plan",
 };
 
 const ledgerProposals = (db: Db, userId: string): ProposalTool[] => [
-  {
-    area: LEDGER,
-    name: "propose_record_price",
-    description:
-      "Proposes recording a manual price for one instrument on one date. instrumentId comes " +
-      "from get_instruments; price is a decimal string in the instrument's currency." +
-      AWAITS,
-    schema: PriceInput,
-    propose: (input) => proposeRecordPrice(db, userId, input),
-  },
   {
     area: LEDGER,
     name: "propose_cash_entry",

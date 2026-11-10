@@ -1,18 +1,22 @@
 import { and, eq } from "drizzle-orm";
 
+import { formatMoney, money as moneyOf, parseCurrency, parseMoney } from "../../core/money.ts";
 import {
   InstrumentCreate,
   InstrumentEdit,
   toBasisPoints,
   FundChargeInput,
+  PriceInput,
 } from "../action-inputs.ts";
-import { forecastRates, instrumentCosts } from "../db/schema.ts";
+import { forecastRates, instrumentCosts, prices } from "../db/schema.ts";
 import { ForecastRateInput } from "../forecast-inputs.ts";
 import { parseChargePercent } from "../instruments/costs.ts";
 import { listInstruments } from "../instruments/store.ts";
 import { listPlan } from "../monthly-plan.ts";
+import { assertNotFuture } from "../prices/manual.ts";
 import {
   AWAITS,
+  canonical,
   HOUSEHOLD_SHARED,
   instrumentLabel,
   newId,
@@ -27,7 +31,7 @@ import type { Db, ProposalArea, ProposalTool, ToolArgs } from "./tool-types.ts";
 const INSTRUMENTS: ProposalArea = {
   name: "Instruments",
   sentence:
-    "add an instrument, change an instrument's price source, set a fund's yearly fee and " +
+    "add an instrument, change an instrument's price source, record a price for a date, set a fund's yearly fee and " +
     "set your own forecast growth rate for an instrument",
 };
 
@@ -193,6 +197,48 @@ const proposeForecastRate = async (db: Db, userId: string, raw: ToolArgs): Promi
   };
 };
 
+const storedPrice = async (db: Db, instrumentId: number, date: string) => {
+  const row = await db
+    .select()
+    .from(prices)
+    .where(and(eq(prices.instrumentId, instrumentId), eq(prices.date, date)))
+    .get();
+  return row === undefined
+    ? null
+    : `${formatMoney(moneyOf(BigInt(row.close), row.currency))} ${row.currency}`;
+};
+
+const proposeRecordPrice = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
+  const input = PriceInput.parse(raw);
+  try {
+    assertNotFuture(input.date);
+  } catch (cause) {
+    throw new Error(cause instanceof Error ? cause.message : "The date is invalid");
+  }
+  const instrument = await ownInstrument(db, userId, input.instrumentId);
+  const currency = parseCurrency(instrument.currency);
+  const price = canonical(input.price, currency);
+  if (parseMoney(input.price, currency).minor <= 0n) throw new Error("The price must be positive");
+  const was = await storedPrice(db, instrument.id, input.date);
+  const name = instrumentLabel(instrument);
+  return {
+    proposalId: newId(),
+    action: "record_price",
+    title: "Record a manual price",
+    facts: [
+      text("Instrument", name),
+      { kind: "money", label: "Price", amount: price, currency },
+      text("Date", input.date),
+      ...(was === null ? [] : [text("Replaces", was)]),
+      HOUSEHOLD_SHARED,
+    ],
+    summary:
+      `Record a manual price of ${price} ${currency} for ${name} on ${input.date}` +
+      `${was === null ? "" : ` (replaces ${was})`}.`,
+    input,
+  };
+};
+
 export const buildInstrumentProposals = (db: Db, userId: string): ProposalTool[] => [
   {
     area: INSTRUMENTS,
@@ -216,6 +262,20 @@ export const buildInstrumentProposals = (db: Db, userId: string): ProposalTool[]
       AWAITS,
     schema: InstrumentEdit,
     propose: (input) => proposePriceSource(db, userId, input),
+  },
+  {
+    area: INSTRUMENTS,
+    name: "propose_record_price",
+    description:
+      "Proposes one manual price for one instrument the owner holds on one date: instrumentId " +
+      "from get_instruments, date YYYY-MM-DD and not in the future, price a decimal string in the " +
+      "instrument's currency. The price comes only from the owner's own words or from a figure a " +
+      "tool returned in this answer (for example the owner's own trade price from " +
+      "get_transactions); never estimate or invent one. It replaces a price already stored for " +
+      "that date, and prices are shared by the whole household." +
+      AWAITS,
+    schema: PriceInput,
+    propose: (input) => proposeRecordPrice(db, userId, input),
   },
   {
     area: INSTRUMENTS,
