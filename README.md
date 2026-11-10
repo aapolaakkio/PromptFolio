@@ -26,10 +26,11 @@ It runs as one Cloudflare Worker with one D1 (SQLite) database. Nothing else to 
 | **Rebalance** | Target allocation, drift, where to put new money, fees per year                         |
 | **Forecast**  | Your monthly plan and what the portfolio could be worth in 1 to 20 years                |
 | **Tax**       | Per tax year: realised gains both permitted ways, dividends, equity savings accounts    |
-| **Chat**      | The assistant: answers, forecasts, charts, and changes you confirm with one click       |
+| **Chat**      | The assistant, also docked on every page: answers, forecasts, charts, confirmed changes |
 | **Imports**   | Drop any export; the app works out what it is. History, with undo                       |
 
 Light and dark themes. Every time chart has a hover ticker, and the value chart zooms by dragging.
+Any chart, including one the assistant drew, exports as PNG or PDF.
 
 ## The AI parts
 
@@ -48,9 +49,11 @@ The rule everywhere: **the model proposes, the app checks, you decide.**
   ISIN next to the price. Fund fees are looked up the same way.
 - **The assistant** answers from the same figures the pages show, runs forecasts and what-ifs,
   draws charts in the conversation, and gives its opinion when asked (as an AI's opinion, not
-  licensed advice). It can also propose changes: a price, a cash entry, targets, the monthly plan.
-  A proposal is a card listing exactly what will change. Nothing is saved until you press Confirm,
-  and Confirm runs the same code the form does.
+  licensed advice). It opens beside any page and knows which page and account you are on. Every
+  form in the app can be filled from chat: accounts, prices, cash entries, targets, the monthly
+  plan, spending rules. A proposal is a card listing exactly what will change. A removal comes on
+  a red warning card, one thing per card. Nothing is saved or removed until you confirm, and
+  Confirm runs the same code the form does.
 - **Weekly summary.** The app gathers the facts; the model only words them. A text containing a
   number that is not one of the facts is thrown away.
 
