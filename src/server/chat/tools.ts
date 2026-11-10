@@ -282,7 +282,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         to: summary.to,
         totalEur: summary.totalEur,
         groups: summary.groups.map((group) => ({
-          label: group.label,
+          label: maskAccountNumbers(group.label),
           totalEur: group.totalEur,
           count: group.count,
         })),

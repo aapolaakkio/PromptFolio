@@ -824,6 +824,34 @@ describe("get_transaction_class", () => {
   });
 });
 
+describe("account numbers in spending tools", () => {
+  test("a payee that is an account number is masked when spending is grouped by payee", async () => {
+    const { tools, bankAccountId } = await seed();
+    await spend(bankAccountId, "TILISIIRTO — FI21 1234 5600 0007 85", -3_000, "2026-05-03");
+
+    const result = await toolNamed(tools, "get_spending").run({
+      from: "2026-05-01",
+      to: "2026-05-31",
+      groupBy: "counterparty",
+    });
+
+    expect(JSON.stringify(result)).not.toContain("5600");
+  });
+
+  test("a search cannot probe the digits of an account number", async () => {
+    const { tools, bankAccountId } = await seed();
+    await spend(bankAccountId, "TILISIIRTO — FI21 1234 5600 0007 85", -3_000, "2026-05-03");
+
+    const result = await toolNamed(tools, "get_transaction_class").run({
+      from: "2026-05-01",
+      to: "2026-05-31",
+      search: "5600",
+    });
+
+    expect(result).toMatchObject({ count: 0 });
+  });
+});
+
 describe("get_spending_rules", () => {
   test("lists the rules and says which ones are the user's own", async () => {
     const { tools, userId } = await seed();

@@ -275,7 +275,10 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
 
       const needle = search?.toLowerCase();
       const matching =
-        needle === undefined ? all : all.filter((txn) => txn.text.toLowerCase().includes(needle));
+        needle === undefined
+          ? all
+          : // Over the masked text: a search must not confirm the digits of a hidden account number.
+            all.filter((txn) => maskAccountNumbers(txn.text).toLowerCase().includes(needle));
       const shown = matching.slice(0, limit);
 
       return {
