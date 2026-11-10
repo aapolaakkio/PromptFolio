@@ -113,11 +113,16 @@ export const setPlanRow = async (
   await upsertFor(db, userId, row).run();
 };
 
+/** Removes one row; a chat card passes the plan's fingerprint it showed, and a plan changed since is refused. */
 export const removePlanRow = async (
   db: Db,
   userId: string,
   instrumentId: number,
+  fingerprint?: string,
 ): Promise<void> => {
+  if (fingerprint !== undefined && (await planFingerprint(db, userId)) !== fingerprint) {
+    throw new HttpError(409, "The plan changed since the card was made. Ask again.");
+  }
   await db
     .delete(monthlyPlan)
     .where(and(eq(monthlyPlan.userId, userId), eq(monthlyPlan.instrumentId, instrumentId)))

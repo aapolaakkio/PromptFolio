@@ -13,6 +13,7 @@ import { listInstruments } from "../instruments/store.ts";
 import { listPlan } from "../monthly-plan.ts";
 import {
   AWAITS,
+  HOUSEHOLD_SHARED,
   instrumentLabel,
   newId,
   ownInstrument,
@@ -146,6 +147,7 @@ const proposeFundFee = async (db: Db, userId: string, raw: ToolArgs): Promise<Pr
       text("Fund", name),
       text("Ongoing charge", `${percentText(bp)} a year`),
       text("Replaces", was),
+      HOUSEHOLD_SHARED,
     ],
     summary: `Set the ongoing charge of ${name} to ${percentText(bp)} a year (was: ${was}).`,
     input,

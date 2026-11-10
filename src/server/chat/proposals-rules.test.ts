@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { db } from "../db/index.ts";
-import { addRules, rulesFor } from "../spending/rules.ts";
+import { addRules, rulesFor, setRuleCategory } from "../spending/rules.ts";
 import { bankAccount, onlyCard, propose, signUp, spend } from "./proposal-test-kit.ts";
 
 // Rules are cards now: nothing is classified until the owner confirms, and only payees the ledger holds.
@@ -32,7 +32,10 @@ describe("propose_spending_rules", () => {
       { kind: "text", label: "Catches", text: "2 uncategorised transactions" },
       { kind: "text", label: "Saved as", text: "Your own rules, editable on the Spending page" },
     ]);
-    expect(card.input).toEqual({ rules: [{ pattern: "OUTOKAUPPA", category: "groceries" }] });
+    expect(card.input).toEqual({
+      rules: [{ pattern: "OUTOKAUPPA", category: "groceries" }],
+      refuseExisting: true,
+    });
     expect(await patterns(userId)).not.toContain("OUTOKAUPPA");
   });
 
@@ -72,10 +75,48 @@ describe("propose_spending_rule_category", () => {
       { kind: "code", label: "Rule", code: "OUTOKAUPPA" },
       { kind: "text", label: "From", text: "Groceries" },
       { kind: "text", label: "To", text: "Restaurants and cafes" },
+      { kind: "text", label: "Made by", text: "You" },
+      { kind: "text", label: "Your own rule", text: "Replaces your own rule" },
     ]);
-    expect(card.input).toEqual({ pattern: "OUTOKAUPPA", category: "restaurants" });
+    expect(card.input).toEqual({
+      pattern: "OUTOKAUPPA",
+      category: "restaurants",
+      expectCategory: "groceries",
+    });
     const rule = (await rulesFor(db, userId)).find((row) => row.pattern === "OUTOKAUPPA");
     expect(rule?.category).toBe("groceries");
+  });
+
+  test("a rule the assistant saved says who made it, without the own-rule warning", async () => {
+    const { userId } = await owner();
+    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "groceries" }], "ai");
+    const card = onlyCard(
+      await propose(userId, "propose_spending_rule_category", {
+        pattern: "OUTOKAUPPA",
+        category: "restaurants",
+      }),
+    );
+
+    expect(card.facts.at(-1)).toEqual({ kind: "text", label: "Made by", text: "The assistant" });
+  });
+
+  test("a rule changed after the card was made is refused on Confirm, and the newer value kept", async () => {
+    const { userId } = await owner();
+    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "groceries" }], "user");
+    const card = onlyCard(
+      await propose(userId, "propose_spending_rule_category", {
+        pattern: "OUTOKAUPPA",
+        category: "restaurants",
+      }),
+    );
+    if (card.action !== "spending_rule_category") throw new Error("wrong card");
+    await setRuleCategory(db, userId, "OUTOKAUPPA", "leisure");
+
+    await expect(
+      setRuleCategory(db, userId, card.input.pattern, "restaurants", card.input.expectCategory),
+    ).resolves.toBe("changed");
+    const rule = (await rulesFor(db, userId)).find((row) => row.pattern === "OUTOKAUPPA");
+    expect(rule?.category).toBe("leisure");
   });
 
   test("a rule that is not there is refused rather than invented", async () => {

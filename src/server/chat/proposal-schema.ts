@@ -48,8 +48,6 @@ const base = {
   summary: z.string().min(1).max(4000),
   title: z.string().min(1).max(200),
   facts: z.array(FactSchema).max(220),
-  /** A removal: the card is warning-styled and its button names the deletion. */
-  danger: z.literal(true).optional(),
 };
 
 /** What the assistant may propose; `input` is exactly what the action's own server function takes. */
@@ -108,6 +106,31 @@ const ACTION_NAMES = {
   clear_fund_fee: "clear_fund_fee",
   clear_forecast_rate: "clear_forecast_rate",
 } as const satisfies Record<ProposalAction, ProposalAction>;
+
+type Removal = { readonly button: string; readonly after: string };
+
+const FINAL = "This cannot be undone.";
+
+/** The actions that remove data, by action: the card's warning style, its button and its last line all come from here. */
+const REMOVALS = new Map<ProposalAction, Removal>([
+  ["delete_cash_entry", { button: "Delete", after: FINAL }],
+  ["delete_plan_row", { button: "Delete", after: FINAL }],
+  ["delete_spending_rule", { button: "Delete", after: FINAL }],
+  ["remove_snapshot", { button: "Delete", after: FINAL }],
+  [
+    "undo_import",
+    { button: "Undo import", after: "Importing the file again brings its rows back." },
+  ],
+  ["remove_conversation", { button: "Delete", after: FINAL }],
+  ["clear_fund_fee", { button: "Delete", after: "A fee lookup may fill it in again." }],
+  ["clear_forecast_rate", { button: "Delete", after: FINAL }],
+]);
+
+export const removalOf = (action: ProposalAction): Removal | null => REMOVALS.get(action) ?? null;
+
+/** What a card's button says: a removal names itself, so it can never pass for an ordinary save. */
+export const confirmLabel = (action: ProposalAction): string =>
+  removalOf(action)?.button ?? "Confirm";
 
 /** The stored trace of a proposal: what the card showed, never the input, so a reloaded thread cannot replay it. */
 export const StoredProposal = z.object({

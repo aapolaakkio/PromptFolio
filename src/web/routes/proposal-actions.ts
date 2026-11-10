@@ -64,16 +64,8 @@ const formActions: ProposalActions = {
   snapshot_adjust: async (args) => {
     await adjustSnapshot(args);
   },
-  // The form skips a pattern that already has a rule; a card must not say "Saved" for it.
   spending_rules: async (args) => {
-    const { added } = await saveSpendingRules(args);
-    const saved = new Set(added.map((rule) => rule.pattern));
-    const skipped = args.data.rules.filter((rule) => !saved.has(rule.pattern.trim().toUpperCase()));
-    if (skipped.length > 0) {
-      throw new Error(
-        `Not saved: ${skipped.map((rule) => rule.pattern).join(", ")} already has a rule`,
-      );
-    }
+    await saveSpendingRules(args);
   },
   spending_rule_category: async (args) => {
     await changeSpendingRule(args);
@@ -114,22 +106,6 @@ const run = (proposal: Proposal, actions: ProposalActions): Promise<void> => {
   const save = actions[proposal.action] as (args: { data: Proposal["input"] }) => Promise<void>;
   return save({ data: proposal.input });
 };
-
-/** What a card's button says: a removal names itself, so it can never pass for an ordinary save. */
-export const confirmLabel = (action: ProposalAction): string => {
-  if (action === "undo_import") return "Undo import";
-  return DANGER_ACTIONS.has(action) ? "Delete" : "Confirm";
-};
-
-const DANGER_ACTIONS: ReadonlySet<ProposalAction> = new Set([
-  "delete_cash_entry",
-  "delete_plan_row",
-  "delete_spending_rule",
-  "remove_snapshot",
-  "remove_conversation",
-  "clear_fund_fee",
-  "clear_forecast_rate",
-]);
 
 export const confirmProposal = async (
   proposal: Proposal,

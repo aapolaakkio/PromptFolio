@@ -107,26 +107,61 @@ const storedRule = async (
   )[0];
 };
 
-/** Re-points one of this user's rules at another category, as the owner's own decision. Returns whether there was one. */
+/** The proposed patterns that already have a rule, as given; checked before an all-or-none save writes anything. */
+export const takenPatterns = async (
+  db: Db,
+  userId: string,
+  proposed: readonly { readonly pattern: string; readonly category: string }[],
+): Promise<string[]> => {
+  const stored = new Set((await rulesFor(db, userId)).map((rule) => rule.pattern));
+  return proposed
+    .map((rule) => rule.pattern)
+    .filter((pattern) => stored.has(pattern.trim().toUpperCase()));
+};
+
+/** What a chat card showed of a rule; a rule changed since is left alone. */
+type AsShown = { readonly expectCategory?: string; readonly expectSource?: string };
+
+const changedSince = (
+  stored: { readonly category: string; readonly source: string },
+  shown: AsShown,
+): boolean =>
+  (shown.expectCategory !== undefined && shown.expectCategory !== stored.category) ||
+  (shown.expectSource !== undefined && shown.expectSource !== stored.source);
+
+/** Re-points one of this user's rules at another category, as the owner's own decision. */
 export const setRuleCategory = async (
   db: Db,
   userId: string,
   pattern: string,
   category: Category,
-): Promise<boolean> => {
+  expectCategory?: string,
+): Promise<"ok" | "missing" | "changed"> => {
   const target = pattern.trim().toUpperCase();
-  if ((await storedRule(db, userId, target)) === undefined) return false;
+  const stored = await storedRule(db, userId, target);
+  if (stored === undefined) return "missing";
+  if (changedSince(stored, { expectCategory })) return "changed";
   await db
     .update(spendingRules)
     .set({ category, source: "user" })
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))
     .run();
-  return true;
+  return "ok";
 };
 
-/** Deletes one rule of this user's. Returns whether there was one to delete. */
-export const removeRule = async (db: Db, userId: string, pattern: string): Promise<boolean> => {
+/** Deletes one rule of this user's: false when there was none, "changed" when it is no longer what a card showed. */
+export const removeRule = async (
+  db: Db,
+  userId: string,
+  pattern: string,
+  shown: AsShown = {},
+): Promise<boolean | "changed"> => {
   const target = pattern.trim().toUpperCase();
+  if (shown.expectCategory !== undefined || shown.expectSource !== undefined) {
+    const stored = await storedRule(db, userId, target);
+    if (stored === undefined) return false;
+    if (changedSince(stored, shown)) return "changed";
+  }
   const deleted = await db
     .delete(spendingRules)
     .where(and(eq(spendingRules.userId, userId), eq(spendingRules.pattern, target)))

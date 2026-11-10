@@ -27,14 +27,15 @@ import {
   transactions,
 } from "../db/schema.ts";
 import { ForecastRateRemoveInput } from "../forecast-inputs.ts";
-import { listPlan } from "../monthly-plan.ts";
+import { listPlan, planFingerprint } from "../monthly-plan.ts";
 import { labelForCategory } from "../spending/categories.ts";
 import { rulesFor } from "../spending/rules.ts";
 import { loadPortfolio } from "../valuation.ts";
 import {
+  HOUSEHOLD_SHARED,
   REMOVAL_RULES,
+  RULE_MADE_BY,
   accountName,
-  maskAccountNumbers,
   instrumentLabel,
   money,
   newId,
@@ -42,6 +43,7 @@ import {
   ownSnapshot,
   text,
 } from "./proposal-kit.ts";
+import { maskAccountNumbers } from "./mask.ts";
 import type { Proposal } from "./proposal-schema.ts";
 import { forecastInstrument, storedRate } from "./proposals-instruments.ts";
 import type { Db, ProposalArea, ProposalTool, ToolArgs } from "./tool-types.ts";
@@ -69,7 +71,6 @@ const dayOf = (date: Date): string => date.toISOString().slice(0, 10);
 /** The parts every removal card shares: a fresh id and the warning flag. */
 const removal = (title: string, facts: Proposal["facts"], summary: string) => ({
   proposalId: newId(),
-  danger: true as const,
   title,
   facts,
   summary,
@@ -130,15 +131,9 @@ const proposePlanRow = async (db: Db, userId: string, raw: ToolArgs): Promise<Pr
       `Delete ${name} (${row.amountEur} EUR a month) from the monthly plan; it then totals ${after} EUR.`,
     ),
     action: "delete_plan_row",
-    input,
+    input: { instrumentId: row.instrumentId, fingerprint: await planFingerprint(db, userId) },
   };
 };
-
-const MADE_BY = {
-  user: "You",
-  ai: "Saved automatically at import",
-  seed: "Built into the app",
-} as const;
 
 const proposeRule = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = SpendingRuleRemove.parse(raw);
@@ -157,13 +152,13 @@ const proposeRule = async (db: Db, userId: string, raw: ToolArgs): Promise<Propo
       [
         { kind: "code", label: "Rule", code: pattern },
         text("Category", category),
-        text("Made by", MADE_BY[rule.source]),
+        text("Made by", RULE_MADE_BY[rule.source]),
         text("Payments it matches", String(matches)),
       ],
       `Delete the spending rule ${pattern} (${category}); its ${matches} payments are categorised again without it.`,
     ),
     action: "delete_spending_rule",
-    input: { pattern },
+    input: { pattern, expectCategory: rule.category, expectSource: rule.source },
   };
 };
 
@@ -234,7 +229,7 @@ const proposeUndo = async (db: Db, userId: string, raw: ToolArgs): Promise<Propo
       `Undo the import ${file} of ${dayOf(record.createdAt)}: ${rows.length} transactions will be removed.`,
     ),
     action: "undo_import",
-    input: { importId: record.id },
+    input: { importId: record.id, expectCount: rows.length },
   };
 };
 
@@ -297,6 +292,7 @@ const proposeClearFee = async (db: Db, userId: string, raw: ToolArgs): Promise<P
       [
         text("Fund", name),
         text("Fee cleared", fee),
+        HOUSEHOLD_SHARED,
         text("Afterwards", "A fee lookup may fill it in again"),
       ],
       `Clear the fee of ${name}: ${fee}.`,

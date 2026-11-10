@@ -17,7 +17,7 @@ import { ChatChart } from "../charts/ChatChart.tsx";
 import { renderItems } from "./chat-order.ts";
 import { refreshAfterDecision } from "./chat-refresh.ts";
 import { askChat } from "./chat-stream.ts";
-import { cardState, confirmLabel, createDecider, type CardOutcome } from "./proposal-actions.ts";
+import { cardState, createDecider, type CardOutcome } from "./proposal-actions.ts";
 import { ProposalCard } from "./ProposalCard.tsx";
 import { TOOL_LABELS } from "./tool-labels.ts";
 
@@ -115,7 +115,6 @@ export const ChatPanel = ({
             summary: proposal.summary,
             title: proposal.title,
             facts: proposal.facts,
-            danger: proposal.danger,
           };
           setPending((previous) => [
             ...previous,
@@ -231,17 +230,15 @@ export const ChatPanel = ({
           if (turn.role !== "proposal") return null;
           const card = readStored(StoredProposal, turn.content);
           if (card === null) return null;
-          const { proposalId, title, facts, action, danger } = card;
+          const { proposalId, title, facts, action } = card;
           const streamed = live.get(proposalId);
           return (
             <li key={`proposal-${proposalId}`}>
               <ProposalCard
+                action={action}
                 title={title}
                 facts={facts}
                 note={streamed?.action === "cash_entry" ? streamed.input.note : undefined}
-                danger={danger === true}
-                permanent={action !== "undo_import"}
-                confirmLabel={confirmLabel(action)}
                 state={cardState(streamed, outcomes.get(proposalId))}
                 outcome={outcomes.get(proposalId)}
                 saving={saving.has(proposalId)}

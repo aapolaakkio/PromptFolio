@@ -14,6 +14,7 @@ import {
   type Proposal,
 } from "./proposal-schema.ts";
 import { ChatChartSchema, StoredChartSchema } from "./chart-schema.ts";
+import { maskAccountNumbers } from "./mask.ts";
 import { buildProposalTools } from "./proposals.ts";
 import { buildChatTools } from "./tools.ts";
 import { buildChartTool } from "./tools-chart.ts";
@@ -100,20 +101,22 @@ const modelHistory = (rows: readonly Row[]) => {
     if (row.role === "proposal") {
       const proposal = readStored(StoredProposal, row.content);
       if (proposal === null) return [];
-      const text = `The assistant proposed "${proposal.summary}". It is not saved unless the owner confirms it.`;
+      const text = `The assistant proposed "${maskAccountNumbers(proposal.summary)}". It is not saved unless the owner confirms it.`;
       return [{ role: "user", content: `${APP_NOTE} ${text}` }];
     }
     if (row.role === "chart") {
       const chart = readStored(StoredChartSchema, row.content);
       if (chart === null) return [];
       if ("expired" in chart) return [];
-      const labels = chart.data.series.map((series) => series.label).join("; ");
+      const labels = chart.data.series.map((series) => maskAccountNumbers(series.label)).join("; ");
       return [{ role: "user", content: `${APP_NOTE} The assistant showed a chart of: ${labels}.` }];
     }
     const outcome = readStored(StoredOutcome, row.content);
     const summary = outcome === null ? undefined : summaries.get(outcome.proposalId);
     if (outcome === null || summary === undefined) return [];
-    return [{ role: "user", content: `${APP_NOTE} ${outcomeText(summary, outcome)}` }];
+    return [
+      { role: "user", content: `${APP_NOTE} ${outcomeText(maskAccountNumbers(summary), outcome)}` },
+    ];
   });
 };
 
@@ -124,7 +127,6 @@ const storedTrace = (proposal: Proposal): string =>
     summary: proposal.summary,
     title: proposal.title,
     facts: proposal.facts,
-    danger: proposal.danger,
   });
 
 /** Records what the owner did with a card, once; the next turn's model reads it as an app note. */

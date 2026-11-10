@@ -223,7 +223,7 @@ const hasLaterDependent = async (
 
 export const undoImport = async (
   db: Db,
-  args: { userId: string; importId: number },
+  args: { userId: string; importId: number; expectCount?: number | undefined },
 ): Promise<UndoResult> => {
   const record = await db
     .select()
@@ -238,6 +238,10 @@ export const undoImport = async (
     .from(transactions)
     .where(eq(transactions.importId, args.importId))
     .all();
+  // A chat card said how many rows would go; a different count means it no longer describes this undo.
+  if (args.expectCount !== undefined && args.expectCount !== rows.length) {
+    throw new HttpError(409, "The import changed since the card was made. Ask again.");
+  }
 
   for (const row of rows) {
     if (row.instrumentId === null) continue;

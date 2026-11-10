@@ -3,7 +3,7 @@ import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
 import { unknownMerchants } from "../spending/classify.ts";
 import { categoriseWith, isCategory, rulesFor } from "../spending/rules.ts";
 import { loadPortfolio } from "../valuation.ts";
-import { AWAITS, newId, text } from "./proposal-kit.ts";
+import { AWAITS, RULE_MADE_BY, newId, text } from "./proposal-kit.ts";
 import type { Fact, Proposal } from "./proposal-schema.ts";
 import type { Db, ProposalArea, ProposalTool, ToolArgs } from "./tool-types.ts";
 
@@ -63,7 +63,7 @@ const proposeRules = async (db: Db, userId: string, raw: ToolArgs): Promise<Prop
     title: wanted.length === 1 ? "Save a spending rule" : `Save ${wanted.length} spending rules`,
     facts,
     summary: `Save spending rules: ${listed.join(", ")}.`,
-    input: { rules: wanted },
+    input: { rules: wanted, refuseExisting: true },
   };
 };
 
@@ -80,9 +80,17 @@ const proposeCategory = async (db: Db, userId: string, raw: ToolArgs): Promise<P
     proposalId: newId(),
     action: "spending_rule_category",
     title: "Move a spending rule",
-    facts: [{ kind: "code", label: "Rule", code: pattern }, text("From", from), text("To", to)],
-    summary: `Move the spending rule ${pattern} from ${from} to ${to}.`,
-    input: { pattern, category },
+    facts: [
+      { kind: "code", label: "Rule", code: pattern },
+      text("From", from),
+      text("To", to),
+      text("Made by", RULE_MADE_BY[rule.source]),
+      ...(rule.source === "user" ? [text("Your own rule", "Replaces your own rule")] : []),
+    ],
+    summary:
+      `Move the spending rule ${pattern} from ${from} to ${to}` +
+      (rule.source === "user" ? ", replacing the owner's own rule." : "."),
+    input: { pattern, category, expectCategory: rule.category },
   };
 };
 

@@ -95,6 +95,7 @@ describe("propose_fund_fee", () => {
       { kind: "text", label: "Fund", text: `Acme Fund (${isin})` },
       { kind: "text", label: "Ongoing charge", text: "0.20 % a year" },
       { kind: "text", label: "Replaces", text: "No fee recorded" },
+      { kind: "text", label: "Applies to", text: "Shared by everyone in the household" },
     ]);
     expect(card.input).toEqual({ id: instrumentId, percent: "0,2" });
     const stored = await db

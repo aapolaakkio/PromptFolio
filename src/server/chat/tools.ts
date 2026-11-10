@@ -17,6 +17,7 @@ import { notSpendingIds } from "../spending/internal.ts";
 import { categoriseWith, rulesFor } from "../spending/rules.ts";
 import { summariseSpending } from "../spending/summary.ts";
 import { calculate } from "./calculator.ts";
+import { maskAccountNumbers } from "./mask.ts";
 import { fundingCashFlows, investedCashFlows } from "../../core/ledger.ts";
 import { formatMoney, formatQuantity, negateMoney } from "../../core/money.ts";
 import { twr, valueSeries, xirr } from "../../core/returns.ts";
@@ -111,7 +112,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         lockedEur,
         balances: rows.map((row) => ({
           accountId: row.accountId,
-          account: row.accountName,
+          account: maskAccountNumbers(row.accountName),
           currency: row.currency,
           amount: row.amount,
           valueEur: row.valueEur,
@@ -150,7 +151,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         asOf: on,
         dimension,
         slices: slices.map((slice) => ({
-          label: slice.label,
+          label: maskAccountNumbers(slice.label),
           valueEur: formatMoney(slice.valueEur),
           weight: slice.weight,
         })),
@@ -407,7 +408,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         incomplete: drift.incomplete,
         rows: drift.rows.map((row) => ({
           key: row.key,
-          item: row.label,
+          item: maskAccountNumbers(row.label),
           target: row.targetPercent,
           current: row.actualPercent,
           difference: row.driftPercent,
@@ -454,7 +455,7 @@ export const buildChatTools = (db: Db, userId: string): ChatTool[] => [
         // Said out loud so a net figure is not presented as gross.
         dividendWithholdingMissing: report.dividends.some((row) => !row.withholdingRecorded),
         ost: report.ost.map((account) => ({
-          account: account.accountName,
+          account: maskAccountNumbers(account.accountName),
           depositedEur: account.depositedEur,
           capRemainingEur: account.capRemainingEur,
           withdrawals: account.withdrawals.map((row) => ({

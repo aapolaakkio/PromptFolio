@@ -114,9 +114,19 @@ export const shownCode = (priceSource: "yahoo" | "page" | "manual", key: string)
   }
 };
 
-/** Account numbers in a bank's file name are masked: the card's text is sent to the model too. */
-export const maskAccountNumbers = (name: string): string =>
-  name.replace(/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){10,30}/g, "…").replace(/\d(?:\s?\d){5,}/g, "…");
+/** A fund's fee is reference data every household member sees, so its cards say so. */
+export const HOUSEHOLD_SHARED = {
+  kind: "text",
+  label: "Applies to",
+  text: "Shared by everyone in the household",
+} as const satisfies Fact;
+
+/** Who wrote a spending rule, as a card says it. */
+export const RULE_MADE_BY = {
+  user: "You",
+  ai: "The assistant",
+  seed: "Built into the app",
+} as const;
 
 export const AWAITS = " Saves nothing: the owner sees a card and decides with Confirm or Dismiss.";
 

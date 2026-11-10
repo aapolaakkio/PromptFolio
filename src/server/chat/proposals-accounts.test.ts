@@ -166,3 +166,19 @@ describe("propose_account_balance", () => {
     expect(result.toolResult).toContain("Account not found");
   });
 });
+
+describe("account numbers in names", () => {
+  test("the owner's card keeps the real name; what the model reads has the number masked", async () => {
+    const userId = await signUp();
+    const accountId = await bankAccount(userId, "OP 1234567-8");
+    const result = await propose(userId, "propose_account_balance", {
+      accountId,
+      on: "2026-06-01",
+      balance: "100",
+    });
+
+    expect(JSON.stringify(onlyCard(result).facts)).toContain("OP 1234567-8");
+    expect(result.toolResult).not.toContain("1234567");
+    expect(result.toolResult).toContain(`OP … (account #${accountId})`);
+  });
+});

@@ -28,6 +28,8 @@ const STATEMENTS: ProposalArea = {
     "record a holdings statement typed by hand and book a reconcile adjustment for one row of a statement",
 };
 
+const EUROS = /^\d+([.,]\d{1,2})?$/;
+
 /** Up to three facts per row must fit the card's fact limit. */
 const MAX_CARD_ROWS = 60;
 
@@ -103,6 +105,9 @@ const proposeSnapshot = async (db: Db, userId: string, raw: ToolArgs): Promise<P
 
 const proposeAdjust = async (db: Db, userId: string, raw: ToolArgs): Promise<Proposal> => {
   const input = AdjustInput.parse(raw);
+  if (input.costEur !== undefined && !EUROS.test(input.costEur)) {
+    throw new Error("Cost basis in euros with at most two decimals, for example 1234.56");
+  }
   await ownSnapshot(db, userId, input.snapshotId);
   const { snapshot, row } = await adjustmentRow(userId, input.snapshotId, input.instrumentId);
   if (row.withinTolerance) throw new Error("The row already matches; nothing to correct");
@@ -146,7 +151,13 @@ const proposeAdjust = async (db: Db, userId: string, raw: ToolArgs): Promise<Pro
     summary:
       `Book ${quantity} units of ${name} ${arriving ? "into" : "out of"} ${accountName(account)} ` +
       `on ${snapshot.asOf} to match the statement${cost === null ? "" : `, at a cost of ${cost} EUR`}.`,
-    input: { ...input, expectQuantity: formatQuantity(row.delta) },
+    // The cost as the card shows it, so the save stores exactly that.
+    input: {
+      snapshotId: input.snapshotId,
+      instrumentId: input.instrumentId,
+      costEur: cost ?? undefined,
+      expectQuantity: formatQuantity(row.delta),
+    },
   };
 };
 

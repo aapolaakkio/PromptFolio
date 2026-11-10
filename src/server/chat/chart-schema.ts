@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { maskAccountNumbers } from "./mask.ts";
+
 // No server-only imports: the chat page validates streamed and stored charts with this.
 
 export const MAX_CHART_SERIES = 6;
@@ -226,7 +228,7 @@ export const chartSummary = (chart: ChatChart) => ({
   scale: chart.data.yScale,
   notes: chart.data.notes,
   series: chart.data.series.map((series) => ({
-    label: series.label,
+    label: maskAccountNumbers(series.label),
     unit: series.unit,
     points: series.points.length,
     // Said out loud so an answer does not present an estimated stretch as market value.

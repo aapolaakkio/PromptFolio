@@ -314,6 +314,7 @@ export const previewPaste = async (userId: string, body: z.infer<typeof PasteBod
   return { broker: "paste", filename: PASTE_FILENAME, sha256, ...draft, corporateActions };
 };
 
-export const undo = (userId: string, importId: number) => undoImport(db, { userId, importId });
+export const undo = (userId: string, importId: number, expectCount?: number) =>
+  undoImport(db, { userId, importId, expectCount });
 
 export { PasteBody };

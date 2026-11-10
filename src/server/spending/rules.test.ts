@@ -8,11 +8,12 @@ let matchRule: (typeof import("./rules.ts"))["matchRule"];
 let removeRule: (typeof import("./rules.ts"))["removeRule"];
 let rulesFor: (typeof import("./rules.ts"))["rulesFor"];
 let setRuleCategory: (typeof import("./rules.ts"))["setRuleCategory"];
+let takenPatterns: (typeof import("./rules.ts"))["takenPatterns"];
 let db: (typeof import("../db/index.ts"))["db"];
 let auth: ReturnType<(typeof import("../auth.ts"))["getAuth"]>;
 
 beforeAll(async () => {
-  ({ addRules, categoriseWith, matchRule, removeRule, rulesFor, setRuleCategory } =
+  ({ addRules, categoriseWith, matchRule, removeRule, rulesFor, setRuleCategory, takenPatterns } =
     await import("./rules.ts"));
   db = (await import("../db/index.ts")).db;
   auth = (await import("../auth.ts")).getAuth();
@@ -127,7 +128,7 @@ describe("setRuleCategory", () => {
     const userId = await makeUser();
     await addRules(db, userId, [{ pattern: "KAHVILA SOLO", category: "groceries" }], "ai");
 
-    expect(await setRuleCategory(db, userId, "kahvila solo", "restaurants")).toBe(true);
+    expect(await setRuleCategory(db, userId, "kahvila solo", "restaurants")).toBe("ok");
     const rule = (await rulesFor(db, userId)).find((row) => row.pattern === "KAHVILA SOLO");
     expect(rule).toMatchObject({ category: "restaurants", source: "user" });
   });
@@ -137,8 +138,23 @@ describe("setRuleCategory", () => {
     const other = await makeUser();
     await addRules(db, other, [{ pattern: "KAHVILA SOLO", category: "groceries" }], "user");
 
-    expect(await setRuleCategory(db, userId, "KAHVILA SOLO", "restaurants")).toBe(false);
+    expect(await setRuleCategory(db, userId, "KAHVILA SOLO", "restaurants")).toBe("missing");
     const theirs = (await rulesFor(db, other)).find((row) => row.pattern === "KAHVILA SOLO");
     expect(theirs?.category).toBe("groceries");
+  });
+});
+
+describe("takenPatterns", () => {
+  test("names every pattern that already has a rule, before anything is written", async () => {
+    const userId = await makeUser();
+    await addRules(db, userId, [{ pattern: "KAHVILA SOLO", category: "groceries" }], "user");
+
+    expect(
+      await takenPatterns(db, userId, [
+        { pattern: "uusi kauppa", category: "groceries" },
+        { pattern: "kahvila solo", category: "restaurants" },
+      ]),
+    ).toEqual(["kahvila solo"]);
+    expect((await rulesFor(db, userId)).some((rule) => rule.pattern === "UUSI KAUPPA")).toBe(false);
   });
 });

@@ -109,7 +109,9 @@ export const savePlanRow = createServerFn({ method: "POST" })
 export const deletePlanRow = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(PlanRemoveInput)
-  .handler(({ data, context }) => removePlanRow(db, context.userId, data.instrumentId));
+  .handler(({ data, context }) =>
+    readable(() => removePlanRow(db, context.userId, data.instrumentId, data.fingerprint)),
+  );
 
 /** The whole plan at once, from a chat card the owner confirmed; atomic. */
 export const savePlan = createServerFn({ method: "POST" })

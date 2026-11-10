@@ -1,32 +1,32 @@
 import { describe, expect, test } from "vitest";
 
-// Every POST server function is either reachable from a chat card or listed here with why not, so the list cannot go stale.
+import type { ProposalAction } from "../../server/chat/proposal-schema.ts";
 
-const PROPOSAL = "proposal";
+// Every POST server function is either the Confirm of the chat cards listed (by action) or listed with why not, so the list cannot go stale.
 
 const INVENTORY = {
-  createAccount: PROPOSAL,
-  editAccount: PROPOSAL,
-  recordAccountBalance: PROPOSAL,
-  saveCashEntry: PROPOSAL,
-  deleteCashEntry: PROPOSAL,
-  removeConversation: PROPOSAL,
-  saveForecastRate: PROPOSAL,
-  deleteForecastRate: PROPOSAL,
-  undoImport: PROPOSAL,
-  createInstrument: PROPOSAL,
-  editInstrument: PROPOSAL,
-  setFundCharge: PROPOSAL,
-  savePrice: PROPOSAL,
-  saveTargetAllocation: PROPOSAL,
-  deletePlanRow: PROPOSAL,
-  savePlan: PROPOSAL,
-  saveSnapshot: PROPOSAL,
-  removeSnapshot: PROPOSAL,
-  adjustSnapshot: PROPOSAL,
-  saveSpendingRules: PROPOSAL,
-  changeSpendingRule: PROPOSAL,
-  deleteSpendingRule: PROPOSAL,
+  createAccount: ["create_account"],
+  editAccount: ["edit_account"],
+  recordAccountBalance: ["account_balance"],
+  saveCashEntry: ["cash_entry"],
+  deleteCashEntry: ["delete_cash_entry"],
+  removeConversation: ["remove_conversation"],
+  saveForecastRate: ["forecast_rate"],
+  deleteForecastRate: ["clear_forecast_rate"],
+  undoImport: ["undo_import"],
+  createInstrument: ["create_instrument"],
+  editInstrument: ["price_source"],
+  setFundCharge: ["fund_fee", "clear_fund_fee"],
+  savePrice: ["record_price"],
+  saveTargetAllocation: ["target_allocation"],
+  deletePlanRow: ["delete_plan_row"],
+  savePlan: ["monthly_plan"],
+  saveSnapshot: ["snapshot"],
+  removeSnapshot: ["remove_snapshot"],
+  adjustSnapshot: ["snapshot_adjust"],
+  saveSpendingRules: ["spending_rules"],
+  changeSpendingRule: ["spending_rule_category"],
+  deleteSpendingRule: ["delete_spending_rule"],
   previewBankImport:
     "not offered: a file upload; a chat message cannot carry a file (Imports page)",
   commitBankDraftImport: "not offered: commits a file's reviewed draft (Imports page)",
@@ -44,7 +44,7 @@ const INVENTORY = {
   getSummary: "not offered: reads, saves nothing",
   saveProposalOutcome: "not offered: the card's own outcome note",
   askTurn: "not offered: the chat itself",
-} satisfies Readonly<Record<string, string>>;
+} satisfies Readonly<Record<string, string | readonly ProposalAction[]>>;
 
 const servers = import.meta.glob<string>("../server/*.ts", {
   query: "?raw",
@@ -57,22 +57,51 @@ const actions = import.meta.glob<string>("./proposal-actions.ts", {
   eager: true,
 });
 
-const POST = /export const (\w+) = createServerFn\(\{ method: "POST" \}\)/g;
+/** Every `createServerFn(...)` whose options say POST, however it is laid out or exported. */
+const postFunctions = (source: string): string[] =>
+  [...source.matchAll(/const\s+(\w+)\s*=\s*createServerFn\(\s*(\{[^)]*\})?\s*\)/g)]
+    .filter((match) => /method\s*:\s*["']POST["']/.test(match[2] ?? ""))
+    .map((match) => match[1] ?? "");
+
+/** Each action's own entry in `formActions`, so a function counts only under the action that calls it. */
+const actionBodies = (source: string): ReadonlyMap<string, string> =>
+  new Map(
+    [...source.matchAll(/^ {2}(\w+): async \(args\) => \{\n([\s\S]*?)\n {2}\},$/gm)].map(
+      (match) => [match[1] ?? "", match[2] ?? ""],
+    ),
+  );
+
+describe("the scanner", () => {
+  test("finds a POST function laid out over several lines or not exported, and skips a GET", () => {
+    const source = [
+      'export const a = createServerFn({ method: "POST" })',
+      "const b = createServerFn({",
+      '  method: "POST",',
+      "})",
+      "export const c = createServerFn()",
+      'export const d = createServerFn({ method: "GET" })',
+    ].join("\n");
+    expect(postFunctions(source)).toEqual(["a", "b"]);
+  });
+});
 
 describe("the proposal inventory", () => {
   test("lists every POST server function, and nothing that is gone", () => {
-    const found = Object.values(servers).flatMap((source) =>
-      [...source.matchAll(POST)].map((match) => match[1] ?? ""),
-    );
+    const found = Object.values(servers).flatMap(postFunctions);
     const byName = (a: string, b: string) => a.localeCompare(b);
     expect([...found].sort(byName)).toEqual(Object.keys(INVENTORY).sort(byName));
   });
 
-  test("each one marked as a proposal is what a card's Confirm calls", () => {
-    const source = Object.values(actions).join("");
-    const missing = Object.entries(INVENTORY)
-      .filter(([name, status]) => status === PROPOSAL && !source.includes(`await ${name}(`))
-      .map(([name]) => name);
-    expect(missing).toEqual([]);
+  test("each proposal function is what its own actions' Confirm calls", () => {
+    const bodies = actionBodies(Object.values(actions).join(""));
+    const wrong = Object.entries(INVENTORY).flatMap(([name, status]) =>
+      !Array.isArray(status)
+        ? []
+        : status
+            .filter((action) => !(bodies.get(action) ?? "").includes(`await ${name}(`))
+            .map((action) => `${action} -> ${name}`),
+    );
+    expect(bodies.size).toBeGreaterThan(20);
+    expect(wrong).toEqual([]);
   });
 });

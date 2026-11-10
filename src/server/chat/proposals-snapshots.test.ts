@@ -109,7 +109,7 @@ describe("propose_snapshot_adjust", () => {
     expect(card.input).toEqual({
       snapshotId,
       instrumentId,
-      costEur: "20",
+      costEur: "20.00",
       expectQuantity: "2.000000",
     });
     const booked = await db
@@ -137,6 +137,13 @@ describe("propose_snapshot_adjust", () => {
     const { userId, instrumentId, snapshotId } = await withGap();
     const other = await withGap();
 
+    const precise = await propose(userId, "propose_snapshot_adjust", {
+      snapshotId,
+      instrumentId,
+      costEur: "12.345",
+    });
+    expect(precise.toolResult).toContain("at most two decimals");
+    expect(precise.proposals).toEqual([]);
     const noCost = await propose(userId, "propose_snapshot_adjust", { snapshotId, instrumentId });
     expect(noCost.toolResult).toContain("Cost basis is required");
     const foreign = await propose(userId, "propose_snapshot_adjust", {

@@ -133,7 +133,13 @@ export const PlanSave = z
     },
   );
 
-export const PlanRemoveInput = z.object({ instrumentId: z.number().int().positive() }).strict();
+/** `fingerprint` is filled by a chat card, so a plan changed since the card is refused. */
+export const PlanRemoveInput = z
+  .object({
+    instrumentId: z.number().int().positive(),
+    fingerprint: z.string().max(4000).optional(),
+  })
+  .strict();
 
 const accountKind = z.enum(["brokerage", "bank"]);
 
@@ -273,7 +279,11 @@ export const FundChargeInput = z
 
 export const CashEntryRemove = z.object({ id: z.number().int().positive() }).strict();
 
-export const UndoInput = z.object({ importId: z.number().int().positive() });
+/** `expectCount` is filled by a chat card: the number of rows it said would be removed. */
+export const UndoInput = z.object({
+  importId: z.number().int().positive(),
+  expectCount: z.number().int().min(0).optional(),
+});
 
 export const ConversationId = z.object({ id: z.number().int().positive() });
 
@@ -285,11 +295,26 @@ export const SpendingRulesSave = z
       .array(z.object({ pattern: RulePattern, category: z.string() }))
       .min(1)
       .max(50),
+    /** Set by a chat card: all rules or none, never a partial save behind a failure. */
+    refuseExisting: z.literal(true).optional(),
   })
   .strict();
 
+const RuleSource = z.enum(["seed", "ai", "user"]);
+
+/** `expectCategory` is filled by a chat card, so a rule changed since the card is refused, not overwritten. */
 export const SpendingRuleChange = z
-  .object({ pattern: RulePattern, category: z.string().max(60) })
+  .object({
+    pattern: RulePattern,
+    category: z.string().max(60),
+    expectCategory: z.string().max(60).optional(),
+  })
   .strict();
 
-export const SpendingRuleRemove = z.object({ pattern: z.string().min(1).max(120) }).strict();
+export const SpendingRuleRemove = z
+  .object({
+    pattern: z.string().min(1).max(120),
+    expectCategory: z.string().max(60).optional(),
+    expectSource: RuleSource.optional(),
+  })
+  .strict();

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { cashBalancesAt, totalCashEur, valueCash } from "../../core/cash.ts";
 import { addMoney, EUR, formatMoney, parseMoney } from "../../core/money.ts";
 import { valueSeries } from "../../core/returns.ts";
+import { maskAccountNumbers } from "./mask.ts";
 import { cashFlowFor } from "../spending/cashflow.ts";
 import { CATEGORY_LABELS, labelForCategory } from "../spending/categories.ts";
 import { cashlessAccountIds } from "../spending/internal.ts";
@@ -154,7 +155,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         spentMoreThanEarned: shortfall,
         byCategory: flow.nodes
           .filter((node) => node.id.startsWith("out:"))
-          .map((node) => ({ label: node.label, totalEur: node.totalEur })),
+          .map((node) => ({ label: maskAccountNumbers(node.label), totalEur: node.totalEur })),
         note:
           "Transfers between own accounts, payments into investments and paying a credit card " +
           "bill are neither spending nor income, so they are left out. " +
@@ -233,7 +234,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
         groupBy: by,
         depositEur: formatMoney(deposit),
         allocations: allocations.map((allocation) => ({
-          label: allocation.label,
+          label: maskAccountNumbers(allocation.label),
           amountEur: allocation.amountEur,
         })),
         note:
@@ -352,7 +353,7 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
 
       return {
         accounts: checks.map((check) => ({
-          account: check.account,
+          account: maskAccountNumbers(check.account),
           checkedAgainst: check.asOf,
           source: check.source,
           differences: check.differences,
@@ -363,7 +364,9 @@ export const buildMoneyTools = (db: Db, userId: string): ChatTool[] => [
             delta: row.delta,
           })),
         })),
-        unchecked: checks.filter((check) => check.asOf === null).map((check) => check.account),
+        unchecked: checks
+          .filter((check) => check.asOf === null)
+          .map((check) => maskAccountNumbers(check.account)),
         note:
           "checkedAgainst = null means no holdings report has been imported for the account, " +
           "so it was compared against nothing -- do not say it matches. A bank account's balance " +

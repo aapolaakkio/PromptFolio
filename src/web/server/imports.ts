@@ -39,7 +39,9 @@ export const previewOpPaste = createServerFn({ method: "POST" })
 export const undoImport = createServerFn({ method: "POST" })
   .middleware([authed])
   .validator(UndoInput)
-  .handler(({ data, context }) => readable(() => undo(context.userId, data.importId)));
+  .handler(({ data, context }) =>
+    readable(() => undo(context.userId, data.importId, data.expectCount)),
+  );
 
 /** Works out what each dropped file is and which account it belongs to; stores nothing. */
 export const sortImportFiles = createServerFn({ method: "POST" })

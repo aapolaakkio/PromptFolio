@@ -7,6 +7,7 @@ import { conversations, imports } from "../db/schema.ts";
 import { createSnapshot } from "../snapshot/service.ts";
 import { bankAccount, seed } from "./proposal-test-kit.ts";
 import { buildRecordTools } from "./tools-records.ts";
+import { buildChatTools } from "./tools.ts";
 
 // The ids proposals need, read from the caller's own records only; nothing here writes.
 
@@ -71,5 +72,31 @@ describe("record tools", () => {
     await expect(run(userId, "get_cash_entries", { accountId: other.accountId })).rejects.toThrow(
       "Account not found",
     );
+  });
+});
+
+describe("account names", () => {
+  test("reach the model with any account number masked", async () => {
+    const { userId } = await seed();
+    const bank = await bankAccount(userId, "OP 1234567-8");
+    await addCashEntry(userId, {
+      accountId: bank,
+      type: "DEPOSIT",
+      tradeDate: "2026-01-02",
+      amount: "50",
+      currency: EUR,
+    });
+    const tools = [...buildRecordTools(db, userId), ...buildChatTools(db, userId)];
+    const read = async (name: string) => {
+      const tool = tools.find((candidate) => candidate.name === name);
+      if (tool === undefined) throw new Error(`no tool ${name}`);
+      return JSON.stringify(await tool.run(tool.schema.parse({})));
+    };
+
+    for (const name of ["get_accounts", "get_cash"]) {
+      const text = await read(name);
+      expect(text).toContain("OP …");
+      expect(text).not.toContain("1234567");
+    }
   });
 });

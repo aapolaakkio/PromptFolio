@@ -13,6 +13,7 @@ import { z } from "zod";
 import { HttpError } from "../errors.ts";
 import type { JSONSchema } from "zod/v4/core";
 
+import { maskAccountNumbers } from "./mask.ts";
 import { DEFAULT_CHAT_MODEL } from "./models.ts";
 import { chartSummary, type ChatChart } from "./chart-schema.ts";
 import type { Proposal } from "./proposal-schema.ts";
@@ -251,7 +252,7 @@ const runTool = async (tools: readonly AnyTool[], call: ToolCall): Promise<ToolO
     const proposal = await tool.propose(input);
     return {
       content: JSON.stringify({
-        ...proposal,
+        ...proposalForModel(proposal),
         status: "awaiting_owner_confirmation",
         note: AWAITING,
       }),
@@ -264,6 +265,19 @@ const runTool = async (tools: readonly AnyTool[], call: ToolCall): Promise<ToolO
     };
   }
 };
+
+/** The card as the model reads it: the owner sees real names, the model never an account number. */
+const proposalForModel = (proposal: Proposal): Proposal => ({
+  ...proposal,
+  title: maskAccountNumbers(proposal.title),
+  summary: maskAccountNumbers(proposal.summary),
+  facts: proposal.facts.map((fact) => {
+    const label = maskAccountNumbers(fact.label);
+    return fact.kind === "text"
+      ? { ...fact, label, text: maskAccountNumbers(fact.text) }
+      : { ...fact, label };
+  }),
+});
 
 const ROUND_BREAK = "\n\n";
 

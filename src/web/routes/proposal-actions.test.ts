@@ -1,10 +1,14 @@
 import { describe, expect, test, vi } from "vitest";
 
 import { EUR } from "../../core/money.ts";
-import type { Proposal, ProposalAction } from "../../server/chat/proposal-schema.ts";
+import {
+  confirmLabel,
+  removalOf,
+  type Proposal,
+  type ProposalAction,
+} from "../../server/chat/proposal-schema.ts";
 import {
   cardState,
-  confirmLabel,
   confirmProposal,
   createDecider,
   type ProposalActions,
@@ -172,34 +176,30 @@ const PROPOSALS: readonly Proposal[] = [
     action: "spending_rule_category",
     input: { pattern: "KAHVILA", category: "groceries" },
   },
-  { ...card, danger: true, proposalId: "a16", action: "delete_cash_entry", input: { id: 7 } },
+  { ...card, proposalId: "a16", action: "delete_cash_entry", input: { id: 7 } },
   {
     ...card,
-    danger: true,
     proposalId: "a17",
     action: "delete_plan_row",
     input: { instrumentId: 4 },
   },
   {
     ...card,
-    danger: true,
     proposalId: "a18",
     action: "delete_spending_rule",
     input: { pattern: "KAHVILA" },
   },
-  { ...card, danger: true, proposalId: "a19", action: "remove_snapshot", input: { snapshotId: 9 } },
-  { ...card, danger: true, proposalId: "a20", action: "undo_import", input: { importId: 5 } },
-  { ...card, danger: true, proposalId: "a21", action: "remove_conversation", input: { id: 2 } },
+  { ...card, proposalId: "a19", action: "remove_snapshot", input: { snapshotId: 9 } },
+  { ...card, proposalId: "a20", action: "undo_import", input: { importId: 5 } },
+  { ...card, proposalId: "a21", action: "remove_conversation", input: { id: 2 } },
   {
     ...card,
-    danger: true,
     proposalId: "a22",
     action: "clear_fund_fee",
     input: { id: 4, percent: "" },
   },
   {
     ...card,
-    danger: true,
     proposalId: "a23",
     action: "clear_forecast_rate",
     input: { instrumentId: 4 },
@@ -243,11 +243,21 @@ describe("confirmLabel", () => {
   test("a removal never reads as a plain Confirm", () => {
     for (const proposal of PROPOSALS) {
       const label = confirmLabel(proposal.action);
-      if (proposal.danger === true) expect(label).not.toBe("Confirm");
+      if (removalOf(proposal.action) !== null) expect(label).not.toBe("Confirm");
       else expect(label).toBe("Confirm");
     }
     expect(confirmLabel("undo_import")).toBe("Undo import");
     expect(confirmLabel("delete_cash_entry")).toBe("Delete");
+    expect(ACTION_NAMES.filter((action) => removalOf(action) !== null)).toEqual([
+      "delete_cash_entry",
+      "delete_plan_row",
+      "delete_spending_rule",
+      "remove_snapshot",
+      "undo_import",
+      "remove_conversation",
+      "clear_fund_fee",
+      "clear_forecast_rate",
+    ]);
   });
 });
 

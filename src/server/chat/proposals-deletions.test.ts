@@ -16,16 +16,16 @@ import {
 import { setRateOverride, removeRateOverride } from "../forecast-rates.ts";
 import { undo } from "../import/service.ts";
 import { setOwnCharge } from "../instruments/costs.ts";
-import { listPlan, removePlanRow, setPlanRow } from "../monthly-plan.ts";
+import { listPlan, planFingerprint, removePlanRow, setPlanRow } from "../monthly-plan.ts";
 import { createSnapshot, deleteSnapshot } from "../snapshot/service.ts";
-import { addRules, removeRule, rulesFor } from "../spending/rules.ts";
-import type { Proposal } from "./proposal-schema.ts";
+import { addRules, removeRule, rulesFor, setRuleCategory } from "../spending/rules.ts";
+import { removalOf, type Proposal } from "./proposal-schema.ts";
 import { bankAccount, onlyCard, propose, seed, spend } from "./proposal-test-kit.ts";
 
 // Every removal: a warning card naming exactly the one thing, nothing removed before Confirm, and Confirm's own function removing only that.
 
 const removal = (card: Proposal) => {
-  expect(card.danger).toBe(true);
+  expect(removalOf(card.action)).not.toBeNull();
   return card;
 };
 
@@ -99,10 +99,24 @@ describe("propose_delete_plan_row", () => {
     expect((await listPlan(db, userId)).rows).toHaveLength(2);
 
     if (card.action !== "delete_plan_row") throw new Error("wrong card");
-    await removePlanRow(db, userId, card.input.instrumentId);
+    expect(card.input.fingerprint).toBe(await planFingerprint(db, userId));
+    await removePlanRow(db, userId, card.input.instrumentId, card.input.fingerprint);
     expect((await listPlan(db, userId)).rows.map((row) => row.instrumentId)).toEqual([
       second.instrumentId,
     ]);
+  });
+
+  test("a plan changed after the card was made is refused, and the row kept", async () => {
+    const { userId, instrumentId } = await seed();
+    await setPlanRow(db, userId, { instrumentId, amountEur: "100" });
+    const card = onlyCard(await propose(userId, "propose_delete_plan_row", { instrumentId }));
+    if (card.action !== "delete_plan_row") throw new Error("wrong card");
+    await setPlanRow(db, userId, { instrumentId, amountEur: "250" });
+
+    await expect(
+      removePlanRow(db, userId, card.input.instrumentId, card.input.fingerprint),
+    ).rejects.toThrow("changed since the card");
+    expect((await listPlan(db, userId)).rows.map((row) => row.amountEur)).toEqual(["250.00"]);
   });
 
   test("an instrument not in the plan is refused", async () => {
@@ -130,14 +144,32 @@ describe("propose_delete_spending_rule", () => {
       { kind: "text", label: "Made by", text: "You" },
       { kind: "text", label: "Payments it matches", text: "1" },
     ]);
-    expect(card.input).toEqual({ pattern: "OUTOKAUPPA" });
+    expect(card.input).toEqual({
+      pattern: "OUTOKAUPPA",
+      expectCategory: "groceries",
+      expectSource: "user",
+    });
     expect(await rulesFor(db, userId)).toHaveLength(before);
 
     if (card.action !== "delete_spending_rule") throw new Error("wrong card");
-    await removeRule(db, userId, card.input.pattern);
+    await removeRule(db, userId, card.input.pattern, card.input);
     const after = (await rulesFor(db, userId)).map((rule) => rule.pattern);
     expect(after).toHaveLength(before - 1);
     expect(after).not.toContain("OUTOKAUPPA");
+  });
+
+  test("a rule changed after the card was made is not deleted", async () => {
+    const { userId } = await seed();
+    await addRules(db, userId, [{ pattern: "OUTOKAUPPA", category: "groceries" }], "user");
+    const card = onlyCard(
+      await propose(userId, "propose_delete_spending_rule", { pattern: "OUTOKAUPPA" }),
+    );
+    if (card.action !== "delete_spending_rule") throw new Error("wrong card");
+    await setRuleCategory(db, userId, "OUTOKAUPPA", "leisure");
+
+    expect(await removeRule(db, userId, card.input.pattern, card.input)).toBe("changed");
+    const rule = (await rulesFor(db, userId)).find((row) => row.pattern === "OUTOKAUPPA");
+    expect(rule?.category).toBe("leisure");
   });
 
   test("a rule that is not there is refused", async () => {
@@ -259,9 +291,26 @@ describe("propose_undo_import", () => {
     expect(await count(target.id)).toBe(3);
 
     if (card.action !== "undo_import") throw new Error("wrong card");
-    await undo(userId, card.input.importId);
+    expect(card.input.expectCount).toBe(3);
+    await undo(userId, card.input.importId, card.input.expectCount);
     expect(await count(target.id)).toBe(0);
     expect(await count(kept.id)).toBe(2);
+  });
+
+  test("an import whose row count changed since the card is not undone", async () => {
+    const { userId } = await seed();
+    const bank = await bankAccount(userId);
+    const target = await imported(userId, bank, "op-2026-10.csv", 2);
+    const card = onlyCard(await propose(userId, "propose_undo_import", { importId: target.id }));
+    if (card.action !== "undo_import") throw new Error("wrong card");
+
+    await expect(undo(userId, card.input.importId, 5)).rejects.toThrow("changed since the card");
+    const left = await db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.importId, target.id))
+      .all();
+    expect(left).toHaveLength(2);
   });
 
   test("an account number in the file name never reaches the model; a foreign or undone import is refused", async () => {
@@ -350,6 +399,7 @@ describe("propose_clear_fund_fee and propose_clear_forecast_rate", () => {
     expect(card.facts).toEqual([
       { kind: "text", label: "Fund", text: `Acme Fund (${isin})` },
       { kind: "text", label: "Fee cleared", text: "0.20 % a year (yours)" },
+      { kind: "text", label: "Applies to", text: "Shared by everyone in the household" },
       { kind: "text", label: "Afterwards", text: "A fee lookup may fill it in again" },
     ]);
     expect(card.input).toEqual({ id: instrumentId, percent: "" });

@@ -5,7 +5,7 @@ import { listAccounts } from "../accounts.ts";
 import { listCashEntries } from "../cash-entries.ts";
 import { conversations, imports } from "../db/schema.ts";
 import { listSnapshots, reconcileSnapshot } from "../snapshot/service.ts";
-import { maskAccountNumbers } from "./proposal-kit.ts";
+import { maskAccountNumbers } from "./mask.ts";
 import type { ChatTool, Db, ToolResult } from "./tool-types.ts";
 
 const NoArgs = z.object({}).strict();
@@ -35,7 +35,7 @@ export const buildRecordTools = (db: Db, userId: string): ChatTool[] => [
       return {
         accounts: (await listAccounts(db, userId)).map((account) => ({
           id: account.id,
-          name: account.name,
+          name: maskAccountNumbers(account.name),
           broker: account.broker,
           kind: account.kind,
           accountType: account.accountType,
